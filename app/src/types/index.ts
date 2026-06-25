@@ -76,6 +76,7 @@ export interface ErrorAnnotation {
 
 export interface SentenceRevision {
   id: string
+  relatedErrorId: string
   original: string
   revised: string
   note: string

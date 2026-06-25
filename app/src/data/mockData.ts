@@ -158,16 +158,24 @@ const resultFor = (essayId: string, seed: number): GradingResult => ({
   sentenceRevisions: [
     {
       id: `${essayId}-rev-1`,
-      original: 'It is very good for you.',
-      revised: 'It will give you a valuable chance to practice English.',
-      note: '把笼统评价改成具体收益。',
+      relatedErrorId: `${essayId}-err-1`,
+      original: 'I suggest you joins the club.',
+      revised: 'I suggest you join the club.',
+      note: '与错误标注中的 suggest 句型一致，修正为动词原形。',
     },
     {
       id: `${essayId}-rev-2`,
-      original: 'You can make more friends and learn more things.',
-      revised:
-        'You can make new friends while learning practical expressions from them.',
-      note: '用 while 连接两个相关动作，表达更紧凑。',
+      relatedErrorId: `${essayId}-err-2`,
+      original: 'enviroment',
+      revised: 'environment',
+      note: '与拼写错误标注一致，补全缺失的 n。',
+    },
+    {
+      id: `${essayId}-rev-3`,
+      relatedErrorId: `${essayId}-err-3`,
+      original: 'It can make you know many knowledge.',
+      revised: 'It can help you gain a lot of knowledge.',
+      note: '与词汇搭配标注一致，将不可数名词搭配改得更自然。',
     },
   ],
   upgradedExpressions: [
