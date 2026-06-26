@@ -184,9 +184,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         ),
       )
 
-      if (!existingResult) {
-        setGradingResults((current) => [createMockResultForEssay(essayId), ...current])
-      }
+      setGradingResults((current) =>
+        current.some((result) => result.essayId === essayId)
+          ? current
+          : [createMockResultForEssay(essayId), ...current],
+      )
     },
     [essays, gradingResults],
   )
