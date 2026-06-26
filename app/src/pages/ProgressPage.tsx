@@ -13,14 +13,23 @@ export function ProgressPage() {
   const { tasks, essays, completeEssayWithMockResult } = useAppState()
   const task = findTask(tasks, taskId)
   const taskEssays = findEssaysByTask(essays, taskId)
-  const nextAction = task ? getProgressNextAction(task, taskEssays) : undefined
-  const nextProcessableEssay = taskEssays.find((essay) =>
-    ['pending_ocr', 'ocr_running', 'pending_grading', 'grading'].includes(essay.status),
-  )
 
   if (!task) {
     return <EmptyState title="找不到任务" description="请返回任务列表重新选择一个批改任务。" />
   }
+
+  const nextAction = getProgressNextAction(task, taskEssays)
+  const nextProcessableEssay = taskEssays.find((essay) =>
+    ['pending_ocr', 'ocr_running', 'pending_grading', 'grading'].includes(essay.status),
+  )
+  const panelAction =
+    nextAction.primaryLabel === '模拟完成下一篇' && !nextProcessableEssay
+      ? {
+          ...nextAction,
+          primaryLabel: '去上传作文',
+          primaryTo: `/tasks/${task.id}/upload`,
+        }
+      : nextAction
 
   return (
     <AppLayout
@@ -31,16 +40,14 @@ export function ProgressPage() {
     >
       <div className="space-y-6">
         <ProgressSummary essays={taskEssays} />
-        {nextAction ? (
-          <NextActionPanel
-            action={nextAction}
-            onPrimaryClick={
-              nextAction.primaryLabel === '模拟完成下一篇' && nextProcessableEssay
-                ? () => completeEssayWithMockResult(nextProcessableEssay.id)
-                : undefined
-            }
-          />
-        ) : null}
+        <NextActionPanel
+          action={panelAction}
+          onPrimaryClick={
+            nextAction.primaryLabel === '模拟完成下一篇' && nextProcessableEssay
+              ? () => completeEssayWithMockResult(nextProcessableEssay.id)
+              : undefined
+          }
+        />
         <div className="grid gap-3 md:hidden">
           {taskEssays.map((essay) => (
             <article key={essay.id} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">

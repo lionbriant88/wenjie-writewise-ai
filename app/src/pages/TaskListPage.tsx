@@ -67,7 +67,7 @@ export function TaskListPage() {
                   </div>
                   <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
                     <div className="flex items-center gap-2 text-sm text-slate-600">
-                      {task.exceptionEssayCount > 0 ? (
+                      {nextAction.tone === 'danger' ? (
                         <TriangleAlert className="h-4 w-4 text-rose-600" />
                       ) : null}
                       <span>{nextAction.title}</span>

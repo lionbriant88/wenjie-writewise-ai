@@ -15,7 +15,7 @@ interface AppLayoutProps {
 }
 
 export function AppLayout({ children, task, title, description, currentStep }: AppLayoutProps) {
-  const workflowSteps = task && currentStep ? getWorkflowSteps(task.id, currentStep) : []
+  const workflowSteps = task ? getWorkflowSteps(task.id, currentStep ?? 'progress') : []
 
   return (
     <div className="min-h-screen bg-[#f6f7f9] text-slate-900">
