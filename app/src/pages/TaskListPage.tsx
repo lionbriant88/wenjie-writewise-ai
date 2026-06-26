@@ -1,3 +1,4 @@
+import { ArrowRight, TriangleAlert } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { EmptyState } from '../components/EmptyState'
 import { ProgressSummary } from '../components/ProgressSummary'
@@ -6,6 +7,7 @@ import { TaskStatusBadge } from '../components/TaskStatusBadge'
 import { useAppState } from '../context/useAppState'
 import { AppLayout } from '../layout/AppLayout'
 import { findEssaysByTask } from '../utils/taskLookup'
+import { getProgressNextAction } from '../utils/workflow'
 
 export function TaskListPage() {
   const { tasks, essays } = useAppState()
@@ -42,11 +44,13 @@ export function TaskListPage() {
             />
           </div>
 
-          <div className="grid gap-4">
+          <div className="grid gap-3">
             {tasks.map((task) => {
               const taskEssays = findEssaysByTask(essays, task.id)
+              const nextAction = getProgressNextAction(task, taskEssays)
+
               return (
-                <article key={task.id} className="rounded-lg border border-slate-200 bg-white p-5">
+                <article key={task.id} className="rounded-lg border border-slate-200 bg-white p-4">
                   <div className="flex flex-wrap items-start justify-between gap-4">
                     <div>
                       <div className="flex flex-wrap items-center gap-3">
@@ -57,23 +61,24 @@ export function TaskListPage() {
                         {task.className} · {task.essayType} · 满分 {task.fullScore}
                       </p>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Link
-                        to={`/tasks/${task.id}/progress`}
-                        className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                      >
-                        进入任务
-                      </Link>
-                      <Link
-                        to={`/tasks/${task.id}/class-review`}
-                        className="rounded-lg bg-blue-700 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-800"
-                      >
-                        查看讲评
-                      </Link>
-                    </div>
                   </div>
                   <div className="mt-5">
                     <ProgressSummary essays={taskEssays} />
+                  </div>
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                    <div className="flex items-center gap-2 text-sm text-slate-600">
+                      {task.exceptionEssayCount > 0 ? (
+                        <TriangleAlert className="h-4 w-4 text-rose-600" />
+                      ) : null}
+                      <span>{nextAction.title}</span>
+                    </div>
+                    <Link
+                      to={nextAction.primaryTo}
+                      className="tech-focus inline-flex items-center gap-2 rounded-lg bg-blue-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-blue-800"
+                    >
+                      {nextAction.primaryLabel}
+                      <ArrowRight className="h-4 w-4" />
+                    </Link>
                   </div>
                 </article>
               )
