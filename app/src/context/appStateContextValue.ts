@@ -9,6 +9,7 @@ export interface AppState {
   createTask: (input: CreateTaskInput) => string
   updateEssayOcrText: (essayId: string, text: string) => void
   markEssayManual: (essayId: string) => void
+  completeEssayWithMockResult: (essayId: string) => void
   updateGradingResult: (essayId: string, patch: Partial<GradingResult>) => void
 }
 
