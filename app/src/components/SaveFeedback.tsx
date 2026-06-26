@@ -8,6 +8,7 @@ interface SaveFeedbackProps {
 export function SaveFeedback({ show, label = '已保存调整' }: SaveFeedbackProps) {
   return (
     <span
+      role="status"
       aria-live="polite"
       className={[
         'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold transition',
@@ -16,8 +17,12 @@ export function SaveFeedback({ show, label = '已保存调整' }: SaveFeedbackPr
           : 'pointer-events-none translate-y-1 text-emerald-700 opacity-0',
       ].join(' ')}
     >
-      <CheckCircle2 className="h-3.5 w-3.5" />
-      {label}
+      {show ? (
+        <>
+          <CheckCircle2 className="h-3.5 w-3.5" />
+          {label}
+        </>
+      ) : null}
     </span>
   )
 }
