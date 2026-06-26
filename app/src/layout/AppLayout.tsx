@@ -1,6 +1,6 @@
 import { ArrowLeft, Sparkles } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { Link, NavLink } from 'react-router-dom'
+import { Link, NavLink, useLocation } from 'react-router-dom'
 import { TaskStatusBadge } from '../components/TaskStatusBadge'
 import type { Task } from '../types'
 import { WorkflowNav } from '../components/WorkflowNav'
@@ -15,7 +15,17 @@ interface AppLayoutProps {
 }
 
 export function AppLayout({ children, task, title, description, currentStep }: AppLayoutProps) {
-  const workflowSteps = task ? getWorkflowSteps(task.id, currentStep ?? 'progress') : []
+  const { pathname } = useLocation()
+  const derivedCurrentStep: WorkflowStepId = pathname.includes('/upload')
+    ? 'upload'
+    : pathname.includes('/exceptions')
+      ? 'exceptions'
+      : pathname.includes('/class-review')
+        ? 'class-review'
+        : pathname.includes('/essays/')
+          ? 'results'
+          : 'progress'
+  const workflowSteps = task ? getWorkflowSteps(task.id, currentStep ?? derivedCurrentStep) : []
 
   return (
     <div className="min-h-screen bg-[#f6f7f9] text-slate-900">

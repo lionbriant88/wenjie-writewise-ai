@@ -76,7 +76,7 @@ export function ProgressPage() {
             </article>
           ))}
         </div>
-        <div className="hidden overflow-hidden rounded-lg border border-slate-200 bg-white md:block">
+        <div className="hidden overflow-x-auto rounded-lg border border-slate-200 bg-white md:block">
           <table className="w-full min-w-[760px] text-left text-sm">
             <thead className="bg-slate-50 text-slate-500">
               <tr>
