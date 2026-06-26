@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { EmptyState } from '../components/EmptyState'
 import { ErrorAnnotationList } from '../components/ErrorAnnotationList'
@@ -21,13 +21,29 @@ export function EssayResultPage() {
     updateGradingResult,
   } = useAppState()
   const [saveNotice, setSaveNotice] = useState(false)
+  const saveTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const task = findTask(tasks, taskId)
   const essay = findEssay(essays, essayId)
   const result = findResultByEssayId(gradingResults, essayId)
 
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        window.clearTimeout(saveTimerRef.current)
+      }
+    }
+  }, [])
+
   const showSaveNotice = () => {
+    if (saveTimerRef.current) {
+      window.clearTimeout(saveTimerRef.current)
+    }
+
     setSaveNotice(true)
-    window.setTimeout(() => setSaveNotice(false), 900)
+    saveTimerRef.current = window.setTimeout(() => {
+      setSaveNotice(false)
+      saveTimerRef.current = null
+    }, 900)
   }
 
   if (!task || !essay) {

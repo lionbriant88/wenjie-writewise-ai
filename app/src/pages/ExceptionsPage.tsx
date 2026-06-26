@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { CheckCircle2, RotateCcw } from 'lucide-react'
 import { EmptyState } from '../components/EmptyState'
@@ -19,14 +19,30 @@ export function ExceptionsPage() {
   const { taskId = '' } = useParams()
   const { tasks, essays, updateEssayOcrText, markEssayManual } = useAppState()
   const [savedEssayId, setSavedEssayId] = useState<string | null>(null)
+  const saveTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const task = findTask(tasks, taskId)
   const exceptionEssays = findEssaysByTask(essays, taskId).filter(
     (essay) => essay.status === 'needs_review',
   )
 
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        window.clearTimeout(saveTimerRef.current)
+      }
+    }
+  }, [])
+
   const showSaved = (essayId: string) => {
+    if (saveTimerRef.current) {
+      window.clearTimeout(saveTimerRef.current)
+    }
+
     setSavedEssayId(essayId)
-    window.setTimeout(() => setSavedEssayId(null), 900)
+    saveTimerRef.current = window.setTimeout(() => {
+      setSavedEssayId(null)
+      saveTimerRef.current = null
+    }, 900)
   }
 
   if (!task) {
