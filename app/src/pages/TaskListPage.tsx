@@ -72,13 +72,21 @@ export function TaskListPage() {
                       ) : null}
                       <span>{nextAction.title}</span>
                     </div>
-                    <Link
-                      to={nextAction.primaryTo}
-                      className="tech-focus inline-flex items-center gap-2 rounded-lg bg-blue-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-blue-800"
-                    >
-                      {nextAction.primaryLabel}
-                      <ArrowRight className="h-4 w-4" />
-                    </Link>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Link
+                        to={`/tasks/${task.id}/class-review`}
+                        className="tech-focus inline-flex items-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-cyan-200 hover:bg-cyan-50"
+                      >
+                        查看讲评
+                      </Link>
+                      <Link
+                        to={nextAction.primaryTo}
+                        className="tech-focus inline-flex items-center gap-2 rounded-lg bg-blue-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-blue-800"
+                      >
+                        {nextAction.primaryLabel}
+                        <ArrowRight className="h-4 w-4" />
+                      </Link>
+                    </div>
                   </div>
                 </article>
               )
