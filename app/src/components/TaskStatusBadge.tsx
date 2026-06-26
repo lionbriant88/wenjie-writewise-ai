@@ -10,7 +10,7 @@ const statusMap: Record<TaskStatus, { label: string; className: string }> = {
 export function TaskStatusBadge({ status }: { status: TaskStatus }) {
   const item = statusMap[status]
   return (
-    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${item.className}`}>
+    <span className={`status-chip inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${item.className}`}>
       {item.label}
     </span>
   )
