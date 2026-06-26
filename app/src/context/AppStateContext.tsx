@@ -161,29 +161,35 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     )
   }, [])
 
-  const completeEssayWithMockResult = useCallback((essayId: string) => {
-    const timestamp = new Date().toISOString()
+  const completeEssayWithMockResult = useCallback(
+    (essayId: string) => {
+      const targetEssay = essays.find((essay) => essay.id === essayId)
+      if (!targetEssay) return
 
-    setEssays((current) =>
-      current.map((essay) =>
-        essay.id === essayId
-          ? {
-              ...essay,
-              status: 'completed',
-              aiResultId: `${essayId}-result`,
-              teacherReviewed: true,
-              updatedAt: timestamp,
-            }
-          : essay,
-      ),
-    )
+      const existingResult = gradingResults.find((result) => result.essayId === essayId)
+      const resultId = existingResult?.id ?? `${essayId}-result`
+      const timestamp = new Date().toISOString()
 
-    setGradingResults((current) =>
-      current.some((result) => result.essayId === essayId)
-        ? current
-        : [createMockResultForEssay(essayId), ...current],
-    )
-  }, [])
+      setEssays((current) =>
+        current.map((essay) =>
+          essay.id === essayId
+            ? {
+                ...essay,
+                status: 'completed',
+                aiResultId: resultId,
+                teacherReviewed: true,
+                updatedAt: timestamp,
+              }
+            : essay,
+        ),
+      )
+
+      if (!existingResult) {
+        setGradingResults((current) => [createMockResultForEssay(essayId), ...current])
+      }
+    },
+    [essays, gradingResults],
+  )
 
   const updateGradingResult = useCallback(
     (essayId: string, patch: Partial<GradingResult>) => {
