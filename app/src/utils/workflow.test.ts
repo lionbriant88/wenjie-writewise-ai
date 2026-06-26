@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Essay, Task } from '../types'
+import type { Essay, EssayStatus, Task } from '../types'
 import {
   getEssayStatusMeta,
   getProgressNextAction,
@@ -34,7 +34,7 @@ const essay = (id: string, status: Essay['status']) =>
     ocrConfidence: 0.88,
     status,
     exceptionReasons: [],
-    teacherReviewed: status === 'completed',
+    teacherReviewed: ['completed', 'manual'].includes(status),
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
   }) as Essay
@@ -79,6 +79,20 @@ describe('workflow helpers', () => {
     })
   })
 
+  it('points to class review when essays are completed or manually reviewed', () => {
+    const next = getProgressNextAction({ ...task, status: 'ready' }, [
+      essay('作文 1', 'completed'),
+      essay('作文 2', 'manual'),
+    ])
+
+    expect(next).toMatchObject({
+      tone: 'success',
+      title: '本批作文已完成',
+      primaryLabel: '查看班级讲评',
+      primaryTo: '/tasks/task-1/class-review',
+    })
+  })
+
   it('labels active and completed essay statuses for animated chips', () => {
     expect(getEssayStatusMeta('grading')).toMatchObject({
       label: '批改中',
@@ -89,4 +103,24 @@ describe('workflow helpers', () => {
       showCheck: true,
     })
   })
+
+  it.each([
+    ['pending_ocr', '待识别', false, false],
+    ['ocr_running', '识别中', true, false],
+    ['pending_grading', '待批改', false, false],
+    ['grading', '批改中', true, false],
+    ['completed', '已完成', false, true],
+    ['needs_review', '需人工复核', false, false],
+    ['manual', '人工批改', false, false],
+  ] satisfies Array<[EssayStatus, string, boolean, boolean]>)(
+    'returns metadata for %s',
+    (status, label, animated, showCheck) => {
+      const meta = getEssayStatusMeta(status)
+
+      expect(meta.label).toBe(label)
+      expect(Boolean(meta.animated)).toBe(animated)
+      expect(Boolean(meta.showCheck)).toBe(showCheck)
+      expect(meta.className).toEqual(expect.any(String))
+    },
+  )
 })

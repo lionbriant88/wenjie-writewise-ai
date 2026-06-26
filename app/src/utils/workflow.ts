@@ -45,7 +45,9 @@ export function getWorkflowSteps(taskId: string, current: WorkflowStepId): Workf
 
 export function getProgressNextAction(task: Task, essays: Essay[]): NextAction {
   const exceptionCount = essays.filter((essay) => essay.status === 'needs_review').length
-  const completedCount = essays.filter((essay) => essay.status === 'completed').length
+  const terminalCount = essays.filter((essay) =>
+    ['completed', 'manual'].includes(essay.status),
+  ).length
   const activeCount = essays.filter((essay) =>
     ['pending_ocr', 'ocr_running', 'pending_grading', 'grading'].includes(essay.status),
   ).length
@@ -62,7 +64,7 @@ export function getProgressNextAction(task: Task, essays: Essay[]): NextAction {
     }
   }
 
-  if (essays.length > 0 && completedCount === essays.length) {
+  if (essays.length > 0 && terminalCount === essays.length) {
     return {
       tone: 'success',
       title: '本批作文已完成',
