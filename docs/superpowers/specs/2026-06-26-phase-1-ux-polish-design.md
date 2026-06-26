@@ -70,6 +70,25 @@ Add or refine a compact workflow strip for task pages:
 
 On desktop, this can appear in the left navigation or page header. On narrow screens, it should become a horizontal shortcut row near the top of the page so the workflow does not disappear when the sidebar is hidden.
 
+## Micro-Interactions
+
+Use very light micro-interactions to reinforce the feeling that AI processing is active and responsive. These interactions should be subtle enough for a teacher workbench and should not distract from grading.
+
+Recommended interactions:
+
+- Status chips should use smooth color and background transitions when their state changes.
+- Processing or grading states can include a very subtle pulse or shimmer, limited to the chip or small status indicator.
+- Completed states can briefly show a checkmark or success accent when a simulated state transition finishes.
+- Score or OCR edits should show a small inline success checkmark or toast after saving.
+- Button feedback should feel immediate, with pressed, disabled, and saved states clearly visible.
+
+Constraints:
+
+- Avoid large page transitions, bouncing motion, confetti, or decorative animation.
+- Keep animation durations short, roughly 150 to 250 ms for transitions and under 1 second for temporary success feedback.
+- Respect users who prefer reduced motion by disabling non-essential animation under `prefers-reduced-motion`.
+- Do not add a third-party animation library for this pass unless the existing stack already needs it.
+
 ## Page-Specific Changes
 
 ### Task List
@@ -91,6 +110,8 @@ Add a next-action panel above the essay list:
 
 For wide screens, keep the table. For narrow screens, convert essay rows into compact cards with status, OCR confidence, page count, and action.
 
+Status chips on this page should communicate movement. For example, a simulated "批改中" item becoming "已完成" should transition color smoothly and briefly show a checkmark, so the teacher perceives that the system is actively working.
+
 ### Exception Review
 
 Make exception handling feel like a review workbench:
@@ -108,6 +129,7 @@ Make the score and teacher adjustment workflow easier to read:
 - Keep OCR confidence visible but secondary.
 - Group save/adjustment actions near editable score and comment sections.
 - Keep error annotations, revision suggestions, and upgraded expressions distinct.
+- After the teacher saves score or comment adjustments, show a lightweight success confirmation through an inline checkmark or compact toast.
 
 ### Class Review
 
@@ -164,8 +186,10 @@ Use the local browser to verify:
 
 - Task list is easier to scan.
 - Progress page clearly suggests the next action.
+- Progress status chips have subtle transitions and do not distract from scanning.
 - Exception review actions are grouped and obvious.
 - Essay result page has clearer score hierarchy.
+- Saving teacher adjustments gives clear lightweight success feedback.
 - Class review remains whiteboard-friendly.
 - Narrow mobile-sized viewport does not hide workflow navigation or force awkward table scanning.
 
