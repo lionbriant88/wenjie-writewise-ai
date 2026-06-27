@@ -111,7 +111,7 @@ describe('workflow helpers', () => {
     ['grading', '批改中', true, false],
     ['completed', '已完成', false, true],
     ['needs_review', '需人工复核', false, false],
-    ['manual', '人工批改', false, false],
+    ['manual', '人工批改', false, true],
   ] satisfies Array<[EssayStatus, string, boolean, boolean]>)(
     'returns metadata for %s',
     (status, label, animated, showCheck) => {

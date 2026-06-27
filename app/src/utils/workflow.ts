@@ -117,6 +117,7 @@ export function getEssayStatusMeta(status: EssayStatus): EssayStatusMeta {
     manual: {
       label: '人工批改',
       className: 'border-amber-200 bg-amber-50 text-amber-700',
+      showCheck: true,
     },
   }
 

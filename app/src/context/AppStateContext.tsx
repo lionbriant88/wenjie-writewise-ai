@@ -6,8 +6,42 @@ import type {
   Essay,
   GradingResult,
   Task,
+  TaskStatus,
 } from '../types'
 import { AppStateContext } from './appStateContextValue'
+
+const terminalEssayStatuses = new Set<Essay['status']>(['completed', 'manual'])
+const activeEssayStatuses = new Set<Essay['status']>(['pending_ocr', 'ocr_running', 'pending_grading', 'grading'])
+
+function getTaskStatusFromEssays(essays: Essay[]): TaskStatus {
+  const exceptionCount = essays.filter((essay) => essay.status === 'needs_review').length
+  const completedCount = essays.filter((essay) => terminalEssayStatuses.has(essay.status)).length
+  const activeCount = essays.filter((essay) => activeEssayStatuses.has(essay.status)).length
+
+  if (exceptionCount > 0) return 'needs_review'
+  if (essays.length > 0 && completedCount === essays.length) return 'ready'
+  if (activeCount > 0 || essays.length > 0) return 'processing'
+  return 'draft'
+}
+
+function updateTasksFromEssays(tasks: Task[], taskId: string, essays: Essay[], timestamp: string): Task[] {
+  const taskEssays = essays.filter((essay) => essay.taskId === taskId)
+  const completedEssayCount = taskEssays.filter((essay) => terminalEssayStatuses.has(essay.status)).length
+  const exceptionEssayCount = taskEssays.filter((essay) => essay.status === 'needs_review').length
+
+  return tasks.map((task) =>
+    task.id === taskId
+      ? {
+          ...task,
+          status: getTaskStatusFromEssays(taskEssays),
+          totalEssayCount: taskEssays.length,
+          completedEssayCount,
+          exceptionEssayCount,
+          updatedAt: timestamp,
+        }
+      : task,
+  )
+}
 
 function createMockResultForEssay(essayId: string): GradingResult {
   const timestamp = new Date().toISOString()
@@ -147,18 +181,26 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const markEssayManual = useCallback((essayId: string) => {
-    setEssays((current) =>
-      current.map((essay) =>
+    const timestamp = new Date().toISOString()
+
+    setEssays((current) => {
+      const targetEssay = current.find((essay) => essay.id === essayId)
+      if (!targetEssay) return current
+
+      const nextEssays = current.map((essay): Essay =>
         essay.id === essayId
           ? {
               ...essay,
               status: 'manual',
               teacherReviewed: true,
-              updatedAt: new Date().toISOString(),
+              updatedAt: timestamp,
             }
           : essay,
-      ),
-    )
+      )
+
+      setTasks((currentTasks) => updateTasksFromEssays(currentTasks, targetEssay.taskId, nextEssays, timestamp))
+      return nextEssays
+    })
   }, [])
 
   const completeEssayWithMockResult = useCallback(
@@ -170,8 +212,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       const resultId = existingResult?.id ?? `${essayId}-result`
       const timestamp = new Date().toISOString()
 
-      setEssays((current) =>
-        current.map((essay) =>
+      setEssays((current) => {
+        const nextEssays = current.map((essay): Essay =>
           essay.id === essayId
             ? {
                 ...essay,
@@ -181,8 +223,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
                 updatedAt: timestamp,
               }
             : essay,
-        ),
-      )
+        )
+
+        setTasks((currentTasks) => updateTasksFromEssays(currentTasks, targetEssay.taskId, nextEssays, timestamp))
+        return nextEssays
+      })
 
       setGradingResults((current) =>
         current.some((result) => result.essayId === essayId)

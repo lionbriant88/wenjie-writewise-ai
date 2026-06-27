@@ -2,7 +2,7 @@ import type { Essay, EssayStatus } from '../types'
 
 export function calculateProgress(essays: Essay[]) {
   const total = essays.length
-  const completed = essays.filter((essay) => essay.status === 'completed').length
+  const completed = essays.filter((essay) => ['completed', 'manual'].includes(essay.status)).length
   const exceptions = essays.filter((essay) => essay.status === 'needs_review').length
 
   return {

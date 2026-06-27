@@ -69,6 +69,8 @@ export function ProgressPage() {
                   <Link to={`/tasks/${task.id}/exceptions`} className="text-sm font-semibold text-rose-700">
                     去复核
                   </Link>
+                ) : essay.status === 'manual' ? (
+                  <span className="text-sm font-semibold text-amber-700">已人工处理</span>
                 ) : (
                   <span className="text-sm text-slate-400">处理中</span>
                 )}
@@ -105,6 +107,8 @@ export function ProgressPage() {
                       <Link to={`/tasks/${task.id}/exceptions`} className="font-semibold text-rose-700">
                         去复核
                       </Link>
+                    ) : essay.status === 'manual' ? (
+                      <span className="font-semibold text-amber-700">已人工处理</span>
                     ) : (
                       <span className="text-slate-400">处理中</span>
                     )}
