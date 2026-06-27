@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight, Image, X } from 'lucide-react'
 import { EmptyState } from '../components/EmptyState'
 import { ErrorAnnotationList } from '../components/ErrorAnnotationList'
 import { EssayPageSorter } from '../components/EssayPageSorter'
-import { OcrTextEditor } from '../components/OcrTextEditor'
 import { RevisionSuggestionList } from '../components/RevisionSuggestionList'
 import { SaveFeedback } from '../components/SaveFeedback'
 import { ScoreBreakdown } from '../components/ScoreBreakdown'
@@ -61,6 +60,7 @@ export function EssayResultPage() {
     updateGradingResult,
   } = useAppState()
   const [saveNotice, setSaveNotice] = useState(false)
+  const [showOriginalImage, setShowOriginalImage] = useState(false)
   const saveTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const task = findTask(tasks, taskId)
   const essay = findEssay(essays, essayId)
@@ -156,16 +156,28 @@ export function EssayResultPage() {
         <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
           <div className="space-y-5">
             <div className="rounded-lg border border-slate-200 bg-white p-4">
-              <h3 className="font-semibold text-slate-950">原图预览</h3>
-              <div className="mt-4">
-                <EssayPageSorter pages={essay.pages} />
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold text-slate-950">学生作文原文</h3>
+                  <p className="mt-1 text-xs font-semibold text-amber-700">
+                    OCR 置信度 {Math.round(essay.ocrConfidence * 100)}%
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowOriginalImage(true)}
+                  className="tech-focus inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-cyan-200 hover:bg-cyan-50"
+                >
+                  <Image className="h-4 w-4" />
+                  查看原图
+                </button>
               </div>
+              <textarea
+                value={essay.ocrText}
+                onChange={(event) => updateEssayOcrText(essay.id, event.target.value)}
+                className="mt-4 min-h-[320px] w-full resize-y rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-800 outline-none focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100"
+              />
             </div>
-            <OcrTextEditor
-              value={essay.ocrText}
-              confidence={essay.ocrConfidence}
-              onChange={(value) => updateEssayOcrText(essay.id, value)}
-            />
           </div>
           <div className="space-y-5">
             <div className="rounded-lg border border-blue-100 bg-white p-5 shadow-sm">
@@ -229,6 +241,29 @@ export function EssayResultPage() {
           </div>
         </div>
       </div>
+      {showOriginalImage ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 px-4 py-6">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="原图预览"
+            className="max-h-full w-full max-w-4xl overflow-auto rounded-lg bg-white p-5 shadow-2xl"
+          >
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h3 className="font-semibold text-slate-950">原图预览</h3>
+              <button
+                type="button"
+                onClick={() => setShowOriginalImage(false)}
+                className="tech-focus inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                <X className="h-4 w-4" />
+                关闭
+              </button>
+            </div>
+            <EssayPageSorter pages={essay.pages} />
+          </div>
+        </div>
+      ) : null}
     </AppLayout>
   )
 }

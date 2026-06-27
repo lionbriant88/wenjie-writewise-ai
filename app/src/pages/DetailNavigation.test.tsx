@@ -1,4 +1,5 @@
 import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it } from 'vitest'
 import { AppStateProvider } from '../context/AppStateContext'
@@ -54,6 +55,20 @@ describe('detail flow back navigation', () => {
       'href',
       '/tasks/task-1/essays/task-1-essay-1',
     )
+  })
+
+  it('prioritizes the student essay source and opens original images on demand', async () => {
+    const user = userEvent.setup()
+    renderWithRoute('/tasks/task-1/essays/task-1-essay-1', <EssayResultPage />)
+
+    expect(screen.getByRole('heading', { name: '学生作文原文' })).toBeInTheDocument()
+    expect(screen.getByText('OCR 置信度 89%')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '查看原图' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '原图预览' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '查看原图' }))
+
+    expect(screen.getByRole('dialog', { name: '原图预览' })).toBeInTheDocument()
   })
 
   it('links exception review pages back to the task progress page and keeps progress current', () => {
