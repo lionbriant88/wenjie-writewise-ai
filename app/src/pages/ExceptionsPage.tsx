@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { useParams } from 'react-router-dom'
-import { CheckCircle2, RotateCcw } from 'lucide-react'
+import { Link, useParams } from 'react-router-dom'
+import { ArrowLeft, CheckCircle2, RotateCcw } from 'lucide-react'
 import { EmptyState } from '../components/EmptyState'
 import { EssayPageSorter } from '../components/EssayPageSorter'
 import { OcrTextEditor } from '../components/OcrTextEditor'
@@ -53,15 +53,23 @@ export function ExceptionsPage() {
     <AppLayout
       task={task}
       title="异常复核"
-      currentStep="exceptions"
+      currentStep="progress"
       description="教师只处理 OCR 或图像质量不可靠的作文。"
     >
-      {exceptionEssays.length === 0 ? (
-        <EmptyState title="暂无异常作文" description="当前任务没有需要人工复核的作文。" />
-      ) : (
-        <div className="space-y-5">
-          {exceptionEssays.map((essay) => (
-            <article key={essay.id} className="grid gap-5 rounded-lg border border-slate-200 bg-white p-5 xl:grid-cols-[360px_minmax(0,1fr)]">
+      <div className="space-y-5">
+        <Link
+          to={`/tasks/${task.id}/progress`}
+          className="tech-focus inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-cyan-200 hover:bg-cyan-50"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          返回
+        </Link>
+        {exceptionEssays.length === 0 ? (
+          <EmptyState title="暂无异常作文" description="当前任务没有需要人工复核的作文。" />
+        ) : (
+          <div className="space-y-5">
+            {exceptionEssays.map((essay) => (
+              <article key={essay.id} className="grid gap-5 rounded-lg border border-slate-200 bg-white p-5 xl:grid-cols-[360px_minmax(0,1fr)]">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="font-semibold text-slate-950">{essay.essayNumber}</h3>
@@ -105,10 +113,11 @@ export function ExceptionsPage() {
                   </div>
                 </div>
               </div>
-            </article>
-          ))}
-        </div>
-      )}
+              </article>
+            ))}
+          </div>
+        )}
+      </div>
     </AppLayout>
   )
 }
