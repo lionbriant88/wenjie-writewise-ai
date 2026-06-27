@@ -161,14 +161,14 @@ const resultFor = (essayId: string, seed: number): GradingResult => ({
       relatedErrorId: `${essayId}-err-1`,
       original: 'I suggest you joins the club.',
       revised: 'I suggest you join the club.',
-      note: '与错误标注中的 suggest 句型一致，修正为动词原形。',
+      note: '与问题修改建议中的 suggest 句型一致，修正为动词原形。',
     },
     {
       id: `${essayId}-rev-2`,
       relatedErrorId: `${essayId}-err-2`,
       original: 'enviroment',
       revised: 'environment',
-      note: '与拼写错误标注一致，补全缺失的 n。',
+      note: '与拼写问题修改建议一致，补全缺失的 n。',
     },
     {
       id: `${essayId}-rev-3`,

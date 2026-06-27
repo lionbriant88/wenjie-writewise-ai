@@ -96,6 +96,7 @@ describe('detail flow back navigation', () => {
     expect(screen.getByRole('heading', { name: '问题与修改建议' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '错误标注' })).not.toBeInTheDocument()
     expect(screen.queryByText('教师可检查 AI 评分、错误标注和修改建议，并进行模拟调整。')).not.toBeInTheDocument()
+    expect(screen.queryByText('与错误标注中的 suggest 句型一致，修正为动词原形。')).not.toBeInTheDocument()
     expect(screen.queryByText('错句修改')).not.toBeInTheDocument()
     expect(screen.getByText('I suggest you joins the club.')).toBeInTheDocument()
     expect(screen.getByText('I suggest you join the club.')).toBeInTheDocument()
