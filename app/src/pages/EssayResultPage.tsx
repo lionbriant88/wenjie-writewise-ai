@@ -50,6 +50,40 @@ function ReviewSwitchLink({
   )
 }
 
+function ReviewActionBar({
+  label,
+  previousEssayId,
+  nextEssayId,
+  taskId,
+}: {
+  label?: string
+  previousEssayId?: string
+  nextEssayId?: string
+  taskId: string
+}) {
+  return (
+    <div
+      role={label ? 'region' : undefined}
+      aria-label={label}
+      className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Link
+          to={`/tasks/${taskId}/progress`}
+          className="tech-focus inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-cyan-200 hover:bg-cyan-50"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          返回批改进度
+        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <ReviewSwitchLink direction="previous" essayId={previousEssayId} taskId={taskId} />
+          <ReviewSwitchLink direction="next" essayId={nextEssayId} taskId={taskId} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function EssayResultPage() {
   const { taskId = '', essayId = '' } = useParams()
   const {
@@ -99,21 +133,7 @@ export function EssayResultPage() {
     return (
       <AppLayout task={task} title={`${essay.essayNumber} 批改结果`} currentStep="progress">
         <div className="space-y-4">
-          <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <Link
-                to={`/tasks/${task.id}/progress`}
-                className="tech-focus inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-cyan-200 hover:bg-cyan-50"
-              >
-                <ArrowLeft className="h-4 w-4" />
-                返回批改进度
-              </Link>
-              <div className="flex flex-wrap items-center gap-2">
-                <ReviewSwitchLink direction="previous" essayId={previousEssayId} taskId={task.id} />
-                <ReviewSwitchLink direction="next" essayId={nextEssayId} taskId={task.id} />
-              </div>
-            </div>
-          </div>
+          <ReviewActionBar previousEssayId={previousEssayId} nextEssayId={nextEssayId} taskId={task.id} />
           <EmptyState title="暂无批改结果" description="这篇作文还未完成 AI 批改。" />
         </div>
       </AppLayout>
@@ -125,10 +145,14 @@ export function EssayResultPage() {
       task={task}
       title={`${essay.essayNumber} 批改结果`}
       currentStep="progress"
-      description="教师可检查 AI 评分、错误标注和修改建议，并进行模拟调整。"
+      description="教师可检查 AI 评分、问题与修改建议，并进行模拟调整。"
     >
       <div className="space-y-5">
-        <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+        <div
+          role="region"
+          aria-label="顶部批改操作"
+          className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm"
+        >
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-3">
               <Link
@@ -240,6 +264,12 @@ export function EssayResultPage() {
             </div>
           </div>
         </div>
+        <ReviewActionBar
+          label="底部批改操作"
+          previousEssayId={previousEssayId}
+          nextEssayId={nextEssayId}
+          taskId={task.id}
+        />
       </div>
       {showOriginalImage ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 px-4 py-6">

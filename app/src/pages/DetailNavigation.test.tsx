@@ -23,7 +23,8 @@ describe('detail flow back navigation', () => {
   it('links essay result pages back to the task progress page and keeps progress current', () => {
     renderWithRoute('/tasks/task-1/essays/task-1-essay-1', <EssayResultPage />)
 
-    expect(screen.getByRole('link', { name: '返回批改进度' })).toHaveAttribute(
+    const topActions = screen.getByRole('region', { name: '顶部批改操作' })
+    expect(within(topActions).getByRole('link', { name: '返回批改进度' })).toHaveAttribute(
       'href',
       '/tasks/task-1/progress',
     )
@@ -38,11 +39,12 @@ describe('detail flow back navigation', () => {
   it('shows top review controls with score, confidence, and previous or next essay links', () => {
     renderWithRoute('/tasks/task-1/essays/task-1-essay-1', <EssayResultPage />)
 
+    const topActions = screen.getByRole('region', { name: '顶部批改操作' })
     expect(screen.getAllByText('作文 1 批改结果').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('12.6 / 15')).toBeInTheDocument()
     expect(screen.getByText('AI 置信度 86%')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '上一篇' })).toBeDisabled()
-    expect(screen.getByRole('link', { name: '下一篇' })).toHaveAttribute(
+    expect(within(topActions).getByRole('button', { name: '上一篇' })).toBeDisabled()
+    expect(within(topActions).getByRole('link', { name: '下一篇' })).toHaveAttribute(
       'href',
       '/tasks/task-1/essays/task-1-essay-2',
     )
@@ -51,9 +53,25 @@ describe('detail flow back navigation', () => {
   it('links the previous essay from the top review controls when available', () => {
     renderWithRoute('/tasks/task-1/essays/task-1-essay-2', <EssayResultPage />)
 
-    expect(screen.getByRole('link', { name: '上一篇' })).toHaveAttribute(
+    const topActions = screen.getByRole('region', { name: '顶部批改操作' })
+    expect(within(topActions).getByRole('link', { name: '上一篇' })).toHaveAttribute(
       'href',
       '/tasks/task-1/essays/task-1-essay-1',
+    )
+  })
+
+  it('shows bottom review actions for returning or switching essays', () => {
+    renderWithRoute('/tasks/task-1/essays/task-1-essay-1', <EssayResultPage />)
+
+    const bottomActions = screen.getByRole('region', { name: '底部批改操作' })
+    expect(within(bottomActions).getByRole('link', { name: '返回批改进度' })).toHaveAttribute(
+      'href',
+      '/tasks/task-1/progress',
+    )
+    expect(within(bottomActions).getByRole('button', { name: '上一篇' })).toBeDisabled()
+    expect(within(bottomActions).getByRole('link', { name: '下一篇' })).toHaveAttribute(
+      'href',
+      '/tasks/task-1/essays/task-1-essay-2',
     )
   })
 
@@ -77,6 +95,7 @@ describe('detail flow back navigation', () => {
 
     expect(screen.getByRole('heading', { name: '问题与修改建议' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '错误标注' })).not.toBeInTheDocument()
+    expect(screen.queryByText('教师可检查 AI 评分、错误标注和修改建议，并进行模拟调整。')).not.toBeInTheDocument()
     expect(screen.queryByText('错句修改')).not.toBeInTheDocument()
     expect(screen.getByText('I suggest you joins the club.')).toBeInTheDocument()
     expect(screen.getByText('I suggest you join the club.')).toBeInTheDocument()
