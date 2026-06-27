@@ -44,9 +44,7 @@ describe('workflow helpers', () => {
     expect(getWorkflowSteps(task.id, 'progress')).toEqual([
       { id: 'upload', label: '上传整理', to: '/tasks/task-1/upload', current: false },
       { id: 'progress', label: '批改进度', to: '/tasks/task-1/progress', current: true },
-      { id: 'exceptions', label: '异常复核', to: '/tasks/task-1/exceptions', current: false },
-      { id: 'results', label: '结果检查', to: '/tasks/task-1/progress', current: false },
-      { id: 'class-review', label: '班级讲评', to: '/tasks/task-1/class-review', current: false },
+      { id: 'class-review', label: '班级总览', to: '/tasks/task-1/class-review', current: false },
     ])
   })
 
@@ -62,6 +60,8 @@ describe('workflow helpers', () => {
       title: '先处理 1 篇异常作文',
       primaryLabel: '去复核',
       primaryTo: '/tasks/task-1/exceptions',
+      secondaryLabel: '查看总览',
+      secondaryTo: '/tasks/task-1/class-review',
     })
   })
 
@@ -74,7 +74,7 @@ describe('workflow helpers', () => {
     expect(next).toMatchObject({
       tone: 'success',
       title: '本批作文已完成',
-      primaryLabel: '查看班级讲评',
+      primaryLabel: '查看班级总览',
       primaryTo: '/tasks/task-1/class-review',
     })
   })
@@ -88,7 +88,7 @@ describe('workflow helpers', () => {
     expect(next).toMatchObject({
       tone: 'success',
       title: '本批作文已完成',
-      primaryLabel: '查看班级讲评',
+      primaryLabel: '查看班级总览',
       primaryTo: '/tasks/task-1/class-review',
     })
   })

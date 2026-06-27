@@ -1,12 +1,10 @@
-import { BookOpenCheck, ClipboardList, FileCheck2, Presentation, Upload } from 'lucide-react'
+import { ClipboardList, Presentation, Upload } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import type { WorkflowStep } from '../utils/workflow'
 
 const iconMap = {
   upload: Upload,
   progress: ClipboardList,
-  exceptions: BookOpenCheck,
-  results: FileCheck2,
   'class-review': Presentation,
 }
 

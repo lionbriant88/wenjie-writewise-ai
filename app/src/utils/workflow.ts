@@ -1,6 +1,6 @@
 import type { Essay, EssayStatus, Task } from '../types'
 
-export type WorkflowStepId = 'upload' | 'progress' | 'exceptions' | 'results' | 'class-review'
+export type WorkflowStepId = 'upload' | 'progress' | 'class-review'
 
 export interface WorkflowStep {
   id: WorkflowStepId
@@ -29,9 +29,7 @@ export interface EssayStatusMeta {
 const workflowLabels: Array<{ id: WorkflowStepId; label: string; path: string }> = [
   { id: 'upload', label: '上传整理', path: 'upload' },
   { id: 'progress', label: '批改进度', path: 'progress' },
-  { id: 'exceptions', label: '异常复核', path: 'exceptions' },
-  { id: 'results', label: '结果检查', path: 'progress' },
-  { id: 'class-review', label: '班级讲评', path: 'class-review' },
+  { id: 'class-review', label: '班级总览', path: 'class-review' },
 ]
 
 export function getWorkflowSteps(taskId: string, current: WorkflowStepId): WorkflowStep[] {
@@ -59,7 +57,7 @@ export function getProgressNextAction(task: Task, essays: Essay[]): NextAction {
       description: '系统已经把低置信度或图像质量不稳定的作文集中到复核队列。',
       primaryLabel: '去复核',
       primaryTo: `/tasks/${task.id}/exceptions`,
-      secondaryLabel: '查看讲评',
+      secondaryLabel: '查看总览',
       secondaryTo: `/tasks/${task.id}/class-review`,
     }
   }
@@ -68,8 +66,8 @@ export function getProgressNextAction(task: Task, essays: Essay[]): NextAction {
     return {
       tone: 'success',
       title: '本批作文已完成',
-      description: '可以直接查看班级共性问题，用于课堂讲评或白板展示。',
-      primaryLabel: '查看班级讲评',
+      description: '可以直接查看班级整体表现和高频问题，用于课堂讲评或白板展示。',
+      primaryLabel: '查看班级总览',
       primaryTo: `/tasks/${task.id}/class-review`,
     }
   }

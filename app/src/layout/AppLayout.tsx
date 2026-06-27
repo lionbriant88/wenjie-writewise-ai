@@ -18,13 +18,9 @@ export function AppLayout({ children, task, title, description, currentStep }: A
   const { pathname } = useLocation()
   const derivedCurrentStep: WorkflowStepId = pathname.includes('/upload')
     ? 'upload'
-    : pathname.includes('/exceptions')
-      ? 'exceptions'
-      : pathname.includes('/class-review')
-        ? 'class-review'
-        : pathname.includes('/essays/')
-          ? 'results'
-          : 'progress'
+    : pathname.includes('/class-review')
+      ? 'class-review'
+      : 'progress'
   const workflowSteps = task ? getWorkflowSteps(task.id, currentStep ?? derivedCurrentStep) : []
 
   return (
