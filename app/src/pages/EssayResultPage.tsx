@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ArrowLeft, ChevronLeft, ChevronRight, Image, X } from 'lucide-react'
 import { EmptyState } from '../components/EmptyState'
-import { ErrorAnnotationList } from '../components/ErrorAnnotationList'
 import { EssayPageSorter } from '../components/EssayPageSorter'
+import { IssueCorrectionList } from '../components/IssueCorrectionList'
 import { RevisionSuggestionList } from '../components/RevisionSuggestionList'
 import { SaveFeedback } from '../components/SaveFeedback'
 import { ScoreBreakdown } from '../components/ScoreBreakdown'
@@ -225,8 +225,8 @@ export function EssayResultPage() {
                 showSaveNotice()
               }}
             />
-            <ErrorAnnotationList annotations={result.errorAnnotations} />
-            <RevisionSuggestionList revisions={result.sentenceRevisions} upgrades={result.upgradedExpressions} />
+            <IssueCorrectionList annotations={result.errorAnnotations} revisions={result.sentenceRevisions} />
+            <RevisionSuggestionList revisions={[]} upgrades={result.upgradedExpressions} />
             <div className="rounded-lg border border-slate-200 bg-white p-4">
               <h3 className="font-semibold text-slate-950">总评</h3>
               <textarea

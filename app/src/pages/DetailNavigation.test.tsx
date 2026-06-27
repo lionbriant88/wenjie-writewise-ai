@@ -71,6 +71,21 @@ describe('detail flow back navigation', () => {
     expect(screen.getByRole('dialog', { name: '原图预览' })).toBeInTheDocument()
   })
 
+  it('combines error annotations and sentence revisions into one issue correction module', async () => {
+    const user = userEvent.setup()
+    renderWithRoute('/tasks/task-1/essays/task-1-essay-1', <EssayResultPage />)
+
+    expect(screen.getByRole('heading', { name: '问题与修改建议' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '错误标注' })).not.toBeInTheDocument()
+    expect(screen.queryByText('错句修改')).not.toBeInTheDocument()
+    expect(screen.getByText('I suggest you joins the club.')).toBeInTheDocument()
+    expect(screen.getByText('I suggest you join the club.')).toBeInTheDocument()
+
+    await user.click(screen.getAllByRole('button', { name: '加入班级总览' })[0])
+
+    expect(screen.getByRole('button', { name: '已加入班级总览' })).toBeInTheDocument()
+  })
+
   it('links exception review pages back to the task progress page and keeps progress current', () => {
     renderWithRoute('/tasks/task-1/exceptions', <ExceptionsPage />)
 
