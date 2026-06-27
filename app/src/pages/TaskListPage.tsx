@@ -68,6 +68,7 @@ export function TaskListPage() {
                     </p>
                     <Link
                       to={`/tasks/${task.id}/progress`}
+                      aria-label={`查看${task.taskName}的批改进度`}
                       className="tech-focus inline-flex items-center rounded-lg bg-blue-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-blue-800"
                     >
                       查看
