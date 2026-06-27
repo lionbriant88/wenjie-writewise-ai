@@ -1,4 +1,3 @@
-import { ArrowRight, TriangleAlert } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { EmptyState } from '../components/EmptyState'
 import { ProgressSummary } from '../components/ProgressSummary'
@@ -7,7 +6,6 @@ import { TaskStatusBadge } from '../components/TaskStatusBadge'
 import { useAppState } from '../context/useAppState'
 import { AppLayout } from '../layout/AppLayout'
 import { findEssaysByTask } from '../utils/taskLookup'
-import { getProgressNextAction } from '../utils/workflow'
 
 export function TaskListPage() {
   const { tasks, essays } = useAppState()
@@ -47,7 +45,6 @@ export function TaskListPage() {
           <div className="grid gap-3">
             {tasks.map((task) => {
               const taskEssays = findEssaysByTask(essays, task.id)
-              const nextAction = getProgressNextAction(task, taskEssays)
 
               return (
                 <article key={task.id} className="rounded-lg border border-slate-200 bg-white p-4">
@@ -66,27 +63,15 @@ export function TaskListPage() {
                     <ProgressSummary essays={taskEssays} />
                   </div>
                   <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
-                    <div className="flex items-center gap-2 text-sm text-slate-600">
-                      {nextAction.tone === 'danger' ? (
-                        <TriangleAlert className="h-4 w-4 text-rose-600" />
-                      ) : null}
-                      <span>{nextAction.title}</span>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Link
-                        to={`/tasks/${task.id}/class-review`}
-                        className="tech-focus inline-flex items-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-cyan-200 hover:bg-cyan-50"
-                      >
-                        查看讲评
-                      </Link>
-                      <Link
-                        to={nextAction.primaryTo}
-                        className="tech-focus inline-flex items-center gap-2 rounded-lg bg-blue-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-blue-800"
-                      >
-                        {nextAction.primaryLabel}
-                        <ArrowRight className="h-4 w-4" />
-                      </Link>
-                    </div>
+                    <p className="text-sm text-slate-600">
+                      进入任务后可继续上传整理、查看批改进度和班级总览。
+                    </p>
+                    <Link
+                      to={`/tasks/${task.id}/progress`}
+                      className="tech-focus inline-flex items-center rounded-lg bg-blue-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-blue-800"
+                    >
+                      查看
+                    </Link>
                   </div>
                 </article>
               )
