@@ -73,7 +73,7 @@ export function AppLayout({ children, task, title, description, currentStep }: A
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
                   <p className="text-sm font-medium text-blue-700">
-                    {task ? `${task.className} · ${task.essayType}` : '教师端原型'}
+                    {task ? `${task.className} · ${task.essayType}` : '教师工作台'}
                   </p>
                   <h2 className="mt-1 text-2xl font-semibold text-slate-950">{title}</h2>
                   {description ? (
