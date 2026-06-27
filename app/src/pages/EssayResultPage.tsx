@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react'
 import { EmptyState } from '../components/EmptyState'
 import { ErrorAnnotationList } from '../components/ErrorAnnotationList'
 import { EssayPageSorter } from '../components/EssayPageSorter'
@@ -10,7 +10,46 @@ import { SaveFeedback } from '../components/SaveFeedback'
 import { ScoreBreakdown } from '../components/ScoreBreakdown'
 import { useAppState } from '../context/useAppState'
 import { AppLayout } from '../layout/AppLayout'
-import { findEssay, findResultByEssayId, findTask } from '../utils/taskLookup'
+import { findEssay, findEssaysByTask, findResultByEssayId, findTask } from '../utils/taskLookup'
+
+function ReviewSwitchLink({
+  direction,
+  essayId,
+  taskId,
+}: {
+  direction: 'previous' | 'next'
+  essayId?: string
+  taskId: string
+}) {
+  const label = direction === 'previous' ? '上一篇' : '下一篇'
+  const Icon = direction === 'previous' ? ChevronLeft : ChevronRight
+  const className = 'tech-focus inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-sm font-semibold transition'
+
+  if (!essayId) {
+    return (
+      <button
+        type="button"
+        disabled
+        className={`${className} cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400`}
+      >
+        {direction === 'previous' ? <Icon className="h-4 w-4" /> : null}
+        {label}
+        {direction === 'next' ? <Icon className="h-4 w-4" /> : null}
+      </button>
+    )
+  }
+
+  return (
+    <Link
+      to={`/tasks/${taskId}/essays/${essayId}`}
+      className={`${className} border-slate-200 bg-white text-slate-700 hover:border-cyan-200 hover:bg-cyan-50`}
+    >
+      {direction === 'previous' ? <Icon className="h-4 w-4" /> : null}
+      {label}
+      {direction === 'next' ? <Icon className="h-4 w-4" /> : null}
+    </Link>
+  )
+}
 
 export function EssayResultPage() {
   const { taskId = '', essayId = '' } = useParams()
@@ -26,6 +65,11 @@ export function EssayResultPage() {
   const task = findTask(tasks, taskId)
   const essay = findEssay(essays, essayId)
   const result = findResultByEssayId(gradingResults, essayId)
+  const taskEssays = findEssaysByTask(essays, taskId)
+  const essayIndex = taskEssays.findIndex((item) => item.id === essayId)
+  const previousEssayId = essayIndex > 0 ? taskEssays[essayIndex - 1].id : undefined
+  const nextEssayId =
+    essayIndex >= 0 && essayIndex < taskEssays.length - 1 ? taskEssays[essayIndex + 1].id : undefined
 
   useEffect(() => {
     return () => {
@@ -55,13 +99,21 @@ export function EssayResultPage() {
     return (
       <AppLayout task={task} title={`${essay.essayNumber} 批改结果`} currentStep="progress">
         <div className="space-y-4">
-          <Link
-            to={`/tasks/${task.id}/progress`}
-            className="tech-focus inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-cyan-200 hover:bg-cyan-50"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            返回
-          </Link>
+          <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <Link
+                to={`/tasks/${task.id}/progress`}
+                className="tech-focus inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-cyan-200 hover:bg-cyan-50"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                返回批改进度
+              </Link>
+              <div className="flex flex-wrap items-center gap-2">
+                <ReviewSwitchLink direction="previous" essayId={previousEssayId} taskId={task.id} />
+                <ReviewSwitchLink direction="next" essayId={nextEssayId} taskId={task.id} />
+              </div>
+            </div>
+          </div>
           <EmptyState title="暂无批改结果" description="这篇作文还未完成 AI 批改。" />
         </div>
       </AppLayout>
@@ -76,13 +128,31 @@ export function EssayResultPage() {
       description="教师可检查 AI 评分、错误标注和修改建议，并进行模拟调整。"
     >
       <div className="space-y-5">
-        <Link
-          to={`/tasks/${task.id}/progress`}
-          className="tech-focus inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-cyan-200 hover:bg-cyan-50"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          返回
-        </Link>
+        <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <Link
+                to={`/tasks/${task.id}/progress`}
+                className="tech-focus inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-cyan-200 hover:bg-cyan-50"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                返回批改进度
+              </Link>
+              <div>
+                <p className="text-sm font-semibold text-slate-950">{essay.essayNumber} 批改结果</p>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  总分 <span className="font-semibold text-blue-700">{result.totalScore.toFixed(1)} / {task.fullScore}</span>
+                  <span className="mx-2 text-slate-300">|</span>
+                  AI 置信度 {Math.round(result.aiConfidence * 100)}%
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <ReviewSwitchLink direction="previous" essayId={previousEssayId} taskId={task.id} />
+              <ReviewSwitchLink direction="next" essayId={nextEssayId} taskId={task.id} />
+            </div>
+          </div>
+        </div>
         <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
           <div className="space-y-5">
             <div className="rounded-lg border border-slate-200 bg-white p-4">
