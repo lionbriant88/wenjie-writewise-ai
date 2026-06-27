@@ -17,7 +17,7 @@ export function ClassReviewPage() {
 
   if (!insight) {
     return (
-      <AppLayout task={task} title="班级讲评">
+      <AppLayout task={task} title="班级共性问题讲评" currentStep="class-review">
         <EmptyState title="暂无讲评材料" description="该任务尚未生成班级讲评数据。" />
       </AppLayout>
     )
@@ -27,14 +27,22 @@ export function ClassReviewPage() {
     <AppLayout
       task={task}
       title="班级共性问题讲评"
+      currentStep="class-review"
       description="适合电脑端或白板横屏展示，不依赖学生姓名。"
     >
       <div className="space-y-6">
-        <div className="rounded-lg bg-slate-950 p-6 text-white">
-          <p className="text-sm font-medium text-blue-200">{task.className}</p>
-          <h3 className="mt-2 text-3xl font-semibold">{task.taskName}</h3>
-          <p className="mt-3 max-w-3xl text-lg leading-8 text-slate-200">
-            本页用于课堂讲评：先看高频错误，再看典型句，最后用改写练习带学生即时修正。
+        <div className="rounded-lg border border-slate-800 bg-slate-950 p-6 text-white shadow-[0_16px_40px_rgba(15,23,42,0.18)]">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-cyan-200">{task.className}</p>
+              <h3 className="mt-2 text-3xl font-semibold">{task.taskName}</h3>
+            </div>
+            <span className="rounded-full border border-cyan-300/40 bg-cyan-300/10 px-3 py-1 text-sm font-semibold text-cyan-100">
+              课堂讲评模式
+            </span>
+          </div>
+          <p className="mt-4 max-w-3xl text-lg leading-8 text-slate-200">
+            先看高频错误，再看典型句，最后用改写练习带学生即时修正。
           </p>
         </div>
         <div className="grid gap-5 xl:grid-cols-2">

@@ -8,7 +8,8 @@ interface ClassInsightPanelProps {
 
 export function ClassInsightPanel({ title, items, large = false }: ClassInsightPanelProps) {
   return (
-    <section className="rounded-lg border border-slate-200 bg-white p-5">
+    <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="mb-4 h-1 w-12 rounded-full bg-cyan-400" />
       <h3 className={large ? 'text-2xl font-semibold text-slate-950' : 'font-semibold text-slate-950'}>
         {title}
       </h3>
