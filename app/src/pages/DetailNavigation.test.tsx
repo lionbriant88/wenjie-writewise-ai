@@ -86,6 +86,20 @@ describe('detail flow back navigation', () => {
     expect(screen.getByRole('button', { name: '已加入班级总览' })).toBeInTheDocument()
   })
 
+  it('separates expression upgrades from error corrections with optional class overview feedback', async () => {
+    const user = userEvent.setup()
+    renderWithRoute('/tasks/task-1/essays/task-1-essay-1', <EssayResultPage />)
+
+    expect(screen.getByRole('heading', { name: '表达升级建议' })).toBeInTheDocument()
+    expect(screen.getByText('以下内容不是错误，而是可用于提升表达质量的替换建议。')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '修改建议与升级表达' })).not.toBeInTheDocument()
+
+    const upgradeSection = screen.getByRole('region', { name: '表达升级建议' })
+    await user.click(within(upgradeSection).getAllByRole('button', { name: '加入班级总览' })[0])
+
+    expect(within(upgradeSection).getByRole('button', { name: '已加入班级总览' })).toBeInTheDocument()
+  })
+
   it('links exception review pages back to the task progress page and keeps progress current', () => {
     renderWithRoute('/tasks/task-1/exceptions', <ExceptionsPage />)
 
