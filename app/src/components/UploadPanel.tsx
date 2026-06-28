@@ -1,16 +1,30 @@
 interface UploadPanelProps {
   onAddPage: () => void
+  onSelectFiles: (files: File[]) => void
   onSubmit: () => void
 }
 
-export function UploadPanel({ onAddPage, onSubmit }: UploadPanelProps) {
+export function UploadPanel({ onAddPage, onSelectFiles, onSubmit }: UploadPanelProps) {
   return (
     <div className="rounded-lg border border-dashed border-blue-300 bg-blue-50 p-6">
-      <h3 className="text-lg font-semibold text-slate-950">模拟上传作文图片</h3>
+      <h3 className="text-lg font-semibold text-slate-950">上传作文图片</h3>
       <p className="mt-2 text-sm leading-6 text-slate-600">
-        第一阶段不读取真实图片，这里用页面占位模拟手机拍照、扫描件或白板展台画面。
+        可选择本地图片查看真实预览；OCR 识别和 AI 批改暂时仍使用模拟结果。
       </p>
       <div className="mt-5 flex flex-wrap gap-3">
+        <label className="tech-focus inline-flex cursor-pointer rounded-lg border border-blue-200 bg-white px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100">
+          选择本地图片
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            className="sr-only"
+            onChange={(event) => {
+              onSelectFiles(Array.from(event.target.files ?? []))
+              event.target.value = ''
+            }}
+          />
+        </label>
         <button
           type="button"
           onClick={onAddPage}

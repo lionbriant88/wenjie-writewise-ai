@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { EmptyState } from '../components/EmptyState'
 import { EssayPageSorter } from '../components/EssayPageSorter'
@@ -16,6 +16,15 @@ export function UploadPage() {
   const taskEssays = findEssaysByTask(essays, taskId)
   const initialPages = useMemo(() => taskEssays.flatMap((essay) => essay.pages).slice(0, 6), [taskEssays])
   const [pages, setPages] = useState<EssayPage[]>(initialPages)
+  const localPreviewUrlsRef = useRef<string[]>([])
+
+  useEffect(() => {
+    const localPreviewUrls = localPreviewUrlsRef.current
+
+    return () => {
+      localPreviewUrls.forEach((url) => URL.revokeObjectURL(url))
+    }
+  }, [])
 
   if (!task) {
     return <EmptyState title="找不到任务" description="请返回任务列表重新选择一个批改任务。" />
@@ -35,6 +44,29 @@ export function UploadPage() {
     ])
   }
 
+  const addLocalFiles = (files: File[]) => {
+    if (files.length === 0) return
+
+    setPages((current) => {
+      const start = current.length + 1
+      const nextPages = files.map((file, index): EssayPage => {
+        const previewUrl = URL.createObjectURL(file)
+        localPreviewUrlsRef.current.push(previewUrl)
+
+        return {
+          id: `local-page-${Date.now()}-${index}`,
+          label: file.name,
+          pageNumber: start + index,
+          quality: 'clear',
+          accent: '#0891b2',
+          previewUrl,
+        }
+      })
+
+      return [...current, ...nextPages]
+    })
+  }
+
   const movePage = (pageId: string, direction: 'up' | 'down') => {
     setPages((current) => {
       const index = current.findIndex((page) => page.id === pageId)
@@ -51,10 +83,14 @@ export function UploadPage() {
     <AppLayout
       task={task}
       title="上传作文与多页整理"
-      description="用模拟图片演示批量上传、多页合并、拆分和页序调整。"
+      description="选择本地图片进行预览和页序整理，OCR 与 AI 批改仍保持模拟。"
     >
       <div className="space-y-6">
-        <UploadPanel onAddPage={addPage} onSubmit={() => navigate(`/tasks/${task.id}/progress`)} />
+        <UploadPanel
+          onAddPage={addPage}
+          onSelectFiles={addLocalFiles}
+          onSubmit={() => navigate(`/tasks/${task.id}/progress`)}
+        />
         <div className="rounded-lg border border-slate-200 bg-white p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>

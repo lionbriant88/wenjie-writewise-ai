@@ -36,6 +36,7 @@ export interface EssayPage {
   pageNumber: number
   quality: 'clear' | 'blurred' | 'dark' | 'tilted' | 'messy'
   accent: string
+  previewUrl?: string
 }
 
 export interface Essay {
