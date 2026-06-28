@@ -8,7 +8,7 @@ Last updated: 2026-06-28
 - Frontend app: `D:\wenjie-writewise-ai\app`
 - Remote: `https://github.com/lionbriant88/wenjie-writewise-ai.git`
 - Active development branch: `codex/phase1-info-architecture-polish`
-- Latest local/remote pushed commit at this update: `9e28a99 refactor: remove legacy revision panels`
+- Latest local commit at this update: `c02583a feat: preview local upload images`
 
 ## Completed Work
 
@@ -37,6 +37,11 @@ Last updated: 2026-06-28
   - Error annotations and sentence revisions are merged into `问题与修改建议`.
   - Expression upgrades are separated into `表达升级建议` with optional class-overview feedback.
   - Legacy revision panels were removed to avoid old terminology reappearing.
+- Started phase 2 with the first safe upload slice:
+  - Upload page now supports selecting local image files.
+  - Selected files are shown as real thumbnail previews in the existing page organizer.
+  - OCR and AI grading remain mocked.
+  - Local previews are in-browser session data only and are not persisted.
 
 ## Latest Verified Commands
 
@@ -56,7 +61,7 @@ npm.cmd run build
 
 Latest known results:
 
-- Tests: 11 test files, 36 tests passed.
+- Tests: 12 test files, 37 tests passed.
 - Lint: passed.
 - Build: passed.
 
@@ -90,17 +95,17 @@ If port `5173` is occupied, Vite may choose the next available port.
 
 ## Next Recommended Development Step
 
-Phase 1 is in a polished prototype state. The next product-development step should start Phase 2 with a small, safe slice:
+Phase 1 is in a polished prototype state and Phase 2 has started. The next product-development step should continue upload/OCR groundwork with another small slice:
 
-1. Add real local image selection on the upload page.
-2. Show selected image thumbnails/previews in the existing upload organizer.
-3. Keep OCR and AI grading mocked.
+1. Add remove/reorder ergonomics for newly selected local images if needed.
+2. Add a mock OCR action that turns selected images into editable OCR text.
+3. Keep AI grading mocked until the upload-to-OCR handoff feels right.
 4. Do not persist files yet; treat uploads as in-browser session preview data.
 
 Suggested next prompt:
 
 ```text
-继续开发文阶 WriteWise AI。请先读取 docs/current_development_status.md，检查 git status、当前分支和最新提交。进入阶段二第一小步：在上传页支持本地图片选择和预览，但 OCR 和 AI 批改仍保持 mock。
+继续开发文阶 WriteWise AI。请先读取 docs/current_development_status.md，检查 git status、当前分支和最新提交。继续阶段二：在本地图片预览基础上，设计并实现 mock OCR 入口和可编辑 OCR 文本流转。
 ```
 
 ## Notes For Future Work
