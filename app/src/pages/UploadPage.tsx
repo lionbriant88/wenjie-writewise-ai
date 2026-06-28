@@ -16,6 +16,8 @@ export function UploadPage() {
   const taskEssays = findEssaysByTask(essays, taskId)
   const initialPages = useMemo(() => taskEssays.flatMap((essay) => essay.pages).slice(0, 6), [taskEssays])
   const [pages, setPages] = useState<EssayPage[]>(initialPages)
+  const [mockOcrStatus, setMockOcrStatus] = useState<'idle' | 'completed'>('idle')
+  const [mockOcrDraft, setMockOcrDraft] = useState('')
   const localPreviewUrlsRef = useRef<string[]>([])
 
   useEffect(() => {
@@ -79,6 +81,36 @@ export function UploadPage() {
     })
   }
 
+  const removePage = (pageId: string) => {
+    setPages((current) => {
+      const target = current.find((page) => page.id === pageId)
+      if (target?.previewUrl) {
+        URL.revokeObjectURL(target.previewUrl)
+        localPreviewUrlsRef.current = localPreviewUrlsRef.current.filter((url) => url !== target.previewUrl)
+      }
+
+      return current.filter((page) => page.id !== pageId)
+    })
+    setMockOcrStatus('idle')
+    setMockOcrDraft('')
+  }
+
+  const startMockOcr = () => {
+    const draft = pages
+      .map((page, index) =>
+        [
+          `作文图片 ${index + 1}：${page.label}`,
+          'Dear Sir or Madam,',
+          'I am writing to share my suggestion for this activity.',
+          'I believe it will help students improve their English writing.',
+        ].join('\n'),
+      )
+      .join('\n\n')
+
+    setMockOcrDraft(draft)
+    setMockOcrStatus('completed')
+  }
+
   return (
     <AppLayout
       task={task}
@@ -98,17 +130,31 @@ export function UploadPage() {
               <p className="mt-1 text-sm text-slate-500">当前 {pages.length} 张，按作文编号进行整理。</p>
             </div>
             <div className="flex gap-2">
-              <button className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">
+              <button
+                type="button"
+                onClick={startMockOcr}
+                disabled={pages.length === 0}
+                className="rounded-lg bg-blue-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+              >
+                开始模拟 OCR
+              </button>
+              <button
+                type="button"
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
+              >
                 合并为多页作文
               </button>
-              <button className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">
+              <button
+                type="button"
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
+              >
                 拆分页
               </button>
             </div>
           </div>
           <div className="mt-5">
             {pages.length > 0 ? (
-              <EssayPageSorter pages={pages} onMove={movePage} />
+              <EssayPageSorter pages={pages} onMove={movePage} onRemove={removePage} />
             ) : (
               <EmptyState
                 title="还没有模拟图片"
@@ -117,6 +163,25 @@ export function UploadPage() {
             )}
           </div>
         </div>
+        {mockOcrStatus === 'completed' ? (
+          <section className="rounded-lg border border-cyan-100 bg-white p-5 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-cyan-700">OCR 识别完成</p>
+                <h3 className="mt-1 font-semibold text-slate-950">模拟 OCR 文本草稿</h3>
+              </div>
+              <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                置信度 88%
+              </span>
+            </div>
+            <textarea
+              aria-label="模拟 OCR 文本草稿"
+              value={mockOcrDraft}
+              onChange={(event) => setMockOcrDraft(event.target.value)}
+              className="mt-4 min-h-44 w-full rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-800 outline-none focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100"
+            />
+          </section>
+        ) : null}
         <Link to={`/tasks/${task.id}/progress`} className="inline-flex text-sm font-semibold text-blue-700">
           跳过上传，查看批改进度
         </Link>

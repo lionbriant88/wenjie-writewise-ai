@@ -40,4 +40,33 @@ describe('UploadPage', () => {
       'blob:essay-photo-preview',
     )
   })
+
+  it('removes selected local images from the organizer and releases their preview URLs', async () => {
+    const user = userEvent.setup()
+    const revokeObjectURL = vi.fn()
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL: vi.fn(() => 'blob:essay-photo-preview'),
+      revokeObjectURL,
+    })
+    renderUploadPage()
+
+    const file = new File(['image-bytes'], 'essay-photo.png', { type: 'image/png' })
+    await user.upload(screen.getByLabelText('选择本地图片'), file)
+    await user.click(screen.getByRole('button', { name: '删除 essay-photo.png' }))
+
+    expect(screen.queryByText('essay-photo.png')).not.toBeInTheDocument()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:essay-photo-preview')
+  })
+
+  it('starts mock OCR and shows editable OCR draft text for the organized images', async () => {
+    const user = userEvent.setup()
+    renderUploadPage()
+
+    await user.click(screen.getByRole('button', { name: '开始模拟 OCR' }))
+
+    expect(screen.getByText('OCR 识别完成')).toBeInTheDocument()
+    const ocrDraft = screen.getByRole('textbox', { name: '模拟 OCR 文本草稿' }) as HTMLTextAreaElement
+    expect(ocrDraft.value).toContain('作文图片 1')
+  })
 })
