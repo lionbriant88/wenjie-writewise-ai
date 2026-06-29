@@ -170,41 +170,40 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     return id
   }, [])
 
-  const confirmMockOcrEssay = useCallback(
-    ({ taskId, pages, ocrText }: ConfirmMockOcrEssayInput) => {
-      const timestamp = new Date().toISOString()
-      const taskEssayCount = essays.filter((essay) => essay.taskId === taskId).length
-      const id = `${taskId}-uploaded-${Date.now()}`
-      const nextEssay: Essay = {
-        id,
-        taskId,
-        essayNumber: `作文 ${taskEssayCount + 1}`,
-        pages: pages.map((page, index) => ({
+  const confirmMockOcrEssay = useCallback(({ taskId, essayGroups }: ConfirmMockOcrEssayInput) => {
+    const timestamp = new Date().toISOString()
+
+    setEssays((current) => {
+      const taskEssayCount = current.filter((essay) => essay.taskId === taskId).length
+      const createdEssays = essayGroups.map((group, groupIndex): Essay => {
+        const id = `${taskId}-uploaded-${Date.now()}-${groupIndex + 1}`
+        const essayPages = group.pages.map((page, pageIndex) => ({
           ...page,
-          id: `${id}-page-${index + 1}`,
-          pageNumber: index + 1,
-        })),
-        pageCount: pages.length,
-        pageOrder: pages.map((_, index) => `${id}-page-${index + 1}`),
-        ocrText,
-        ocrConfidence: 0.88,
-        status: 'pending_grading',
-        exceptionReasons: [],
-        teacherReviewed: false,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      }
+          id: `${id}-page-${pageIndex + 1}`,
+          pageNumber: pageIndex + 1,
+        }))
 
-      setEssays((current) => {
-        const nextEssays = [...current, nextEssay]
-        setTasks((currentTasks) => updateTasksFromEssays(currentTasks, taskId, nextEssays, timestamp))
-        return nextEssays
+        return {
+          id,
+          taskId,
+          essayNumber: `作文 ${taskEssayCount + groupIndex + 1}`,
+          pages: essayPages,
+          pageCount: essayPages.length,
+          pageOrder: essayPages.map((page) => page.id),
+          ocrText: group.ocrText,
+          ocrConfidence: 0.88,
+          status: 'pending_grading',
+          exceptionReasons: [],
+          teacherReviewed: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }
       })
-
-      return id
-    },
-    [essays],
-  )
+      const nextEssays = [...current, ...createdEssays]
+      setTasks((currentTasks) => updateTasksFromEssays(currentTasks, taskId, nextEssays, timestamp))
+      return nextEssays
+    })
+  }, [])
 
   const updateEssayOcrText = useCallback((essayId: string, text: string) => {
     setEssays((current) =>
@@ -274,23 +273,20 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [essays, gradingResults],
   )
 
-  const updateGradingResult = useCallback(
-    (essayId: string, patch: Partial<GradingResult>) => {
-      setGradingResults((current) =>
-        current.map((result) =>
-          result.essayId === essayId
-            ? {
-                ...result,
-                ...patch,
-                teacherAdjusted: true,
-                updatedAt: new Date().toISOString(),
-              }
-            : result,
-        ),
-      )
-    },
-    [],
-  )
+  const updateGradingResult = useCallback((essayId: string, patch: Partial<GradingResult>) => {
+    setGradingResults((current) =>
+      current.map((result) =>
+        result.essayId === essayId
+          ? {
+              ...result,
+              ...patch,
+              teacherAdjusted: true,
+              updatedAt: new Date().toISOString(),
+            }
+          : result,
+      ),
+    )
+  }, [])
 
   const value = useMemo(
     () => ({

@@ -98,4 +98,17 @@ describe('UploadPage', () => {
     expect(screen.getAllByText('作文 11').length).toBeGreaterThan(0)
     expect(screen.getAllByText('待批改').length).toBeGreaterThan(0)
   })
+
+  it('splits organized images into one queued essay per image when split mode is selected', async () => {
+    const user = userEvent.setup()
+    renderUploadToProgressFlow()
+
+    await user.click(screen.getByRole('button', { name: '拆分页' }))
+    await user.click(screen.getByRole('button', { name: '开始模拟 OCR' }))
+    await user.click(screen.getByRole('button', { name: '确认 OCR 文本' }))
+
+    expect(screen.getByRole('heading', { name: '批改进度' })).toBeInTheDocument()
+    expect(screen.getAllByText('作文 11').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('作文 16').length).toBeGreaterThan(0)
+  })
 })

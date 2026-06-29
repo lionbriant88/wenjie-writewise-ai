@@ -8,6 +8,23 @@ import { AppLayout } from '../layout/AppLayout'
 import type { EssayPage } from '../types'
 import { findEssaysByTask, findTask } from '../utils/taskLookup'
 
+type EssayGroupingMode = 'merged' | 'perPage'
+
+function buildPageOcrDraft(page: EssayPage, index: number) {
+  return [
+    `作文图片 ${index + 1}：${page.label}`,
+    'Dear Sir or Madam,',
+    'I am writing to share my suggestion for this activity.',
+    'I believe it will help students improve their English writing.',
+  ].join('\n')
+}
+
+function groupingButtonClass(active: boolean) {
+  return active
+    ? 'rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-800 shadow-[0_0_0_1px_rgba(37,99,235,0.08)]'
+    : 'rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-cyan-200 hover:bg-cyan-50/60'
+}
+
 export function UploadPage() {
   const { taskId = '' } = useParams()
   const navigate = useNavigate()
@@ -16,9 +33,12 @@ export function UploadPage() {
   const taskEssays = findEssaysByTask(essays, taskId)
   const initialPages = useMemo(() => taskEssays.flatMap((essay) => essay.pages).slice(0, 6), [taskEssays])
   const [pages, setPages] = useState<EssayPage[]>(initialPages)
+  const [essayGroupingMode, setEssayGroupingMode] = useState<EssayGroupingMode>('merged')
   const [mockOcrStatus, setMockOcrStatus] = useState<'idle' | 'completed'>('idle')
   const [mockOcrDraft, setMockOcrDraft] = useState('')
   const localPreviewUrlsRef = useRef<string[]>([])
+
+  const essaySubmissionCount = essayGroupingMode === 'perPage' ? pages.length : pages.length > 0 ? 1 : 0
 
   useEffect(() => {
     const localPreviewUrls = localPreviewUrlsRef.current
@@ -30,6 +50,16 @@ export function UploadPage() {
 
   if (!task) {
     return <EmptyState title="找不到任务" description="请返回任务列表重新选择一个批改任务。" />
+  }
+
+  const resetOcrDraft = () => {
+    setMockOcrStatus('idle')
+    setMockOcrDraft('')
+  }
+
+  const setGroupingMode = (mode: EssayGroupingMode) => {
+    setEssayGroupingMode(mode)
+    resetOcrDraft()
   }
 
   const addPage = () => {
@@ -44,6 +74,7 @@ export function UploadPage() {
         accent: '#2563eb',
       },
     ])
+    resetOcrDraft()
   }
 
   const addLocalFiles = (files: File[]) => {
@@ -67,6 +98,7 @@ export function UploadPage() {
 
       return [...current, ...nextPages]
     })
+    resetOcrDraft()
   }
 
   const movePage = (pageId: string, direction: 'up' | 'down') => {
@@ -79,6 +111,7 @@ export function UploadPage() {
       next.splice(target, 0, item)
       return next
     })
+    resetOcrDraft()
   }
 
   const removePage = (pageId: string) => {
@@ -91,34 +124,41 @@ export function UploadPage() {
 
       return current.filter((page) => page.id !== pageId)
     })
-    setMockOcrStatus('idle')
-    setMockOcrDraft('')
+    resetOcrDraft()
   }
 
   const startMockOcr = () => {
-    const draft = pages
-      .map((page, index) =>
-        [
-          `作文图片 ${index + 1}：${page.label}`,
-          'Dear Sir or Madam,',
-          'I am writing to share my suggestion for this activity.',
-          'I believe it will help students improve their English writing.',
-        ].join('\n'),
-      )
-      .join('\n\n')
-
-    setMockOcrDraft(draft)
+    setMockOcrDraft(pages.map((page, index) => buildPageOcrDraft(page, index)).join('\n\n'))
     setMockOcrStatus('completed')
+  }
+
+  const getEssayGroups = () => {
+    if (essayGroupingMode === 'perPage') {
+      const draftSections = mockOcrDraft
+        .split(/\n{2,}/)
+        .map((section) => section.trim())
+        .filter(Boolean)
+
+      return pages.map((page, index) => ({
+        pages: [page],
+        ocrText: draftSections[index] ?? buildPageOcrDraft(page, index),
+      }))
+    }
+
+    return [
+      {
+        pages,
+        ocrText: mockOcrDraft,
+      },
+    ]
   }
 
   const confirmMockOcrText = () => {
     confirmMockOcrEssay({
       taskId: task.id,
-      pages,
-      ocrText: mockOcrDraft,
+      essayGroups: getEssayGroups(),
     })
-    setMockOcrStatus('idle')
-    setMockOcrDraft('')
+    resetOcrDraft()
     navigate(`/tasks/${task.id}/progress`)
   }
 
@@ -139,9 +179,11 @@ export function UploadPage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="font-semibold text-slate-950">已上传图片</h3>
-              <p className="mt-1 text-sm text-slate-500">当前 {pages.length} 张，按作文编号进行整理。</p>
+              <p className="mt-1 text-sm text-slate-500">
+                当前 {pages.length} 张，确认 OCR 后将提交 {essaySubmissionCount} 篇作文。
+              </p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={startMockOcr}
@@ -152,13 +194,17 @@ export function UploadPage() {
               </button>
               <button
                 type="button"
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
+                aria-pressed={essayGroupingMode === 'merged'}
+                onClick={() => setGroupingMode('merged')}
+                className={groupingButtonClass(essayGroupingMode === 'merged')}
               >
                 合并为多页作文
               </button>
               <button
                 type="button"
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
+                aria-pressed={essayGroupingMode === 'perPage'}
+                onClick={() => setGroupingMode('perPage')}
+                className={groupingButtonClass(essayGroupingMode === 'perPage')}
               >
                 拆分页
               </button>
@@ -181,6 +227,9 @@ export function UploadPage() {
               <div>
                 <p className="text-sm font-semibold text-cyan-700">OCR 识别完成</p>
                 <h3 className="mt-1 font-semibold text-slate-950">模拟 OCR 文本草稿</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  当前分组方式会提交 {essaySubmissionCount} 篇作文。
+                </p>
               </div>
               <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
                 置信度 88%
@@ -196,7 +245,7 @@ export function UploadPage() {
               <button
                 type="button"
                 onClick={confirmMockOcrText}
-                disabled={mockOcrDraft.trim().length === 0}
+                disabled={mockOcrDraft.trim().length === 0 || pages.length === 0}
                 className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
               >
                 确认 OCR 文本
