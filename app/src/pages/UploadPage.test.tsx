@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AppStateProvider } from '../context/AppStateContext'
+import { ProgressPage } from './ProgressPage'
 import { UploadPage } from './UploadPage'
 
 function renderUploadPage() {
@@ -11,6 +12,19 @@ function renderUploadPage() {
       <MemoryRouter initialEntries={['/tasks/task-1/upload']}>
         <Routes>
           <Route path="/tasks/:taskId/upload" element={<UploadPage />} />
+        </Routes>
+      </MemoryRouter>
+    </AppStateProvider>,
+  )
+}
+
+function renderUploadToProgressFlow() {
+  render(
+    <AppStateProvider>
+      <MemoryRouter initialEntries={['/tasks/task-1/upload']}>
+        <Routes>
+          <Route path="/tasks/:taskId/upload" element={<UploadPage />} />
+          <Route path="/tasks/:taskId/progress" element={<ProgressPage />} />
         </Routes>
       </MemoryRouter>
     </AppStateProvider>,
@@ -68,5 +82,20 @@ describe('UploadPage', () => {
     expect(screen.getByText('OCR 识别完成')).toBeInTheDocument()
     const ocrDraft = screen.getByRole('textbox', { name: '模拟 OCR 文本草稿' }) as HTMLTextAreaElement
     expect(ocrDraft.value).toContain('作文图片 1')
+  })
+
+  it('confirms mock OCR text into the task progress queue', async () => {
+    const user = userEvent.setup()
+    renderUploadToProgressFlow()
+
+    await user.click(screen.getByRole('button', { name: '开始模拟 OCR' }))
+    const ocrDraft = screen.getByRole('textbox', { name: '模拟 OCR 文本草稿' })
+    await user.clear(ocrDraft)
+    await user.type(ocrDraft, 'Confirmed OCR essay text')
+    await user.click(screen.getByRole('button', { name: '确认 OCR 文本' }))
+
+    expect(screen.getByRole('heading', { name: '批改进度' })).toBeInTheDocument()
+    expect(screen.getAllByText('作文 11').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('待批改').length).toBeGreaterThan(0)
   })
 })

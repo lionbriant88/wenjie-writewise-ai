@@ -11,7 +11,7 @@ import { findEssaysByTask, findTask } from '../utils/taskLookup'
 export function UploadPage() {
   const { taskId = '' } = useParams()
   const navigate = useNavigate()
-  const { tasks, essays } = useAppState()
+  const { tasks, essays, confirmMockOcrEssay } = useAppState()
   const task = findTask(tasks, taskId)
   const taskEssays = findEssaysByTask(essays, taskId)
   const initialPages = useMemo(() => taskEssays.flatMap((essay) => essay.pages).slice(0, 6), [taskEssays])
@@ -111,10 +111,22 @@ export function UploadPage() {
     setMockOcrStatus('completed')
   }
 
+  const confirmMockOcrText = () => {
+    confirmMockOcrEssay({
+      taskId: task.id,
+      pages,
+      ocrText: mockOcrDraft,
+    })
+    setMockOcrStatus('idle')
+    setMockOcrDraft('')
+    navigate(`/tasks/${task.id}/progress`)
+  }
+
   return (
     <AppLayout
       task={task}
       title="上传作文与多页整理"
+      currentStep="upload"
       description="选择本地图片进行预览和页序整理，OCR 与 AI 批改仍保持模拟。"
     >
       <div className="space-y-6">
@@ -180,6 +192,16 @@ export function UploadPage() {
               onChange={(event) => setMockOcrDraft(event.target.value)}
               className="mt-4 min-h-44 w-full rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-800 outline-none focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100"
             />
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={confirmMockOcrText}
+                disabled={mockOcrDraft.trim().length === 0}
+                className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+              >
+                确认 OCR 文本
+              </button>
+            </div>
           </section>
         ) : null}
         <Link to={`/tasks/${task.id}/progress`} className="inline-flex text-sm font-semibold text-blue-700">

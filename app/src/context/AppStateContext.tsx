@@ -8,7 +8,7 @@ import type {
   Task,
   TaskStatus,
 } from '../types'
-import { AppStateContext } from './appStateContextValue'
+import { AppStateContext, type ConfirmMockOcrEssayInput } from './appStateContextValue'
 
 const terminalEssayStatuses = new Set<Essay['status']>(['completed', 'manual'])
 const activeEssayStatuses = new Set<Essay['status']>(['pending_ocr', 'ocr_running', 'pending_grading', 'grading'])
@@ -170,6 +170,42 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     return id
   }, [])
 
+  const confirmMockOcrEssay = useCallback(
+    ({ taskId, pages, ocrText }: ConfirmMockOcrEssayInput) => {
+      const timestamp = new Date().toISOString()
+      const taskEssayCount = essays.filter((essay) => essay.taskId === taskId).length
+      const id = `${taskId}-uploaded-${Date.now()}`
+      const nextEssay: Essay = {
+        id,
+        taskId,
+        essayNumber: `作文 ${taskEssayCount + 1}`,
+        pages: pages.map((page, index) => ({
+          ...page,
+          id: `${id}-page-${index + 1}`,
+          pageNumber: index + 1,
+        })),
+        pageCount: pages.length,
+        pageOrder: pages.map((_, index) => `${id}-page-${index + 1}`),
+        ocrText,
+        ocrConfidence: 0.88,
+        status: 'pending_grading',
+        exceptionReasons: [],
+        teacherReviewed: false,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }
+
+      setEssays((current) => {
+        const nextEssays = [...current, nextEssay]
+        setTasks((currentTasks) => updateTasksFromEssays(currentTasks, taskId, nextEssays, timestamp))
+        return nextEssays
+      })
+
+      return id
+    },
+    [essays],
+  )
+
   const updateEssayOcrText = useCallback((essayId: string, text: string) => {
     setEssays((current) =>
       current.map((essay) =>
@@ -263,6 +299,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       gradingResults,
       classInsights,
       createTask,
+      confirmMockOcrEssay,
       updateEssayOcrText,
       markEssayManual,
       completeEssayWithMockResult,
@@ -274,6 +311,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       gradingResults,
       classInsights,
       createTask,
+      confirmMockOcrEssay,
       updateEssayOcrText,
       markEssayManual,
       completeEssayWithMockResult,
