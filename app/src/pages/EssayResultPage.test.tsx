@@ -87,18 +87,28 @@ describe('EssayResultPage teacher decision workflow', () => {
     const user = userEvent.setup()
     renderEssayDetail()
 
+    expect(screen.getByRole('button', { name: '阅读定位' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '编辑 OCR' })).toBeInTheDocument()
+    expect(screen.queryByLabelText('学生作文原文')).not.toBeInTheDocument()
+
     await user.click(screen.getByText('I suggest you joins the club.'))
 
-    expect(screen.getByText('定位预览')).toBeInTheDocument()
+    expect(screen.queryByText('定位预览')).not.toBeInTheDocument()
     expect(screen.getAllByText('I suggest you joins the club.').length).toBeGreaterThanOrEqual(2)
+
+    await user.click(screen.getByRole('button', { name: '编辑 OCR' }))
+
+    expect(screen.getByLabelText('学生作文原文')).toBeInTheDocument()
   })
 
   it('shows fallback feedback when selected issue text is not found in the source', async () => {
     const user = userEvent.setup()
     renderEssayDetail()
 
+    await user.click(screen.getByRole('button', { name: '编辑 OCR' }))
     await user.clear(screen.getByLabelText('学生作文原文'))
     await user.type(screen.getByLabelText('学生作文原文'), 'This edited OCR text no longer contains the issue sentence.')
+    await user.click(screen.getByRole('button', { name: '阅读定位' }))
     await user.click(screen.getByText('I suggest you joins the club.'))
 
     expect(screen.getByText('未在原文中精确定位，请手动核对')).toBeInTheDocument()
