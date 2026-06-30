@@ -159,6 +159,7 @@ it('shows batch grouping modes and removes old top-level grouping actions', () =
   expect(screen.getByRole('button', { name: '一张一篇' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: '每 2 张一篇' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: '混合页数' })).toBeInTheDocument()
+  expect(screen.getByText('当前按上传顺序排列，自动分组将按此顺序生成作文。')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: '开始模拟 OCR（预计 6 篇）' })).toBeInTheDocument()
 
   expect(screen.queryByRole('button', { name: '合并为多页作文' })).not.toBeInTheDocument()
@@ -185,6 +186,12 @@ In `UploadPage.tsx`:
 - Replace `EssayGroupingMode = 'merged' | 'perPage' | 'manual'` with `UploadGroupingMode`.
 - Initialize grouping mode as `'single'`.
 - Replace old buttons with `一张一篇`, `每 2 张一篇`, `混合页数`.
+- Show the upload-order hint near the grouping controls:
+
+```text
+当前按上传顺序排列，自动分组将按此顺序生成作文。
+```
+
 - Render the primary OCR button as `开始模拟 OCR（预计 ${essaySubmissionCount} 篇）`.
 - Remove top-level `合并为多页作文`, `拆分页`, and `手动分组` buttons.
 
@@ -222,6 +229,7 @@ it('groups images into fixed two-page essays before OCR', async () => {
 
   await user.click(screen.getByRole('button', { name: '每 2 张一篇' }))
 
+  expect(screen.getByText('当前按上传顺序排列，自动分组将按此顺序生成作文。')).toBeInTheDocument()
   expect(screen.getByText('当前 6 张图片，预计生成 3 篇作文')).toBeInTheDocument()
   expect(screen.getByText('作文 1 · 共 2 页')).toBeInTheDocument()
   expect(screen.getByText('作文 3 · 共 2 页')).toBeInTheDocument()
@@ -486,6 +494,7 @@ http://127.0.0.1:5173/tasks/task-1/upload
 Verify:
 
 - Top grouping modes are `一张一篇`, `每 2 张一篇`, `混合页数`.
+- The grouping controls show `当前按上传顺序排列，自动分组将按此顺序生成作文。`.
 - `每 2 张一篇` shows three groups for six current pages.
 - `混合页数` shows the guide on first entry.
 - `知道了`, `不再提醒`, and `查看操作提示` work.
@@ -503,6 +512,7 @@ Update `docs/current_development_status.md` with:
 - Optimized upload organizing into batch grouping:
   - Default one image per essay.
   - Added fixed two-page grouping.
+  - Showed the upload-order hint used for automatic grouping.
   - Replaced manual grouping with mixed-pages organizing.
   - Added mixed-pages guide with "知道了" and "不再提醒".
   - Added contextual merge and per-group split.

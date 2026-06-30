@@ -41,6 +41,7 @@ The upload page grouping area should become:
 整理方式
 [一张一篇] [每 2 张一篇] [混合页数]
 
+当前按上传顺序排列，自动分组将按此顺序生成作文。
 当前 6 张图片，预计生成 4 篇作文
 [开始模拟 OCR（预计 4 篇）]
 ```
@@ -109,6 +110,14 @@ Behavior:
 
 `每 2 张一篇` groups images by current display order:
 
+The UI must explicitly show:
+
+```text
+当前按上传顺序排列，自动分组将按此顺序生成作文。
+```
+
+This prevents ambiguity about how fixed two-page groups are generated.
+
 ```text
 Page 1 + Page 2 -> 作文 1
 Page 3 + Page 4 -> 作文 2
@@ -128,6 +137,7 @@ If one image remains at the end, keep it as a single-page essay and show a light
 - Single-page group: one page draft becomes one essay draft.
 - Multi-page group: page drafts are concatenated in group order.
 - Confirming OCR submits one queued essay per group.
+- The visible upload-order hint explains the grouping order before OCR starts.
 
 The existing app-state contract remains:
 
@@ -145,6 +155,7 @@ Add or update tests for:
 - Grouping utility: single-page grouping.
 - Grouping utility: fixed two-page grouping, including odd remainder.
 - Upload page mode selector.
+- Upload-order hint displayed near the grouping controls.
 - Top-level old grouping buttons removed.
 - Mixed-pages guide shown on first entry.
 - `不再提醒` suppresses automatic guide display.
