@@ -83,6 +83,16 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.getByText('正在定位原文')).toBeInTheDocument()
   })
 
+  it('highlights the matching source text when an issue card is selected', async () => {
+    const user = userEvent.setup()
+    renderEssayDetail()
+
+    await user.click(screen.getByText('I suggest you joins the club.'))
+
+    expect(screen.getByText('定位预览')).toBeInTheDocument()
+    expect(screen.getAllByText('I suggest you joins the club.').length).toBeGreaterThanOrEqual(2)
+  })
+
   it('saves teacher comment adjustments with lightweight feedback', async () => {
     const user = userEvent.setup()
     renderEssayDetail()

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { ArrowLeft, ChevronLeft, ChevronRight, Image, X } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { DiagnosticScoreSummary } from '../components/DiagnosticScoreSummary'
 import { EmptyState } from '../components/EmptyState'
 import { EssayPageSorter } from '../components/EssayPageSorter'
+import { EssaySourcePanel } from '../components/EssaySourcePanel'
 import { ExpressionUpgradeList } from '../components/ExpressionUpgradeList'
 import { IssueCorrectionList } from '../components/IssueCorrectionList'
 import { useAppState } from '../context/useAppState'
@@ -137,6 +138,7 @@ export function EssayResultPage() {
 
   const fullScore = task.fullScore ?? 15
   const totalScore = calculateTotalScore(result.dimensionScores, fullScore)
+  const activeIssue = result.errorAnnotations.find((issue) => issue.id === activeIssueId) ?? null
 
   return (
     <AppLayout
@@ -178,29 +180,12 @@ export function EssayResultPage() {
 
         <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
           <div className="space-y-5">
-            <div className="rounded-lg border border-slate-200 bg-white p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h3 className="font-semibold text-slate-950">学生作文原文</h3>
-                  <p className="mt-1 text-xs font-semibold text-amber-700">
-                    OCR 置信度 {formatConfidence(essay.ocrConfidence)}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowOriginalImage(true)}
-                  className="tech-focus inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-cyan-200 hover:bg-cyan-50"
-                >
-                  <Image className="h-4 w-4" />
-                  查看原图
-                </button>
-              </div>
-              <textarea
-                value={essay.ocrText}
-                onChange={(event) => updateEssayOcrText(essay.id, event.target.value)}
-                className="mt-4 min-h-[320px] w-full resize-y rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-800 outline-none focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100"
-              />
-            </div>
+            <EssaySourcePanel
+              essay={essay}
+              activeHighlightText={activeIssue?.original}
+              onOcrTextChange={updateEssayOcrText}
+              onViewOriginalImage={() => setShowOriginalImage(true)}
+            />
           </div>
 
           <div className="space-y-5">
