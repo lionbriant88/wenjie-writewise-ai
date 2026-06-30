@@ -29,11 +29,20 @@ describe('detail flow back navigation', () => {
       '/tasks/task-1/progress',
     )
 
+    expect(screen.queryByRole('navigation', { name: '任务流程导航' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '展开导航' })).toBeInTheDocument()
+  })
+
+  it('can expand the focused detail sidebar without hiding review controls', async () => {
+    const user = userEvent.setup()
+    renderWithRoute('/tasks/task-1/essays/task-1-essay-1', <EssayResultPage />)
+
+    await user.click(screen.getByRole('button', { name: '展开导航' }))
+
     const workflowNav = screen.getByRole('navigation', { name: '任务流程导航' })
-    expect(within(workflowNav).getByRole('link', { name: /批改进度/ })).toHaveAttribute(
-      'aria-current',
-      'page',
-    )
+    expect(within(workflowNav).getByRole('link', { name: /批改进度/ })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('button', { name: '折叠导航' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '顶部批改操作' })).toBeInTheDocument()
   })
 
   it('shows top review controls with score, confidence, and previous or next essay links', () => {

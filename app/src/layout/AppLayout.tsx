@@ -1,5 +1,6 @@
-import { ArrowLeft, Sparkles } from 'lucide-react'
+import { ArrowLeft, Menu, PanelLeftClose, Sparkles } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { useState } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { TaskStatusBadge } from '../components/TaskStatusBadge'
 import type { Task } from '../types'
@@ -12,9 +13,11 @@ interface AppLayoutProps {
   title: string
   description?: string
   currentStep?: WorkflowStepId
+  focusedReview?: boolean
 }
 
-export function AppLayout({ children, task, title, description, currentStep }: AppLayoutProps) {
+export function AppLayout({ children, task, title, description, currentStep, focusedReview = false }: AppLayoutProps) {
+  const [isSidebarExpanded, setIsSidebarExpanded] = useState(!focusedReview)
   const { pathname } = useLocation()
   const derivedCurrentStep: WorkflowStepId = pathname.includes('/upload')
     ? 'upload'
@@ -22,50 +25,63 @@ export function AppLayout({ children, task, title, description, currentStep }: A
       ? 'class-review'
       : 'progress'
   const workflowSteps = task ? getWorkflowSteps(task.id, currentStep ?? derivedCurrentStep) : []
+  const showSidebar = !focusedReview || isSidebarExpanded
 
   return (
     <div className="min-h-screen bg-[#f6f7f9] text-slate-900">
       <div className="flex min-h-screen">
-        <aside className="hidden w-72 shrink-0 border-r border-slate-200 bg-white px-5 py-6 lg:block">
-          <Link to="/" className="block rounded-lg border border-slate-200 p-4">
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">
-              <Sparkles className="h-3.5 w-3.5 text-cyan-500" />
-              文阶
-            </div>
-            <h1 className="mt-1 text-xl font-semibold text-slate-950">WriteWise AI</h1>
-            <p className="mt-2 text-sm leading-6 text-slate-500">英语作文批改与课堂讲评工作台</p>
-          </Link>
-
-          <div className="mt-6 space-y-2">
-            <NavLink
-              to="/"
-              className={({ isActive }) =>
-                `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium ${
-                  isActive ? 'bg-blue-50 text-blue-800' : 'text-slate-600 hover:bg-slate-100'
-                }`
-              }
+        {focusedReview ? (
+          <div className="hidden shrink-0 border-r border-slate-200 bg-white px-2 py-4 lg:block">
+            <button
+              type="button"
+              onClick={() => setIsSidebarExpanded((current) => !current)}
+              className="tech-focus inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-cyan-200 hover:bg-cyan-50"
             >
-              <ArrowLeft className="h-4 w-4" />
-              任务列表
-            </NavLink>
-            {workflowSteps.length > 0 ? (
-              <WorkflowNav steps={workflowSteps} ariaLabel="任务流程导航" />
-            ) : null}
+              {showSidebar ? <PanelLeftClose className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+              {showSidebar ? '折叠导航' : '展开导航'}
+            </button>
           </div>
-
-          {task ? (
-            <div className="mt-8 rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-semibold text-slate-900">{task.taskName}</p>
-                <TaskStatusBadge status={task.status} />
+        ) : null}
+        {showSidebar ? (
+          <aside className="hidden w-72 shrink-0 border-r border-slate-200 bg-white px-5 py-6 lg:block">
+            <Link to="/" className="block rounded-lg border border-slate-200 p-4">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">
+                <Sparkles className="h-3.5 w-3.5 text-cyan-500" />
+                文阶
               </div>
-              <p className="mt-2 text-sm text-slate-500">{task.className}</p>
-              <p className="mt-1 text-sm text-slate-500">
-                {task.essayType} · 满分 {task.fullScore}
-              </p>
+              <h1 className="mt-1 text-xl font-semibold text-slate-950">WriteWise AI</h1>
+              <p className="mt-2 text-sm leading-6 text-slate-500">英语作文批改与课堂讲评工作台</p>
+            </Link>
+
+            <div className="mt-6 space-y-2">
+              <NavLink
+                to="/"
+                className={({ isActive }) =>
+                  `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium ${
+                    isActive ? 'bg-blue-50 text-blue-800' : 'text-slate-600 hover:bg-slate-100'
+                  }`
+                }
+              >
+                <ArrowLeft className="h-4 w-4" />
+                任务列表
+              </NavLink>
+              {workflowSteps.length > 0 ? <WorkflowNav steps={workflowSteps} ariaLabel="任务流程导航" /> : null}
             </div>
-          ) : null}
-        </aside>
+
+            {task ? (
+              <div className="mt-8 rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold text-slate-900">{task.taskName}</p>
+                  <TaskStatusBadge status={task.status} />
+                </div>
+                <p className="mt-2 text-sm text-slate-500">{task.className}</p>
+                <p className="mt-1 text-sm text-slate-500">
+                  {task.essayType} · 满分 {task.fullScore}
+                </p>
+              </div>
+            ) : null}
+          </aside>
+        ) : null}
 
         <main className="min-w-0 flex-1">
           <header className="border-b border-slate-200 bg-white px-5 py-5 lg:px-8">
