@@ -74,6 +74,15 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.getByRole('button', { name: '已加入班级总览' })).toBeInTheDocument()
   })
 
+  it('marks an issue card as selected when the teacher clicks it', async () => {
+    const user = userEvent.setup()
+    renderEssayDetail()
+
+    await user.click(screen.getByText('I suggest you joins the club.'))
+
+    expect(screen.getByText('正在定位原文')).toBeInTheDocument()
+  })
+
   it('saves teacher comment adjustments with lightweight feedback', async () => {
     const user = userEvent.setup()
     renderEssayDetail()

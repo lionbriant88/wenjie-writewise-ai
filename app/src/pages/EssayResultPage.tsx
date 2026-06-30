@@ -88,6 +88,7 @@ export function EssayResultPage() {
   const { taskId = '', essayId = '' } = useParams()
   const { tasks, essays, gradingResults, updateEssayOcrText, updateGradingResult } = useAppState()
   const [saveNotice, setSaveNotice] = useState('')
+  const [activeIssueId, setActiveIssueId] = useState<string | null>(null)
   const [showOriginalImage, setShowOriginalImage] = useState(false)
   const saveTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const task = findTask(tasks, taskId)
@@ -239,7 +240,12 @@ export function EssayResultPage() {
                 showSaveNotice('分数已更新')
               }}
             />
-            <IssueCorrectionList annotations={result.errorAnnotations} revisions={result.sentenceRevisions} />
+            <IssueCorrectionList
+              annotations={result.errorAnnotations}
+              revisions={result.sentenceRevisions}
+              activeIssueId={activeIssueId}
+              onIssueSelect={setActiveIssueId}
+            />
             <ExpressionUpgradeList upgrades={result.upgradedExpressions} />
             <div className="rounded-lg border border-slate-200 bg-white p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">

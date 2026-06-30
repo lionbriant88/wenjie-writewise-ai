@@ -5,6 +5,8 @@ import { getSeverityImpactLabel } from '../utils/gradingDiagnostics'
 interface IssueCorrectionListProps {
   annotations: ErrorAnnotation[]
   revisions: SentenceRevision[]
+  activeIssueId?: string | null
+  onIssueSelect?: (issueId: string) => void
 }
 
 const severityTone: Record<ErrorAnnotation['severity'], string> = {
@@ -13,7 +15,12 @@ const severityTone: Record<ErrorAnnotation['severity'], string> = {
   high: 'bg-rose-100 text-rose-700',
 }
 
-export function IssueCorrectionList({ annotations, revisions }: IssueCorrectionListProps) {
+export function IssueCorrectionList({
+  annotations,
+  revisions,
+  activeIssueId,
+  onIssueSelect,
+}: IssueCorrectionListProps) {
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
   const revisionByErrorId = new Map(revisions.map((item) => [item.relatedErrorId, item]))
 
@@ -35,9 +42,27 @@ export function IssueCorrectionList({ annotations, revisions }: IssueCorrectionL
         {annotations.map((item) => {
           const revision = revisionByErrorId.get(item.id)
           const isAdded = addedIds.has(item.id)
+          const isActive = activeIssueId === item.id
 
           return (
-            <div key={item.id} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+            <div
+              key={item.id}
+              role="button"
+              tabIndex={0}
+              aria-pressed={isActive}
+              onClick={() => onIssueSelect?.(item.id)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  onIssueSelect?.(item.id)
+                }
+              }}
+              className={`tech-focus cursor-pointer rounded-lg border p-3 text-left transition ${
+                isActive
+                  ? 'border-blue-200 bg-blue-50 shadow-[0_0_0_1px_rgba(37,99,235,0.08)]'
+                  : 'border-slate-100 bg-slate-50 hover:border-cyan-200 hover:bg-cyan-50/60'
+              }`}
+            >
               <div className="flex flex-wrap items-center gap-2">
                 <span className="rounded-full bg-cyan-50 px-2 py-0.5 text-xs font-semibold text-cyan-700">
                   <span className="sr-only">问题类型</span>
@@ -47,6 +72,11 @@ export function IssueCorrectionList({ annotations, revisions }: IssueCorrectionL
                   <span className="sr-only">扣分影响</span>
                   扣分影响：{getSeverityImpactLabel(item.severity)}
                 </span>
+                {isActive ? (
+                  <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
+                    正在定位原文
+                  </span>
+                ) : null}
               </div>
               <dl className="mt-3 grid gap-2 text-sm">
                 <div>
@@ -64,7 +94,10 @@ export function IssueCorrectionList({ annotations, revisions }: IssueCorrectionL
               </dl>
               <button
                 type="button"
-                onClick={() => markAdded(item.id)}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  markAdded(item.id)
+                }}
                 className={`tech-focus mt-3 inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
                   isAdded
                     ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
