@@ -57,4 +57,20 @@ describe('EssayResultPage teacher decision workflow', () => {
     fireEvent.change(accuracyInput, { target: { value: '-3' } })
     expect(accuracyInput).toHaveValue(0)
   })
+
+  it('shows structured issue correction details and class overview feedback', async () => {
+    const user = userEvent.setup()
+    renderEssayDetail()
+
+    expect(screen.getByRole('heading', { name: '问题与修改建议' })).toBeInTheDocument()
+    expect(screen.getAllByText('问题类型')[0]).toBeInTheDocument()
+    expect(screen.getAllByText('扣分影响')[0]).toBeInTheDocument()
+    expect(screen.getAllByText('原句')[0]).toBeInTheDocument()
+    expect(screen.getAllByText('推荐改法')[0]).toBeInTheDocument()
+    expect(screen.getAllByText('原因')[0]).toBeInTheDocument()
+
+    await user.click(screen.getAllByRole('button', { name: '加入班级总览' })[0])
+
+    expect(screen.getByRole('button', { name: '已加入班级总览' })).toBeInTheDocument()
+  })
 })
