@@ -242,15 +242,46 @@ export function EssayResultPage() {
             <IssueCorrectionList annotations={result.errorAnnotations} revisions={result.sentenceRevisions} />
             <ExpressionUpgradeList upgrades={result.upgradedExpressions} />
             <div className="rounded-lg border border-slate-200 bg-white p-4">
-              <h3 className="font-semibold text-slate-950">总评</h3>
-              <textarea
-                value={result.overallComment}
-                onChange={(event) => {
-                  updateGradingResult(essay.id, { overallComment: event.target.value })
-                  showSaveNotice()
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold text-slate-950">AI 总评 / 教师补充建议</h3>
+                  <p className="mt-1 text-xs text-slate-500">老师可在 AI 总评基础上补充最终反馈。</p>
+                </div>
+                {result.teacherAdjusted ? (
+                  <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
+                    已由教师调整
+                  </span>
+                ) : null}
+              </div>
+              <label className="mt-4 block">
+                <span className="text-xs font-semibold text-slate-600">AI 总评</span>
+                <textarea
+                  aria-label="AI 总评"
+                  value={result.overallComment}
+                  onChange={(event) => updateGradingResult(essay.id, { overallComment: event.target.value })}
+                  className="mt-2 min-h-28 w-full rounded-lg border border-slate-200 p-3 text-sm leading-6 text-slate-700"
+                />
+              </label>
+              <label className="mt-3 block">
+                <span className="text-xs font-semibold text-slate-600">教师补充建议</span>
+                <textarea
+                  aria-label="教师补充建议"
+                  value={result.teacherSuggestion ?? ''}
+                  onChange={(event) => updateGradingResult(essay.id, { teacherSuggestion: event.target.value })}
+                  className="mt-2 min-h-24 w-full rounded-lg border border-slate-200 p-3 text-sm leading-6 text-slate-700"
+                  placeholder="例如：建议先复习 suggest 后接动词原形，再重写第二段。"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  updateGradingResult(essay.id, { teacherAdjusted: true })
+                  showSaveNotice('已保存教师调整')
                 }}
-                className="mt-3 min-h-28 w-full rounded-lg border border-slate-200 p-3 text-sm leading-6 text-slate-700"
-              />
+                className="tech-focus mt-3 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
+              >
+                保存调整
+              </button>
             </div>
           </div>
         </div>

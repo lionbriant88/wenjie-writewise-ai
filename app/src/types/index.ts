@@ -99,6 +99,7 @@ export interface GradingResult {
   sentenceRevisions: SentenceRevision[]
   upgradedExpressions: UpgradedExpression[]
   overallComment: string
+  teacherSuggestion?: string
   aiConfidence: number
   teacherAdjusted: boolean
   createdAt: string
