@@ -93,6 +93,17 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.getAllByText('I suggest you joins the club.').length).toBeGreaterThanOrEqual(2)
   })
 
+  it('shows fallback feedback when selected issue text is not found in the source', async () => {
+    const user = userEvent.setup()
+    renderEssayDetail()
+
+    await user.clear(screen.getByLabelText('学生作文原文'))
+    await user.type(screen.getByLabelText('学生作文原文'), 'This edited OCR text no longer contains the issue sentence.')
+    await user.click(screen.getByText('I suggest you joins the club.'))
+
+    expect(screen.getByText('未在原文中精确定位，请手动核对')).toBeInTheDocument()
+  })
+
   it('saves teacher comment adjustments with lightweight feedback', async () => {
     const user = userEvent.setup()
     renderEssayDetail()

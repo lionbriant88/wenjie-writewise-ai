@@ -49,6 +49,7 @@ export function EssaySourcePanel({
         </button>
       </div>
       <textarea
+        aria-label="学生作文原文"
         value={essay.ocrText}
         onChange={(event) => onOcrTextChange(essay.id, event.target.value)}
         className="mt-4 min-h-[320px] w-full resize-y rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-800 outline-none focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100"
