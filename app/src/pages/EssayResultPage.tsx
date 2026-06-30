@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ArrowLeft, ChevronLeft, ChevronRight, Image, X } from 'lucide-react'
+import { DiagnosticScoreSummary } from '../components/DiagnosticScoreSummary'
 import { EmptyState } from '../components/EmptyState'
 import { EssayPageSorter } from '../components/EssayPageSorter'
 import { ExpressionUpgradeList } from '../components/ExpressionUpgradeList'
 import { IssueCorrectionList } from '../components/IssueCorrectionList'
-import { SaveFeedback } from '../components/SaveFeedback'
-import { ScoreBreakdown } from '../components/ScoreBreakdown'
 import { useAppState } from '../context/useAppState'
 import { AppLayout } from '../layout/AppLayout'
+import { calculateTotalScore, clampDimensionScore, formatConfidence, formatTotalScore } from '../utils/gradingDiagnostics'
 import { findEssay, findEssaysByTask, findResultByEssayId, findTask } from '../utils/taskLookup'
 
 function ReviewSwitchLink({
@@ -86,14 +86,8 @@ function ReviewActionBar({
 
 export function EssayResultPage() {
   const { taskId = '', essayId = '' } = useParams()
-  const {
-    tasks,
-    essays,
-    gradingResults,
-    updateEssayOcrText,
-    updateGradingResult,
-  } = useAppState()
-  const [saveNotice, setSaveNotice] = useState(false)
+  const { tasks, essays, gradingResults, updateEssayOcrText, updateGradingResult } = useAppState()
+  const [saveNotice, setSaveNotice] = useState('')
   const [showOriginalImage, setShowOriginalImage] = useState(false)
   const saveTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const task = findTask(tasks, taskId)
@@ -113,16 +107,16 @@ export function EssayResultPage() {
     }
   }, [])
 
-  const showSaveNotice = () => {
+  const showSaveNotice = (message = '已保存教师调整') => {
     if (saveTimerRef.current) {
       window.clearTimeout(saveTimerRef.current)
     }
 
-    setSaveNotice(true)
+    setSaveNotice(message)
     saveTimerRef.current = window.setTimeout(() => {
-      setSaveNotice(false)
+      setSaveNotice('')
       saveTimerRef.current = null
-    }, 900)
+    }, 1800)
   }
 
   if (!task || !essay) {
@@ -139,6 +133,9 @@ export function EssayResultPage() {
       </AppLayout>
     )
   }
+
+  const fullScore = task.fullScore ?? 15
+  const totalScore = calculateTotalScore(result.dimensionScores, fullScore)
 
   return (
     <AppLayout
@@ -165,9 +162,9 @@ export function EssayResultPage() {
               <div>
                 <p className="text-sm font-semibold text-slate-950">{essay.essayNumber} 批改结果</p>
                 <p className="mt-0.5 text-xs text-slate-500">
-                  总分 <span className="font-semibold text-blue-700">{result.totalScore.toFixed(1)} / {task.fullScore}</span>
+                  总分 <span className="font-semibold text-blue-700">{formatTotalScore(totalScore)} / {fullScore}</span>
                   <span className="mx-2 text-slate-300">|</span>
-                  AI 置信度 {Math.round(result.aiConfidence * 100)}%
+                  AI 置信度 {formatConfidence(result.aiConfidence)}
                 </p>
               </div>
             </div>
@@ -177,6 +174,7 @@ export function EssayResultPage() {
             </div>
           </div>
         </div>
+
         <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
           <div className="space-y-5">
             <div className="rounded-lg border border-slate-200 bg-white p-4">
@@ -184,7 +182,7 @@ export function EssayResultPage() {
                 <div>
                   <h3 className="font-semibold text-slate-950">学生作文原文</h3>
                   <p className="mt-1 text-xs font-semibold text-amber-700">
-                    OCR 置信度 {Math.round(essay.ocrConfidence * 100)}%
+                    OCR 置信度 {formatConfidence(essay.ocrConfidence)}
                   </p>
                 </div>
                 <button
@@ -203,50 +201,33 @@ export function EssayResultPage() {
               />
             </div>
           </div>
+
           <div className="space-y-5">
-            <div className="rounded-lg border border-blue-100 bg-white p-5 shadow-sm">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-medium text-slate-500">总分</p>
-                  <div className="mt-2 flex flex-wrap items-end gap-3">
-                    <input
-                      type="number"
-                      min={0}
-                      max={task.fullScore}
-                      step={0.1}
-                      value={result.totalScore}
-                      onChange={(event) => {
-                        updateGradingResult(essay.id, {
-                          totalScore: Number.parseFloat(event.target.value) || 0,
-                        })
-                        showSaveNotice()
-                      }}
-                      className="tech-focus w-32 rounded-lg border border-slate-200 px-3 py-2 text-3xl font-semibold text-slate-950"
-                    />
-                    <span className="pb-2 text-slate-500">/ {task.fullScore}</span>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <SaveFeedback show={saveNotice} />
-                  <p className="mt-2 text-xs text-slate-500">AI 置信度 {Math.round(result.aiConfidence * 100)}%</p>
-                </div>
+            {saveNotice ? (
+              <div
+                role="status"
+                className="rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800 shadow-sm"
+              >
+                {saveNotice}
               </div>
-              {result.teacherAdjusted ? (
-                <span className="mt-4 inline-flex rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
-                  教师已调整
-                </span>
-              ) : null}
-            </div>
-            <ScoreBreakdown
+            ) : null}
+            <DiagnosticScoreSummary
+              aiConfidence={result.aiConfidence}
               dimensions={result.dimensionScores}
-              editable
-              onChange={(dimensionId, score) => {
+              fullScore={fullScore}
+              issues={result.errorAnnotations}
+              onDimensionScoreChange={(dimensionId, nextScore) => {
+                const nextDimensions = result.dimensionScores.map((dimension) =>
+                  dimension.id === dimensionId
+                    ? { ...dimension, score: clampDimensionScore(nextScore, dimension.maxScore) }
+                    : dimension,
+                )
+
                 updateGradingResult(essay.id, {
-                  dimensionScores: result.dimensionScores.map((dimension) =>
-                    dimension.id === dimensionId ? { ...dimension, score } : dimension,
-                  ),
+                  dimensionScores: nextDimensions,
+                  totalScore: calculateTotalScore(nextDimensions, fullScore),
                 })
-                showSaveNotice()
+                showSaveNotice('分数已更新')
               }}
             />
             <IssueCorrectionList annotations={result.errorAnnotations} revisions={result.sentenceRevisions} />
