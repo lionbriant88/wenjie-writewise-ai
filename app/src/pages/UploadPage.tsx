@@ -8,7 +8,7 @@ import { AppLayout } from '../layout/AppLayout'
 import type { EssayPage } from '../types'
 import { findEssaysByTask, findTask } from '../utils/taskLookup'
 
-type EssayGroupingMode = 'merged' | 'perPage'
+type EssayGroupingMode = 'merged' | 'perPage' | 'manual'
 
 function buildPageOcrDraft(page: EssayPage, index: number) {
   return [
@@ -34,11 +34,27 @@ export function UploadPage() {
   const initialPages = useMemo(() => taskEssays.flatMap((essay) => essay.pages).slice(0, 6), [taskEssays])
   const [pages, setPages] = useState<EssayPage[]>(initialPages)
   const [essayGroupingMode, setEssayGroupingMode] = useState<EssayGroupingMode>('merged')
+  const [manualGroups, setManualGroups] = useState<string[][]>([initialPages.map((page) => page.id)])
   const [mockOcrStatus, setMockOcrStatus] = useState<'idle' | 'completed'>('idle')
   const [mockOcrDraft, setMockOcrDraft] = useState('')
   const localPreviewUrlsRef = useRef<string[]>([])
 
-  const essaySubmissionCount = essayGroupingMode === 'perPage' ? pages.length : pages.length > 0 ? 1 : 0
+  const pagesById = useMemo(() => new Map(pages.map((page) => [page.id, page])), [pages])
+  const nonEmptyManualGroups = useMemo(
+    () =>
+      manualGroups
+        .map((group) => group.filter((pageId) => pagesById.has(pageId)))
+        .filter((group) => group.length > 0),
+    [manualGroups, pagesById],
+  )
+  const essaySubmissionCount =
+    essayGroupingMode === 'perPage'
+      ? pages.length
+      : essayGroupingMode === 'manual'
+        ? nonEmptyManualGroups.length
+        : pages.length > 0
+          ? 1
+          : 0
 
   useEffect(() => {
     const localPreviewUrls = localPreviewUrlsRef.current
@@ -64,16 +80,19 @@ export function UploadPage() {
 
   const addPage = () => {
     const next = pages.length + 1
-    setPages((current) => [
-      ...current,
-      {
-        id: `uploaded-page-${Date.now()}`,
-        label: `新增图片 ${next}`,
-        pageNumber: next,
-        quality: next % 3 === 0 ? 'tilted' : 'clear',
-        accent: '#2563eb',
-      },
-    ])
+    const nextPage: EssayPage = {
+      id: `uploaded-page-${Date.now()}`,
+      label: `新增图片 ${next}`,
+      pageNumber: next,
+      quality: next % 3 === 0 ? 'tilted' : 'clear',
+      accent: '#2563eb',
+    }
+    setPages((current) => [...current, nextPage])
+    setManualGroups((current) => {
+      const nextGroups = current.length > 0 ? [...current] : [[]]
+      nextGroups[nextGroups.length - 1] = [...nextGroups[nextGroups.length - 1], nextPage.id]
+      return nextGroups
+    })
     resetOcrDraft()
   }
 
@@ -96,6 +115,14 @@ export function UploadPage() {
         }
       })
 
+      setManualGroups((currentGroups) => {
+        const nextGroups = currentGroups.length > 0 ? [...currentGroups] : [[]]
+        nextGroups[nextGroups.length - 1] = [
+          ...nextGroups[nextGroups.length - 1],
+          ...nextPages.map((page) => page.id),
+        ]
+        return nextGroups
+      })
       return [...current, ...nextPages]
     })
     resetOcrDraft()
@@ -122,7 +149,35 @@ export function UploadPage() {
         localPreviewUrlsRef.current = localPreviewUrlsRef.current.filter((url) => url !== target.previewUrl)
       }
 
-      return current.filter((page) => page.id !== pageId)
+      const nextPages = current.filter((page) => page.id !== pageId)
+      setManualGroups((currentGroups) => {
+        const nextGroups = currentGroups
+          .map((group) => group.filter((currentPageId) => currentPageId !== pageId))
+          .filter((group) => group.length > 0)
+        return nextGroups.length > 0 ? nextGroups : [nextPages.map((page) => page.id)]
+      })
+      return nextPages
+    })
+    resetOcrDraft()
+  }
+
+  const addManualGroup = () => {
+    setManualGroups((current) => [...current, []])
+    resetOcrDraft()
+  }
+
+  const movePageToManualGroup = (pageId: string, direction: 'previous' | 'next') => {
+    setManualGroups((current) => {
+      const sourceIndex = current.findIndex((group) => group.includes(pageId))
+      if (sourceIndex < 0) return current
+
+      const targetIndex = direction === 'previous' ? sourceIndex - 1 : sourceIndex + 1
+      if (targetIndex < 0 || targetIndex >= current.length) return current
+
+      const nextGroups = current.map((group) => group.filter((currentPageId) => currentPageId !== pageId))
+      nextGroups[targetIndex] = [...nextGroups[targetIndex], pageId]
+      const compacted = nextGroups.filter((group, index) => group.length > 0 || index === targetIndex)
+      return compacted.length > 0 ? compacted : [pages.map((page) => page.id)]
     })
     resetOcrDraft()
   }
@@ -208,10 +263,88 @@ export function UploadPage() {
               >
                 拆分页
               </button>
+              <button
+                type="button"
+                aria-pressed={essayGroupingMode === 'manual'}
+                onClick={() => setGroupingMode('manual')}
+                className={groupingButtonClass(essayGroupingMode === 'manual')}
+              >
+                手动分组
+              </button>
             </div>
           </div>
           <div className="mt-5">
-            {pages.length > 0 ? (
+            {pages.length > 0 && essayGroupingMode === 'manual' ? (
+              <div className="space-y-3">
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={addManualGroup}
+                    disabled={pages.length === 0}
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-cyan-200 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                  >
+                    新增作文组
+                  </button>
+                </div>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  {manualGroups.map((group, groupIndex) => {
+                    const groupPages = group.map((pageId) => pagesById.get(pageId)).filter((page): page is EssayPage => Boolean(page))
+
+                    return (
+                      <section key={`manual-group-${groupIndex}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <h4 className="text-sm font-semibold text-slate-950">作文组 {groupIndex + 1}</h4>
+                            <p className="mt-0.5 text-xs text-slate-500">{groupPages.length} 张图片</p>
+                          </div>
+                        </div>
+                        {groupPages.length > 0 ? (
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            {groupPages.map((page) => (
+                              <div key={page.id} className="rounded-lg bg-white p-2">
+                                <EssayPageSorter pages={[page]} />
+                                <div className="mt-2 grid grid-cols-3 gap-2">
+                                  <button
+                                    type="button"
+                                    disabled={groupIndex === 0}
+                                    onClick={() => movePageToManualGroup(page.id, 'previous')}
+                                    aria-label={`将 ${page.label} 移到上一篇`}
+                                    className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 disabled:opacity-40"
+                                  >
+                                    上一篇
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={groupIndex === manualGroups.length - 1}
+                                    onClick={() => movePageToManualGroup(page.id, 'next')}
+                                    aria-label={`将 ${page.label} 移到下一篇`}
+                                    className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 disabled:opacity-40"
+                                  >
+                                    下一篇
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => removePage(page.id)}
+                                    aria-label={`删除 ${page.label}`}
+                                    className="rounded-md border border-rose-100 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50"
+                                  >
+                                    删除
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="rounded-lg border border-dashed border-slate-200 bg-white px-4 py-6 text-sm text-slate-500">
+                            可将图片移动到这里，形成新的作文。
+                          </div>
+                        )}
+                      </section>
+                    )
+                  })}
+                </div>
+              </div>
+            ) : pages.length > 0 ? (
               <EssayPageSorter pages={pages} onMove={movePage} onRemove={removePage} />
             ) : (
               <EmptyState
