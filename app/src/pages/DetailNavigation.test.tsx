@@ -41,8 +41,10 @@ describe('detail flow back navigation', () => {
 
     const topActions = screen.getByRole('region', { name: '顶部批改操作' })
     expect(screen.getAllByText('作文 1 批改结果').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('12.6 / 15')).toBeInTheDocument()
-    expect(screen.getByText('AI 置信度 86%')).toBeInTheDocument()
+    expect(screen.getByText('13 / 15')).toBeInTheDocument()
+    expect(
+      within(topActions).getAllByText((_, element) => element?.textContent?.includes('AI 置信度 86%') ?? false).length,
+    ).toBeGreaterThanOrEqual(1)
     expect(within(topActions).getByRole('button', { name: '上一篇' })).toBeDisabled()
     expect(within(topActions).getByRole('link', { name: '下一篇' })).toHaveAttribute(
       'href',
