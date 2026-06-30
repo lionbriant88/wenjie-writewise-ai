@@ -192,6 +192,7 @@ In `UploadPage.tsx`:
 当前按上传顺序排列，自动分组将按此顺序生成作文。
 ```
 
+- Keep this hint visible in all three grouping modes (`一张一篇`, `每 2 张一篇`, `混合页数`) so teachers know fixed-count grouping and OCR drafts follow the current upload/display order.
 - Render the primary OCR button as `开始模拟 OCR（预计 ${essaySubmissionCount} 篇）`.
 - Remove top-level `合并为多页作文`, `拆分页`, and `手动分组` buttons.
 
@@ -495,6 +496,7 @@ Verify:
 
 - Top grouping modes are `一张一篇`, `每 2 张一篇`, `混合页数`.
 - The grouping controls show `当前按上传顺序排列，自动分组将按此顺序生成作文。`.
+- The upload-order hint remains visible after switching between `一张一篇`, `每 2 张一篇`, and `混合页数`.
 - `每 2 张一篇` shows three groups for six current pages.
 - `混合页数` shows the guide on first entry.
 - `知道了`, `不再提醒`, and `查看操作提示` work.
