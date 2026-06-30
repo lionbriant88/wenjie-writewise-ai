@@ -1,21 +1,21 @@
-# Current Development Status
+# 当前开发状态
 
-Last updated: 2026-06-29
+最后更新：2026-06-30
 
-## Repository State
+## 仓库状态
 
-- Project root: `D:\wenjie-writewise-ai`
-- Frontend app: `D:\wenjie-writewise-ai\app`
-- Remote: `https://github.com/lionbriant88/wenjie-writewise-ai.git`
-- Active development branch: `codex/phase1-info-architecture-polish`
-- Latest product commit at this update: `7ebbc0e feat: complete queued essay reviews`
+- 项目根目录：`D:\wenjie-writewise-ai`
+- 前端应用：`D:\wenjie-writewise-ai\app`
+- 远程仓库：`https://github.com/lionbriant88/wenjie-writewise-ai.git`
+- 当前开发分支：`codex/phase1-info-architecture-polish`
+- 本次记忆更新前的最新实现提交：`cbf89aa test: align detail navigation score expectations`
 
-## Completed Work
+## 已完成工作
 
-- Initialized and pushed the project to GitHub.
-- Added product docs, phase 1 implementation plans, and information architecture design docs.
-- Built the first-stage static React prototype in `app`.
-- Implemented these routes:
+- 已初始化项目并推送到 GitHub。
+- 已建立产品文档、阶段一实现计划和信息架构设计文档。
+- 已完成阶段一静态 React 原型，并持续向阶段二 mock 闭环演进。
+- 当前主要路由：
   - `/`
   - `/tasks/new`
   - `/tasks/:taskId/upload`
@@ -23,89 +23,103 @@ Last updated: 2026-06-29
   - `/tasks/:taskId/exceptions`
   - `/tasks/:taskId/essays/:essayId`
   - `/tasks/:taskId/class-review`
-- Added mock data for tasks, essays, grading results, exceptions, and class overview insights.
-- Added tests for workflow navigation, progress calculations, task lookup, score breakdown, save feedback, class overview stats, task list, class overview page, mock data consistency, detail-page navigation, upload preview, upload deletion, mock OCR draft generation, OCR-to-progress handoff, OCR essay grouping, and progress-page completion.
-- Completed phase 1 information architecture polish:
-  - Task cards use one stable `查看` entry.
-  - Task-internal navigation is simplified to `任务列表`, `上传整理`, `批改进度`, `班级总览`.
-  - Detail flows return to progress with explicit back/navigation controls.
-  - Class review is renamed to `班级总览` and includes a compact score distribution.
-- Completed phase 1 detail-page teacher experience polish:
-  - Top and bottom review navigation for switching essays.
-  - Student source panel prioritizes OCR text and opens original images on demand.
-  - Score breakdown is more compact and marks main deduction/attention items.
-  - Error annotations and sentence revisions are merged into `问题与修改建议`.
-  - Expression upgrades are separated into `表达升级建议` with optional class-overview feedback.
-  - Legacy revision panels were removed to avoid old terminology reappearing.
-- Continued phase 2 upload/OCR groundwork:
-  - Upload page supports selecting local image files.
-  - Selected files are shown as real thumbnail previews in the existing page organizer.
-  - Selected or mock pages can be reordered and deleted from the organizer.
-  - Deleting local preview images releases their object URLs.
-  - Upload page has a `开始模拟 OCR` action.
-  - Mock OCR produces an editable `模拟 OCR 文本草稿` and a lightweight completion/confidence state.
-  - Upload page has a `确认 OCR 文本` action.
-  - Confirmed OCR text creates in-memory essay records for the task.
-  - Upload page supports two grouping modes:
-    - `合并为多页作文`: all organized images become one queued essay.
-    - `拆分页`: each organized image becomes one queued essay.
-  - The OCR panel shows how many essays will be submitted before confirmation.
-  - Confirmed essays enter the progress page as `pending_grading` and appear as `待批改` / `处理中`.
-  - OCR and AI grading remain mocked.
-  - Local previews are in-browser session data only and are not persisted.
-- Completed the phase 2 progress-page mock grading loop:
-  - Progress page now shows a lightweight `模拟进度` bar for queued/in-progress essays.
-  - `模拟完成下一篇` advances one processable essay at a time and keeps existing queue priority.
-  - Completing a queued essay generates a mock grading result through the app state layer.
-  - Newly uploaded/OCR-confirmed essays can be completed and opened in the detail page.
-  - Completion shows a small inline success cue such as `作文 11 已完成批改，可查看结果`.
-  - The action panel still offers exception review as a secondary path when abnormal essays exist.
+- 已加入任务、作文、批改结果、异常作文和班级总览洞察的 mock 数据。
+- 已覆盖工作流导航、上传预览、OCR 草稿、OCR 分组、进度页完成、详情页导航、评分诊断、问题卡片、教师评语调整等测试。
 
-## Latest Verified Commands
+## 阶段一与阶段二进展
 
-Run from:
+### 阶段一：原型与信息架构
+
+- 任务列表、任务内导航、上传整理、批改进度、班级总览、单篇详情页已形成可演示闭环。
+- 视觉风格已调整为简洁、专业、轻科技感，避免营销页式表达。
+- 二级页面返回统一为明确返回路径。
+- 班级总览保留分数分布轻量 CSS 条形图，并整合作文总数、平均分、最高分、最低分。
+- 班级总览分数档按高考 15 分制拆分为 `1-3`、`4-6`、`7-9`、`10-12`、`13-15`。
+- 进度页状态标签支持轻量状态反馈，强化“AI 正在处理”的感知。
+
+### 阶段二：上传 / OCR / 进度 mock 闭环
+
+- 上传页支持选择本地图片，并以真实缩略图进入页面整理器。
+- 图片可排序、删除，本地预览 URL 会被释放。
+- 上传页支持模拟 OCR，生成可编辑 OCR 文本草稿。
+- OCR 确认后可进入批改队列。
+- OCR 分组已支持两种基础模式：
+  - 合并为一篇多页作文。
+  - 按图片拆分为多篇作文。
+- 进度页支持“模拟完成下一篇”，可把队列中的作文推进到已完成并生成 mock 批改结果。
+- 新上传 / OCR 确认的作文可以完成批改，并进入详情页查看 mock 结果。
+- OCR 和 AI 批改仍为 mock；本地上传预览仍只保存在浏览器会话内。
+
+### 阶段二：单篇作文批改结果详情页
+
+- 已把详情页从“报告页”升级为更偏教师决策的工作台。
+- 左侧仍保留“学生作文原文”和“查看原图”入口。
+- 右侧新增紧凑的“诊断摘要”：
+  - 总分改为整数展示，例如 `13 / 15`。
+  - 保留 AI 置信度。
+  - 显示档次判断，例如“优秀”“良好”。
+  - 标出主要扣分项和讲评建议。
+- 分项分数输入支持教师调整：
+  - 合法范围内保留小数。
+  - 超出范围会被夹到维度满分或 0。
+  - 总分实时联动为整数。
+  - 调整后显示轻量反馈，如“分数已更新”“已由教师调整”。
+- “问题与修改建议”已改为教师更容易扫读的问题卡片：
+  - 问题类型。
+  - 扣分影响。
+  - 原句。
+  - 推荐改法。
+  - 原因。
+  - 可加入班级总览。
+- “表达升级建议”保持独立，不与错误修改混在一起。
+- “总评”升级为“AI 总评 / 教师补充建议”：
+  - AI 总评可编辑。
+  - 教师可补充最终反馈。
+  - 保存后显示“已保存教师调整”和“已由教师调整”。
+
+## 最新验证
+
+执行目录：
 
 ```powershell
 cd D:\wenjie-writewise-ai\app
 ```
 
-Latest verified commands:
+最新验证命令：
 
 ```powershell
-npm.cmd test -- src/pages/UploadPage.test.tsx
-npm.cmd test -- src/pages/ProgressPage.test.tsx
+npm.cmd test -- src/pages/EssayResultPage.test.tsx
 npm.cmd test
 npm.cmd run lint
 npm.cmd run build
 ```
 
-Latest known results:
+最新结果：
 
-- Targeted upload tests: 1 test file, 5 tests passed.
-- Targeted progress-page tests: 1 test file, 1 test passed.
-- Full test suite: 13 test files, 42 tests passed.
-- Lint: passed.
-- Build: passed.
-- Browser check: upload page starts mock OCR, confirms edited OCR text, navigates to progress, shows the new queued essay with `模拟进度`, completes the existing active essay first, completes `作文 11` next, shows success feedback, and opens the new detail page with the OCR text plus mock grading suggestions.
+- 详情页聚焦测试：1 个测试文件，5 个用例通过。
+- 全量测试：15 个测试文件，55 个用例通过。
+- Lint：通过。
+- Build：通过。
+- 浏览器预览：已在右侧浏览器打开并验证 `http://127.0.0.1:5173/tasks/task-1/essays/task-1-essay-1`。
+- 浏览器交互验证：
+  - 左侧“学生作文原文”和“查看原图”存在。
+  - 右侧“诊断摘要”存在，整数总分显示为 `13 / 15`。
+  - 修改“卷面/字迹”分数为 `0.1` 后，总分联动为 `12 / 15`。
+  - 分数调整显示“分数已更新”和“已由教师调整”。
+  - 保存教师补充建议后显示“已保存教师调整”。
 
-`app\dist` is generated by `npm.cmd run build` and should normally not be committed.
+`app\dist` 是 `npm.cmd run build` 生成目录，通常不应提交。
 
-## Local Preview
+## 本地预览
 
-Start the app with:
+启动方式：
 
 ```powershell
 cd D:\wenjie-writewise-ai\app
 npm.cmd run dev
 ```
 
-Expected preview URL:
-
-```text
-http://localhost:5173/
-```
-
-Useful direct routes:
+常用预览地址：
 
 ```text
 http://localhost:5173/
@@ -115,32 +129,26 @@ http://localhost:5173/tasks/task-1/essays/task-1-essay-1
 http://localhost:5173/tasks/task-1/class-review
 ```
 
-If port `5173` is occupied, Vite may choose the next available port.
+如果 `5173` 端口被占用，Vite 可能会自动选择下一个可用端口。
 
-## Next Recommended Development Step
+## 下一步最合理开发内容
 
-Phase 1 is in a polished prototype state and Phase 2 now has a working upload/OCR/progress/detail mock loop. The next product-development step should make the upload grouping workflow closer to real teacher use:
+建议下一步继续优化“单篇详情页的原文定位与教师决策效率”，而不是马上堆更多报告内容。
 
-1. Add a true manual grouping mode for mixed cases such as images 1-2 as one essay, image 3 as another essay, and images 4-5 as another.
-2. Let teachers preview each OCR group before confirmation, with clear group labels and page counts.
-3. Keep the default simple options `合并为多页作文` and `拆分页`, then expose manual grouping only when needed.
-4. Add focused tests for manual grouping and OCR-to-progress handoff.
-5. Continue browser verification for every visual or workflow change.
+优先方向：
 
-Suggested next prompt:
+1. 建立“原文句子 / 问题卡片”的轻量联动：点击问题卡片时，左侧原文中对应句子高亮。
+2. 在问题卡片中增加“定位原文”操作，让老师能快速核对 AI 判断。
+3. 对原文中的问题句做低干扰标记，避免整篇原文变得花哨。
+4. 保留“查看原图”作为核对入口，暂不做复杂图片批注。
+5. 为原文定位、问题卡片选择、高亮状态增加聚焦测试和浏览器验证。
 
-```text
-继续开发文阶 WriteWise AI。请先读取 docs/current_development_status.md，检查 git status、当前分支和最新提交。继续阶段二：为上传/OCR 页面增加更真实的手动作文分组能力，让教师可以把多张图片灵活组合成若干篇作文，再确认 OCR 并进入批改队列。
-```
+随后再回到上传/OCR 的更真实手动分组能力，例如图片 1-2 为一篇、图片 3 为一篇、图片 4-5 为一篇。
 
-## Notes For Future Work
+## 后续工作注意事项
 
-- Keep the product style simple, professional, software-like, and lightly technical.
-- Do not turn the app into a marketing landing page.
-- Use browser verification for visual changes.
-- Preserve teacher workflows already verified in phase 1:
-  - manual review counts toward completion
-  - progress can reach 10/10
-  - score edits show inline save feedback
-  - detail pages can return to progress
-  - class overview keeps score distribution and insight panels
+- 保持产品像软件工作台，而不是营销落地页。
+- 所有视觉优化都要用右侧浏览器验证。
+- 保持简洁、专业、轻科技感。
+- 不要为了“丰富”而堆信息，优先减少教师判断成本。
+- 阶段二仍以 mock 闭环为主，真实 OCR / AI 接口接入可放到后续阶段。
