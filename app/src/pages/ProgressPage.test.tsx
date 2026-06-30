@@ -45,6 +45,8 @@ describe('ProgressPage', () => {
     await user.click(resultLinks[resultLinks.length - 1])
 
     expect(screen.getByRole('heading', { name: '作文 11 批改结果' })).toBeInTheDocument()
+    expect(screen.getByText('Confirmed OCR essay text')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '编辑 OCR' }))
     expect(screen.getByDisplayValue('Confirmed OCR essay text')).toBeInTheDocument()
     expect(screen.getByText('问题与修改建议')).toBeInTheDocument()
     expect(screen.getByText('表达升级建议')).toBeInTheDocument()
