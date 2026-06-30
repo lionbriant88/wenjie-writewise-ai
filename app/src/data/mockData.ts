@@ -49,7 +49,7 @@ const essay = (
     pageCount,
     pageOrder: pages.map((essayPage) => essayPage.id),
     ocrText:
-      'Dear Peter, I am glad to hear that you are interested in our reading festival. I suggest you joins the club. I think you can join the English corner and share your favorite book with classmates. It will help you learn more words and make friends.',
+      'Dear Peter,\n\nI am glad to hear that you are interested in our reading festival. I suggest you joins the club. We should protect the enviroment when we read in public places. It can make you know many knowledge.\n\nI think you can join the English corner and share your favorite book with classmates. This activity is very important because it will help you learn more words and make friends.',
     ocrConfidence,
     status,
     exceptionReasons:
