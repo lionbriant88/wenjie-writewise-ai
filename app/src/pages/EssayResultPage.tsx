@@ -10,6 +10,7 @@ import { IssueCorrectionList } from '../components/IssueCorrectionList'
 import { useAppState } from '../context/useAppState'
 import { AppLayout } from '../layout/AppLayout'
 import { calculateTotalScore, clampDimensionScore, formatConfidence, formatTotalScore } from '../utils/gradingDiagnostics'
+import { findTextMatch } from '../utils/textHighlight'
 import { findEssay, findEssaysByTask, findResultByEssayId, findTask } from '../utils/taskLookup'
 
 function ReviewSwitchLink({
@@ -139,6 +140,11 @@ export function EssayResultPage() {
   const fullScore = task.fullScore ?? 15
   const totalScore = calculateTotalScore(result.dimensionScores, fullScore)
   const activeIssue = result.errorAnnotations.find((issue) => issue.id === activeIssueId) ?? null
+  const activeIssueLocateStatus = !activeIssue
+    ? 'idle'
+    : findTextMatch(essay.ocrText, activeIssue.original)
+      ? 'located'
+      : 'missing'
 
   return (
     <AppLayout
@@ -230,6 +236,7 @@ export function EssayResultPage() {
               annotations={result.errorAnnotations}
               revisions={result.sentenceRevisions}
               activeIssueId={activeIssueId}
+              activeIssueLocateStatus={activeIssueLocateStatus}
               onIssueSelect={setActiveIssueId}
             />
             <ExpressionUpgradeList upgrades={result.upgradedExpressions} />

@@ -6,6 +6,7 @@ interface IssueCorrectionListProps {
   annotations: ErrorAnnotation[]
   revisions: SentenceRevision[]
   activeIssueId?: string | null
+  activeIssueLocateStatus?: 'idle' | 'located' | 'missing'
   onIssueSelect?: (issueId: string) => void
 }
 
@@ -19,6 +20,7 @@ export function IssueCorrectionList({
   annotations,
   revisions,
   activeIssueId,
+  activeIssueLocateStatus = 'idle',
   onIssueSelect,
 }: IssueCorrectionListProps) {
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
@@ -43,6 +45,14 @@ export function IssueCorrectionList({
           const revision = revisionByErrorId.get(item.id)
           const isAdded = addedIds.has(item.id)
           const isActive = activeIssueId === item.id
+          const locateLabel =
+            isActive && activeIssueLocateStatus === 'located'
+              ? '已定位'
+              : isActive && activeIssueLocateStatus === 'missing'
+                ? '未精确定位'
+                : ''
+          const locateTone =
+            activeIssueLocateStatus === 'missing' ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-700'
 
           return (
             <div
@@ -57,55 +67,57 @@ export function IssueCorrectionList({
                   onIssueSelect?.(item.id)
                 }
               }}
-              className={`tech-focus cursor-pointer rounded-lg border p-3 text-left transition ${
+              className={`tech-focus cursor-pointer rounded-lg border p-2.5 text-left transition ${
                 isActive
                   ? 'border-blue-200 bg-blue-50 shadow-[0_0_0_1px_rgba(37,99,235,0.08)]'
                   : 'border-slate-100 bg-slate-50 hover:border-cyan-200 hover:bg-cyan-50/60'
               }`}
             >
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-full bg-cyan-50 px-2 py-0.5 text-xs font-semibold text-cyan-700">
-                  <span className="sr-only">问题类型</span>
-                  问题类型：{item.type}
-                </span>
-                <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${severityTone[item.severity]}`}>
-                  <span className="sr-only">扣分影响</span>
-                  扣分影响：{getSeverityImpactLabel(item.severity)}
-                </span>
-                {isActive ? (
-                  <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
-                    正在定位原文
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full bg-cyan-50 px-2 py-0.5 text-xs font-semibold text-cyan-700">
+                    <span className="sr-only">问题类型</span>
+                    问题类型：{item.type}
                   </span>
-                ) : null}
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${severityTone[item.severity]}`}>
+                    <span className="sr-only">扣分影响</span>
+                    扣分影响：{getSeverityImpactLabel(item.severity)}
+                  </span>
+                  {locateLabel ? (
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${locateTone}`}>
+                      {locateLabel}
+                    </span>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    markAdded(item.id)
+                  }}
+                  className={`tech-focus inline-flex items-center rounded-lg border px-2.5 py-1 text-xs font-semibold transition ${
+                    isAdded
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                      : 'border-slate-200 bg-white text-slate-700 hover:border-cyan-200 hover:bg-cyan-50'
+                  }`}
+                >
+                  {isAdded ? '已加入班级总览' : '加入班级总览'}
+                </button>
               </div>
-              <dl className="mt-3 grid gap-2 text-sm">
-                <div>
+              <dl className="mt-2 grid gap-1.5 text-sm">
+                <div className="grid gap-1 md:grid-cols-[72px_minmax(0,1fr)]">
                   <dt className="text-xs font-semibold text-slate-500">原句</dt>
-                  <dd className="mt-1 text-slate-600 line-through">{item.original}</dd>
+                  <dd className="text-slate-600 line-through">{item.original}</dd>
                 </div>
-                <div>
+                <div className="grid gap-1 md:grid-cols-[72px_minmax(0,1fr)]">
                   <dt className="text-xs font-semibold text-slate-500">推荐改法</dt>
-                  <dd className="mt-1 font-medium text-slate-950">{revision?.revised ?? item.suggestion}</dd>
+                  <dd className="font-medium text-slate-950">{revision?.revised ?? item.suggestion}</dd>
                 </div>
-                <div>
+                <div className="grid gap-1 md:grid-cols-[72px_minmax(0,1fr)]">
                   <dt className="text-xs font-semibold text-slate-500">原因</dt>
-                  <dd className="mt-1 text-xs leading-5 text-slate-500">{revision?.note ?? item.explanation}</dd>
+                  <dd className="text-xs leading-5 text-slate-500">{revision?.note ?? item.explanation}</dd>
                 </div>
               </dl>
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  markAdded(item.id)
-                }}
-                className={`tech-focus mt-3 inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
-                  isAdded
-                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                    : 'border-slate-200 bg-white text-slate-700 hover:border-cyan-200 hover:bg-cyan-50'
-                }`}
-              >
-                {isAdded ? '已加入班级总览' : '加入班级总览'}
-              </button>
             </div>
           )
         })}

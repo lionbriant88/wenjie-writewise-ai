@@ -80,7 +80,7 @@ describe('EssayResultPage teacher decision workflow', () => {
 
     await user.click(screen.getByText('I suggest you joins the club.'))
 
-    expect(screen.getByText('正在定位原文')).toBeInTheDocument()
+    expect(screen.getByText('已定位')).toBeInTheDocument()
   })
 
   it('highlights the matching source text when an issue card is selected', async () => {
@@ -111,6 +111,7 @@ describe('EssayResultPage teacher decision workflow', () => {
     await user.click(screen.getByRole('button', { name: '阅读定位' }))
     await user.click(screen.getByText('I suggest you joins the club.'))
 
+    expect(screen.getByText('未精确定位')).toBeInTheDocument()
     expect(screen.getByText('未在原文中精确定位，请手动核对')).toBeInTheDocument()
   })
 
