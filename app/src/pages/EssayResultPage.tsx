@@ -203,12 +203,21 @@ export function EssayResultPage() {
           </div>
 
           <div className="space-y-5">
-            {saveNotice ? (
-              <div
-                role="status"
-                className="rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800 shadow-sm"
-              >
-                {saveNotice}
+            {(saveNotice || result.teacherAdjusted) ? (
+              <div className="flex flex-wrap items-center gap-2">
+                {saveNotice ? (
+                  <div
+                    role="status"
+                    className="rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800 shadow-sm"
+                  >
+                    {saveNotice}
+                  </div>
+                ) : null}
+                {result.teacherAdjusted ? (
+                  <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
+                    已由教师调整
+                  </span>
+                ) : null}
               </div>
             ) : null}
             <DiagnosticScoreSummary

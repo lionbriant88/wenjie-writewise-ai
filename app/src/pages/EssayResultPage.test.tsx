@@ -1,4 +1,5 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it } from 'vitest'
 import { AppStateProvider } from '../context/AppStateContext'
@@ -29,5 +30,31 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.getByText('/ 15')).toBeInTheDocument()
     expect(screen.getByRole('spinbutton', { name: /语言准确性/ })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '分项评分' })).not.toBeInTheDocument()
+  })
+
+  it('syncs dimension score edits with integer total score and five-band grade', async () => {
+    const user = userEvent.setup()
+    renderEssayDetail()
+
+    const handwritingInput = screen.getByRole('spinbutton', { name: /卷面\/字迹/ })
+    await user.clear(handwritingInput)
+    await user.type(handwritingInput, '0.1')
+
+    expect(screen.getByText('12')).toBeInTheDocument()
+    expect(screen.getByText('良好')).toBeInTheDocument()
+    expect(screen.getByText('分数已更新')).toBeInTheDocument()
+    expect(screen.getByText('已由教师调整')).toBeInTheDocument()
+  })
+
+  it('clamps invalid dimension score values without rounding valid max scores upward', () => {
+    renderEssayDetail()
+
+    const accuracyInput = screen.getByRole('spinbutton', { name: /语言准确性/ })
+
+    fireEvent.change(accuracyInput, { target: { value: '99' } })
+    expect(accuracyInput).toHaveValue(3.75)
+
+    fireEvent.change(accuracyInput, { target: { value: '-3' } })
+    expect(accuracyInput).toHaveValue(0)
   })
 })
