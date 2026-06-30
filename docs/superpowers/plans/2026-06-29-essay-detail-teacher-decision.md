@@ -2,33 +2,49 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Turn the single-essay result detail page into a compact teacher decision workstation with diagnostic scoring, linked total score, structured issue cards, and lightweight teacher feedback controls.
+**Goal:** Turn the single-essay result detail page into a compact teacher decision workstation with integer total score, five-band grading, editable dimension scores, structured issue cards, and lightweight teacher feedback controls.
 
-**Architecture:** Put score/diagnostic rules in a pure utility module with focused unit tests, then render those rules through a new compact summary component. Keep the left-side source essay panel stable, and only reorganize the right-side work area in `EssayResultPage`.
+**Architecture:** Put score/diagnostic rules in a pure utility module with focused unit tests, then render those rules through a compact summary component. Keep the left-side source essay panel stable, and only reorganize the right-side work area in `EssayResultPage`.
 
 **Tech Stack:** React, TypeScript, React Router, Vitest, Testing Library, Tailwind CSS, existing in-memory `AppStateProvider`.
 
 ---
 
+## Product Rules To Preserve
+
+- Total essay score is always an integer.
+- Dimension scores may be decimals, including `3.75`, `2.25`, and `1.5`.
+- Total score is calculated by summing dimension scores, rounding to the nearest integer, and clamping to `0 - fullScore`.
+- `task.fullScore` should be used when available; fallback is `15`.
+- Grade band uses the existing five-band score ranges:
+  - `13-15`: `优秀`
+  - `10-12`: `良好`
+  - `7-9`: `合格`
+  - `4-6`: `待提升`
+  - `0-3`: `基础薄弱`
+- AI confidence may be stored as `0.86` or `86`; display and recommendation logic must normalize both to `86%`.
+- The verified real detail route is `/tasks/:taskId/essays/:essayId`.
+- This round does not modify upload page, progress page, student feedback views, export, backend persistence, real AI, permissions, or left-side original-text highlighting.
+
 ## File Structure
 
 - Create `app/src/utils/gradingDiagnostics.ts`
-  - Pure helpers for score clamping, total score calculation, grade band, main deduction dimensions, severity labels, and review recommendation.
+  - Pure helpers for score clamping, integer total score calculation, total/dimension formatting, confidence normalization, five-band grade labels, main deduction dimensions, severity labels, and review recommendation.
 - Create `app/src/utils/gradingDiagnostics.test.ts`
   - Unit tests for all diagnostic rules.
 - Create `app/src/components/DiagnosticScoreSummary.tsx`
-  - Compact top-right summary that renders total score, grade band, AI confidence, main deduction dimensions, review recommendation, and editable dimension score rows.
+  - Compact top-right summary that renders integer total score, grade band, normalized AI confidence, main deduction dimensions, review recommendation, and editable dimension score rows.
 - Modify `app/src/components/IssueCorrectionList.tsx`
   - Make cards more structured and translate severity into teacher-facing impact labels.
 - Modify `app/src/types/index.ts`
   - Add optional `teacherSuggestion?: string` to `GradingResult`.
 - Modify `app/src/pages/EssayResultPage.tsx`
-  - Replace standalone total card and `ScoreBreakdown` usage with `DiagnosticScoreSummary`.
-  - Keep left-side original essay panel unchanged.
+  - Replace standalone total-score card and `ScoreBreakdown` usage with `DiagnosticScoreSummary`.
+  - Keep left-side original essay and original image behavior unchanged.
   - Keep issue corrections, expression upgrades, and final comment area in the agreed order.
   - Add teacher supplemental suggestion editing and save feedback.
 - Create `app/src/pages/EssayResultPage.test.tsx`
-  - Integration tests for the detail-page teacher workflow.
+  - Integration tests for the detail-page teacher workflow using the real route pattern `/tasks/:taskId/essays/:essayId`.
 
 ## Task 1: Add Diagnostic Rule Helpers
 
@@ -46,11 +62,14 @@ import type { ErrorAnnotation, ScoreDimension } from '../types'
 import {
   calculateTotalScore,
   clampDimensionScore,
-  formatScore,
+  formatConfidence,
+  formatDimensionScore,
+  formatTotalScore,
   getGradeBand,
   getMainDeductionDimensions,
   getReviewRecommendation,
   getSeverityImpactLabel,
+  normalizeConfidence,
 } from './gradingDiagnostics'
 
 const dimensions: ScoreDimension[] = [
@@ -103,30 +122,54 @@ const highIssues: ErrorAnnotation[] = [
 ]
 
 describe('grading diagnostics', () => {
-  it('calculates and formats total score from dimensions', () => {
-    expect(calculateTotalScore(dimensions)).toBe(6.7)
-    expect(formatScore(13)).toBe('13')
-    expect(formatScore(13.1)).toBe('13.1')
+  it('calculates integer total score from dimensions and clamps to full score', () => {
+    expect(calculateTotalScore(dimensions)).toBe(7)
+    expect(calculateTotalScore([{ ...dimensions[0], score: 20 }], 15)).toBe(15)
+    expect(calculateTotalScore([{ ...dimensions[0], score: -2 }], 15)).toBe(0)
   })
 
-  it('clamps dimension score to a valid range', () => {
+  it('formats total score separately from dimension score', () => {
+    expect(formatTotalScore(13.1)).toBe('13')
+    expect(formatTotalScore(13.6)).toBe('14')
+    expect(formatDimensionScore(3)).toBe('3')
+    expect(formatDimensionScore(3.75)).toBe('3.75')
+  })
+
+  it('clamps dimension score while preserving valid two-decimal max scores', () => {
     expect(clampDimensionScore(9, 3.75)).toBe(3.75)
     expect(clampDimensionScore(-1, 3.75)).toBe(0)
     expect(clampDimensionScore(Number.NaN, 3.75)).toBe(0)
-    expect(clampDimensionScore(3.16, 3.75)).toBe(3.2)
+    expect(clampDimensionScore(3.756, 3.75)).toBe(3.75)
+    expect(clampDimensionScore(2.235, 2.25)).toBe(2.24)
   })
 
-  it('returns grade bands from total score', () => {
-    expect(getGradeBand(14).label).toBe('优秀')
-    expect(getGradeBand(12.8).label).toBe('良好')
-    expect(getGradeBand(10).label).toBe('合格')
-    expect(getGradeBand(8.5).label).toBe('待提升')
+  it('returns five grade bands from integer total score', () => {
+    expect(getGradeBand(15).label).toBe('优秀')
+    expect(getGradeBand(13).label).toBe('优秀')
+    expect(getGradeBand(12).label).toBe('良好')
+    expect(getGradeBand(10).label).toBe('良好')
+    expect(getGradeBand(9).label).toBe('合格')
+    expect(getGradeBand(7).label).toBe('合格')
+    expect(getGradeBand(6).label).toBe('待提升')
+    expect(getGradeBand(4).label).toBe('待提升')
+    expect(getGradeBand(3).label).toBe('基础薄弱')
+    expect(getGradeBand(0).label).toBe('基础薄弱')
   })
 
-  it('returns the lowest score-rate dimensions as main deductions', () => {
-    expect(getMainDeductionDimensions(dimensions).map((item) => item.name)).toEqual([
+  it('returns the lowest score-rate dimensions as main deductions and tolerates zero max score', () => {
+    const zeroMaxDimension: ScoreDimension = {
+      id: 'zero',
+      name: '异常维度',
+      score: 0,
+      maxScore: 0,
+      weight: 0,
+      reason: '无满分',
+      evidence: '',
+    }
+
+    expect(getMainDeductionDimensions([...dimensions, zeroMaxDimension]).map((item) => item.name)).toEqual([
+      '异常维度',
       '卷面/字迹',
-      '语言准确性',
     ])
   })
 
@@ -136,12 +179,19 @@ describe('grading diagnostics', () => {
     expect(getSeverityImpactLabel('low')).toBe('低')
   })
 
-  it('builds review recommendations from score, confidence, and issue severity', () => {
+  it('normalizes and formats confidence stored as ratio or percent', () => {
+    expect(normalizeConfidence(0.86)).toBe(0.86)
+    expect(normalizeConfidence(86)).toBe(0.86)
+    expect(formatConfidence(0.86)).toBe('86%')
+    expect(formatConfidence(86)).toBe('86%')
+  })
+
+  it('builds review recommendations from integer score, normalized confidence, and issue severity', () => {
     expect(getReviewRecommendation({ totalScore: 14, aiConfidence: 0.9, issues: [] })).toBe('可作为优秀范例')
     expect(getReviewRecommendation({ totalScore: 12, aiConfidence: 0.9, issues: [] })).toBe('普通反馈')
-    expect(getReviewRecommendation({ totalScore: 10, aiConfidence: 0.9, issues: [] })).toBe('建议关注主要问题')
-    expect(getReviewRecommendation({ totalScore: 8, aiConfidence: 0.9, issues: [] })).toBe('建议教师复核')
-    expect(getReviewRecommendation({ totalScore: 12, aiConfidence: 0.66, issues: [] })).toBe('建议教师复核')
+    expect(getReviewRecommendation({ totalScore: 9, aiConfidence: 0.9, issues: [] })).toBe('建议关注主要问题')
+    expect(getReviewRecommendation({ totalScore: 6, aiConfidence: 0.9, issues: [] })).toBe('建议教师复核')
+    expect(getReviewRecommendation({ totalScore: 12, aiConfidence: 66, issues: [] })).toBe('建议教师复核')
     expect(getReviewRecommendation({ totalScore: 12, aiConfidence: 0.9, issues: highIssues })).toBe('建议重点讲评')
   })
 })
@@ -166,36 +216,56 @@ Create `app/src/utils/gradingDiagnostics.ts`:
 import type { ErrorAnnotation, ScoreDimension } from '../types'
 
 export interface GradeBand {
-  label: '优秀' | '良好' | '合格' | '待提升'
-  tone: 'excellent' | 'good' | 'pass' | 'weak'
+  label: '优秀' | '良好' | '合格' | '待提升' | '基础薄弱'
+  tone: 'excellent' | 'good' | 'pass' | 'weak' | 'veryWeak'
+}
+
+function getScoreRate(dimension: ScoreDimension) {
+  if (!dimension.maxScore) return 0
+  return dimension.score / dimension.maxScore
 }
 
 export function clampDimensionScore(value: number, maxScore: number) {
   if (!Number.isFinite(value)) return 0
+
   const clamped = Math.min(Math.max(value, 0), maxScore)
-  return Math.round(clamped * 10) / 10
+  const rounded = Math.round(clamped * 100) / 100
+
+  return Math.min(rounded, maxScore)
 }
 
-export function calculateTotalScore(dimensions: ScoreDimension[]) {
-  const total = dimensions.reduce((sum, dimension) => sum + dimension.score, 0)
-  return Math.round(total * 10) / 10
+export function calculateTotalScore(dimensions: ScoreDimension[], fullScore = 15) {
+  const rawTotal = dimensions.reduce((sum, dimension) => sum + dimension.score, 0)
+  const roundedTotal = Math.round(rawTotal)
+  return Math.min(Math.max(roundedTotal, 0), fullScore)
 }
 
-export function formatScore(score: number) {
-  return Number.isInteger(score) ? String(score) : score.toFixed(1)
+export function formatTotalScore(score: number) {
+  return String(Math.round(score))
+}
+
+export function formatDimensionScore(score: number) {
+  return Number.isInteger(score) ? String(score) : String(score)
+}
+
+export function normalizeConfidence(confidence: number) {
+  return confidence > 1 ? confidence / 100 : confidence
+}
+
+export function formatConfidence(confidence: number) {
+  return `${Math.round(normalizeConfidence(confidence) * 100)}%`
 }
 
 export function getGradeBand(totalScore: number): GradeBand {
-  if (totalScore >= 13.5) return { label: '优秀', tone: 'excellent' }
-  if (totalScore >= 11) return { label: '良好', tone: 'good' }
-  if (totalScore >= 9) return { label: '合格', tone: 'pass' }
-  return { label: '待提升', tone: 'weak' }
+  if (totalScore >= 13) return { label: '优秀', tone: 'excellent' }
+  if (totalScore >= 10) return { label: '良好', tone: 'good' }
+  if (totalScore >= 7) return { label: '合格', tone: 'pass' }
+  if (totalScore >= 4) return { label: '待提升', tone: 'weak' }
+  return { label: '基础薄弱', tone: 'veryWeak' }
 }
 
 export function getMainDeductionDimensions(dimensions: ScoreDimension[], limit = 2) {
-  return [...dimensions]
-    .sort((left, right) => left.score / left.maxScore - right.score / right.maxScore)
-    .slice(0, limit)
+  return [...dimensions].sort((left, right) => getScoreRate(left) - getScoreRate(right)).slice(0, limit)
 }
 
 export function getSeverityImpactLabel(severity: ErrorAnnotation['severity']) {
@@ -213,13 +283,15 @@ export function getReviewRecommendation({
   aiConfidence: number
   issues: ErrorAnnotation[]
 }) {
+  const normalizedConfidence = normalizeConfidence(aiConfidence)
   const highSeverityCount = issues.filter((issue) => issue.severity === 'high').length
 
-  if (aiConfidence < 0.7 || totalScore < 9) return '建议教师复核'
+  if (normalizedConfidence < 0.7) return '建议教师复核'
   if (highSeverityCount >= 2) return '建议重点讲评'
-  if (totalScore >= 13.5) return '可作为优秀范例'
-  if (totalScore >= 11) return '普通反馈'
-  return '建议关注主要问题'
+  if (totalScore >= 13) return '可作为优秀范例'
+  if (totalScore >= 10) return '普通反馈'
+  if (totalScore >= 7) return '建议关注主要问题'
+  return '建议教师复核'
 }
 ```
 
@@ -250,10 +322,11 @@ git commit -m "feat: add grading diagnostic helpers"
 
 - [ ] **Step 1: Write failing detail-page test for summary**
 
-Create `app/src/pages/EssayResultPage.test.tsx` with the first test:
+Create `app/src/pages/EssayResultPage.test.tsx`:
 
 ```tsx
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it } from 'vitest'
 import { AppStateProvider } from '../context/AppStateContext'
@@ -279,6 +352,9 @@ describe('EssayResultPage', () => {
     expect(screen.getByText('AI 置信度')).toBeInTheDocument()
     expect(screen.getByText('主要扣分项')).toBeInTheDocument()
     expect(screen.getByText('讲评建议')).toBeInTheDocument()
+    expect(screen.getByText('良好')).toBeInTheDocument()
+    expect(screen.getByText('13')).toBeInTheDocument()
+    expect(screen.getByText('/ 15')).toBeInTheDocument()
     expect(screen.getByRole('spinbutton', { name: /语言准确性/ })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '分项评分' })).not.toBeInTheDocument()
   })
@@ -304,7 +380,9 @@ Create `app/src/components/DiagnosticScoreSummary.tsx`:
 import type { ErrorAnnotation, ScoreDimension } from '../types'
 import {
   calculateTotalScore,
-  formatScore,
+  formatConfidence,
+  formatDimensionScore,
+  formatTotalScore,
   getGradeBand,
   getMainDeductionDimensions,
   getReviewRecommendation,
@@ -315,6 +393,7 @@ const gradeToneClass = {
   good: 'bg-blue-50 text-blue-700 border-blue-100',
   pass: 'bg-amber-50 text-amber-700 border-amber-100',
   weak: 'bg-rose-50 text-rose-700 border-rose-100',
+  veryWeak: 'bg-slate-100 text-slate-700 border-slate-200',
 }
 
 interface DiagnosticScoreSummaryProps {
@@ -332,7 +411,8 @@ export function DiagnosticScoreSummary({
   issues,
   onDimensionScoreChange,
 }: DiagnosticScoreSummaryProps) {
-  const totalScore = calculateTotalScore(dimensions)
+  const safeFullScore = fullScore ?? 15
+  const totalScore = calculateTotalScore(dimensions, safeFullScore)
   const gradeBand = getGradeBand(totalScore)
   const mainDeductions = getMainDeductionDimensions(dimensions)
   const reviewRecommendation = getReviewRecommendation({ totalScore, aiConfidence, issues })
@@ -341,7 +421,7 @@ export function DiagnosticScoreSummary({
     <section className="rounded-lg border border-blue-100 bg-white p-4 shadow-sm" aria-labelledby="diagnostic-summary-title">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">AI 批改工作台</p>
+          <p className="text-xs font-semibold uppercase text-blue-700">AI 批改工作台</p>
           <h3 id="diagnostic-summary-title" className="mt-1 text-lg font-semibold text-slate-950">
             诊断摘要
           </h3>
@@ -360,13 +440,13 @@ export function DiagnosticScoreSummary({
         <div>
           <p className="text-xs font-semibold text-slate-500">总分</p>
           <p className="mt-1 text-3xl font-semibold text-slate-950">
-            {formatScore(totalScore)}
-            <span className="ml-1 text-base font-medium text-slate-500">/ {fullScore}</span>
+            {formatTotalScore(totalScore)}
+            <span className="ml-1 text-base font-medium text-slate-500">/ {safeFullScore}</span>
           </p>
         </div>
         <div>
           <p className="text-xs font-semibold text-slate-500">AI 置信度</p>
-          <p className="mt-2 text-sm font-semibold text-slate-800">{Math.round(aiConfidence * 100)}%</p>
+          <p className="mt-2 text-sm font-semibold text-slate-800">{formatConfidence(aiConfidence)}</p>
         </div>
         <div>
           <p className="text-xs font-semibold text-slate-500">主要扣分项</p>
@@ -404,12 +484,12 @@ export function DiagnosticScoreSummary({
                     type="number"
                     min={0}
                     max={dimension.maxScore}
-                    step={0.1}
+                    step={0.05}
                     value={dimension.score}
                     onChange={(event) => onDimensionScoreChange(dimension.id, Number.parseFloat(event.target.value))}
                     className="tech-focus w-16 rounded-md border border-slate-200 bg-white px-2 py-1 text-sm font-semibold text-slate-900"
                   />
-                  <span className="text-xs font-medium text-slate-500">/ {dimension.maxScore}</span>
+                  <span className="text-xs font-medium text-slate-500">/ {formatDimensionScore(dimension.maxScore)}</span>
                 </span>
               </label>
             )
@@ -421,7 +501,7 @@ export function DiagnosticScoreSummary({
 }
 ```
 
-- [ ] **Step 4: Wire summary into detail page**
+- [ ] **Step 4: Wire summary and message-specific feedback into detail page**
 
 Modify `app/src/pages/EssayResultPage.tsx`:
 
@@ -433,13 +513,49 @@ import { DiagnosticScoreSummary } from '../components/DiagnosticScoreSummary'
 import { calculateTotalScore, clampDimensionScore } from '../utils/gradingDiagnostics'
 ```
 
+- Change:
+
+```ts
+const [saveNotice, setSaveNotice] = useState(false)
+```
+
+to:
+
+```ts
+const [saveNotice, setSaveNotice] = useState('')
+```
+
+- Replace `showSaveNotice` with:
+
+```ts
+const showSaveNotice = (message = '已保存教师调整') => {
+  if (saveTimerRef.current) {
+    window.clearTimeout(saveTimerRef.current)
+  }
+
+  setSaveNotice(message)
+  saveTimerRef.current = window.setTimeout(() => {
+    setSaveNotice('')
+    saveTimerRef.current = null
+  }, 1800)
+}
+```
+
 - Replace the standalone total-score card and `<ScoreBreakdown />` with:
 
 ```tsx
+{saveNotice ? (
+  <div
+    role="status"
+    className="rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800 shadow-sm"
+  >
+    {saveNotice}
+  </div>
+) : null}
 <DiagnosticScoreSummary
   aiConfidence={result.aiConfidence}
   dimensions={result.dimensionScores}
-  fullScore={task.fullScore}
+  fullScore={task.fullScore ?? 15}
   issues={result.errorAnnotations}
   onDimensionScoreChange={(dimensionId, nextScore) => {
     const nextDimensions = result.dimensionScores.map((dimension) =>
@@ -450,12 +566,14 @@ import { calculateTotalScore, clampDimensionScore } from '../utils/gradingDiagno
 
     updateGradingResult(essay.id, {
       dimensionScores: nextDimensions,
-      totalScore: calculateTotalScore(nextDimensions),
+      totalScore: calculateTotalScore(nextDimensions, task.fullScore ?? 15),
     })
-    showSaveNotice()
+    showSaveNotice('分数已更新')
   }}
 />
 ```
+
+`updateGradingResult` already writes `teacherAdjusted: true` and `updatedAt`, so the page handler should not duplicate those fields.
 
 - [ ] **Step 5: Run focused page test**
 
@@ -475,7 +593,7 @@ git add app/src/components/DiagnosticScoreSummary.tsx app/src/pages/EssayResultP
 git commit -m "feat: add compact diagnostic scoring summary"
 ```
 
-## Task 3: Verify Score Edits Sync Total And Grade Band
+## Task 3: Verify Score Edits Sync Integer Total And Five-Band Grade
 
 **Files:**
 - Modify: `app/src/pages/EssayResultPage.test.tsx`
@@ -487,9 +605,7 @@ git commit -m "feat: add compact diagnostic scoring summary"
 Append tests to `app/src/pages/EssayResultPage.test.tsx`:
 
 ```tsx
-import userEvent from '@testing-library/user-event'
-
-it('syncs dimension score edits with total score and grade band', async () => {
+it('syncs dimension score edits with integer total score and five-band grade', async () => {
   const user = userEvent.setup()
   renderEssayDetail()
 
@@ -497,24 +613,21 @@ it('syncs dimension score edits with total score and grade band', async () => {
   await user.clear(accuracyInput)
   await user.type(accuracyInput, '3.75')
 
-  expect(screen.getByText('13.5')).toBeInTheDocument()
+  expect(screen.getByText('14')).toBeInTheDocument()
   expect(screen.getByText('优秀')).toBeInTheDocument()
   expect(screen.getByText('分数已更新')).toBeInTheDocument()
+  expect(screen.getByText('已由教师调整')).toBeInTheDocument()
 })
 
-it('clamps invalid dimension score values', async () => {
-  const user = userEvent.setup()
+it('clamps invalid dimension score values without rounding valid max scores upward', () => {
   renderEssayDetail()
 
   const accuracyInput = screen.getByRole('spinbutton', { name: /语言准确性/ })
-  await user.clear(accuracyInput)
-  await user.type(accuracyInput, '99')
 
+  fireEvent.change(accuracyInput, { target: { value: '99' } })
   expect(accuracyInput).toHaveValue(3.75)
 
-  await user.clear(accuracyInput)
-  await user.type(accuracyInput, '-3')
-
+  fireEvent.change(accuracyInput, { target: { value: '-3' } })
   expect(accuracyInput).toHaveValue(0)
 })
 ```
@@ -528,61 +641,25 @@ cd D:\wenjie-writewise-ai\app
 npm.cmd test -- src/pages/EssayResultPage.test.tsx
 ```
 
-Expected before implementation adjustments: fail if save feedback text or clamping is not reflected in the input value.
+Expected before final adjustments: fail if the total still displays a decimal, if the grade band still uses old boundaries, or if number input clamping does not rerender.
 
-- [ ] **Step 3: Make save notice message-specific**
+- [ ] **Step 3: Keep controlled input value from app state**
 
-Modify `app/src/pages/EssayResultPage.tsx`:
-
-- Change:
-
-```ts
-const [saveNotice, setSaveNotice] = useState(false)
-```
-
-to:
-
-```ts
-const [saveNotice, setSaveNotice] = useState('')
-```
-
-- Change `showSaveNotice` to accept a message:
-
-```ts
-const showSaveNotice = (message = '已保存教师调整') => {
-  if (saveTimerRef.current) {
-    window.clearTimeout(saveTimerRef.current)
-  }
-
-  setSaveNotice(message)
-  saveTimerRef.current = window.setTimeout(() => {
-    setSaveNotice('')
-    saveTimerRef.current = null
-  }, 1800)
-}
-```
-
-- Render feedback near the right-side work area:
+Verify `DiagnosticScoreSummary` keeps:
 
 ```tsx
-{saveNotice ? (
-  <div role="status" className="rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800 shadow-sm">
-    {saveNotice}
-  </div>
-) : null}
+value={dimension.score}
 ```
 
-- For dimension score changes, call:
+and `EssayResultPage` updates state with:
 
 ```ts
-showSaveNotice('分数已更新')
+score: clampDimensionScore(nextScore, dimension.maxScore)
 ```
 
-- [ ] **Step 4: Ensure inputs reflect clamped values**
+This ensures `fireEvent.change` to `99` rerenders as `3.75` and `-3` rerenders as `0`.
 
-The summary input value should come from `result.dimensionScores`; after `updateGradingResult`, React will rerender with the clamped value. Keep `value={dimension.score}` and the `clampDimensionScore` call in the page handler.
-
-- [ ] **Step 5: Run tests**
+- [ ] **Step 4: Run tests**
 
 Run:
 
@@ -593,11 +670,11 @@ npm.cmd test -- src/pages/EssayResultPage.test.tsx
 
 Expected: pass.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```powershell
 git add app/src/pages/EssayResultPage.tsx app/src/pages/EssayResultPage.test.tsx app/src/components/DiagnosticScoreSummary.tsx
-git commit -m "feat: sync dimension score edits with total"
+git commit -m "feat: sync dimension edits with integer total"
 ```
 
 ## Task 4: Improve Issue Correction Cards
@@ -616,15 +693,15 @@ it('shows structured issue correction details and class overview feedback', asyn
   renderEssayDetail()
 
   expect(screen.getByRole('heading', { name: '问题与修改建议' })).toBeInTheDocument()
-  expect(screen.getByText('问题类型')).toBeInTheDocument()
-  expect(screen.getByText('扣分影响')).toBeInTheDocument()
-  expect(screen.getByText('原句')).toBeInTheDocument()
-  expect(screen.getByText('推荐改法')).toBeInTheDocument()
-  expect(screen.getByText('原因')).toBeInTheDocument()
+  expect(screen.getAllByText('问题类型')[0]).toBeInTheDocument()
+  expect(screen.getAllByText('扣分影响')[0]).toBeInTheDocument()
+  expect(screen.getAllByText('原句')[0]).toBeInTheDocument()
+  expect(screen.getAllByText('推荐改法')[0]).toBeInTheDocument()
+  expect(screen.getAllByText('原因')[0]).toBeInTheDocument()
 
   await user.click(screen.getAllByRole('button', { name: '加入班级总览' })[0])
 
-  expect(screen.getByText('已加入班级总览')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '已加入班级总览' })).toBeInTheDocument()
 })
 ```
 
@@ -649,15 +726,17 @@ Modify `app/src/components/IssueCorrectionList.tsx`:
 import { getSeverityImpactLabel } from '../utils/gradingDiagnostics'
 ```
 
-- Replace the card heading/body with this structure inside the `annotations.map` block:
+- Use this structure inside the `annotations.map` block:
 
 ```tsx
 <div key={item.id} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
   <div className="flex flex-wrap items-center gap-2">
     <span className="rounded-full bg-cyan-50 px-2 py-0.5 text-xs font-semibold text-cyan-700">
+      <span className="sr-only">问题类型</span>
       问题类型：{item.type}
     </span>
     <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${severityTone[item.severity]}`}>
+      <span className="sr-only">扣分影响</span>
       扣分影响：{getSeverityImpactLabel(item.severity)}
     </span>
   </div>
@@ -807,13 +886,18 @@ In `app/src/pages/EssayResultPage.tsx`, replace the existing `总评` card with:
   </label>
   <button
     type="button"
-    onClick={() => showSaveNotice('已保存教师调整')}
+    onClick={() => {
+      updateGradingResult(essay.id, { teacherAdjusted: true })
+      showSaveNotice('已保存教师调整')
+    }}
     className="tech-focus mt-3 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
   >
     保存调整
   </button>
 </div>
 ```
+
+`updateGradingResult` already stamps `updatedAt`; the explicit `teacherAdjusted: true` here documents the save intent and is harmless because the state updater also enforces it.
 
 - [ ] **Step 5: Run tests**
 
@@ -859,7 +943,13 @@ Expected:
 
 - [ ] **Step 2: Start or reuse local preview**
 
-If no dev server is running:
+Check whether port `5173` is listening:
+
+```powershell
+Get-NetTCPConnection -LocalPort 5173 -State Listen | Select-Object -Property LocalAddress,LocalPort,OwningProcess
+```
+
+When no listener is returned, start the app:
 
 ```powershell
 cd D:\wenjie-writewise-ai\app
@@ -885,13 +975,16 @@ Check:
 - Left column still shows `学生作文原文`.
 - Left column still has `查看原图`.
 - Right column first module is `诊断摘要`.
-- Dimension score inputs are inside the summary.
-- Editing `语言准确性` changes total score.
+- Total score displays as an integer such as `13 / 15`, never `13.1 / 15`.
+- Dimension score inputs are inside the summary and can display values such as `3.75 / 3.75`.
+- Editing `语言准确性` changes integer total score and five-band grade.
+- AI confidence displays correctly as `86%` when data is `0.86`.
 - Main deduction chips remain reasonable after editing.
 - Issue cards show `问题类型`, `扣分影响`, `原句`, `推荐改法`, and `原因`.
 - `加入班级总览` changes to `已加入班级总览`.
 - `表达升级建议` remains after issues.
 - `AI 总评 / 教师补充建议` saves and shows `已保存教师调整`.
+- `已由教师调整` appears after score or comment adjustment.
 - `返回批改进度`, `上一篇`, and `下一篇` still work.
 
 - [ ] **Step 4: Update memory file**
@@ -903,9 +996,9 @@ Modify `docs/current_development_status.md`:
 
 ```markdown
 - Completed phase 2 essay-detail teacher decision polish:
-  - Added compact diagnostic summary with total score, grade band, AI confidence, main deduction dimensions, and review recommendation.
+  - Added compact diagnostic summary with integer total score, five-band grade, AI confidence, main deduction dimensions, and review recommendation.
   - Integrated editable dimension scores into the summary.
-  - Total score now syncs from dimension score edits.
+  - Total score now syncs from dimension score edits and remains an integer.
   - Issue correction cards show issue type, impact, original text, suggested revision, and explanation.
   - Teacher comment and supplemental suggestion editing show lightweight save feedback.
 ```
@@ -928,8 +1021,11 @@ Do not push during this task unless the user explicitly asks for GitHub sync aft
 
 - Spec coverage:
   - Diagnostic summary: Task 2.
-  - Dimension editing and total sync: Task 1, Task 2, Task 3.
-  - Grade band/main deduction/recommendation derivation: Task 1, Task 2, Task 3.
+  - Integer total score: Task 1, Task 2, Task 3.
+  - Five-band grade rules: Task 1, Task 2, Task 3.
+  - Dimension editing and clamping: Task 1, Task 2, Task 3.
+  - Confidence normalization: Task 1, Task 2.
+  - Main deduction/recommendation derivation: Task 1, Task 2, Task 3.
   - Remove duplicate standalone score card: Task 2.
   - Structured issue cards: Task 4.
   - Teacher comment controls and feedback: Task 5.
@@ -938,6 +1034,8 @@ Do not push during this task unless the user explicitly asks for GitHub sync aft
   - No incomplete implementation instructions are used.
 - Type consistency:
   - `teacherSuggestion?: string` is added to `GradingResult`.
-  - `DiagnosticScoreSummary` receives `ScoreDimension[]` and `ErrorAnnotation[]`.
-  - Score calculation uses `calculateTotalScore`.
+  - `DiagnosticScoreSummary` receives `ScoreDimension[]`, `ErrorAnnotation[]`, and `fullScore`.
+  - Integer score calculation uses `calculateTotalScore(dimensions, fullScore)`.
+  - Total score formatting uses `formatTotalScore`.
+  - Dimension score formatting uses `formatDimensionScore`.
   - Input clamping uses `clampDimensionScore`.

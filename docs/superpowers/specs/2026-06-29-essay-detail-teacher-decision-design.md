@@ -13,7 +13,7 @@ This round focuses on one small Phase 2 loop:
 - Add a compact diagnostic scoring summary at the top of the right-side work area.
 - Integrate dimension scores into that diagnostic summary.
 - Keep dimension scores editable.
-- Recompute the total score from dimension scores immediately after edits.
+- Recompute the total score from dimension scores immediately after edits, then round the total score to an integer.
 - Derive grade band, main deduction dimensions, and review recommendation from the latest score state.
 - Strengthen issue/correction cards so teachers can scan issue type, severity impact, original sentence, suggested revision, and explanation.
 - Add lightweight teacher comment adjustment controls and success feedback.
@@ -59,21 +59,22 @@ The new top summary should appear in the right-side work area, above issue corre
 
 Required content:
 
-- Total score, displayed as calculated score `/ 15`.
+- Total score, displayed as an integer calculated score `/ 15`.
 - Grade band:
-  - `优秀`: 13.5-15
-  - `良好`: 11-13.4
-  - `合格`: 9-10.9
-  - `待提升`: 0-8.9
+  - `优秀`: 13-15
+  - `良好`: 10-12
+  - `合格`: 7-9
+  - `待提升`: 4-6
+  - `基础薄弱`: 0-3
 - AI confidence as a percentage.
 - Main deduction dimensions, based on the 1-2 lowest dimension score rates.
 - Review recommendation:
-  - Score >= 13.5: `可作为优秀范例`
-  - Score >= 11 and < 13.5: `普通反馈`
-  - Score >= 9 and < 11: `建议关注主要问题`
-  - Score < 9: `建议教师复核`
-  - Low AI confidence should also show `建议教师复核`.
-  - Multiple high-severity issues can show `建议重点讲评`.
+  - Low AI confidence below 70%: `建议教师复核`
+  - Multiple high-severity issues: `建议重点讲评`
+  - Score 13-15: `可作为优秀范例`
+  - Score 10-12: `普通反馈`
+  - Score 7-9: `建议关注主要问题`
+  - Score 0-6: `建议教师复核`
 - Compact editable dimension score rows.
 
 The summary should feel simple, professional, and lightly technical. Use concise chips, restrained borders, and inline status feedback rather than decorative effects.
@@ -86,8 +87,10 @@ Rules:
 
 - Each score input is clamped between `0` and that dimension's `maxScore`.
 - Decimal values are supported.
-- Display scores with one decimal place where appropriate.
-- The total score is the sum of all dimension scores.
+- Dimension scores can keep two-decimal values such as `3.75` or `2.25`.
+- The total score is the sum of all dimension scores, rounded to the nearest integer.
+- The total score is clamped between `0` and `task.fullScore` when available, with `15` as fallback.
+- Total score formatting is separate from dimension score formatting so total score never displays as `13.1 / 15`.
 - After any dimension score edit, update the grading result state with:
   - the updated `dimensionScores`
   - the recomputed `totalScore`
@@ -155,7 +158,7 @@ Add focused tests for the detail page:
 
 - Diagnostic summary appears with total score, grade band, AI confidence, main deduction dimensions, and review recommendation.
 - Dimension score edit updates total score immediately.
-- Editing a dimension clamps values above max score and below zero.
+- Editing a dimension clamps values above max score and below zero while preserving valid two-decimal max scores such as `3.75`.
 - Grade band updates after dimension score edits.
 - The old standalone `分项评分` card is not duplicated below the summary.
 - Issue cards show type, impact, original sentence, suggested revision, and explanation.
@@ -178,7 +181,7 @@ Browser verification should cover:
 1. Open a completed essay detail page.
 2. Check the new diagnostic summary.
 3. Edit one dimension score.
-4. Confirm total score, grade band, and main deduction dimensions update.
+4. Confirm integer total score, grade band, and main deduction dimensions update.
 5. Confirm old standalone dimension score card is gone.
 6. Check issue cards.
 7. Save teacher comment/supplement.
@@ -190,8 +193,8 @@ Browser verification should cover:
 - Detail page first screen shows a compact diagnostic scoring summary.
 - Total score, grade band, AI confidence, main deduction dimensions, and review recommendation are visible near the top.
 - Dimension scores are integrated into the summary and remain editable.
-- Total score updates from dimension scores.
-- Dimension score input is clamped to valid ranges.
+- Total score updates from dimension scores and displays as an integer.
+- Dimension score input is clamped to valid ranges without rounding `3.75` to `3.8`.
 - Grade band and main deduction dimensions update after score edits.
 - The old standalone `分项评分` card no longer duplicates the same data.
 - `问题与修改建议` is more structured and still compact.
