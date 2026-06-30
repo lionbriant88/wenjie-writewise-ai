@@ -37,6 +37,7 @@ export function UploadPage() {
   const [manualGroups, setManualGroups] = useState<string[][]>([initialPages.map((page) => page.id)])
   const [mockOcrStatus, setMockOcrStatus] = useState<'idle' | 'completed'>('idle')
   const [mockOcrDraft, setMockOcrDraft] = useState('')
+  const [manualOcrDrafts, setManualOcrDrafts] = useState<string[]>([])
   const localPreviewUrlsRef = useRef<string[]>([])
 
   const pagesById = useMemo(() => new Map(pages.map((page) => [page.id, page])), [pages])
@@ -71,6 +72,7 @@ export function UploadPage() {
   const resetOcrDraft = () => {
     setMockOcrStatus('idle')
     setMockOcrDraft('')
+    setManualOcrDrafts([])
   }
 
   const setGroupingMode = (mode: EssayGroupingMode) => {
@@ -183,11 +185,33 @@ export function UploadPage() {
   }
 
   const startMockOcr = () => {
+    if (essayGroupingMode === 'manual') {
+      setManualOcrDrafts(
+        nonEmptyManualGroups.map((group) =>
+          group
+            .map((pageId) => pagesById.get(pageId))
+            .filter((page): page is EssayPage => Boolean(page))
+            .map((page, index) => buildPageOcrDraft(page, index))
+            .join('\n\n'),
+        ),
+      )
+      setMockOcrDraft('')
+      setMockOcrStatus('completed')
+      return
+    }
+
     setMockOcrDraft(pages.map((page, index) => buildPageOcrDraft(page, index)).join('\n\n'))
     setMockOcrStatus('completed')
   }
 
   const getEssayGroups = () => {
+    if (essayGroupingMode === 'manual') {
+      return nonEmptyManualGroups.map((group, groupIndex) => ({
+        pages: group.map((pageId) => pagesById.get(pageId)).filter((page): page is EssayPage => Boolean(page)),
+        ocrText: manualOcrDrafts[groupIndex] ?? '',
+      }))
+    }
+
     if (essayGroupingMode === 'perPage') {
       const draftSections = mockOcrDraft
         .split(/\n{2,}/)
@@ -207,6 +231,13 @@ export function UploadPage() {
       },
     ]
   }
+
+  const canConfirmMockOcr =
+    essayGroupingMode === 'manual'
+      ? nonEmptyManualGroups.length > 0 &&
+        manualOcrDrafts.length === nonEmptyManualGroups.length &&
+        manualOcrDrafts.every((draft) => draft.trim().length > 0)
+      : mockOcrDraft.trim().length > 0 && pages.length > 0
 
   const confirmMockOcrText = () => {
     confirmMockOcrEssay({
@@ -368,17 +399,40 @@ export function UploadPage() {
                 置信度 88%
               </span>
             </div>
-            <textarea
-              aria-label="模拟 OCR 文本草稿"
-              value={mockOcrDraft}
-              onChange={(event) => setMockOcrDraft(event.target.value)}
-              className="mt-4 min-h-44 w-full rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-800 outline-none focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100"
-            />
+            {essayGroupingMode === 'manual' ? (
+              <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                {nonEmptyManualGroups.map((group, groupIndex) => (
+                  <label key={`manual-ocr-${groupIndex}`} className="block rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <span className="text-sm font-semibold text-slate-800">
+                      作文组 {groupIndex + 1} OCR 文本
+                    </span>
+                    <span className="mt-1 block text-xs text-slate-500">{group.length} 张图片</span>
+                    <textarea
+                      aria-label={`作文组 ${groupIndex + 1} OCR 文本`}
+                      value={manualOcrDrafts[groupIndex] ?? ''}
+                      onChange={(event) =>
+                        setManualOcrDrafts((current) =>
+                          current.map((draft, draftIndex) => (draftIndex === groupIndex ? event.target.value : draft)),
+                        )
+                      }
+                      className="mt-3 min-h-40 w-full rounded-lg border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <textarea
+                aria-label="模拟 OCR 文本草稿"
+                value={mockOcrDraft}
+                onChange={(event) => setMockOcrDraft(event.target.value)}
+                className="mt-4 min-h-44 w-full rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-800 outline-none focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100"
+              />
+            )}
             <div className="mt-4 flex justify-end">
               <button
                 type="button"
                 onClick={confirmMockOcrText}
-                disabled={mockOcrDraft.trim().length === 0 || pages.length === 0}
+                disabled={!canConfirmMockOcr}
                 className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
               >
                 确认 OCR 文本

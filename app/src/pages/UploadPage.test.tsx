@@ -128,4 +128,27 @@ describe('UploadPage', () => {
     expect(screen.getByText('作文组 2')).toBeInTheDocument()
     expect(screen.getByText('当前 6 张，确认 OCR 后将提交 2 篇作文。')).toBeInTheDocument()
   })
+
+  it('confirms manually grouped OCR drafts as separate queued essays', async () => {
+    const user = userEvent.setup()
+    renderUploadToProgressFlow()
+
+    await user.click(screen.getByRole('button', { name: '手动分组' }))
+    await user.click(screen.getByRole('button', { name: '新增作文组' }))
+    await user.click(screen.getByRole('button', { name: '将 Page 2 移到下一篇' }))
+    await user.click(screen.getByRole('button', { name: '开始模拟 OCR' }))
+
+    expect(screen.getByRole('textbox', { name: '作文组 1 OCR 文本' })).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: '作文组 2 OCR 文本' })).toBeInTheDocument()
+
+    await user.clear(screen.getByRole('textbox', { name: '作文组 1 OCR 文本' }))
+    await user.type(screen.getByRole('textbox', { name: '作文组 1 OCR 文本' }), 'Manual group one text')
+    await user.clear(screen.getByRole('textbox', { name: '作文组 2 OCR 文本' }))
+    await user.type(screen.getByRole('textbox', { name: '作文组 2 OCR 文本' }), 'Manual group two text')
+    await user.click(screen.getByRole('button', { name: '确认 OCR 文本' }))
+
+    expect(screen.getByRole('heading', { name: '批改进度' })).toBeInTheDocument()
+    expect(screen.getAllByText('作文 11').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('作文 12').length).toBeGreaterThan(0)
+  })
 })
