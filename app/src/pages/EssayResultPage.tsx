@@ -5,7 +5,7 @@ import { DiagnosticScoreSummary } from '../components/DiagnosticScoreSummary'
 import { EmptyState } from '../components/EmptyState'
 import { EssayPageSorter } from '../components/EssayPageSorter'
 import { EssaySourcePanel } from '../components/EssaySourcePanel'
-import { ExpressionUpgradeList } from '../components/ExpressionUpgradeList'
+import { FullTextRevisionPanel } from '../components/FullTextRevisionPanel'
 import { IssueCorrectionList } from '../components/IssueCorrectionList'
 import { useAppState } from '../context/useAppState'
 import { AppLayout } from '../layout/AppLayout'
@@ -244,7 +244,7 @@ export function EssayResultPage() {
               activeIssueLocateStatus={activeIssueLocateStatus}
               onIssueSelect={setActiveIssueId}
             />
-            <ExpressionUpgradeList upgrades={result.upgradedExpressions} />
+            <FullTextRevisionPanel revision={result.fullTextRevision} upgrades={result.upgradedExpressions} />
             <div className="rounded-lg border border-slate-200 bg-white p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>

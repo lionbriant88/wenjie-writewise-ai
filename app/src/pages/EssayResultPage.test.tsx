@@ -93,6 +93,28 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.getByRole('button', { name: '已加入班级总览' })).toBeInTheDocument()
   })
 
+  it('shows full text revision with safe correction and sentence comparison views', async () => {
+    const user = userEvent.setup()
+    renderEssayDetail()
+
+    expect(screen.getByRole('heading', { name: '全文优化稿' })).toBeInTheDocument()
+    expect(screen.getAllByText(/保留学生原文思路/).length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: '纠错版' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '提升版' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: '逐句对照' })).toBeInTheDocument()
+    expect(screen.getByText('逻辑优化说明')).toBeInTheDocument()
+    expect(screen.getByText('本文重点提升点')).toBeInTheDocument()
+    expect(screen.getAllByText(/From my point of view/).length).toBeGreaterThan(0)
+    expect(screen.queryByRole('heading', { name: '表达升级建议' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '纠错版' }))
+    expect(screen.getAllByText(/I suggest you join the club\./).length).toBeGreaterThan(0)
+
+    await user.click(screen.getByRole('button', { name: '逐句对照' }))
+    expect(screen.getAllByText(/是否保留原意/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText('建议教师复核').length).toBeGreaterThan(0)
+  })
+
   it('marks an issue card as selected when the teacher clicks it', async () => {
     const user = userEvent.setup()
     renderEssayDetail()
