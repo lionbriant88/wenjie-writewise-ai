@@ -189,6 +189,33 @@ export interface ClassInsight {
   rewriteExercises: ClassInsightItem[]
 }
 
+export type ClassReviewMaterialType =
+  | 'typical_error'
+  | 'logic_issue'
+  | 'expression_upgrade'
+  | 'excellent_expression'
+  | 'teacher_note'
+
+export interface ClassReviewMaterial {
+  id: string
+  taskId: string
+  essayId: string
+  essayLabel: string
+  type: ClassReviewMaterialType
+  categoryLabel: string
+  original: string
+  revised?: string
+  diagnosis?: string
+  explanation?: string
+  teachingSuggestion?: string
+  severity?: 'low' | 'medium' | 'high'
+  needsTeacherReview?: boolean
+  sourceIssueId?: string
+  createdAt: string
+}
+
+export type ClassReviewMaterialInput = Omit<ClassReviewMaterial, 'id' | 'createdAt'>
+
 export interface CreateTaskInput {
   taskName: string
   className: string
