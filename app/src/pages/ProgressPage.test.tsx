@@ -82,6 +82,33 @@ describe('ProgressPage', () => {
     expect(screen.queryByRole('link', { name: '去复核' })).not.toBeInTheDocument()
   })
 
+  it('shows the latest completed essay entry after completing one essay', async () => {
+    const user = userEvent.setup()
+    renderProgressFlow()
+
+    await user.click(screen.getByRole('button', { name: '模拟完成下一篇' }))
+
+    expect(screen.getByRole('status')).toHaveTextContent(/已生成批改结果/)
+    const latestLink = screen.getByRole('link', { name: '查看详情' })
+    await user.click(latestLink)
+
+    expect(screen.getByRole('heading', { name: /批改结果/ })).toBeInTheDocument()
+  })
+
+  it('batch-completes all processable essays without completing review-needed essays', async () => {
+    const user = userEvent.setup()
+    renderProgressFlow('task-2')
+
+    await user.click(screen.getByRole('button', { name: '模拟完成全部可处理' }))
+
+    expect(screen.getByRole('status')).toHaveTextContent(/已完成 \d+ 篇作文的模拟批改/)
+    expect(screen.queryByRole('button', { name: '模拟完成下一篇' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '模拟完成全部可处理' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: /需复核/ }))
+    expect(screen.getAllByRole('link', { name: '去复核' }).length).toBeGreaterThan(0)
+  })
+
   it('completes the next queued OCR essay and opens its generated review result', async () => {
     const user = userEvent.setup()
     renderUploadProgressAndDetailFlow()
@@ -97,10 +124,10 @@ describe('ProgressPage', () => {
     expect(screen.getAllByText('模拟进度').length).toBeGreaterThan(0)
 
     await user.click(screen.getByRole('button', { name: '模拟完成下一篇' }))
-    expect(screen.getByRole('status')).toHaveTextContent('作文 9 已完成批改，可查看结果')
+    expect(screen.getByRole('status')).toHaveTextContent('最新完成：作文 9 已生成批改结果')
 
     await user.click(screen.getByRole('button', { name: '模拟完成下一篇' }))
-    expect(screen.getByRole('status')).toHaveTextContent('作文 11 已完成批改，可查看结果')
+    expect(screen.getByRole('status')).toHaveTextContent('最新完成：作文 11 已生成批改结果')
     const resultLinks = screen.getAllByRole('link', { name: '查看结果' })
     await user.click(resultLinks[resultLinks.length - 1])
 

@@ -104,6 +104,8 @@ export function ProgressPage() {
   const { tasks, essays, completeEssayWithMockResult } = useAppState()
   const [completionNotice, setCompletionNotice] = useState('')
   const [activeTab, setActiveTab] = useState<ProgressQueueTab>('all')
+  const [latestCompletedEssayId, setLatestCompletedEssayId] = useState<string | null>(null)
+  const [latestCompletionCount, setLatestCompletionCount] = useState(0)
   const noticeTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const task = findTask(tasks, taskId)
   const taskEssays = findEssaysByTask(essays, taskId)
@@ -111,6 +113,9 @@ export function ProgressPage() {
   const filteredEssays = filterEssaysByProgressTab(taskEssays, activeTab)
   const processableEssays = taskEssays.filter((essay) => isProcessableEssayStatus(essay.status))
   const nextProcessableEssay = processableEssays[0]
+  const latestCompletedEssay = latestCompletedEssayId
+    ? taskEssays.find((essay) => essay.id === latestCompletedEssayId)
+    : undefined
   const hasExceptions = queueStats.reviewNeeded > 0
   const activeTabLabel = progressTabs.find((tab) => tab.id === activeTab)?.label ?? '全部'
 
@@ -141,14 +146,18 @@ export function ProgressPage() {
     if (!nextProcessableEssay) return
 
     completeEssayWithMockResult(nextProcessableEssay.id)
-    showCompletionNotice(`${nextProcessableEssay.essayNumber} 已完成批改，可查看结果`)
+    setLatestCompletedEssayId(nextProcessableEssay.id)
+    setLatestCompletionCount(1)
+    showCompletionNotice(`${nextProcessableEssay.essayNumber} 已生成批改结果`)
   }
 
   const completeAllProcessableEssays = () => {
     if (processableEssays.length === 0) return
 
     processableEssays.forEach((essay) => completeEssayWithMockResult(essay.id))
-    showCompletionNotice(`${processableEssays.length} 篇作文已完成批改，可查看结果`)
+    setLatestCompletedEssayId(processableEssays[processableEssays.length - 1].id)
+    setLatestCompletionCount(processableEssays.length)
+    showCompletionNotice(`已完成 ${processableEssays.length} 篇作文的模拟批改`)
   }
 
   const getTabCount = (tab: ProgressQueueTab) => {
@@ -234,11 +243,29 @@ export function ProgressPage() {
           </div>
         </section>
         {completionNotice ? (
+          <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800 shadow-sm">
+            {completionNotice}
+          </div>
+        ) : null}
+        {latestCompletedEssay ? (
           <div
             role="status"
-            className="rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800 shadow-sm"
+            className="flex flex-col gap-3 rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 shadow-sm md:flex-row md:items-center md:justify-between"
           >
-            {completionNotice}
+            <div>
+              <p className="font-semibold">
+                {latestCompletionCount > 1
+                  ? `已完成 ${latestCompletionCount} 篇作文的模拟批改`
+                  : `最新完成：${latestCompletedEssay.essayNumber} 已生成批改结果`}
+              </p>
+              <p className="mt-1 text-emerald-700">可直接进入刚完成的作文详情页查看 mock 批改结果。</p>
+            </div>
+            <Link
+              to={`/tasks/${task.id}/essays/${latestCompletedEssay.id}`}
+              className="tech-focus inline-flex items-center justify-center rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800"
+            >
+              {latestCompletionCount > 1 ? '查看最新完成作文' : '查看详情'}
+            </Link>
           </div>
         ) : null}
         <div className="space-y-3">
