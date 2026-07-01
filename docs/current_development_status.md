@@ -2,6 +2,25 @@
 
 最后更新：2026-07-01
 
+## 本次新增进展：批改进度页队列体验优化 v2
+
+- 批改进度页保留原有顶部统计卡片，不新增重复统计区域。
+- 中部提示条已升级为队列操作条，显示当前处理中作文数和需人工复核作文数。
+- 新增状态筛选 Tabs：全部、处理中、需复核、已完成，并按当前状态过滤桌面表格和移动端作文卡片。
+- 新增“最新完成作文”入口：
+  - 点击“模拟完成下一篇”后，显示最新完成作文并可直接进入详情页。
+  - 点击“模拟完成全部可处理”后，显示批量完成数量，并可进入最后完成作文详情页。
+- 新增“模拟完成全部可处理”，只处理 `pending_ocr`、`ocr_running`、`pending_grading`、`grading`，不处理需复核或已完成作文。
+- 需复核作文在桌面表格和移动端卡片中增加轻微 rose 背景，更容易被教师扫到。
+- 本轮未改上传整理页、单篇详情页、异常复核页核心逻辑、班级总览核心逻辑，也未接入真实 AI / OCR 或后端队列。
+- 本轮验证结果：
+  - `npm.cmd test -- src/utils/progressQueue.test.ts src/pages/ProgressPage.test.tsx`：2 个测试文件、12 个测试通过。
+  - `npm.cmd test`：20 个测试文件、94 个测试通过。
+  - `npm.cmd run lint`：通过。
+  - `npm.cmd run build`：通过。
+  - 浏览器验证：已打开 `/tasks/task-1/progress`，确认顶部统计卡片、队列操作条、状态 Tabs、需复核行强调、最新完成入口、详情页跳转均可用。
+  - 浏览器交互验证：`task-1` 中只有 1 篇可处理作文时不显示批量按钮；点击“模拟完成下一篇”后处理中从 1 变 0，已完成从 7 变 8，并可进入作文 9 详情页；`task-2` 中点击“模拟完成全部可处理”后处理中归零，需复核仍保留 1 篇。
+
 ## 本次新增进展：单篇详情页全文优化稿与逻辑连贯性诊断
 
 - 单篇作文详情页新增“全文优化稿”模块，默认展示“提升版”，并支持切换：
@@ -48,8 +67,12 @@
 - 项目根目录：`D:\wenjie-writewise-ai`
 - 前端应用：`D:\wenjie-writewise-ai\app`
 - 远程仓库：`https://github.com/lionbriant88/wenjie-writewise-ai.git`
-- 当前开发分支：`codex/phase1-info-architecture-polish`
-- 本次记忆更新前的最新实现提交：`0f3f410 feat: submit manual ocr groups`
+- 当前开发分支：`codex/progress-queue-workbench-plan`
+- 当前远端跟踪分支：`origin/codex/progress-queue-workbench-plan`
+- 当前最新提交：`fd2bffe docs: update progress queue status`
+- 当前分支已推送到 GitHub，本地与远端分支一致。
+- `main` 最新已包含 PR #2：`372c31a Merge pull request #2 from lionbriant88/codex/phase1-info-architecture-polish`
+- 当前分支尚未合并回 `main`，下一步应创建 / 更新 PR 并在确认后合并。
 
 ## 已完成工作
 
@@ -151,12 +174,7 @@ cd D:\wenjie-writewise-ai\app
 最新验证命令：
 
 ```powershell
-npm.cmd test -- src/pages/EssayResultPage.test.tsx
-npm.cmd test -- src/pages/DetailNavigation.test.tsx
-npm.cmd test -- src/pages/UploadPage.test.tsx
-npm.cmd test -- src/pages/ProgressPage.test.tsx
-npm.cmd test -- src/data/mockData.test.ts
-npm.cmd test -- src/utils/textHighlight.test.ts
+npm.cmd test -- src/utils/progressQueue.test.ts src/pages/ProgressPage.test.tsx
 npm.cmd test
 npm.cmd run lint
 npm.cmd run build
@@ -164,32 +182,18 @@ npm.cmd run build
 
 最新结果：
 
-- 文本高亮工具测试：1 个测试文件，7 个用例通过。
-- 上传页聚焦测试：1 个测试文件，7 个用例通过。
-- 进度页聚焦测试：1 个测试文件，1 个用例通过。
-- 详情页聚焦测试：1 个测试文件，8 个用例通过。
-- 详情页导航测试：1 个测试文件，9 个用例通过。
-- mock 数据一致性测试：1 个测试文件，2 个用例通过。
-- 全量测试：16 个测试文件，69 个用例通过。
+- 进度页队列聚焦测试：2 个测试文件，12 个用例通过。
+- 全量测试：20 个测试文件，94 个用例通过。
 - Lint：通过。
 - Build：通过。
-- 浏览器预览：已在右侧浏览器打开并验证上传页与详情页。
+- 浏览器预览：已在右侧浏览器打开并验证批改进度页。
 - 浏览器交互验证：
-  - 上传页存在“手动分组”按钮。
-  - 点击“手动分组”后显示“作文组 1”和“新增作文组”。
-  - 点击“新增作文组”并将 `Page 2` 移到下一篇后，顶部摘要更新为“确认 OCR 后将提交 2 篇作文”。
-  - 手动分组模式下点击“开始模拟 OCR”后，显示“作文组 1 OCR 文本”和“作文组 2 OCR 文本”两个独立文本框。
-  - 编辑两个作文组 OCR 文本后点击“确认 OCR 文本”，页面进入批改进度，并出现 `作文 11`、`作文 12` 两篇待批改作文。
-  - 左侧“学生作文原文”和“查看原图”存在，默认显示“阅读定位 / 编辑 OCR”双模式。
-  - 默认阅读态不显示 OCR textarea，也不显示独立“定位预览”。
-  - 右侧“诊断摘要”存在，整数总分显示为 `13 / 15`。
-  - 点击第一条问题卡片后，右侧卡片显示“已定位”。
-  - 左侧原文直接高亮 `I suggest you joins the club.`，没有额外重复预览卡。
-  - 切换“编辑 OCR”后 textarea 可编辑；切回“阅读定位”后恢复阅读态。
-  - 当 OCR 文本不包含问题原句时，显示“未在原文中精确定位，请手动核对”。
-  - 当 OCR 文本不包含问题原句时，问题卡片显示“未精确定位”，原文中不出现高亮 mark。
-  - 桌面 1280 宽度下专注模式默认显示“展开导航”；点击后可展开流程导航。
-  - 浏览器控制台无 error 日志。
+  - `/tasks/task-1/progress` 保留顶部统计卡片，并显示队列操作条和状态 Tabs。
+  - `task-1` 中只有 1 篇可处理作文时不显示“模拟完成全部可处理”。
+  - 点击“需复核”Tab 后只显示需复核作文，且行背景有轻微 rose 强调。
+  - 点击“已完成”Tab 后只显示已完成作文和“查看结果”入口。
+  - 点击“模拟完成下一篇”后，最新完成入口出现，并可进入作文 9 详情页。
+  - `/tasks/task-2/progress` 中点击“模拟完成全部可处理”后，处理中归零，需复核仍保留 1 篇，并显示“查看最新完成作文”。
 
 `app\dist` 是 `npm.cmd run build` 生成目录，通常不应提交。
 
@@ -216,15 +220,16 @@ http://localhost:5173/tasks/task-1/class-review
 
 ## 下一步最合理开发内容
 
-建议下一步优化“批改进度页的队列操作体验”。
+建议下一步先完成当前分支的 GitHub 收尾，然后再进入下一个产品功能。
 
 优先方向：
 
-1. 当手动分组一次提交多篇作文后，进度页应更清晰地区分新入队作文、处理中作文和已完成作文。
-2. 增加轻量批量操作，例如“连续模拟完成 3 篇”或“完成全部待批改 mock 作文”，减少演示时反复点击。
-3. 完成后提供更明确的结果入口，让老师能快速进入刚完成的作文详情。
-4. 保持当前状态 chips 的轻科技微交互，不引入复杂动画。
-5. 为批量完成、最新完成入口、详情页跳转补充聚焦测试和浏览器验证。
+1. 为 `codex/progress-queue-workbench-plan` 创建 PR，检查 `Files changed` 后合并回 `main`。
+2. 合并后删除远端分支，并在本地切回 `main`、`git pull` 到最新。
+3. 下一个产品功能建议在以下方向中二选一：
+   - 继续打磨详情页：做 OCR 原文行内批注 v0.1，而不是直接做图片原卷批注。
+   - 继续打磨工作流：补充进度页完成后的班级总览入口与讲评素材承接。
+4. 真正的原卷图片批注视图建议继续后置，等真实 OCR 坐标或更稳定的 mock 坐标结构准备好后再做。
 
 ## 后续工作注意事项
 
