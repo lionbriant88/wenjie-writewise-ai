@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { getSeverityImpactLabel } from '../utils/gradingDiagnostics'
 import type { ReviewIssueCardItem } from '../utils/reviewIssueItems'
 
@@ -7,6 +6,8 @@ interface IssueCorrectionListProps {
   activeIssueId?: string | null
   activeIssueLocateStatus?: 'idle' | 'located' | 'missing'
   onIssueSelect?: (issueId: string) => void
+  isIssueAdded?: (issue: ReviewIssueCardItem) => boolean
+  onAddIssue?: (issue: ReviewIssueCardItem) => void
 }
 
 const severityTone: Record<ReviewIssueCardItem['severity'], string> = {
@@ -20,13 +21,9 @@ export function IssueCorrectionList({
   activeIssueId,
   activeIssueLocateStatus = 'idle',
   onIssueSelect,
+  isIssueAdded = () => false,
+  onAddIssue,
 }: IssueCorrectionListProps) {
-  const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
-
-  const markAdded = (id: string) => {
-    setAddedIds((current) => new Set(current).add(id))
-  }
-
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -39,7 +36,7 @@ export function IssueCorrectionList({
       </div>
       <div className="mt-4 space-y-3">
         {items.map((item) => {
-          const isAdded = addedIds.has(item.id)
+          const isAdded = isIssueAdded(item)
           const isActive = activeIssueId === item.id
           const locateLabel =
             isActive && activeIssueLocateStatus === 'located'
@@ -94,7 +91,7 @@ export function IssueCorrectionList({
                   type="button"
                   onClick={(event) => {
                     event.stopPropagation()
-                    markAdded(item.id)
+                    onAddIssue?.(item)
                   }}
                   className={`tech-focus inline-flex items-center rounded-lg border px-2.5 py-1 text-xs font-semibold transition ${
                     isAdded

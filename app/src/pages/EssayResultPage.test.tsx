@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it } from 'vitest'
 import { AppStateProvider } from '../context/AppStateContext'
+import { ClassReviewPage } from './ClassReviewPage'
 import { EssayResultPage } from './EssayResultPage'
 
 function renderEssayDetail(path = '/tasks/task-1/essays/task-1-essay-1') {
@@ -11,6 +12,7 @@ function renderEssayDetail(path = '/tasks/task-1/essays/task-1-essay-1') {
       <AppStateProvider>
         <Routes>
           <Route path="/tasks/:taskId/essays/:essayId" element={<EssayResultPage />} />
+          <Route path="/tasks/:taskId/class-review" element={<ClassReviewPage />} />
         </Routes>
       </AppStateProvider>
     </MemoryRouter>,
@@ -72,6 +74,24 @@ describe('EssayResultPage teacher decision workflow', () => {
     await user.click(screen.getAllByRole('button', { name: '加入班级总览' })[0])
 
     expect(screen.getByRole('button', { name: '已加入班级总览' })).toBeInTheDocument()
+  })
+
+  it('adds a language issue to class review materials across the task flow', async () => {
+    const user = userEvent.setup()
+    renderEssayDetail()
+
+    await user.click(screen.getAllByRole('button', { name: '加入班级总览' })[0])
+    await user.click(screen.getByRole('button', { name: '已加入班级总览' }))
+    await user.click(screen.getAllByRole('link', { name: '班级总览' })[0])
+
+    expect(screen.getByRole('heading', { name: '教师精选讲评素材' })).toBeInTheDocument()
+    expect(screen.getByText('共 1 条素材')).toBeInTheDocument()
+    expect(screen.getByText('典型错误')).toBeInTheDocument()
+    expect(screen.getAllByText('I suggest you joins the club.').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('I suggest you join the club.').length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/suggest/).length).toBeGreaterThan(0)
+    expect(screen.getByText('来源：作文 1')).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: /表达提升/ })).not.toBeInTheDocument()
   })
 
   it('shows logic coherence issues in the issue correction module', async () => {

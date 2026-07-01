@@ -2,12 +2,15 @@ import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { createMockFullTextRevision, mockClassInsights, mockEssays, mockGradingResults, mockTasks } from '../data/mockData'
 import type {
   ClassInsight,
+  ClassReviewMaterial,
+  ClassReviewMaterialInput,
   CreateTaskInput,
   Essay,
   GradingResult,
   Task,
   TaskStatus,
 } from '../types'
+import { getClassReviewMaterialKey } from '../utils/classReviewMaterials'
 import { AppStateContext, type ConfirmMockOcrEssayInput } from './appStateContextValue'
 
 const terminalEssayStatuses = new Set<Essay['status']>(['completed', 'manual'])
@@ -147,6 +150,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [essays, setEssays] = useState<Essay[]>(mockEssays)
   const [gradingResults, setGradingResults] = useState<GradingResult[]>(mockGradingResults)
   const [classInsights] = useState<ClassInsight[]>(mockClassInsights)
+  const [classReviewMaterials, setClassReviewMaterials] = useState<ClassReviewMaterial[]>([])
 
   const createTask = useCallback((input: CreateTaskInput) => {
     const id = `task-${Date.now()}`
@@ -289,30 +293,68 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     )
   }, [])
 
+  const addClassReviewMaterial = useCallback((input: ClassReviewMaterialInput) => {
+    const key = getClassReviewMaterialKey(input)
+    const timestamp = new Date().toISOString()
+    const material: ClassReviewMaterial = {
+      ...input,
+      id: `material-${key}`,
+      createdAt: timestamp,
+    }
+
+    setClassReviewMaterials((current) => {
+      const existing = current.find((item) => getClassReviewMaterialKey(item) === key)
+      if (existing) return current
+      return [material, ...current]
+    })
+
+    return material
+  }, [])
+
+  const removeClassReviewMaterial = useCallback((materialId: string) => {
+    setClassReviewMaterials((current) => current.filter((material) => material.id !== materialId))
+  }, [])
+
+  const isClassReviewMaterialAdded = useCallback(
+    (input: ClassReviewMaterialInput) => {
+      const key = getClassReviewMaterialKey(input)
+      return classReviewMaterials.some((material) => getClassReviewMaterialKey(material) === key)
+    },
+    [classReviewMaterials],
+  )
+
   const value = useMemo(
     () => ({
       tasks,
       essays,
       gradingResults,
       classInsights,
+      classReviewMaterials,
       createTask,
       confirmMockOcrEssay,
       updateEssayOcrText,
       markEssayManual,
       completeEssayWithMockResult,
       updateGradingResult,
+      addClassReviewMaterial,
+      removeClassReviewMaterial,
+      isClassReviewMaterialAdded,
     }),
     [
       tasks,
       essays,
       gradingResults,
       classInsights,
+      classReviewMaterials,
       createTask,
       confirmMockOcrEssay,
       updateEssayOcrText,
       markEssayManual,
       completeEssayWithMockResult,
       updateGradingResult,
+      addClassReviewMaterial,
+      removeClassReviewMaterial,
+      isClassReviewMaterialAdded,
     ],
   )
 

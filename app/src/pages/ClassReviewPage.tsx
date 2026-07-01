@@ -1,5 +1,6 @@
 import { useParams } from 'react-router-dom'
 import { ClassInsightPanel } from '../components/ClassInsightPanel'
+import { ClassReviewMaterialsPanel } from '../components/ClassReviewMaterialsPanel'
 import { EmptyState } from '../components/EmptyState'
 import { useAppState } from '../context/useAppState'
 import { AppLayout } from '../layout/AppLayout'
@@ -12,9 +13,10 @@ function formatScore(score: number | null) {
 
 export function ClassReviewPage() {
   const { taskId = '' } = useParams()
-  const { tasks, essays, gradingResults, classInsights } = useAppState()
+  const { tasks, essays, gradingResults, classInsights, classReviewMaterials, removeClassReviewMaterial } = useAppState()
   const task = findTask(tasks, taskId)
   const insight = findClassInsight(classInsights, taskId)
+  const taskMaterials = classReviewMaterials.filter((material) => material.taskId === taskId)
   const stats = getClassOverviewStats(findEssaysByTask(essays, taskId), gradingResults)
   const summaryStats = [
     { label: '作文总数', value: stats.totalEssayCount.toString() },
@@ -90,6 +92,11 @@ export function ClassReviewPage() {
             ))}
           </div>
         </section>
+        <ClassReviewMaterialsPanel
+          taskId={task.id}
+          materials={taskMaterials}
+          onRemoveMaterial={removeClassReviewMaterial}
+        />
         <div className="grid gap-5 xl:grid-cols-2">
           <ClassInsightPanel title="高频语法错误" items={insight.grammarErrors} large />
           <ClassInsightPanel title="高频拼写错误" items={insight.spellingErrors} large />

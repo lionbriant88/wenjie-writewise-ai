@@ -9,6 +9,7 @@ import { FullTextRevisionPanel } from '../components/FullTextRevisionPanel'
 import { IssueCorrectionList } from '../components/IssueCorrectionList'
 import { useAppState } from '../context/useAppState'
 import { AppLayout } from '../layout/AppLayout'
+import { buildClassReviewMaterialFromIssue } from '../utils/classReviewMaterials'
 import { calculateTotalScore, clampDimensionScore, formatConfidence, formatTotalScore } from '../utils/gradingDiagnostics'
 import { buildReviewIssueItems } from '../utils/reviewIssueItems'
 import { findTextMatch } from '../utils/textHighlight'
@@ -89,7 +90,15 @@ function ReviewActionBar({
 
 export function EssayResultPage() {
   const { taskId = '', essayId = '' } = useParams()
-  const { tasks, essays, gradingResults, updateEssayOcrText, updateGradingResult } = useAppState()
+  const {
+    tasks,
+    essays,
+    gradingResults,
+    updateEssayOcrText,
+    updateGradingResult,
+    addClassReviewMaterial,
+    isClassReviewMaterialAdded,
+  } = useAppState()
   const [saveNotice, setSaveNotice] = useState('')
   const [activeIssueId, setActiveIssueId] = useState<string | null>(null)
   const [showOriginalImage, setShowOriginalImage] = useState(false)
@@ -151,6 +160,13 @@ export function EssayResultPage() {
     : findTextMatch(essay.ocrText, activeIssue.original)
       ? 'located'
       : 'missing'
+  const getMaterialInput = (issue: (typeof reviewIssueItems)[number]) =>
+    buildClassReviewMaterialFromIssue({
+      taskId: task.id,
+      essayId: essay.id,
+      essayLabel: essay.essayNumber,
+      issue,
+    })
 
   return (
     <AppLayout
@@ -243,6 +259,8 @@ export function EssayResultPage() {
               activeIssueId={activeIssueId}
               activeIssueLocateStatus={activeIssueLocateStatus}
               onIssueSelect={setActiveIssueId}
+              isIssueAdded={(issue) => isClassReviewMaterialAdded(getMaterialInput(issue))}
+              onAddIssue={(issue) => addClassReviewMaterial(getMaterialInput(issue))}
             />
             <FullTextRevisionPanel revision={result.fullTextRevision} upgrades={result.upgradedExpressions} />
             <div className="rounded-lg border border-slate-200 bg-white p-4">

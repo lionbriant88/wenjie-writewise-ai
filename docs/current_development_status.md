@@ -2,6 +2,31 @@
 
 最后更新：2026-07-01
 
+## 本次新增进展：班级总览讲评素材池闭环 v0.1
+
+- 单篇详情页“问题与修改建议”中的“加入班级总览”已从组件内 mock 反馈升级为真实写入当前任务的 `classReviewMaterials`。
+- 本轮支持两类素材沉淀：
+  - 语言问题 -> `typical_error`，保留原句、推荐改法、讲解、扣分影响、来源作文。
+  - 逻辑问题 -> `logic_issue`，保留原句、逻辑诊断、讲评建议、是否建议教师复核、来源作文。
+- 素材按任务隔离，并按 `taskId + essayId + sourceIssueId` 优先去重；没有 `sourceIssueId` 时用 `taskId + essayId + type + original` 兜底。
+- `IssueCorrectionList` 已保持为受控组件，不直接读写 `AppStateContext`；详情页负责将 issue 映射成素材并判断按钮状态。
+- 班级总览页新增“教师精选讲评素材”模块，位于分数分布之后、高频问题模块之前：
+  - 显示素材总数。
+  - 支持“全部 / 典型错误 / 逻辑问题”筛选。
+  - `expression_upgrade` 类型已在数据层预留，但没有真实表达提升素材时不显示空的“表达提升”Tab。
+  - 每条素材支持“查看来源”和“移除”。
+- 从班级总览移除素材后，回到对应单篇详情页，按钮会恢复为“加入班级总览”。
+- “查看来源”本轮只跳转到 `/tasks/:taskId/essays/:essayId`，不做 query param 自动定位。
+- 本轮未接入真实 AI / OCR、后端数据库、导出、学生端/家长端、复杂课堂播放模式，也未重构上传整理页、批改进度页或详情页整体布局。
+- 本轮验证结果：
+  - `npm.cmd test -- src/utils/classReviewMaterials.test.ts`：1 个测试文件、4 个用例通过。
+  - `npm.cmd test -- src/pages/EssayResultPage.test.tsx`：1 个测试文件、11 个用例通过。
+  - `npm.cmd test -- src/pages/ClassReviewPage.test.tsx`：1 个测试文件、2 个用例通过。
+  - `npm.cmd test -- src/pages/ProgressPage.test.tsx`：1 个测试文件、8 个用例通过。
+  - `npm.cmd test`：21 个测试文件、100 个用例通过。
+  - `npm.cmd run lint`：通过。
+  - `npm.cmd run build`：通过。
+
 ## 本次收尾：批改进度页队列体验 PR 已合并
 
 - PR #3 “优化批改进度页队列体验”已创建并合并回 `main`。
