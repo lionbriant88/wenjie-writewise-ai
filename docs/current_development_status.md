@@ -2,6 +2,17 @@
 
 最后更新：2026-07-01
 
+## 本次收尾：批改进度页队列体验 PR 已合并
+
+- PR #3 “优化批改进度页队列体验”已创建并合并回 `main`。
+- 合并提交：`a8eb68a Merge pull request #3 from lionbriant88/codex/progress-queue-workbench-plan`
+- 本地已切回 `main` 并执行 `git pull`，当前本地 `main` 与 `origin/main` 一致。
+- 合并后已在 `main` 上重新验证：
+  - `npm.cmd test`：20 个测试文件、94 个用例通过。
+  - `npm.cmd run lint`：通过。
+  - `npm.cmd run build`：通过。
+- 远端功能分支 `codex/progress-queue-workbench-plan` 暂未删除，但代码已经完整进入 `main`，不会影响后续从 `main` 新建分支继续开发。
+
 ## 本次新增进展：批改进度页队列体验优化 v2
 
 - 批改进度页保留原有顶部统计卡片，不新增重复统计区域。
@@ -67,12 +78,13 @@
 - 项目根目录：`D:\wenjie-writewise-ai`
 - 前端应用：`D:\wenjie-writewise-ai\app`
 - 远程仓库：`https://github.com/lionbriant88/wenjie-writewise-ai.git`
-- 当前开发分支：`codex/progress-queue-workbench-plan`
-- 当前远端跟踪分支：`origin/codex/progress-queue-workbench-plan`
-- 当前最新提交：`fd2bffe docs: update progress queue status`
-- 当前分支已推送到 GitHub，本地与远端分支一致。
-- `main` 最新已包含 PR #2：`372c31a Merge pull request #2 from lionbriant88/codex/phase1-info-architecture-polish`
-- 当前分支尚未合并回 `main`，下一步应创建 / 更新 PR 并在确认后合并。
+- 当前本地分支：`main`
+- 当前远端跟踪分支：`origin/main`
+- 当前最新主线提交：`a8eb68a Merge pull request #3 from lionbriant88/codex/progress-queue-workbench-plan`
+- 当前本地 `main` 与 `origin/main` 一致，工作区干净。
+- `main` 已包含 PR #2：阶段一信息架构与界面打磨。
+- `main` 已包含 PR #3：批改进度页队列体验优化 v2。
+- 远端功能分支 `codex/progress-queue-workbench-plan` 暂未删除，仅作为已合并历史分支保留。
 
 ## 已完成工作
 
@@ -220,16 +232,18 @@ http://localhost:5173/tasks/task-1/class-review
 
 ## 下一步最合理开发内容
 
-建议下一步先完成当前分支的 GitHub 收尾，然后再进入下一个产品功能。
+当前批改进度页队列体验已经合并进 `main`，下一次开发建议从 `main` 新建新分支开始。
 
 优先方向：
 
-1. 为 `codex/progress-queue-workbench-plan` 创建 PR，检查 `Files changed` 后合并回 `main`。
-2. 合并后删除远端分支，并在本地切回 `main`、`git pull` 到最新。
-3. 下一个产品功能建议在以下方向中二选一：
-   - 继续打磨详情页：做 OCR 原文行内批注 v0.1，而不是直接做图片原卷批注。
-   - 继续打磨工作流：补充进度页完成后的班级总览入口与讲评素材承接。
-4. 真正的原卷图片批注视图建议继续后置，等真实 OCR 坐标或更稳定的 mock 坐标结构准备好后再做。
+1. 优先做详情页的 OCR 原文行内批注 v0.1：
+   - 在左侧 OCR 原文中加入轻量编号批注标记。
+   - 问题卡片与原文标记双向联动。
+   - 支持“只看问题句 / 查看全文”切换。
+   - 保留现有“编辑 OCR”能力。
+   - 不做图片坐标级原卷批注，不接真实 OCR / AI。
+2. 备选方向是继续打磨工作流：补充进度页完成后的班级总览入口与讲评素材承接。
+3. 真正的原卷图片批注视图建议继续后置，等真实 OCR 坐标或更稳定的 mock 坐标结构准备好后再做。
 
 ## 后续工作注意事项
 
