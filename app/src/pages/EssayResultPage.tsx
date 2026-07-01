@@ -10,6 +10,7 @@ import { IssueCorrectionList } from '../components/IssueCorrectionList'
 import { useAppState } from '../context/useAppState'
 import { AppLayout } from '../layout/AppLayout'
 import { calculateTotalScore, clampDimensionScore, formatConfidence, formatTotalScore } from '../utils/gradingDiagnostics'
+import { buildReviewIssueItems } from '../utils/reviewIssueItems'
 import { findTextMatch } from '../utils/textHighlight'
 import { findEssay, findEssaysByTask, findResultByEssayId, findTask } from '../utils/taskLookup'
 
@@ -139,7 +140,12 @@ export function EssayResultPage() {
 
   const fullScore = task.fullScore ?? 15
   const totalScore = calculateTotalScore(result.dimensionScores, fullScore)
-  const activeIssue = result.errorAnnotations.find((issue) => issue.id === activeIssueId) ?? null
+  const reviewIssueItems = buildReviewIssueItems({
+    annotations: result.errorAnnotations,
+    revisions: result.sentenceRevisions,
+    logicIssues: result.fullTextRevision?.logicIssues,
+  })
+  const activeIssue = reviewIssueItems.find((issue) => issue.id === activeIssueId) ?? null
   const activeIssueLocateStatus = !activeIssue
     ? 'idle'
     : findTextMatch(essay.ocrText, activeIssue.original)
@@ -233,8 +239,7 @@ export function EssayResultPage() {
               }}
             />
             <IssueCorrectionList
-              annotations={result.errorAnnotations}
-              revisions={result.sentenceRevisions}
+              items={reviewIssueItems}
               activeIssueId={activeIssueId}
               activeIssueLocateStatus={activeIssueLocateStatus}
               onIssueSelect={setActiveIssueId}

@@ -74,6 +74,25 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.getByRole('button', { name: '已加入班级总览' })).toBeInTheDocument()
   })
 
+  it('shows logic coherence issues in the issue correction module', async () => {
+    const user = userEvent.setup()
+    renderEssayDetail()
+
+    expect(screen.getAllByText(/上下文关联度差/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText('建议教师复核').length).toBeGreaterThan(0)
+    expect(screen.getByText('建议学生补充说明')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: '加入班级总览' }).length).toBeGreaterThan(0)
+
+    await user.click(screen.getByRole('button', { name: /My mother was angry\./ }))
+
+    expect(screen.getByText('已定位')).toBeInTheDocument()
+
+    const addButtons = screen.getAllByRole('button', { name: '加入班级总览' })
+    await user.click(addButtons[addButtons.length - 1])
+
+    expect(screen.getByRole('button', { name: '已加入班级总览' })).toBeInTheDocument()
+  })
+
   it('marks an issue card as selected when the teacher clicks it', async () => {
     const user = userEvent.setup()
     renderEssayDetail()

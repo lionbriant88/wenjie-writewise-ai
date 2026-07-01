@@ -1,30 +1,27 @@
 import { useState } from 'react'
-import type { ErrorAnnotation, SentenceRevision } from '../types'
 import { getSeverityImpactLabel } from '../utils/gradingDiagnostics'
+import type { ReviewIssueCardItem } from '../utils/reviewIssueItems'
 
 interface IssueCorrectionListProps {
-  annotations: ErrorAnnotation[]
-  revisions: SentenceRevision[]
+  items: ReviewIssueCardItem[]
   activeIssueId?: string | null
   activeIssueLocateStatus?: 'idle' | 'located' | 'missing'
   onIssueSelect?: (issueId: string) => void
 }
 
-const severityTone: Record<ErrorAnnotation['severity'], string> = {
+const severityTone: Record<ReviewIssueCardItem['severity'], string> = {
   low: 'bg-slate-100 text-slate-600',
   medium: 'bg-amber-100 text-amber-700',
   high: 'bg-rose-100 text-rose-700',
 }
 
 export function IssueCorrectionList({
-  annotations,
-  revisions,
+  items,
   activeIssueId,
   activeIssueLocateStatus = 'idle',
   onIssueSelect,
 }: IssueCorrectionListProps) {
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
-  const revisionByErrorId = new Map(revisions.map((item) => [item.relatedErrorId, item]))
 
   const markAdded = (id: string) => {
     setAddedIds((current) => new Set(current).add(id))
@@ -41,8 +38,7 @@ export function IssueCorrectionList({
         </div>
       </div>
       <div className="mt-4 space-y-3">
-        {annotations.map((item) => {
-          const revision = revisionByErrorId.get(item.id)
+        {items.map((item) => {
           const isAdded = addedIds.has(item.id)
           const isActive = activeIssueId === item.id
           const locateLabel =
@@ -77,7 +73,7 @@ export function IssueCorrectionList({
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="rounded-full bg-cyan-50 px-2 py-0.5 text-xs font-semibold text-cyan-700">
                     <span className="sr-only">问题类型</span>
-                    问题类型：{item.type}
+                    问题类型：{item.typeLabel}
                   </span>
                   <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${severityTone[item.severity]}`}>
                     <span className="sr-only">扣分影响</span>
@@ -86,6 +82,11 @@ export function IssueCorrectionList({
                   {locateLabel ? (
                     <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${locateTone}`}>
                       {locateLabel}
+                    </span>
+                  ) : null}
+                  {item.needsTeacherReview ? (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                      建议教师复核
                     </span>
                   ) : null}
                 </div>
@@ -109,14 +110,35 @@ export function IssueCorrectionList({
                   <dt className="text-xs font-semibold text-slate-500">原句</dt>
                   <dd className="text-slate-600 line-through">{item.original}</dd>
                 </div>
-                <div className="grid gap-1 md:grid-cols-[72px_minmax(0,1fr)]">
-                  <dt className="text-xs font-semibold text-slate-500">推荐改法</dt>
-                  <dd className="font-medium text-slate-950">{revision?.revised ?? item.suggestion}</dd>
-                </div>
-                <div className="grid gap-1 md:grid-cols-[72px_minmax(0,1fr)]">
-                  <dt className="text-xs font-semibold text-slate-500">原因</dt>
-                  <dd className="text-xs leading-5 text-slate-500">{revision?.note ?? item.explanation}</dd>
-                </div>
+                {item.source === 'language' ? (
+                  <>
+                    <div className="grid gap-1 md:grid-cols-[72px_minmax(0,1fr)]">
+                      <dt className="text-xs font-semibold text-slate-500">推荐改法</dt>
+                      <dd className="font-medium text-slate-950">{item.suggestion}</dd>
+                    </div>
+                    <div className="grid gap-1 md:grid-cols-[72px_minmax(0,1fr)]">
+                      <dt className="text-xs font-semibold text-slate-500">原因</dt>
+                      <dd className="text-xs leading-5 text-slate-500">{item.explanation}</dd>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="grid gap-1 md:grid-cols-[72px_minmax(0,1fr)]">
+                      <dt className="text-xs font-semibold text-slate-500">诊断</dt>
+                      <dd className="text-xs leading-5 text-slate-600">{item.diagnosis}</dd>
+                    </div>
+                    <div className="grid gap-1 md:grid-cols-[72px_minmax(0,1fr)]">
+                      <dt className="text-xs font-semibold text-slate-500">建议处理</dt>
+                      <dd className="font-medium text-slate-950">{item.suggestedActionLabel}</dd>
+                    </div>
+                    {item.conservativeSuggestion ? (
+                      <div className="grid gap-1 md:grid-cols-[72px_minmax(0,1fr)]">
+                        <dt className="text-xs font-semibold text-slate-500">保守建议</dt>
+                        <dd className="text-xs leading-5 text-slate-500">{item.conservativeSuggestion}</dd>
+                      </div>
+                    ) : null}
+                  </>
+                )}
               </dl>
             </div>
           )
