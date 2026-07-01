@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
-import { mockClassInsights, mockEssays, mockGradingResults, mockTasks } from '../data/mockData'
+import { createMockFullTextRevision, mockClassInsights, mockEssays, mockGradingResults, mockTasks } from '../data/mockData'
 import type {
   ClassInsight,
   CreateTaskInput,
@@ -133,6 +133,7 @@ function createMockResultForEssay(essayId: string): GradingResult {
         note: '适合正式建议信表达。',
       },
     ],
+    fullTextRevision: createMockFullTextRevision(essayId),
     overallComment: '文章结构完整，建议继续减少基础语法错误，并补充更具体的行动细节。',
     aiConfidence: 0.84,
     teacherAdjusted: false,

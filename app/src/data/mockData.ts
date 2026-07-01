@@ -125,7 +125,7 @@ const dimensions = (seed: number) => [
   },
 ]
 
-const fullTextRevisionFor = (essayId: string): FullTextRevision => ({
+export const createMockFullTextRevision = (essayId: string): FullTextRevision => ({
   originalText:
     'Dear Peter,\n\nI am glad to hear that you are interested in our reading festival. I suggest you joins the club. We should protect the enviroment when we read in public places. It can make you know many knowledge.\n\nI think you can join the English corner and share your favorite book with classmates. This activity is very important because it will help you learn more words and make friends. My mother was angry.\n\nI hope my advice can help you.',
   correctedText:
@@ -262,7 +262,7 @@ const resultFor = (essayId: string, seed: number): GradingResult => ({
       note: '可用于强调活动意义。',
     },
   ],
-  fullTextRevision: fullTextRevisionFor(essayId),
+  fullTextRevision: createMockFullTextRevision(essayId),
   overallComment:
     '文章结构完整，能回应题目要求。下一步重点是减少基础语法错误，并把笼统表达改成更具体的建议。',
   aiConfidence: 0.86,
