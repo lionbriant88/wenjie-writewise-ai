@@ -18,9 +18,11 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# Local brainstorming artifacts
+.superpowers/
+
 # Editor and OS files
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
-

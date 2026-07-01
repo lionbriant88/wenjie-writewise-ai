@@ -36,6 +36,7 @@ export interface EssayPage {
   pageNumber: number
   quality: 'clear' | 'blurred' | 'dark' | 'tilted' | 'messy'
   accent: string
+  previewUrl?: string
 }
 
 export interface Essay {
@@ -89,6 +90,71 @@ export interface UpgradedExpression {
   note: string
 }
 
+export type FullTextChangeType =
+  | 'grammar'
+  | 'spelling'
+  | 'word_choice'
+  | 'sentence_upgrade'
+  | 'coherence'
+  | 'logic_bridge'
+  | 'delete_suggestion'
+  | 'replace_sentence'
+  | 'reference_clarification'
+
+export type LogicIssueSubType =
+  | 'weak_connection'
+  | 'unclear_logic'
+  | 'missing_cause_effect'
+  | 'unclear_transition'
+  | 'topic_drift'
+  | 'irrelevant_sentence'
+  | 'unclear_reference'
+  | 'missing_motivation'
+  | 'plot_gap'
+
+export type LogicSuggestionAction =
+  | 'add_connector'
+  | 'add_bridge_sentence'
+  | 'delete_sentence'
+  | 'replace_sentence'
+  | 'clarify_reference'
+  | 'ask_student_to_explain'
+
+export interface LogicIssue {
+  id: string
+  sentenceId?: string
+  original: string
+  contextBefore?: string
+  contextAfter?: string
+  subType: LogicIssueSubType
+  severity: 'low' | 'medium' | 'high'
+  diagnosis: string
+  suggestedAction: LogicSuggestionAction
+  conservativeSuggestion?: string
+  polishedSuggestion?: string
+  needsTeacherReview?: boolean
+}
+
+export interface FullTextSentencePair {
+  id: string
+  original: string
+  corrected: string
+  polished: string
+  changeTypes: FullTextChangeType[]
+  explanation: string
+  preservesOriginalIntent: boolean
+  needsTeacherReview?: boolean
+}
+
+export interface FullTextRevision {
+  originalText: string
+  correctedText: string
+  polishedText: string
+  sentencePairs: FullTextSentencePair[]
+  logicIssues: LogicIssue[]
+  logicNotes: string[]
+}
+
 export interface GradingResult {
   id: string
   essayId: string
@@ -97,7 +163,9 @@ export interface GradingResult {
   errorAnnotations: ErrorAnnotation[]
   sentenceRevisions: SentenceRevision[]
   upgradedExpressions: UpgradedExpression[]
+  fullTextRevision?: FullTextRevision
   overallComment: string
+  teacherSuggestion?: string
   aiConfidence: number
   teacherAdjusted: boolean
   createdAt: string

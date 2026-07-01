@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
-import { mockClassInsights, mockEssays, mockGradingResults, mockTasks } from '../data/mockData'
+import { createMockFullTextRevision, mockClassInsights, mockEssays, mockGradingResults, mockTasks } from '../data/mockData'
 import type {
   ClassInsight,
   CreateTaskInput,
@@ -8,7 +8,7 @@ import type {
   Task,
   TaskStatus,
 } from '../types'
-import { AppStateContext } from './appStateContextValue'
+import { AppStateContext, type ConfirmMockOcrEssayInput } from './appStateContextValue'
 
 const terminalEssayStatuses = new Set<Essay['status']>(['completed', 'manual'])
 const activeEssayStatuses = new Set<Essay['status']>(['pending_ocr', 'ocr_running', 'pending_grading', 'grading'])
@@ -133,6 +133,7 @@ function createMockResultForEssay(essayId: string): GradingResult {
         note: '适合正式建议信表达。',
       },
     ],
+    fullTextRevision: createMockFullTextRevision(essayId),
     overallComment: '文章结构完整，建议继续减少基础语法错误，并补充更具体的行动细节。',
     aiConfidence: 0.84,
     teacherAdjusted: false,
@@ -168,6 +169,41 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
     setTasks((current) => [nextTask, ...current])
     return id
+  }, [])
+
+  const confirmMockOcrEssay = useCallback(({ taskId, essayGroups }: ConfirmMockOcrEssayInput) => {
+    const timestamp = new Date().toISOString()
+
+    setEssays((current) => {
+      const taskEssayCount = current.filter((essay) => essay.taskId === taskId).length
+      const createdEssays = essayGroups.map((group, groupIndex): Essay => {
+        const id = `${taskId}-uploaded-${Date.now()}-${groupIndex + 1}`
+        const essayPages = group.pages.map((page, pageIndex) => ({
+          ...page,
+          id: `${id}-page-${pageIndex + 1}`,
+          pageNumber: pageIndex + 1,
+        }))
+
+        return {
+          id,
+          taskId,
+          essayNumber: `作文 ${taskEssayCount + groupIndex + 1}`,
+          pages: essayPages,
+          pageCount: essayPages.length,
+          pageOrder: essayPages.map((page) => page.id),
+          ocrText: group.ocrText,
+          ocrConfidence: 0.88,
+          status: 'pending_grading',
+          exceptionReasons: [],
+          teacherReviewed: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }
+      })
+      const nextEssays = [...current, ...createdEssays]
+      setTasks((currentTasks) => updateTasksFromEssays(currentTasks, taskId, nextEssays, timestamp))
+      return nextEssays
+    })
   }, [])
 
   const updateEssayOcrText = useCallback((essayId: string, text: string) => {
@@ -238,23 +274,20 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [essays, gradingResults],
   )
 
-  const updateGradingResult = useCallback(
-    (essayId: string, patch: Partial<GradingResult>) => {
-      setGradingResults((current) =>
-        current.map((result) =>
-          result.essayId === essayId
-            ? {
-                ...result,
-                ...patch,
-                teacherAdjusted: true,
-                updatedAt: new Date().toISOString(),
-              }
-            : result,
-        ),
-      )
-    },
-    [],
-  )
+  const updateGradingResult = useCallback((essayId: string, patch: Partial<GradingResult>) => {
+    setGradingResults((current) =>
+      current.map((result) =>
+        result.essayId === essayId
+          ? {
+              ...result,
+              ...patch,
+              teacherAdjusted: true,
+              updatedAt: new Date().toISOString(),
+            }
+          : result,
+      ),
+    )
+  }, [])
 
   const value = useMemo(
     () => ({
@@ -263,6 +296,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       gradingResults,
       classInsights,
       createTask,
+      confirmMockOcrEssay,
       updateEssayOcrText,
       markEssayManual,
       completeEssayWithMockResult,
@@ -274,6 +308,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       gradingResults,
       classInsights,
       createTask,
+      confirmMockOcrEssay,
       updateEssayOcrText,
       markEssayManual,
       completeEssayWithMockResult,

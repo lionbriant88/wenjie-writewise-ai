@@ -1,21 +1,62 @@
-# Current Development Status
+# 当前开发状态
 
-Last updated: 2026-06-25
+最后更新：2026-07-01
 
-## Repository State
+## 本次新增进展：单篇详情页全文优化稿与逻辑连贯性诊断
 
-- Project root: `D:\wenjie-writewise-ai`
-- Remote: `https://github.com/lionbriant88/wenjie-writewise-ai.git`
-- Active development branch: `phase-1-static-prototype`
-- Main branch latest commit: `84f2f57 docs: add phase 1 implementation plan`
-- Prototype branch latest commit before this note: `a96f82f fix: align mock revisions with annotations`
+- 单篇作文详情页新增“全文优化稿”模块，默认展示“提升版”，并支持切换：
+  - 纠错版：只做必要语言修正。
+  - 提升版：在保留学生原文思路的前提下优化表达与衔接。
+  - 逐句对照：展示原句、纠错版、提升版、修改类型、说明、是否保留原意和教师复核提示。
+- 逻辑连贯性问题已进入“问题与修改建议”卡片：
+  - 支持上下文关联度差、人物动机缺失、情节衔接断裂等后续可扩展类型。
+  - 对不确定学生原意的内容显示“建议教师复核”，避免 AI 擅自编造原因或情节。
+  - 逻辑问题卡片保留“加入班级总览”和原文定位反馈。
+- 原来的“表达升级建议”不再作为独立主模块展示，已整合到“全文优化稿”中的“本文重点提升点”，并保留加入班级总览反馈。
+- 动态上传 / OCR 后通过“模拟完成下一篇”生成的 mock 批改结果，也会带全文优化稿数据，进入详情页后保持同一套信息架构。
+- 本轮未实现原卷批注视图、图片坐标级批注、真实 AI、真实 OCR 或导出功能。
+- 本轮验证结果：
+  - `npm.cmd test -- src/data/mockData.test.ts src/utils/reviewIssueItems.test.ts src/components/FullTextRevisionPanel.test.tsx src/pages/EssayResultPage.test.tsx src/pages/DetailNavigation.test.tsx`：5 个测试文件、25 个测试通过。
+  - `npm.cmd test -- src/pages/ProgressPage.test.tsx`：1 个测试文件、1 个测试通过。
+  - `npm.cmd test`：19 个测试文件、83 个测试通过。
+  - `npm.cmd run lint`：通过。
+  - `npm.cmd run build`：通过。
+  - 浏览器验证：已打开 `/tasks/task-1/essays/task-1-essay-1`，确认诊断摘要、学生原文、问题卡片、逻辑问题、全文优化稿、纠错版 / 提升版 / 逐句对照、逻辑优化说明、本文重点提升点、AI 总评 / 教师补充建议、返回进度和上一篇 / 下一篇均可见；“表达升级建议”独立模块和“原卷批注视图”未出现。
+  - 浏览器交互验证：切换“逐句对照”后可见是否保留原意与教师复核提示；点击 `My mother was angry.` 逻辑问题卡片后显示“已定位”。
 
-## Completed Work
+## 本次新增进展：上传整理批量分组重构
 
-- Initialized Git and pushed the project to GitHub.
-- Added product and implementation planning docs.
-- Built the first-stage static React prototype in `app`.
-- Implemented these routes:
+- 上传整理页已从旧的“先手动分组，再 OCR”改为批量图片整理流程。
+- 默认模式为“一张一篇”，未合并图片会直接作为单页作文进入 OCR 队列。
+- 新增“每 2 张一篇”模式，系统会按当前上传/显示顺序自动生成作文组；如果最后剩 1 张图片，会保留为单页作文。
+- 新增“混合页数”模式，老师可点击图片进行多选，选择 2 张以上后合并为一篇作文；多页作文卡片内可拆分回单页作文。
+- 上传整理区明确显示提示：“当前按上传顺序排列，自动分组将按此顺序生成作文。”
+- 混合页数模式新增操作引导，支持“知道了”“不再提醒”和“查看操作提示”，其中“不再提醒”写入 `localStorage`。
+- 模拟 OCR 已改为按作文组生成草稿：每个作文组一个 OCR 文本框，确认后按组进入批改队列。
+- 已新增/更新上传页测试，覆盖模式切换、上传顺序提示、固定两页分组、混合页数引导、合并、拆分、按组 OCR 提交。
+- 本次验证结果：
+  - `npm.cmd test -- src/utils/essayGrouping.test.ts`：3 个用例通过。
+  - `npm.cmd test -- src/pages/UploadPage.test.tsx`：12 个用例通过。
+  - `npm.cmd test -- src/pages/ProgressPage.test.tsx`：1 个用例通过。
+  - `npm.cmd test`：17 个测试文件、77 个用例通过。
+  - `npm.cmd run lint`：通过。
+  - `npm.cmd run build`：通过。
+  - 浏览器预览已验证 `/tasks/task-1/upload`：三种分组模式、上传顺序提示、混合页数引导、合并、拆分均可用。
+
+## 仓库状态
+
+- 项目根目录：`D:\wenjie-writewise-ai`
+- 前端应用：`D:\wenjie-writewise-ai\app`
+- 远程仓库：`https://github.com/lionbriant88/wenjie-writewise-ai.git`
+- 当前开发分支：`codex/phase1-info-architecture-polish`
+- 本次记忆更新前的最新实现提交：`0f3f410 feat: submit manual ocr groups`
+
+## 已完成工作
+
+- 已初始化项目并推送到 GitHub。
+- 已建立产品文档、阶段一实现计划和信息架构设计文档。
+- 已完成阶段一静态 React 原型，并持续向阶段二 mock 闭环演进。
+- 当前主要路由：
   - `/`
   - `/tasks/new`
   - `/tasks/:taskId/upload`
@@ -23,55 +64,172 @@ Last updated: 2026-06-25
   - `/tasks/:taskId/exceptions`
   - `/tasks/:taskId/essays/:essayId`
   - `/tasks/:taskId/class-review`
-- Added mock data for tasks, essays, grading results, exceptions, and class review insights.
-- Fixed the mock-data mismatch where error annotations and sentence revision suggestions did not correspond.
-- Added tests to keep mock sentence revisions linked to matching error annotations.
+- 已加入任务、作文、批改结果、异常作文和班级总览洞察的 mock 数据。
+- 已覆盖工作流导航、上传预览、OCR 草稿、OCR 分组、手动作文分组、进度页完成、详情页导航、评分诊断、问题卡片、原文定位高亮、教师评语调整等测试。
 
-## Verification
+## 阶段一与阶段二进展
 
-Latest verified commands:
+### 阶段一：原型与信息架构
+
+- 任务列表、任务内导航、上传整理、批改进度、班级总览、单篇详情页已形成可演示闭环。
+- 视觉风格已调整为简洁、专业、轻科技感，避免营销页式表达。
+- 二级页面返回统一为明确返回路径。
+- 班级总览保留分数分布轻量 CSS 条形图，并整合作文总数、平均分、最高分、最低分。
+- 班级总览分数档按高考 15 分制拆分为 `1-3`、`4-6`、`7-9`、`10-12`、`13-15`。
+- 进度页状态标签支持轻量状态反馈，强化“AI 正在处理”的感知。
+
+### 阶段二：上传 / OCR / 进度 mock 闭环
+
+- 上传页支持选择本地图片，并以真实缩略图进入页面整理器。
+- 图片可排序、删除，本地预览 URL 会被释放。
+- 上传页支持模拟 OCR，生成可编辑 OCR 文本草稿。
+- OCR 确认后可进入批改队列。
+- OCR 分组已支持三种基础模式：
+  - 合并为一篇多页作文。
+  - 按图片拆分为多篇作文。
+  - 手动分组为多篇作文。
+- 手动分组模式已支持：
+  - 新增作文组。
+  - 将图片移动到上一篇或下一篇。
+  - 空组作为临时接收区。
+  - 顶部实时显示确认 OCR 后将提交的作文篇数。
+  - OCR 完成后每个作文组有独立可编辑文本草稿。
+  - 确认 OCR 后按作文组分别进入批改队列。
+- 进度页支持“模拟完成下一篇”，可把队列中的作文推进到已完成并生成 mock 批改结果。
+- 新上传 / OCR 确认的作文可以完成批改，并进入详情页查看 mock 结果。
+- OCR 和 AI 批改仍为 mock；本地上传预览仍只保存在浏览器会话内。
+
+### 阶段二：单篇作文批改结果详情页
+
+- 已把详情页从“报告页”升级为更偏教师决策的工作台。
+- 左侧仍保留“学生作文原文”和“查看原图”入口。
+- 右侧新增紧凑的“诊断摘要”：
+  - 总分改为整数展示，例如 `13 / 15`。
+  - 保留 AI 置信度。
+  - 显示档次判断，例如“优秀”“良好”。
+  - 标出主要扣分项和讲评建议。
+- 分项分数输入支持教师调整：
+  - 合法范围内保留小数。
+  - 超出范围会被夹到维度满分或 0。
+  - 总分实时联动为整数。
+  - 调整后显示轻量反馈，如“分数已更新”“已由教师调整”。
+- “问题与修改建议”已改为教师更容易扫读的问题卡片：
+  - 问题类型。
+  - 扣分影响。
+  - 原句。
+  - 推荐改法。
+  - 原因。
+  - 可加入班级总览。
+- “表达升级建议”保持独立，不与错误修改混在一起。
+- “总评”升级为“AI 总评 / 教师补充建议”：
+  - AI 总评可编辑。
+  - 教师可补充最终反馈。
+  - 保存后显示“已保存教师调整”和“已由教师调整”。
+- 已完成问题卡片到原文定位的轻量闭环：
+  - 右侧“问题与修改建议”卡片可点击选中。
+  - 选中卡片根据真实匹配结果显示“已定位”或“未精确定位”。
+  - 左侧“学生作文原文”默认进入“阅读定位”模式，直接在原文中高亮匹配句。
+  - 左侧可切换到“编辑 OCR”模式，保留 OCR textarea 编辑能力。
+  - 已移除独立“定位预览”卡片，避免左侧原文重复展示。
+  - 匹配失败时显示“未在原文中精确定位，请手动核对”。
+  - “加入班级总览”、查看原图、分数编辑、教师评语保存和上下篇导航保持可用。
+- 已完成详情页专注批改模式第一轮打磨：
+  - 桌面端侧边流程导航默认折叠，保留“展开导航 / 折叠导航”。
+  - 顶部和底部仍保留返回批改进度、上一篇、下一篇。
+  - “问题与修改建议”卡片压缩为更适合扫读的状态/操作行 + 字段行布局。
+  - “表达升级建议”同步压缩为同类信息密度，避免示例卡片过高。
+  - mock 学生原文已覆盖问题句和表达升级原表达，便于演示左侧定位对应关系。
+
+## 最新验证
+
+执行目录：
 
 ```powershell
 cd D:\wenjie-writewise-ai\app
+```
+
+最新验证命令：
+
+```powershell
+npm.cmd test -- src/pages/EssayResultPage.test.tsx
+npm.cmd test -- src/pages/DetailNavigation.test.tsx
+npm.cmd test -- src/pages/UploadPage.test.tsx
+npm.cmd test -- src/pages/ProgressPage.test.tsx
+npm.cmd test -- src/data/mockData.test.ts
+npm.cmd test -- src/utils/textHighlight.test.ts
 npm.cmd test
 npm.cmd run lint
 npm.cmd run build
 ```
 
-Latest results:
+最新结果：
 
-- Tests: 3 test files, 9 tests passed.
-- Lint: passed.
-- Build: passed.
+- 文本高亮工具测试：1 个测试文件，7 个用例通过。
+- 上传页聚焦测试：1 个测试文件，7 个用例通过。
+- 进度页聚焦测试：1 个测试文件，1 个用例通过。
+- 详情页聚焦测试：1 个测试文件，8 个用例通过。
+- 详情页导航测试：1 个测试文件，9 个用例通过。
+- mock 数据一致性测试：1 个测试文件，2 个用例通过。
+- 全量测试：16 个测试文件，69 个用例通过。
+- Lint：通过。
+- Build：通过。
+- 浏览器预览：已在右侧浏览器打开并验证上传页与详情页。
+- 浏览器交互验证：
+  - 上传页存在“手动分组”按钮。
+  - 点击“手动分组”后显示“作文组 1”和“新增作文组”。
+  - 点击“新增作文组”并将 `Page 2` 移到下一篇后，顶部摘要更新为“确认 OCR 后将提交 2 篇作文”。
+  - 手动分组模式下点击“开始模拟 OCR”后，显示“作文组 1 OCR 文本”和“作文组 2 OCR 文本”两个独立文本框。
+  - 编辑两个作文组 OCR 文本后点击“确认 OCR 文本”，页面进入批改进度，并出现 `作文 11`、`作文 12` 两篇待批改作文。
+  - 左侧“学生作文原文”和“查看原图”存在，默认显示“阅读定位 / 编辑 OCR”双模式。
+  - 默认阅读态不显示 OCR textarea，也不显示独立“定位预览”。
+  - 右侧“诊断摘要”存在，整数总分显示为 `13 / 15`。
+  - 点击第一条问题卡片后，右侧卡片显示“已定位”。
+  - 左侧原文直接高亮 `I suggest you joins the club.`，没有额外重复预览卡。
+  - 切换“编辑 OCR”后 textarea 可编辑；切回“阅读定位”后恢复阅读态。
+  - 当 OCR 文本不包含问题原句时，显示“未在原文中精确定位，请手动核对”。
+  - 当 OCR 文本不包含问题原句时，问题卡片显示“未精确定位”，原文中不出现高亮 mark。
+  - 桌面 1280 宽度下专注模式默认显示“展开导航”；点击后可展开流程导航。
+  - 浏览器控制台无 error 日志。
 
-Build output `app\dist` was cleaned after verification and should not be committed.
+`app\dist` 是 `npm.cmd run build` 生成目录，通常不应提交。
 
-## Local Preview
+## 本地预览
 
-The app can be started with:
+启动方式：
 
 ```powershell
 cd D:\wenjie-writewise-ai\app
-npm.cmd run dev -- --host 127.0.0.1
+npm.cmd run dev
 ```
 
-Expected preview URL:
+常用预览地址：
 
 ```text
-http://127.0.0.1:5173/
+http://localhost:5173/
+http://localhost:5173/tasks/task-1/upload
+http://localhost:5173/tasks/task-1/progress
+http://localhost:5173/tasks/task-1/essays/task-1-essay-1
+http://localhost:5173/tasks/task-1/class-review
 ```
 
-If port `5173` is occupied, Vite may choose the next available port.
+如果 `5173` 端口被占用，Vite 可能会自动选择下一个可用端口。
 
-## Next Recommended Step
+## 下一步最合理开发内容
 
-Continue reviewing and polishing the first-stage prototype on `phase-1-static-prototype`.
+建议下一步优化“批改进度页的队列操作体验”。
 
-Suggested next prompt:
+优先方向：
 
-```text
-继续开发文阶 WriteWise AI。请先读取 docs/current_development_status.md，检查 git status、当前分支和最新提交。继续在 phase-1-static-prototype 分支上根据我的反馈优化第一阶段原型。
-```
+1. 当手动分组一次提交多篇作文后，进度页应更清晰地区分新入队作文、处理中作文和已完成作文。
+2. 增加轻量批量操作，例如“连续模拟完成 3 篇”或“完成全部待批改 mock 作文”，减少演示时反复点击。
+3. 完成后提供更明确的结果入口，让老师能快速进入刚完成的作文详情。
+4. 保持当前状态 chips 的轻科技微交互，不引入复杂动画。
+5. 为批量完成、最新完成入口、详情页跳转补充聚焦测试和浏览器验证。
 
-Do not merge into `main` until the prototype is reviewed and accepted.
+## 后续工作注意事项
 
+- 保持产品像软件工作台，而不是营销落地页。
+- 所有视觉优化都要用右侧浏览器验证。
+- 保持简洁、专业、轻科技感。
+- 不要为了“丰富”而堆信息，优先减少教师判断成本。
+- 阶段二仍以 mock 闭环为主，真实 OCR / AI 接口接入可放到后续阶段。
