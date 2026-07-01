@@ -25,10 +25,10 @@ function renderUploadProgressAndDetailFlow() {
   )
 }
 
-function renderProgressFlow() {
+function renderProgressFlow(taskId = 'task-1') {
   render(
     <AppStateProvider>
-      <MemoryRouter initialEntries={['/tasks/task-1/progress']}>
+      <MemoryRouter initialEntries={[`/tasks/${taskId}/progress`]}>
         <Routes>
           <Route path="/tasks/:taskId/progress" element={<ProgressPage />} />
           <Route path="/tasks/:taskId/exceptions" element={<ExceptionsPage />} />
@@ -51,13 +51,20 @@ describe('ProgressPage', () => {
 
     expect(screen.getByText(/当前队列：/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '模拟完成下一篇' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '模拟完成全部可处理' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '模拟完成全部可处理' })).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: '查看异常队列' })).toBeInTheDocument()
 
     expect(screen.getByRole('tab', { name: /全部/ })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /处理中/ })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /需复核/ })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /已完成/ })).toBeInTheDocument()
+  })
+
+  it('shows batch completion only when multiple essays are processable', () => {
+    renderProgressFlow('task-2')
+
+    expect(screen.getByRole('button', { name: '模拟完成下一篇' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '模拟完成全部可处理' })).toBeInTheDocument()
   })
 
   it('filters progress table by review and completed tabs', async () => {

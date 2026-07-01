@@ -193,7 +193,7 @@ export function ProgressPage() {
                   模拟完成下一篇
                 </button>
               ) : null}
-              {processableEssays.length > 0 ? (
+              {processableEssays.length > 1 ? (
                 <button
                   type="button"
                   onClick={completeAllProcessableEssays}
