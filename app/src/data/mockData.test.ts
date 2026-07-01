@@ -2,6 +2,20 @@ import { describe, expect, it } from 'vitest'
 import { mockEssays, mockGradingResults } from './mockData'
 
 describe('mock grading result consistency', () => {
+  it('provides full text revision data for completed mock grading results', () => {
+    for (const result of mockGradingResults) {
+      expect(result.fullTextRevision, `${result.id} should include full text revision`).toBeDefined()
+      expect(result.fullTextRevision?.correctedText).toContain('I suggest you join the club.')
+      expect(result.fullTextRevision?.polishedText).toContain('I suggest that you join the club.')
+      expect(result.fullTextRevision?.sentencePairs.length).toBeGreaterThanOrEqual(3)
+      expect(result.fullTextRevision?.logicNotes.join(' ')).toContain('上下文关联度差')
+      expect(
+        result.fullTextRevision?.logicIssues.some((issue) => issue.needsTeacherReview),
+        `${result.id} should include a teacher-review logic issue`,
+      ).toBe(true)
+    }
+  })
+
   it('links each sentence revision to its matching error annotation', () => {
     for (const result of mockGradingResults) {
       const annotationsById = new Map(
@@ -43,6 +57,20 @@ describe('mock grading result consistency', () => {
           essay?.ocrText,
           `${result.id}/${upgrade.id} expression upgrade should be present in source text`,
         ).toContain(upgrade.original)
+      }
+
+      for (const pair of result.fullTextRevision?.sentencePairs ?? []) {
+        expect(
+          essay?.ocrText,
+          `${result.id}/${pair.id} sentence pair original should be present in source text`,
+        ).toContain(pair.original)
+      }
+
+      for (const logicIssue of result.fullTextRevision?.logicIssues ?? []) {
+        expect(
+          essay?.ocrText,
+          `${result.id}/${logicIssue.id} logic issue original should be present in source text`,
+        ).toContain(logicIssue.original)
       }
     }
   })

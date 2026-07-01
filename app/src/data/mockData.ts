@@ -3,6 +3,7 @@ import type {
   Essay,
   EssayPage,
   EssayStatus,
+  FullTextRevision,
   GradingResult,
   Task,
 } from '../types'
@@ -49,7 +50,7 @@ const essay = (
     pageCount,
     pageOrder: pages.map((essayPage) => essayPage.id),
     ocrText:
-      'Dear Peter,\n\nI am glad to hear that you are interested in our reading festival. I suggest you joins the club. We should protect the enviroment when we read in public places. It can make you know many knowledge.\n\nI think you can join the English corner and share your favorite book with classmates. This activity is very important because it will help you learn more words and make friends.',
+      'Dear Peter,\n\nI am glad to hear that you are interested in our reading festival. I suggest you joins the club. We should protect the enviroment when we read in public places. It can make you know many knowledge.\n\nI think you can join the English corner and share your favorite book with classmates. This activity is very important because it will help you learn more words and make friends. My mother was angry.\n\nI hope my advice can help you.',
     ocrConfidence,
     status,
     exceptionReasons:
@@ -124,6 +125,75 @@ const dimensions = (seed: number) => [
   },
 ]
 
+const fullTextRevisionFor = (essayId: string): FullTextRevision => ({
+  originalText:
+    'Dear Peter,\n\nI am glad to hear that you are interested in our reading festival. I suggest you joins the club. We should protect the enviroment when we read in public places. It can make you know many knowledge.\n\nI think you can join the English corner and share your favorite book with classmates. This activity is very important because it will help you learn more words and make friends. My mother was angry.\n\nI hope my advice can help you.',
+  correctedText:
+    'Dear Peter,\n\nI am glad to hear that you are interested in our reading festival. I suggest you join the club. We should protect the environment when we read in public places. It can help you gain a lot of knowledge.\n\nI think you can join the English corner and share your favorite book with classmates. This activity is very important because it will help you learn more words and make friends. My mother was angry.\n\nI hope my advice can help you.',
+  polishedText:
+    'Dear Peter,\n\nI am glad to hear that you are interested in our reading festival. I suggest that you join the club. We should protect the environment when reading in public places. It can help you gain a lot of knowledge.\n\nFrom my point of view, you can join the English corner and share your favorite book with classmates. This activity is of great importance because it will help you learn more words and make friends.\n\nI hope my advice can help you.',
+  sentencePairs: [
+    {
+      id: `${essayId}-pair-1`,
+      original: 'I suggest you joins the club.',
+      corrected: 'I suggest you join the club.',
+      polished: 'I suggest that you join the club.',
+      changeTypes: ['grammar', 'sentence_upgrade'],
+      explanation: 'suggest 后的宾语从句使用动词原形；提升版让句式更自然。',
+      preservesOriginalIntent: true,
+    },
+    {
+      id: `${essayId}-pair-2`,
+      original: 'We should protect the enviroment when we read in public places.',
+      corrected: 'We should protect the environment when we read in public places.',
+      polished: 'We should protect the environment when reading in public places.',
+      changeTypes: ['spelling', 'sentence_upgrade'],
+      explanation: '修正 environment 拼写，并让时间状语表达更简洁。',
+      preservesOriginalIntent: true,
+    },
+    {
+      id: `${essayId}-pair-3`,
+      original: 'It can make you know many knowledge.',
+      corrected: 'It can help you gain a lot of knowledge.',
+      polished: 'It can help you gain a lot of knowledge.',
+      changeTypes: ['word_choice'],
+      explanation: 'knowledge 是不可数名词，搭配 gain a lot of knowledge 更自然。',
+      preservesOriginalIntent: true,
+    },
+    {
+      id: `${essayId}-pair-4`,
+      original: 'My mother was angry.',
+      corrected: 'My mother was angry.',
+      polished: '提升版暂不保留该句，等待教师复核后决定是否补充原因、改写或删除。',
+      changeTypes: ['coherence', 'replace_sentence'],
+      explanation: '该句与上下文关联度差，不能擅自补写原因，建议教师复核。',
+      preservesOriginalIntent: false,
+      needsTeacherReview: true,
+    },
+  ],
+  logicIssues: [
+    {
+      id: `${essayId}-logic-1`,
+      sentenceId: `${essayId}-pair-4`,
+      original: 'My mother was angry.',
+      contextBefore:
+        'This activity is very important because it will help you learn more words and make friends.',
+      contextAfter: 'I hope my advice can help you.',
+      subType: 'weak_connection',
+      severity: 'high',
+      diagnosis: '上下文关联度差：该句与阅读节建议之间缺少明确关系，读者难以判断学生想表达的原因。',
+      suggestedAction: 'ask_student_to_explain',
+      conservativeSuggestion: '建议学生补充这句话与阅读节的关系，或由教师判断是否删除。',
+      polishedSuggestion: '提升版暂不保留该句，等待教师复核后决定是否补充原因、改写或删除。',
+      needsTeacherReview: true,
+    },
+  ],
+  logicNotes: [
+    '第 4 句与上下文关联度差，提升版没有擅自编造新情节，而是提示教师复核。',
+    '其余修改主要是语法纠错、拼写纠错和表达升级，保留学生原文思路。',
+  ],
+})
+
 const resultFor = (essayId: string, seed: number): GradingResult => ({
   id: `${essayId}-result`,
   essayId,
@@ -192,6 +262,7 @@ const resultFor = (essayId: string, seed: number): GradingResult => ({
       note: '可用于强调活动意义。',
     },
   ],
+  fullTextRevision: fullTextRevisionFor(essayId),
   overallComment:
     '文章结构完整，能回应题目要求。下一步重点是减少基础语法错误，并把笼统表达改成更具体的建议。',
   aiConfidence: 0.86,
