@@ -6,6 +6,8 @@ Upgrade the single-essay detail page from local correction cards into a more com
 
 This round focuses on `全文优化稿` and `逻辑连贯性诊断`. The `原卷批注视图` idea is valid, but it should be deferred to a later round so the detail page does not absorb too much new interaction at once.
 
+Revision note before implementation: keep `原卷批注视图` fully out of this implementation round. This spec may preserve the later direction, but implementation planning should only cover full-text revision and logic/coherence diagnostics.
+
 ## Current Baseline
 
 The single-essay detail page already has:
@@ -31,8 +33,9 @@ Adopt:
 - Add full-text revision data to grading results.
 - Add a `全文优化稿` module to the workstation view.
 - Replace the current visible `表达升级建议` section with `全文优化稿`.
-- Keep `upgradedExpressions` in the data model for compatibility, but make it a source that can feed the full-text revision experience later.
+- Keep `upgradedExpressions` in the data model for compatibility and integrate those items into `全文优化稿` as `本文重点提升点`.
 - Add logic/coherence issues into issue cards.
+- Prefer a display-layer `ReviewIssueCardItem` adapter if directly extending `ErrorAnnotation` would create too many optional fields.
 - Use conservative copy when student intent is unclear.
 
 Defer:
@@ -56,12 +59,14 @@ In scope for the first round:
 - Add one logic issue that requires teacher review.
 - Add a `FullTextRevisionPanel` component.
 - Render `全文优化稿` in the right-side workstation flow where `表达升级建议` currently appears.
+- Show `本文重点提升点` inside `全文优化稿`, using the existing `upgradedExpressions` data.
 - Support three internal views inside the panel:
   - `纠错版`
   - `提升版`
   - `逐句对照`
 - Show `逻辑优化说明` in the panel.
-- Optionally support `复制纠错版` and `复制提升版` if implementation remains simple.
+- Optionally support `复制纠错版` and `复制提升版` if implementation remains simple. Do not let clipboard API compatibility or test cost block the main full-text revision workflow.
+- If `result.fullTextRevision` is missing, the page must not crash. Hide the module or show `暂无全文优化稿`.
 - Preserve all existing detail page behavior.
 
 Out of scope for this round:
@@ -135,6 +140,8 @@ export type LogicIssueSubType =
   | 'topic_drift'
   | 'irrelevant_sentence'
   | 'unclear_reference'
+  | 'missing_motivation'
+  | 'plot_gap'
 
 export type LogicSuggestionAction =
   | 'add_connector'
@@ -175,6 +182,27 @@ Extend `ErrorAnnotation['type']` conservatively:
 type: 'grammar' | 'spelling' | 'word_choice' | 'structure' | 'logic' | 'coherence'
 ```
 
+If direct `ErrorAnnotation` expansion causes too many optional fields, keep the persisted/mock data focused and add a display adapter:
+
+```ts
+export interface ReviewIssueCardItem {
+  id: string
+  source: 'language' | 'logic'
+  typeLabel: string
+  severity: 'low' | 'medium' | 'high'
+  original: string
+  suggestion?: string
+  explanation?: string
+  diagnosis?: string
+  suggestedActionLabel?: string
+  conservativeSuggestion?: string
+  needsTeacherReview?: boolean
+  relatedPageNumber?: number
+}
+```
+
+`IssueCorrectionList` can then receive `ReviewIssueCardItem[]` or a locally adapted list, so language issues and logic issues share the same card surface without forcing all fields into `ErrorAnnotation`.
+
 Do not delete `UpgradedExpression` yet.
 
 ## Mock Data Requirements
@@ -186,6 +214,7 @@ The mock result should include:
 - `sentencePairs`
 - `logicIssues`
 - `logicNotes`
+- `keyImprovements`, or an equivalent UI mapping from existing `upgradedExpressions`
 - At least one grammar correction.
 - At least one spelling correction.
 - At least one word-choice improvement.
@@ -238,6 +267,8 @@ Panel behavior:
 - `提升版`: show moderately polished full text with safer expression and coherence improvements.
 - `逐句对照`: show rows containing original, corrected, polished, change type, explanation, original-intent status, and teacher-review status.
 - `逻辑优化说明`: show below the tab content as a concise list.
+- `本文重点提升点`: show existing expression upgrade suggestions inside this module, not as a separate primary section.
+- Missing data behavior: if `fullTextRevision` is absent, do not throw. Either hide the panel or render a compact `暂无全文优化稿` empty state.
 - If copy buttons are included, show lightweight success feedback after copying.
 
 Design constraints:
@@ -286,7 +317,7 @@ The default detail page remains the workstation view. In the right-side column, 
 
 The existing left-side source panel remains unchanged in this round.
 
-`表达升级建议` is no longer a standalone visible section once `全文优化稿` is present. Its data remains in the model for compatibility and possible future use.
+`表达升级建议` is no longer a standalone visible section once `全文优化稿` is present. Its data remains in the model and should appear as `本文重点提升点` inside the full-text revision module.
 
 ## Deferred Original-Paper Annotation View
 
@@ -311,6 +342,7 @@ Add or update tests for:
 - Full-text revision data keeps source phrases visible in mock OCR text.
 - Detail page renders `全文优化稿`.
 - `全文优化稿` shows the safety description about preserving student intent.
+- Tests should assert stable labels and keywords instead of full long-text equality.
 - Default full-text tab is `提升版`.
 - `纠错版` tab shows corrected text.
 - `提升版` tab shows polished text.
@@ -318,7 +350,9 @@ Add or update tests for:
 - Logic optimization notes are visible.
 - Logic/coherence issue appears in `问题与修改建议`.
 - Logic issue can show `建议教师复核`.
+- Logic issue can show `上下文关联度差`.
 - Clicking a logic issue still attempts source locating.
+- Missing `fullTextRevision` does not crash the detail page.
 - Existing diagnostic summary remains visible.
 - Existing dimension score editing still updates total score.
 - Existing teacher comment saving still works.
@@ -340,13 +374,17 @@ npm.cmd run build
 
 - The single-essay detail page shows `全文优化稿` in the workstation view.
 - `表达升级建议` is not shown as a separate primary section when full-text revision exists.
+- Existing expression upgrade data is still visible inside `全文优化稿` as `本文重点提升点`.
 - Full-text revision includes `纠错版`, `提升版`, and `逐句对照`.
 - The module explicitly says it preserves the student's original intent.
 - The corrected version only performs necessary language corrections.
 - The polished version moderately improves expression and coherence without inventing new content.
 - Sentence-by-sentence comparison explains what changed.
 - Logic/coherence issues can appear in issue cards.
+- Logic issue subtype supports `missing_motivation` and `plot_gap`.
+- Logic suggestion action supports `ask_student_to_explain`.
 - Logic issues can show conservative suggestions and teacher-review prompts.
 - Source locating still works for issue cards when text exists in OCR text.
+- The detail page handles a missing `fullTextRevision` safely.
 - Existing diagnostic scoring, editable dimensions, teacher comments, source panel, original image modal, and navigation remain usable.
 - No real AI generation, real OCR coordinate mapping, export, backend persistence, or original-paper annotation view is added in this round.
