@@ -25,6 +25,18 @@ function essay(id: string, status: EssayStatus): Essay {
 }
 
 describe('progressQueue', () => {
+  it('returns zeroed stats for an empty queue', () => {
+    expect(getProgressQueueStats([])).toEqual({
+      total: 0,
+      completed: 0,
+      processing: 0,
+      reviewNeeded: 0,
+      pending: 0,
+      completionRate: 0,
+      processable: 0,
+    })
+  })
+
   it('calculates queue stats from current essay statuses', () => {
     const essays = [
       essay('作文 1', 'completed'),
