@@ -38,10 +38,11 @@ Do not implement in this plan:
 - Real AI or OCR calls.
 - Backend persistence.
 
-## Task 1: Add Full Text Revision Types
+## Task 1: Add Full Text Revision Types And Mock Data
 
 **Files:**
 - Modify: `app/src/types/index.ts`
+- Modify: `app/src/data/mockData.ts`
 - Test: `app/src/data/mockData.test.ts`
 
 - [ ] **Step 1: Write the failing mock-data type/shape test**
@@ -77,12 +78,12 @@ Expected: fail with a TypeScript or assertion error because `fullTextRevision` i
 
 - [ ] **Step 3: Add full-text revision and logic issue types**
 
-In `app/src/types/index.ts`, replace the `ErrorAnnotation` type union and add the new types near the grading result types:
+In `app/src/types/index.ts`, keep the existing `ErrorAnnotation['type']` union unchanged and add the new full-text revision types near the grading result types:
 
 ```ts
 export interface ErrorAnnotation {
   id: string
-  type: 'grammar' | 'spelling' | 'word_choice' | 'structure' | 'logic' | 'coherence'
+  type: 'grammar' | 'spelling' | 'word_choice' | 'structure'
   original: string
   suggestion: string
   explanation: string
@@ -176,7 +177,7 @@ export interface GradingResult {
 }
 ```
 
-- [ ] **Step 4: Run test to verify current expected failure**
+- [ ] **Step 4: Run test to verify current expected failure, then continue without committing**
 
 Run:
 
@@ -186,16 +187,12 @@ npm.cmd test -- src/data/mockData.test.ts
 
 Expected: fail because mock grading results do not yet populate `fullTextRevision`.
 
-- [ ] **Step 5: Commit**
+Do not commit this red test state. Continue to Task 2 and commit only after the type, mock data, and mock-data tests are all green.
 
-```powershell
-git add app/src/types/index.ts app/src/data/mockData.test.ts
-git commit -m "test: specify full text revision grading data"
-```
-
-## Task 2: Add Mock Full Text Revision Data
+## Task 2: Complete Full Text Revision Mock Data
 
 **Files:**
+- Modify: `app/src/types/index.ts`
 - Modify: `app/src/data/mockData.ts`
 - Modify: `app/src/data/mockData.test.ts`
 
@@ -240,23 +237,37 @@ In `app/src/data/mockData.ts`, update the `ocrText` in the `essay()` helper to i
 
 - [ ] **Step 4: Add a helper for full-text revision mock data**
 
-In `app/src/data/mockData.ts`, add this helper above `resultFor`:
+In `app/src/data/mockData.ts`, add `FullTextRevision` to the existing type import:
 
 ```ts
-const fullTextRevisionFor = (essayId: string) => ({
+import type {
+  ClassInsight,
+  Essay,
+  EssayPage,
+  EssayStatus,
+  FullTextRevision,
+  GradingResult,
+  Task,
+} from '../types'
+```
+
+Then add this helper above `resultFor`:
+
+```ts
+const fullTextRevisionFor = (essayId: string): FullTextRevision => ({
   originalText:
     'Dear Peter,\n\nI am glad to hear that you are interested in our reading festival. I suggest you joins the club. We should protect the enviroment when we read in public places. It can make you know many knowledge.\n\nI think you can join the English corner and share your favorite book with classmates. This activity is very important because it will help you learn more words and make friends. My mother was angry.\n\nI hope my advice can help you.',
   correctedText:
     'Dear Peter,\n\nI am glad to hear that you are interested in our reading festival. I suggest you join the club. We should protect the environment when we read in public places. It can help you gain a lot of knowledge.\n\nI think you can join the English corner and share your favorite book with classmates. This activity is very important because it will help you learn more words and make friends. My mother was angry.\n\nI hope my advice can help you.',
   polishedText:
-    'Dear Peter,\n\nI am glad to hear that you are interested in our reading festival. I suggest that you join the club. We should protect the environment when reading in public places. It can help you gain a lot of knowledge.\n\nFrom my point of view, you can join the English corner and share your favorite book with classmates. This activity is of great importance because it will help you learn more words and make friends. The sentence about your mother needs teacher review because it is not clearly connected to the reading festival.\n\nI hope my advice can help you.',
+    'Dear Peter,\n\nI am glad to hear that you are interested in our reading festival. I suggest that you join the club. We should protect the environment when reading in public places. It can help you gain a lot of knowledge.\n\nFrom my point of view, you can join the English corner and share your favorite book with classmates. This activity is of great importance because it will help you learn more words and make friends.\n\nI hope my advice can help you.',
   sentencePairs: [
     {
       id: `${essayId}-pair-1`,
       original: 'I suggest you joins the club.',
       corrected: 'I suggest you join the club.',
       polished: 'I suggest that you join the club.',
-      changeTypes: ['grammar', 'sentence_upgrade'] as const,
+      changeTypes: ['grammar', 'sentence_upgrade'],
       explanation: 'suggest 后的宾语从句使用动词原形；提升版让句式更自然。',
       preservesOriginalIntent: true,
     },
@@ -265,7 +276,7 @@ const fullTextRevisionFor = (essayId: string) => ({
       original: 'We should protect the enviroment when we read in public places.',
       corrected: 'We should protect the environment when we read in public places.',
       polished: 'We should protect the environment when reading in public places.',
-      changeTypes: ['spelling', 'sentence_upgrade'] as const,
+      changeTypes: ['spelling', 'sentence_upgrade'],
       explanation: '修正 environment 拼写，并让时间状语表达更简洁。',
       preservesOriginalIntent: true,
     },
@@ -274,7 +285,7 @@ const fullTextRevisionFor = (essayId: string) => ({
       original: 'It can make you know many knowledge.',
       corrected: 'It can help you gain a lot of knowledge.',
       polished: 'It can help you gain a lot of knowledge.',
-      changeTypes: ['word_choice'] as const,
+      changeTypes: ['word_choice'],
       explanation: 'knowledge 是不可数名词，搭配 gain a lot of knowledge 更自然。',
       preservesOriginalIntent: true,
     },
@@ -282,8 +293,8 @@ const fullTextRevisionFor = (essayId: string) => ({
       id: `${essayId}-pair-4`,
       original: 'My mother was angry.',
       corrected: 'My mother was angry.',
-      polished: 'The sentence about your mother needs teacher review because it is not clearly connected to the reading festival.',
-      changeTypes: ['coherence', 'replace_sentence'] as const,
+      polished: '提升版暂不保留该句，等待教师复核后决定是否补充原因、改写或删除。',
+      changeTypes: ['coherence', 'replace_sentence'],
       explanation: '该句与上下文关联度差，不能擅自补写原因，建议教师复核。',
       preservesOriginalIntent: false,
       needsTeacherReview: true,
@@ -297,13 +308,13 @@ const fullTextRevisionFor = (essayId: string) => ({
       contextBefore:
         'This activity is very important because it will help you learn more words and make friends.',
       contextAfter: 'I hope my advice can help you.',
-      subType: 'weak_connection' as const,
-      severity: 'high' as const,
+      subType: 'weak_connection',
+      severity: 'high',
       diagnosis: '上下文关联度差：该句与阅读节建议之间缺少明确关系，读者难以判断学生想表达的原因。',
-      suggestedAction: 'ask_student_to_explain' as const,
+      suggestedAction: 'ask_student_to_explain',
       conservativeSuggestion: '建议学生补充这句话与阅读节的关系，或由教师判断是否删除。',
       polishedSuggestion:
-        'The sentence about your mother needs teacher review because it is not clearly connected to the reading festival.',
+        '提升版暂不保留该句，等待教师复核后决定是否补充原因、改写或删除。',
       needsTeacherReview: true,
     },
   ],
@@ -335,7 +346,7 @@ Expected: all mock-data tests pass.
 - [ ] **Step 7: Commit**
 
 ```powershell
-git add app/src/data/mockData.ts app/src/data/mockData.test.ts
+git add app/src/types/index.ts app/src/data/mockData.ts app/src/data/mockData.test.ts
 git commit -m "feat: add mock full text revisions"
 ```
 
@@ -554,10 +565,15 @@ it('shows logic coherence issues in the issue correction module', async () => {
   expect(screen.getByText('上下文关联度差')).toBeInTheDocument()
   expect(screen.getByText('建议教师复核')).toBeInTheDocument()
   expect(screen.getByText('建议学生补充说明')).toBeInTheDocument()
+  expect(screen.getAllByRole('button', { name: '加入班级总览' }).length).toBeGreaterThan(0)
 
   await user.click(screen.getByText('My mother was angry.'))
 
   expect(screen.getByText('已定位')).toBeInTheDocument()
+
+  const addButtons = screen.getAllByRole('button', { name: '加入班级总览' })
+  await user.click(addButtons[addButtons.length - 1])
+  expect(screen.getByRole('button', { name: '已加入班级总览' })).toBeInTheDocument()
 })
 ```
 
@@ -605,6 +621,8 @@ const severityTone: Record<ReviewIssueCardItem['severity'], string> = {
 ```
 
 4. Inside the component, remove `revisionByErrorId` and map over `items`.
+
+Keep the existing `addedIds`, `markAdded`, `加入班级总览`, and `已加入班级总览` interaction for every `ReviewIssueCardItem`, including both language issues and logic issues.
 
 5. Replace type chip text:
 
@@ -668,17 +686,7 @@ In `app/src/pages/EssayResultPage.tsx`:
 import { buildReviewIssueItems } from '../utils/reviewIssueItems'
 ```
 
-2. Add derived issue items after `activeIssueLocateStatus`:
-
-```ts
-  const reviewIssueItems = buildReviewIssueItems({
-    annotations: result.errorAnnotations,
-    revisions: result.sentenceRevisions,
-    logicIssues: result.fullTextRevision?.logicIssues,
-  })
-```
-
-3. Replace active issue lookup:
+2. Replace the existing `activeIssue` and `activeIssueLocateStatus` block with this single derived sequence:
 
 ```ts
   const reviewIssueItems = buildReviewIssueItems({
@@ -687,9 +695,14 @@ import { buildReviewIssueItems } from '../utils/reviewIssueItems'
     logicIssues: result.fullTextRevision?.logicIssues,
   })
   const activeIssue = reviewIssueItems.find((issue) => issue.id === activeIssueId) ?? null
+  const activeIssueLocateStatus = !activeIssue
+    ? 'idle'
+    : findTextMatch(essay.ocrText, activeIssue.original)
+      ? 'located'
+      : 'missing'
 ```
 
-4. Update `IssueCorrectionList` usage:
+3. Update `IssueCorrectionList` usage:
 
 ```tsx
 <IssueCorrectionList
@@ -758,7 +771,7 @@ it('shows full text revision with safe correction and sentence comparison views'
   expect(screen.getByRole('button', { name: '逐句对照' })).toBeInTheDocument()
   expect(screen.getByText('逻辑优化说明')).toBeInTheDocument()
   expect(screen.getByText('本文重点提升点')).toBeInTheDocument()
-  expect(screen.getByText('From my point of view')).toBeInTheDocument()
+  expect(screen.getByText(/From my point of view/)).toBeInTheDocument()
 
   await user.click(screen.getByRole('button', { name: '纠错版' }))
   expect(screen.getByText('I suggest you join the club.')).toBeInTheDocument()
@@ -947,16 +960,13 @@ npm.cmd test -- src/pages/EssayResultPage.test.tsx -t "shows full text revision"
 
 Expected: component empty-state test passes; page test still fails because the panel is not rendered in `EssayResultPage`.
 
-- [ ] **Step 5: Commit**
-
-```powershell
-git add app/src/components/FullTextRevisionPanel.tsx app/src/components/FullTextRevisionPanel.test.tsx app/src/pages/EssayResultPage.test.tsx
-git commit -m "test: specify full text revision panel"
-```
+Do not commit this mixed red/green state. Continue to Task 6 and commit only after the panel is integrated into `EssayResultPage` and the page tests are green.
 
 ## Task 6: Integrate FullTextRevisionPanel Into EssayResultPage
 
 **Files:**
+- Create: `app/src/components/FullTextRevisionPanel.tsx`
+- Create: `app/src/components/FullTextRevisionPanel.test.tsx`
 - Modify: `app/src/pages/EssayResultPage.tsx`
 - Modify: `app/src/pages/EssayResultPage.test.tsx`
 - Modify: `app/src/pages/DetailNavigation.test.tsx`
@@ -1026,7 +1036,7 @@ Expected: both detail-page focused suites pass.
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add app/src/pages/EssayResultPage.tsx app/src/pages/EssayResultPage.test.tsx app/src/pages/DetailNavigation.test.tsx
+git add app/src/components/FullTextRevisionPanel.tsx app/src/components/FullTextRevisionPanel.test.tsx app/src/pages/EssayResultPage.tsx app/src/pages/EssayResultPage.test.tsx app/src/pages/DetailNavigation.test.tsx
 git commit -m "feat: integrate full text revision panel"
 ```
 
@@ -1043,6 +1053,7 @@ Run:
 cd D:\wenjie-writewise-ai\app
 npm.cmd test -- src/data/mockData.test.ts
 npm.cmd test -- src/utils/reviewIssueItems.test.ts
+npm.cmd test -- src/components/FullTextRevisionPanel.test.tsx
 npm.cmd test -- src/pages/EssayResultPage.test.tsx
 npm.cmd test -- src/pages/DetailNavigation.test.tsx
 ```
@@ -1125,4 +1136,5 @@ git commit -m "docs: update full text revision status"
 - [ ] Spec coverage: Full-text revision, logic/coherence diagnostics, missing-data behavior, existing expression upgrade integration, deferred original-paper annotation view, and existing detail flow preservation are all mapped to tasks.
 - [ ] Placeholder scan: The plan avoids unresolved placeholder language in implementation steps.
 - [ ] Type consistency: `FullTextRevision`, `LogicIssue`, `ReviewIssueCardItem`, and `FullTextRevisionPanel` names are consistent across tasks.
+- [ ] Commit boundary check: Tasks 1-2 and Tasks 5-6 commit only after related tests are green; no red-test-only commits are planned.
 - [ ] Scope check: No upload, progress, backend, real AI/OCR, export, or original-paper annotation work is included.
