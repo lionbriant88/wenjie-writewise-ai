@@ -109,6 +109,23 @@ describe('ProgressPage', () => {
     expect(screen.getAllByRole('link', { name: '去复核' }).length).toBeGreaterThan(0)
   })
 
+  it('keeps exception navigation available from the queue operation bar', async () => {
+    const user = userEvent.setup()
+    renderProgressFlow()
+
+    await user.click(screen.getByRole('link', { name: '查看异常队列' }))
+
+    expect(screen.getByRole('heading', { name: '异常复核' })).toBeInTheDocument()
+  })
+
+  it('marks review-needed rows for quick scanning', () => {
+    renderProgressFlow()
+
+    const reviewRows = screen.getAllByTestId('progress-review-row')
+    expect(reviewRows.length).toBeGreaterThan(0)
+    expect(reviewRows[0]).toHaveClass('bg-rose-50')
+  })
+
   it('completes the next queued OCR essay and opens its generated review result', async () => {
     const user = userEvent.setup()
     renderUploadProgressAndDetailFlow()

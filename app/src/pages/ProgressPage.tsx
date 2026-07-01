@@ -309,7 +309,15 @@ export function ProgressPage() {
           <>
             <div className="grid gap-3 md:hidden">
               {filteredEssays.map((essay) => (
-                <article key={essay.id} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                <article
+                  key={essay.id}
+                  className={[
+                    'rounded-lg border p-4 shadow-sm',
+                    essay.status === 'needs_review'
+                      ? 'border-rose-100 bg-rose-50'
+                      : 'border-slate-200 bg-white',
+                  ].join(' ')}
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="font-semibold text-slate-950">{essay.essayNumber}</p>
@@ -338,7 +346,11 @@ export function ProgressPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredEssays.map((essay) => (
-                    <tr key={essay.id}>
+                    <tr
+                      key={essay.id}
+                      data-testid={essay.status === 'needs_review' ? 'progress-review-row' : undefined}
+                      className={essay.status === 'needs_review' ? 'bg-rose-50' : undefined}
+                    >
                       <td className="px-4 py-3 font-medium text-slate-900">{essay.essayNumber}</td>
                       <td className="px-4 py-3 text-slate-600">{essay.pageCount}</td>
                       <td className="px-4 py-3 text-slate-600">{Math.round(essay.ocrConfidence * 100)}%</td>
