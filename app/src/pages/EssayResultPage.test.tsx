@@ -31,9 +31,15 @@ function getIssueCardButton(name: RegExp) {
   return issueCard
 }
 
-function getSourceModeButton(mode: 'read' | 'edit') {
-  const keyword = mode === 'read' ? '阅读' : 'OCR'
-  const modeButton = screen.getAllByRole('button').find((button) => button.textContent?.includes(keyword))
+function getSourceModeButton(mode: 'read' | 'paper' | 'edit') {
+  const keywordsByMode = {
+    read: ['阅读定位', '阅读', '闃呰'],
+    paper: ['原卷视图', '原卷', '鍘熷嵎', '瑙嗗浘'],
+    edit: ['编辑 OCR', '缂栬緫 OCR', 'OCR'],
+  } satisfies Record<typeof mode, string[]>
+  const modeButton = screen
+    .getAllByRole('button')
+    .find((button) => keywordsByMode[mode].some((keyword) => button.textContent?.includes(keyword)))
 
   if (!modeButton) {
     throw new Error(`Source mode button not found: ${mode}`)
@@ -183,8 +189,9 @@ describe('EssayResultPage teacher decision workflow', () => {
     const user = userEvent.setup()
     renderEssayDetail()
 
-    expect(screen.getByRole('button', { name: '阅读定位' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '编辑 OCR' })).toBeInTheDocument()
+    expect(getSourceModeButton('read')).toBeInTheDocument()
+    expect(getSourceModeButton('paper')).toBeInTheDocument()
+    expect(getSourceModeButton('edit')).toBeInTheDocument()
     expect(screen.queryByLabelText('学生作文原文')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('tab', { name: '问题批改' }))
@@ -248,6 +255,45 @@ describe('EssayResultPage teacher decision workflow', () => {
 
     expect(screen.getByText('未精确定位')).toBeInTheDocument()
     expect(screen.getByText('未在原文中精确定位，请手动核对')).toBeInTheDocument()
+  })
+
+  it('shows the original paper view placeholder without text issue markers', async () => {
+    const user = userEvent.setup()
+    const view = renderEssayDetail()
+
+    expect(view.container.querySelector('[data-issue-source="language"]')).not.toBeNull()
+    expect(view.container.querySelector('[data-issue-source="logic"]')).not.toBeNull()
+
+    await user.click(getSourceModeButton('paper'))
+
+    expect(screen.getByRole('heading', { name: '原卷视图 · 阶段三预留' })).toBeInTheDocument()
+    expect(screen.getByText(/卷面定位/)).toBeInTheDocument()
+    expect(screen.getByText(/图片区域高亮/)).toBeInTheDocument()
+    expect(screen.getByText(/批注卡片联动/)).toBeInTheDocument()
+    expect(screen.getByText('暂不支持')).toBeInTheDocument()
+    expect(screen.getByText(/图片批注/)).toBeInTheDocument()
+    expect(screen.getByText(/框选/)).toBeInTheDocument()
+    expect(screen.getByText(/手写痕迹/)).toBeInTheDocument()
+    expect(screen.getByText(/拖拽批注/)).toBeInTheDocument()
+    expect(screen.getByText(/OCR 坐标定位/)).toBeInTheDocument()
+    expect(screen.getByText('Page 1')).toBeInTheDocument()
+    expect(view.container.querySelector('[data-issue-source="language"]')).toBeNull()
+    expect(view.container.querySelector('[data-issue-source="logic"]')).toBeNull()
+    expect(screen.queryByLabelText('学生作文原文')).not.toBeInTheDocument()
+    expect(screen.queryByText(/旁批/)).not.toBeInTheDocument()
+  })
+
+  it('restores OCR reading markers after switching away from original paper view', async () => {
+    const user = userEvent.setup()
+    const view = renderEssayDetail()
+
+    await user.click(getSourceModeButton('paper'))
+    expect(view.container.querySelector('[data-issue-source="language"]')).toBeNull()
+
+    await user.click(getSourceModeButton('read'))
+
+    expect(view.container.querySelector('[data-issue-source="language"]')).not.toBeNull()
+    expect(view.container.querySelector('[data-issue-source="logic"]')).not.toBeNull()
   })
 
   it('saves teacher comment adjustments with lightweight feedback', async () => {
