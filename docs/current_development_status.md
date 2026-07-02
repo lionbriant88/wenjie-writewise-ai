@@ -18,7 +18,7 @@
   - `npm.cmd test`：21 个测试文件、100 个用例通过。
   - `npm.cmd run lint`：通过。
   - `npm.cmd run build`：通过。
-- GitHub：已推送到远端分支 `origin/codex/class-review-materials-v0`，可用于创建 PR。
+- GitHub：`codex/class-review-materials-v0` 已 fast-forward 合并进 `main`，并已推送到 `origin/main`。
 
 ## 本次新增进展：班级总览讲评素材池闭环 v0.1
 
