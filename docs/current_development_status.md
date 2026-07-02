@@ -75,7 +75,7 @@
   - `npm.cmd test`：20 个测试文件、94 个用例通过。
   - `npm.cmd run lint`：通过。
   - `npm.cmd run build`：通过。
-- 远端功能分支 `codex/progress-queue-workbench-plan` 暂未删除，但代码已经完整进入 `main`，不会影响后续从 `main` 新建分支继续开发。
+- 远端功能分支已在后续仓库清理中删除；代码已经完整进入 `main`，不会影响后续从 `main` 新建分支继续开发。
 
 ## 本次新增进展：批改进度页队列体验优化 v2
 
@@ -142,13 +142,14 @@
 - 项目根目录：`D:\wenjie-writewise-ai`
 - 前端应用：`D:\wenjie-writewise-ai\app`
 - 远程仓库：`https://github.com/lionbriant88/wenjie-writewise-ai.git`
-- 当前本地分支：`codex/ocr-clickable-issue-sentences-v0`
-- 当前功能分支基于最新 `main` 开发，已完成本地提交和人工预览确认，准备合并进 `main`。
-- 当前最新主线提交：`ff3b1e1 docs: record main merge status`
-- `main` 已包含班级总览讲评素材池闭环 v0.1；当前功能分支新增 OCR 原文可点击问题句 v0.1。
+- 当前本地分支：`main`
+- 当前远端分支：仅 `origin/main`
+- 当前本地 `main` 与 `origin/main` 一致。
+- 当前最新主线提交：`24989b8 docs: record ocr marker preview approval`
+- `main` 已包含班级总览讲评素材池闭环 v0.1 和 OCR 原文可点击问题句 v0.1。
 - `main` 已包含 PR #2：阶段一信息架构与界面打磨。
 - `main` 已包含 PR #3：批改进度页队列体验优化 v2。
-- 远端功能分支 `codex/progress-queue-workbench-plan` 暂未删除，仅作为已合并历史分支保留。
+- 已合并的本地/远端历史功能分支已清理，当前仓库只保留 `main`。
 
 ## 已完成工作
 
@@ -301,13 +302,13 @@ http://localhost:5173/tasks/task-1/class-review
 
 ## 下一步最合理开发内容
 
-当前正在 `codex/ocr-clickable-issue-sentences-v0` 分支上推进 OCR 原文可点击问题句 v0.1，功能代码和自动化验证已经完成。
+当前 `main` 已包含 OCR 原文可点击问题句 v0.1，GitHub 和本地历史功能分支已清理，仓库处于单主线状态。
 
 优先方向：
 
-1. 合并并推送 `codex/ocr-clickable-issue-sentences-v0` 到 `main`。
-2. 下一轮产品开发建议进入“原卷旁批视图路线设计 v0.2”或“课堂讲评素材整理增强”，但仍不接真实 OCR 坐标、不做复杂图片批注，先明确信息架构和低风险 mock 结构。
-3. 如果继续做原卷旁批，请先定义 mock 坐标结构和图片/文本双视图的信息边界，再进入实现。
+1. 下一轮产品开发建议进入“原卷旁批视图路线设计 v0.2”或“课堂讲评素材整理增强”，但仍不接真实 OCR 坐标、不做复杂图片批注，先明确信息架构和低风险 mock 结构。
+2. 如果继续做原卷旁批，请先定义 mock 坐标结构和图片/文本双视图的信息边界，再进入实现。
+3. 阶段二收尾前建议补一份验收清单，把 mock 闭环中已完成、暂缓和进入阶段三的能力明确分层。
 
 ## 后续工作注意事项
 
