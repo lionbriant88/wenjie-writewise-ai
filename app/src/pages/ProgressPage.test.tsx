@@ -152,7 +152,11 @@ describe('ProgressPage', () => {
     expect(screen.getByText('Confirmed OCR essay text')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '编辑 OCR' }))
     expect(screen.getByDisplayValue('Confirmed OCR essay text')).toBeInTheDocument()
+
+    expect(screen.getByRole('tab', { name: '评分诊断' })).toHaveAttribute('aria-selected', 'true')
+    await user.click(screen.getByRole('tab', { name: '问题批改' }))
     expect(screen.getByText('问题与修改建议')).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: '全文优化' }))
     expect(screen.getByRole('heading', { name: '全文优化稿' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '本文重点提升点' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '表达升级建议' })).not.toBeInTheDocument()

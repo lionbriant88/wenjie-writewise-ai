@@ -62,6 +62,7 @@ describe('ClassReviewPage', () => {
     const user = userEvent.setup()
     renderClassReviewPage('/tasks/task-1/essays/task-1-essay-1')
 
+    await user.click(screen.getByRole('tab', { name: '问题批改' }))
     await user.click(screen.getAllByRole('button', { name: '加入班级总览' })[0])
     const logicIssueCard = screen.getByRole('button', { name: /My mother was angry\./ })
     await user.click(within(logicIssueCard).getByRole('button', { name: '加入班级总览' }))
@@ -94,6 +95,7 @@ describe('ClassReviewPage', () => {
 
     await user.click(materials.getByRole('link', { name: '查看来源' }))
     expect(screen.getByRole('heading', { name: /批改结果/ })).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: '问题批改' }))
     expect(screen.getAllByRole('button', { name: '加入班级总览' }).length).toBeGreaterThan(0)
     expect(screen.getByRole('button', { name: '已加入班级总览' })).toBeInTheDocument()
   })
