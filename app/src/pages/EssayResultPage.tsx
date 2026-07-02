@@ -12,6 +12,7 @@ import { AppLayout } from '../layout/AppLayout'
 import { buildClassReviewMaterialFromIssue } from '../utils/classReviewMaterials'
 import { calculateTotalScore, clampDimensionScore, formatConfidence, formatTotalScore } from '../utils/gradingDiagnostics'
 import { buildReviewIssueItems } from '../utils/reviewIssueItems'
+import { buildSourceIssueMarkers } from '../utils/sourceIssueMarkers'
 import { findTextMatch } from '../utils/textHighlight'
 import { findEssay, findEssaysByTask, findResultByEssayId, findTask } from '../utils/taskLookup'
 
@@ -164,6 +165,7 @@ export function EssayResultPage() {
     revisions: result.sentenceRevisions,
     logicIssues: result.fullTextRevision?.logicIssues,
   })
+  const sourceIssueMarkers = buildSourceIssueMarkers(essay.ocrText, reviewIssueItems)
   const activeIssue = reviewIssueItems.find((issue) => issue.id === activeIssueId) ?? null
   const activeIssueLocateStatus = !activeIssue
     ? 'idle'
@@ -222,6 +224,12 @@ export function EssayResultPage() {
             <EssaySourcePanel
               essay={essay}
               activeHighlightText={activeIssue?.original}
+              issueMarkers={sourceIssueMarkers}
+              activeIssueId={activeIssueId}
+              onIssueMarkerSelect={(issueId) => {
+                setActiveIssueId(issueId)
+                setActiveDetailTab('issues')
+              }}
               onOcrTextChange={updateEssayOcrText}
               onViewOriginalImage={() => setShowOriginalImage(true)}
             />

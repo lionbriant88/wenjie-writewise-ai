@@ -2,11 +2,16 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Image } from 'lucide-react'
 import type { Essay } from '../types'
 import { formatConfidence } from '../utils/gradingDiagnostics'
+import type { SourceIssueMarker } from '../utils/sourceIssueMarkers'
+import { splitTextByIssueMarkers } from '../utils/sourceIssueMarkers'
 import { findTextMatch, splitTextByMatch } from '../utils/textHighlight'
 
 interface EssaySourcePanelProps {
   essay: Essay
   activeHighlightText?: string
+  issueMarkers?: SourceIssueMarker[]
+  activeIssueId?: string | null
+  onIssueMarkerSelect?: (issueId: string) => void
   onOcrTextChange: (essayId: string, nextText: string) => void
   onViewOriginalImage: () => void
 }
@@ -14,6 +19,9 @@ interface EssaySourcePanelProps {
 export function EssaySourcePanel({
   essay,
   activeHighlightText,
+  issueMarkers = [],
+  activeIssueId,
+  onIssueMarkerSelect,
   onOcrTextChange,
   onViewOriginalImage,
 }: EssaySourcePanelProps) {
@@ -24,11 +32,13 @@ export function EssaySourcePanel({
     [activeHighlightText, essay.ocrText],
   )
   const highlightParts = useMemo(() => splitTextByMatch(essay.ocrText, match), [essay.ocrText, match])
+  const markerParts = useMemo(() => splitTextByIssueMarkers(essay.ocrText, issueMarkers), [essay.ocrText, issueMarkers])
+  const hasIssueMarkers = issueMarkers.length > 0
   const shouldShowFallback = Boolean(activeHighlightText) && !match
 
   useEffect(() => {
     highlightedRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
-  }, [match])
+  }, [activeIssueId, match])
 
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-4">
@@ -77,19 +87,51 @@ export function EssaySourcePanel({
             </p>
           ) : null}
           <p className="whitespace-pre-wrap text-sm leading-7 text-slate-800">
-            {highlightParts.map((part, index) =>
-              part.highlighted ? (
-                <mark
-                  key={`${part.text}-${index}`}
-                  ref={highlightedRef}
-                  className="rounded bg-amber-100 px-1 font-semibold text-amber-800"
-                >
-                  {part.text}
-                </mark>
-              ) : (
-                <span key={`${part.text}-${index}`}>{part.text}</span>
-              ),
-            )}
+            {hasIssueMarkers
+              ? markerParts.map((part, index) => {
+                  if (!part.marker) {
+                    return <span key={`${part.text}-${index}`}>{part.text}</span>
+                  }
+
+                  const marker = part.marker
+                  const isActive = marker.issueId === activeIssueId
+                  const markerTone =
+                    marker.source === 'logic'
+                      ? isActive
+                        ? 'bg-amber-100 text-amber-950 ring-1 ring-amber-200'
+                        : 'bg-amber-50 text-slate-800 hover:bg-amber-100'
+                      : isActive
+                        ? 'bg-cyan-100 text-cyan-950 ring-1 ring-cyan-200'
+                        : 'bg-cyan-50 text-slate-800 hover:bg-cyan-100'
+
+                  return (
+                    <button
+                      key={`${part.text}-${index}`}
+                      ref={isActive ? highlightedRef : undefined}
+                      type="button"
+                      aria-label={`查看问题：${marker.matchedText}`}
+                      data-active={isActive ? 'true' : 'false'}
+                      data-issue-source={marker.source}
+                      onClick={() => onIssueMarkerSelect?.(marker.issueId)}
+                      className={`tech-focus inline rounded-sm px-0.5 text-left align-baseline transition ${markerTone}`}
+                    >
+                      {part.text}
+                    </button>
+                  )
+                })
+              : highlightParts.map((part, index) =>
+                  part.highlighted ? (
+                    <mark
+                      key={`${part.text}-${index}`}
+                      ref={highlightedRef}
+                      className="rounded bg-amber-100 px-1 font-semibold text-amber-800"
+                    >
+                      {part.text}
+                    </mark>
+                  ) : (
+                    <span key={`${part.text}-${index}`}>{part.text}</span>
+                  ),
+                )}
           </p>
         </div>
       )}

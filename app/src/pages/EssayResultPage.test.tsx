@@ -7,7 +7,7 @@ import { ClassReviewPage } from './ClassReviewPage'
 import { EssayResultPage } from './EssayResultPage'
 
 function renderEssayDetail(path = '/tasks/task-1/essays/task-1-essay-1') {
-  render(
+  return render(
     <MemoryRouter initialEntries={[path]}>
       <AppStateProvider>
         <Routes>
@@ -17,6 +17,29 @@ function renderEssayDetail(path = '/tasks/task-1/essays/task-1-essay-1') {
       </AppStateProvider>
     </MemoryRouter>,
   )
+}
+
+function getIssueCardButton(name: RegExp) {
+  const issueCard = screen
+    .getAllByRole('button', { name })
+    .find((button) => button.getAttribute('aria-pressed') !== null)
+
+  if (!issueCard) {
+    throw new Error(`Issue card not found: ${name}`)
+  }
+
+  return issueCard
+}
+
+function getSourceModeButton(mode: 'read' | 'edit') {
+  const keyword = mode === 'read' ? '阅读' : 'OCR'
+  const modeButton = screen.getAllByRole('button').find((button) => button.textContent?.includes(keyword))
+
+  if (!modeButton) {
+    throw new Error(`Source mode button not found: ${mode}`)
+  }
+
+  return modeButton
 }
 
 describe('EssayResultPage teacher decision workflow', () => {
@@ -113,7 +136,7 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.getByText('建议学生补充说明')).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: '加入班级总览' }).length).toBeGreaterThan(0)
 
-    await user.click(screen.getByRole('button', { name: /My mother was angry\./ }))
+    await user.click(getIssueCardButton(/My mother was angry\./))
 
     expect(screen.getByText('已定位')).toBeInTheDocument()
 
@@ -151,7 +174,7 @@ describe('EssayResultPage teacher decision workflow', () => {
     renderEssayDetail()
 
     await user.click(screen.getByRole('tab', { name: '问题批改' }))
-    await user.click(screen.getByText('I suggest you joins the club.'))
+    await user.click(getIssueCardButton(/I suggest you joins the club\./))
 
     expect(screen.getByText('已定位')).toBeInTheDocument()
   })
@@ -165,7 +188,7 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.queryByLabelText('学生作文原文')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('tab', { name: '问题批改' }))
-    await user.click(screen.getByText('I suggest you joins the club.'))
+    await user.click(getIssueCardButton(/I suggest you joins the club\./))
 
     expect(screen.queryByText('定位预览')).not.toBeInTheDocument()
     expect(screen.getAllByText('I suggest you joins the club.').length).toBeGreaterThanOrEqual(2)
@@ -173,6 +196,43 @@ describe('EssayResultPage teacher decision workflow', () => {
     await user.click(screen.getByRole('button', { name: '编辑 OCR' }))
 
     expect(screen.getByLabelText('学生作文原文')).toBeInTheDocument()
+  })
+
+  it('opens the issue correction tab and selects a card when a marked source sentence is clicked', async () => {
+    const user = userEvent.setup()
+    const view = renderEssayDetail()
+
+    const languageMarker = view.container.querySelector('[data-issue-source="language"]')
+
+    expect(languageMarker).not.toBeNull()
+
+    await user.click(languageMarker as HTMLElement)
+
+    expect(view.container.querySelector('[data-issue-source="language"]')).toHaveAttribute('data-active', 'true')
+    expect(
+      screen
+        .getAllByRole('button', { name: /I suggest you joins the club\./ })
+        .some((button) => button.getAttribute('aria-pressed') === 'true'),
+    ).toBe(true)
+  })
+
+  it('hides source issue markers while editing OCR and recalculates them in read mode', async () => {
+    const user = userEvent.setup()
+    const view = renderEssayDetail()
+
+    expect(view.container.querySelector('[data-issue-source="language"]')).not.toBeNull()
+    expect(view.container.querySelector('[data-issue-source="logic"]')).not.toBeNull()
+
+    await user.click(getSourceModeButton('edit'))
+
+    expect(view.container.querySelector('[data-issue-source="language"]')).toBeNull()
+    expect(view.container.querySelector('[data-issue-source="logic"]')).toBeNull()
+
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'My mother was angry.' } })
+    await user.click(getSourceModeButton('read'))
+
+    expect(view.container.querySelector('[data-issue-source="language"]')).toBeNull()
+    expect(view.container.querySelector('[data-issue-source="logic"]')).not.toBeNull()
   })
 
   it('shows fallback feedback when selected issue text is not found in the source', async () => {
