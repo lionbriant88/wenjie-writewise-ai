@@ -5,6 +5,25 @@ import { formatConfidence } from '../utils/gradingDiagnostics'
 import type { SourceIssueMarker } from '../utils/sourceIssueMarkers'
 import { splitTextByIssueMarkers } from '../utils/sourceIssueMarkers'
 import { findTextMatch, splitTextByMatch } from '../utils/textHighlight'
+import { EssayPageSorter } from './EssayPageSorter'
+
+type SourcePanelMode = 'read' | 'paper' | 'edit'
+
+const SOURCE_PANEL_MODE_OPTIONS: Array<{ mode: SourcePanelMode; label: string }> = [
+  { mode: 'read', label: '阅读定位' },
+  { mode: 'paper', label: '原卷视图' },
+  { mode: 'edit', label: '编辑 OCR' },
+]
+
+const UNSUPPORTED_PAPER_FEATURES = [
+  '图片批注',
+  '框选',
+  '手写痕迹',
+  '拖拽批注',
+  '自由绘图',
+  'OCR 坐标定位',
+  '图片与问题卡片联动',
+]
 
 interface EssaySourcePanelProps {
   essay: Essay
@@ -25,7 +44,7 @@ export function EssaySourcePanel({
   onOcrTextChange,
   onViewOriginalImage,
 }: EssaySourcePanelProps) {
-  const [mode, setMode] = useState<'read' | 'edit'>('read')
+  const [mode, setMode] = useState<SourcePanelMode>('read')
   const highlightedRef = useRef<HTMLElement | null>(null)
   const match = useMemo(
     () => findTextMatch(essay.ocrText, activeHighlightText ?? ''),
@@ -62,16 +81,16 @@ export function EssaySourcePanel({
         </button>
       </div>
       <div className="mt-4 inline-flex rounded-lg border border-slate-200 bg-slate-100 p-1">
-        {(['read', 'edit'] as const).map((modeOption) => (
+        {SOURCE_PANEL_MODE_OPTIONS.map((modeOption) => (
           <button
-            key={modeOption}
+            key={modeOption.mode}
             type="button"
-            onClick={() => setMode(modeOption)}
+            onClick={() => setMode(modeOption.mode)}
             className={`tech-focus rounded-md px-3 py-1.5 text-xs font-semibold transition ${
-              mode === modeOption ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+              mode === modeOption.mode ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-900'
             }`}
           >
-            {modeOption === 'read' ? '阅读定位' : '编辑 OCR'}
+            {modeOption.label}
           </button>
         ))}
       </div>
@@ -82,6 +101,35 @@ export function EssaySourcePanel({
           onChange={(event) => onOcrTextChange(essay.id, event.target.value)}
           className="mt-4 min-h-[320px] w-full resize-y rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-800 outline-none focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100"
         />
+      ) : mode === 'paper' ? (
+        <div className="mt-4 max-h-[520px] overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <div className="mb-4">
+            <h4 className="text-sm font-semibold text-slate-950">原卷视图 · 阶段三预留</h4>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              后续将接入卷面定位、图片区域高亮和批注卡片联动能力；当前先保留原卷预览入口。
+            </p>
+          </div>
+          {essay.pages.length > 0 ? (
+            <EssayPageSorter pages={essay.pages} />
+          ) : (
+            <p className="rounded-md border border-dashed border-slate-200 bg-white px-3 py-4 text-sm text-slate-500">
+              当前作文暂无原卷图片预览。后续接入 OCR 坐标后，将在此处展示原卷批阅能力。
+            </p>
+          )}
+          <div className="mt-4">
+            <p className="text-xs font-semibold text-slate-500">暂不支持</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {UNSUPPORTED_PAPER_FEATURES.map((feature) => (
+                <span
+                  key={feature}
+                  className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600"
+                >
+                  {feature}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
       ) : (
         <div className="mt-4 max-h-[520px] overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-4">
           {shouldShowFallback ? (
