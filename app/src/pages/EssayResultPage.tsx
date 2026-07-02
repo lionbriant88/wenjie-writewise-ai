@@ -15,6 +15,15 @@ import { buildReviewIssueItems } from '../utils/reviewIssueItems'
 import { findTextMatch } from '../utils/textHighlight'
 import { findEssay, findEssaysByTask, findResultByEssayId, findTask } from '../utils/taskLookup'
 
+type EssayDetailTab = 'scoring' | 'issues' | 'revision' | 'feedback'
+
+const essayDetailTabs: Array<{ id: EssayDetailTab; label: string }> = [
+  { id: 'scoring', label: '评分诊断' },
+  { id: 'issues', label: '问题批改' },
+  { id: 'revision', label: '全文优化' },
+  { id: 'feedback', label: '教师反馈' },
+]
+
 function ReviewSwitchLink({
   direction,
   essayId,
@@ -100,6 +109,7 @@ export function EssayResultPage() {
     isClassReviewMaterialAdded,
   } = useAppState()
   const [saveNotice, setSaveNotice] = useState('')
+  const [activeDetailTab, setActiveDetailTab] = useState<EssayDetailTab>('scoring')
   const [activeIssueId, setActiveIssueId] = useState<string | null>(null)
   const [showOriginalImage, setShowOriginalImage] = useState(false)
   const saveTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
@@ -235,76 +245,110 @@ export function EssayResultPage() {
                 ) : null}
               </div>
             ) : null}
-            <DiagnosticScoreSummary
-              aiConfidence={result.aiConfidence}
-              dimensions={result.dimensionScores}
-              fullScore={fullScore}
-              issues={result.errorAnnotations}
-              onDimensionScoreChange={(dimensionId, nextScore) => {
-                const nextDimensions = result.dimensionScores.map((dimension) =>
-                  dimension.id === dimensionId
-                    ? { ...dimension, score: clampDimensionScore(nextScore, dimension.maxScore) }
-                    : dimension,
-                )
-
-                updateGradingResult(essay.id, {
-                  dimensionScores: nextDimensions,
-                  totalScore: calculateTotalScore(nextDimensions, fullScore),
-                })
-                showSaveNotice('分数已更新')
-              }}
-            />
-            <IssueCorrectionList
-              items={reviewIssueItems}
-              activeIssueId={activeIssueId}
-              activeIssueLocateStatus={activeIssueLocateStatus}
-              onIssueSelect={setActiveIssueId}
-              isIssueAdded={(issue) => isClassReviewMaterialAdded(getMaterialInput(issue))}
-              onAddIssue={(issue) => addClassReviewMaterial(getMaterialInput(issue))}
-            />
-            <FullTextRevisionPanel revision={result.fullTextRevision} upgrades={result.upgradedExpressions} />
-            <div className="rounded-lg border border-slate-200 bg-white p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h3 className="font-semibold text-slate-950">AI 总评 / 教师补充建议</h3>
-                  <p className="mt-1 text-xs text-slate-500">老师可在 AI 总评基础上补充最终反馈。</p>
-                </div>
-                {result.teacherAdjusted ? (
-                  <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
-                    已由教师调整
-                  </span>
-                ) : null}
-              </div>
-              <label className="mt-4 block">
-                <span className="text-xs font-semibold text-slate-600">AI 总评</span>
-                <textarea
-                  aria-label="AI 总评"
-                  value={result.overallComment}
-                  onChange={(event) => updateGradingResult(essay.id, { overallComment: event.target.value })}
-                  className="mt-2 min-h-28 w-full rounded-lg border border-slate-200 p-3 text-sm leading-6 text-slate-700"
-                />
-              </label>
-              <label className="mt-3 block">
-                <span className="text-xs font-semibold text-slate-600">教师补充建议</span>
-                <textarea
-                  aria-label="教师补充建议"
-                  value={result.teacherSuggestion ?? ''}
-                  onChange={(event) => updateGradingResult(essay.id, { teacherSuggestion: event.target.value })}
-                  className="mt-2 min-h-24 w-full rounded-lg border border-slate-200 p-3 text-sm leading-6 text-slate-700"
-                  placeholder="例如：建议先复习 suggest 后接动词原形，再重写第二段。"
-                />
-              </label>
-              <button
-                type="button"
-                onClick={() => {
-                  updateGradingResult(essay.id, { teacherAdjusted: true })
-                  showSaveNotice('已保存教师调整')
-                }}
-                className="tech-focus mt-3 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
-              >
-                保存调整
-              </button>
+            <div
+              role="tablist"
+              aria-label="单篇批改内容"
+              className="flex flex-wrap gap-1 rounded-lg border border-slate-200 bg-white p-1 shadow-sm"
+            >
+              {essayDetailTabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeDetailTab === tab.id}
+                  onClick={() => setActiveDetailTab(tab.id)}
+                  className={`tech-focus rounded-md px-4 py-2 text-sm font-semibold transition ${
+                    activeDetailTab === tab.id
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:bg-slate-50 hover:text-slate-950'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
             </div>
+
+            {activeDetailTab === 'scoring' ? (
+              <DiagnosticScoreSummary
+                aiConfidence={result.aiConfidence}
+                dimensions={result.dimensionScores}
+                fullScore={fullScore}
+                issues={result.errorAnnotations}
+                onDimensionScoreChange={(dimensionId, nextScore) => {
+                  const nextDimensions = result.dimensionScores.map((dimension) =>
+                    dimension.id === dimensionId
+                      ? { ...dimension, score: clampDimensionScore(nextScore, dimension.maxScore) }
+                      : dimension,
+                  )
+
+                  updateGradingResult(essay.id, {
+                    dimensionScores: nextDimensions,
+                    totalScore: calculateTotalScore(nextDimensions, fullScore),
+                  })
+                  showSaveNotice('分数已更新')
+                }}
+              />
+            ) : null}
+
+            {activeDetailTab === 'issues' ? (
+              <IssueCorrectionList
+                items={reviewIssueItems}
+                activeIssueId={activeIssueId}
+                activeIssueLocateStatus={activeIssueLocateStatus}
+                onIssueSelect={setActiveIssueId}
+                isIssueAdded={(issue) => isClassReviewMaterialAdded(getMaterialInput(issue))}
+                onAddIssue={(issue) => addClassReviewMaterial(getMaterialInput(issue))}
+              />
+            ) : null}
+
+            {activeDetailTab === 'revision' ? (
+              <FullTextRevisionPanel revision={result.fullTextRevision} upgrades={result.upgradedExpressions} />
+            ) : null}
+
+            {activeDetailTab === 'feedback' ? (
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="font-semibold text-slate-950">AI 总评 / 教师补充建议</h3>
+                    <p className="mt-1 text-xs text-slate-500">老师可在 AI 总评基础上补充最终反馈。</p>
+                  </div>
+                  {result.teacherAdjusted ? (
+                    <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
+                      已由教师调整
+                    </span>
+                  ) : null}
+                </div>
+                <label className="mt-4 block">
+                  <span className="text-xs font-semibold text-slate-600">AI 总评</span>
+                  <textarea
+                    aria-label="AI 总评"
+                    value={result.overallComment}
+                    onChange={(event) => updateGradingResult(essay.id, { overallComment: event.target.value })}
+                    className="mt-2 min-h-28 w-full rounded-lg border border-slate-200 p-3 text-sm leading-6 text-slate-700"
+                  />
+                </label>
+                <label className="mt-3 block">
+                  <span className="text-xs font-semibold text-slate-600">教师补充建议</span>
+                  <textarea
+                    aria-label="教师补充建议"
+                    value={result.teacherSuggestion ?? ''}
+                    onChange={(event) => updateGradingResult(essay.id, { teacherSuggestion: event.target.value })}
+                    className="mt-2 min-h-24 w-full rounded-lg border border-slate-200 p-3 text-sm leading-6 text-slate-700"
+                    placeholder="例如：建议先复习 suggest 后接动词原形，再重写第二段。"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    updateGradingResult(essay.id, { teacherAdjusted: true })
+                    showSaveNotice('已保存教师调整')
+                  }}
+                  className="tech-focus mt-3 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
+                >
+                  保存调整
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
         <ReviewActionBar

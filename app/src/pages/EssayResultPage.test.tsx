@@ -23,6 +23,9 @@ describe('EssayResultPage teacher decision workflow', () => {
   it('shows a compact diagnostic summary with editable dimension scores', () => {
     renderEssayDetail()
 
+    expect(screen.getByRole('tab', { name: '评分诊断' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: '问题批改' })).toHaveAttribute('aria-selected', 'false')
+    expect(screen.getByText('学生作文原文')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '诊断摘要' })).toBeInTheDocument()
     expect(screen.getByText('AI 置信度')).toBeInTheDocument()
     expect(screen.getByText('主要扣分项')).toBeInTheDocument()
@@ -32,6 +35,9 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.getByText('/ 15')).toBeInTheDocument()
     expect(screen.getByRole('spinbutton', { name: /语言准确性/ })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '分项评分' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '问题与修改建议' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '全文优化稿' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('教师补充建议')).not.toBeInTheDocument()
   })
 
   it('syncs dimension score edits with integer total score and five-band grade', async () => {
@@ -64,6 +70,7 @@ describe('EssayResultPage teacher decision workflow', () => {
     const user = userEvent.setup()
     renderEssayDetail()
 
+    await user.click(screen.getByRole('tab', { name: '问题批改' }))
     expect(screen.getByRole('heading', { name: '问题与修改建议' })).toBeInTheDocument()
     expect(screen.getAllByText('问题类型')[0]).toBeInTheDocument()
     expect(screen.getAllByText('扣分影响')[0]).toBeInTheDocument()
@@ -80,9 +87,11 @@ describe('EssayResultPage teacher decision workflow', () => {
     const user = userEvent.setup()
     renderEssayDetail()
 
+    await user.click(screen.getByRole('tab', { name: '问题批改' }))
     await user.click(screen.getAllByRole('button', { name: '加入班级总览' })[0])
     await user.click(screen.getByRole('button', { name: '已加入班级总览' }))
     await user.click(screen.getAllByRole('link', { name: '班级总览' })[0])
+    await user.click(screen.getByRole('tab', { name: '教师精选素材' }))
 
     expect(screen.getByRole('heading', { name: '教师精选讲评素材' })).toBeInTheDocument()
     expect(screen.getByText('共 1 条素材')).toBeInTheDocument()
@@ -98,6 +107,7 @@ describe('EssayResultPage teacher decision workflow', () => {
     const user = userEvent.setup()
     renderEssayDetail()
 
+    await user.click(screen.getByRole('tab', { name: '问题批改' }))
     expect(screen.getAllByText(/上下文关联度差/).length).toBeGreaterThan(0)
     expect(screen.getAllByText('建议教师复核').length).toBeGreaterThan(0)
     expect(screen.getByText('建议学生补充说明')).toBeInTheDocument()
@@ -117,6 +127,7 @@ describe('EssayResultPage teacher decision workflow', () => {
     const user = userEvent.setup()
     renderEssayDetail()
 
+    await user.click(screen.getByRole('tab', { name: '全文优化' }))
     expect(screen.getByRole('heading', { name: '全文优化稿' })).toBeInTheDocument()
     expect(screen.getAllByText(/保留学生原文思路/).length).toBeGreaterThan(0)
     expect(screen.getByRole('button', { name: '纠错版' })).toBeInTheDocument()
@@ -139,6 +150,7 @@ describe('EssayResultPage teacher decision workflow', () => {
     const user = userEvent.setup()
     renderEssayDetail()
 
+    await user.click(screen.getByRole('tab', { name: '问题批改' }))
     await user.click(screen.getByText('I suggest you joins the club.'))
 
     expect(screen.getByText('已定位')).toBeInTheDocument()
@@ -152,6 +164,7 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.getByRole('button', { name: '编辑 OCR' })).toBeInTheDocument()
     expect(screen.queryByLabelText('学生作文原文')).not.toBeInTheDocument()
 
+    await user.click(screen.getByRole('tab', { name: '问题批改' }))
     await user.click(screen.getByText('I suggest you joins the club.'))
 
     expect(screen.queryByText('定位预览')).not.toBeInTheDocument()
@@ -170,6 +183,7 @@ describe('EssayResultPage teacher decision workflow', () => {
     await user.clear(screen.getByLabelText('学生作文原文'))
     await user.type(screen.getByLabelText('学生作文原文'), 'This edited OCR text no longer contains the issue sentence.')
     await user.click(screen.getByRole('button', { name: '阅读定位' }))
+    await user.click(screen.getByRole('tab', { name: '问题批改' }))
     await user.click(screen.getByText('I suggest you joins the club.'))
 
     expect(screen.getByText('未精确定位')).toBeInTheDocument()
@@ -180,6 +194,7 @@ describe('EssayResultPage teacher decision workflow', () => {
     const user = userEvent.setup()
     renderEssayDetail()
 
+    await user.click(screen.getByRole('tab', { name: '教师反馈' }))
     await user.clear(screen.getByLabelText('AI 总评'))
     await user.type(screen.getByLabelText('AI 总评'), 'Teacher adjusted overall comment.')
     await user.type(screen.getByLabelText('教师补充建议'), 'Focus on subject-verb agreement before final submission.')
