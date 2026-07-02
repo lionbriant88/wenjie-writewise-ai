@@ -1,6 +1,23 @@
 # 当前开发状态
 
-最后更新：2026-07-01
+最后更新：2026-07-02
+
+## 本次新增进展：核心批改工作台信息架构优化
+
+- 班级总览删除冗余黑色横幅，改为页内 Tabs：概览、教师精选素材、高频问题、改写练习。
+- 班级总览默认进入“概览”，只展示分数统计和分数分布；教师精选素材、高频问题、改写练习分别进入独立内容区。
+- 高频语法错误、高频拼写错误、典型问题句和可上课改写练习改为更紧凑的列表展示，原有 `classInsights` 数据不丢失。
+- 单篇详情页保留左侧学生作文原文常驻，右侧改为 Tabs：评分诊断、问题批改、全文优化、教师反馈。
+- 评分编辑、问题定位、加入班级总览、素材查看来源、素材移除、全文优化稿、教师反馈保存和进度页最新完成入口保持可用。
+- 本轮未新增路由，未改变 `classReviewMaterials` 数据结构，未接真实 AI / OCR / 后端 / 导出能力。
+- 本轮验证结果：
+  - `npm.cmd test -- src/pages/ClassReviewPage.test.tsx`：1 个测试文件、2 个用例通过。
+  - `npm.cmd test -- src/pages/EssayResultPage.test.tsx`：1 个测试文件、11 个用例通过。
+  - `npm.cmd test -- src/pages/ProgressPage.test.tsx`：1 个测试文件、8 个用例通过。
+  - `npm.cmd test -- src/pages/DetailNavigation.test.tsx`：1 个测试文件、9 个用例通过。
+  - `npm.cmd test`：21 个测试文件、100 个用例通过。
+  - `npm.cmd run lint`：通过。
+  - `npm.cmd run build`：通过。
 
 ## 本次新增进展：班级总览讲评素材池闭环 v0.1
 
@@ -211,7 +228,10 @@ cd D:\wenjie-writewise-ai\app
 最新验证命令：
 
 ```powershell
-npm.cmd test -- src/utils/progressQueue.test.ts src/pages/ProgressPage.test.tsx
+npm.cmd test -- src/pages/ClassReviewPage.test.tsx
+npm.cmd test -- src/pages/EssayResultPage.test.tsx
+npm.cmd test -- src/pages/ProgressPage.test.tsx
+npm.cmd test -- src/pages/DetailNavigation.test.tsx
 npm.cmd test
 npm.cmd run lint
 npm.cmd run build
@@ -219,18 +239,19 @@ npm.cmd run build
 
 最新结果：
 
-- 进度页队列聚焦测试：2 个测试文件，12 个用例通过。
-- 全量测试：20 个测试文件，94 个用例通过。
+- 班级总览聚焦测试：1 个测试文件，2 个用例通过。
+- 单篇详情页聚焦测试：1 个测试文件，11 个用例通过。
+- 批改进度页聚焦测试：1 个测试文件，8 个用例通过。
+- 详情页导航聚焦测试：1 个测试文件，9 个用例通过。
+- 全量测试：21 个测试文件，100 个用例通过。
 - Lint：通过。
 - Build：通过。
-- 浏览器预览：已在右侧浏览器打开并验证批改进度页。
+- 浏览器预览：已在右侧浏览器验证班级总览页和单篇详情页。
 - 浏览器交互验证：
-  - `/tasks/task-1/progress` 保留顶部统计卡片，并显示队列操作条和状态 Tabs。
-  - `task-1` 中只有 1 篇可处理作文时不显示“模拟完成全部可处理”。
-  - 点击“需复核”Tab 后只显示需复核作文，且行背景有轻微 rose 强调。
-  - 点击“已完成”Tab 后只显示已完成作文和“查看结果”入口。
-  - 点击“模拟完成下一篇”后，最新完成入口出现，并可进入作文 9 详情页。
-  - `/tasks/task-2/progress` 中点击“模拟完成全部可处理”后，处理中归零，需复核仍保留 1 篇，并显示“查看最新完成作文”。
+  - `/tasks/task-1/class-review` 默认显示“概览”，黑色横幅不再出现，页内 Tabs 可切换到教师精选素材、高频问题和改写练习。
+  - 教师精选素材空态正常，未出现空的“表达提升”Tab。
+  - `/tasks/task-1/essays/task-1-essay-1` 默认显示“学生作文原文 + 诊断摘要”。
+  - 单篇详情页右侧 Tabs 可切换评分诊断、问题批改、全文优化和教师反馈，切换后左侧作文原文保持可见。
 
 `app\dist` 是 `npm.cmd run build` 生成目录，通常不应提交。
 

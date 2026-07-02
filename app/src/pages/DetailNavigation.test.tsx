@@ -104,6 +104,7 @@ describe('detail flow back navigation', () => {
     const user = userEvent.setup()
     renderWithRoute('/tasks/task-1/essays/task-1-essay-1', <EssayResultPage />)
 
+    await user.click(screen.getByRole('tab', { name: '问题批改' }))
     expect(screen.getByRole('heading', { name: '问题与修改建议' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '错误标注' })).not.toBeInTheDocument()
     expect(screen.queryByText('教师可检查 AI 评分、错误标注和修改建议，并进行模拟调整。')).not.toBeInTheDocument()
@@ -121,6 +122,7 @@ describe('detail flow back navigation', () => {
     const user = userEvent.setup()
     renderWithRoute('/tasks/task-1/essays/task-1-essay-1', <EssayResultPage />)
 
+    await user.click(screen.getByRole('tab', { name: '全文优化' }))
     expect(screen.getByRole('heading', { name: '全文优化稿' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '本文重点提升点' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '表达升级建议' })).not.toBeInTheDocument()
