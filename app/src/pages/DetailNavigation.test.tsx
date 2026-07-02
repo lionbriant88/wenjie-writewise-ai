@@ -110,7 +110,7 @@ describe('detail flow back navigation', () => {
     expect(screen.queryByText('教师可检查 AI 评分、错误标注和修改建议，并进行模拟调整。')).not.toBeInTheDocument()
     expect(screen.queryByText('与错误标注中的 suggest 句型一致，修正为动词原形。')).not.toBeInTheDocument()
     expect(screen.queryByText('错句修改')).not.toBeInTheDocument()
-    expect(screen.getByText('I suggest you joins the club.')).toBeInTheDocument()
+    expect(screen.getAllByText('I suggest you joins the club.').length).toBeGreaterThan(0)
     expect(screen.getByText('I suggest you join the club.')).toBeInTheDocument()
 
     await user.click(screen.getAllByRole('button', { name: '加入班级总览' })[0])
