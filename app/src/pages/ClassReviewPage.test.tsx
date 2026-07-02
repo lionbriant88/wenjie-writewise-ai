@@ -19,6 +19,18 @@ function renderClassReviewPage(initialPath = '/tasks/task-1/class-review') {
   )
 }
 
+function getIssueCardButton(name: RegExp) {
+  const issueCard = screen
+    .getAllByRole('button', { name })
+    .find((button) => button.getAttribute('aria-pressed') !== null)
+
+  if (!issueCard) {
+    throw new Error(`Issue card not found: ${name}`)
+  }
+
+  return issueCard
+}
+
 describe('ClassReviewPage', () => {
   it('shows overview by default and switches between class review tabs', async () => {
     const user = userEvent.setup()
@@ -64,7 +76,7 @@ describe('ClassReviewPage', () => {
 
     await user.click(screen.getByRole('tab', { name: '问题批改' }))
     await user.click(screen.getAllByRole('button', { name: '加入班级总览' })[0])
-    const logicIssueCard = screen.getByRole('button', { name: /My mother was angry\./ })
+    const logicIssueCard = getIssueCardButton(/My mother was angry\./)
     await user.click(within(logicIssueCard).getByRole('button', { name: '加入班级总览' }))
     await user.click(screen.getAllByRole('link', { name: '班级总览' })[0])
     await user.click(screen.getByRole('tab', { name: '教师精选素材' }))

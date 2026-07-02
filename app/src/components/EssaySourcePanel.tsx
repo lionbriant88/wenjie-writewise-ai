@@ -35,6 +35,9 @@ export function EssaySourcePanel({
   const markerParts = useMemo(() => splitTextByIssueMarkers(essay.ocrText, issueMarkers), [essay.ocrText, issueMarkers])
   const hasIssueMarkers = issueMarkers.length > 0
   const shouldShowFallback = Boolean(activeHighlightText) && !match
+  const setHighlightedElement = (element: HTMLElement | null) => {
+    highlightedRef.current = element
+  }
 
   useEffect(() => {
     highlightedRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
@@ -107,7 +110,7 @@ export function EssaySourcePanel({
                   return (
                     <button
                       key={`${part.text}-${index}`}
-                      ref={isActive ? highlightedRef : undefined}
+                      ref={isActive ? setHighlightedElement : undefined}
                       type="button"
                       aria-label={`查看问题：${marker.matchedText}`}
                       data-active={isActive ? 'true' : 'false'}
@@ -123,7 +126,7 @@ export function EssaySourcePanel({
                   part.highlighted ? (
                     <mark
                       key={`${part.text}-${index}`}
-                      ref={highlightedRef}
+                      ref={setHighlightedElement}
                       className="rounded bg-amber-100 px-1 font-semibold text-amber-800"
                     >
                       {part.text}
