@@ -21,7 +21,7 @@
   - `npm.cmd test`：22 个测试文件，106 个用例通过。
   - `npm.cmd run lint`：通过。
   - `npm.cmd run build`：通过。
-- 浏览器预览状态：本轮尝试打开 `http://127.0.0.1:5173/tasks/task-1/essays/task-1-essay-1`，但当前 Codex 环境无法让 Vite dev server 在后台稳定监听 5173，浏览器侧一直返回 `ERR_CONNECTION_REFUSED`；需要后续在本机可见终端中启动 `npm.cmd run dev` 后补一次人工预览。
+- 浏览器预览状态：用户已在本机预览并确认没有问题。
 
 ## 本次新增进展：核心批改工作台信息架构优化
 
@@ -143,7 +143,7 @@
 - 前端应用：`D:\wenjie-writewise-ai\app`
 - 远程仓库：`https://github.com/lionbriant88/wenjie-writewise-ai.git`
 - 当前本地分支：`codex/ocr-clickable-issue-sentences-v0`
-- 当前功能分支基于最新 `main` 开发，已完成本地提交，待补人工预览后决定 PR / 合并。
+- 当前功能分支基于最新 `main` 开发，已完成本地提交和人工预览确认，准备合并进 `main`。
 - 当前最新主线提交：`ff3b1e1 docs: record main merge status`
 - `main` 已包含班级总览讲评素材池闭环 v0.1；当前功能分支新增 OCR 原文可点击问题句 v0.1。
 - `main` 已包含 PR #2：阶段一信息架构与界面打磨。
@@ -270,11 +270,11 @@ npm.cmd run build
 - 全量测试：22 个测试文件，106 个用例通过。
 - Lint：通过。
 - Build：通过。
-- 浏览器预览：本轮未完成。当前 Codex 环境无法让 Vite dev server 在后台稳定监听 5173，浏览器打开 `/tasks/task-1/essays/task-1-essay-1` 返回 `ERR_CONNECTION_REFUSED`。
-- 待补人工预览：
-  - 左侧问题句 marker 视觉是否足够轻。
-  - 点击语言问题 / 逻辑问题 marker 后，右侧是否自动切到“问题批改”并选中对应卡片。
-  - 切到“编辑 OCR”后 marker 是否隐藏，回到阅读模式后是否按最新 OCR 文本重算。
+- 浏览器预览：用户已在本机预览并确认没有问题。
+- 浏览器交互验收：
+  - 左侧问题句 marker 视觉通过人工检查。
+  - 点击语言问题 / 逻辑问题 marker 后，右侧切到“问题批改”并选中对应卡片。
+  - 切到“编辑 OCR”后 marker 隐藏，回到阅读模式后按最新 OCR 文本重算。
 
 `app\dist` 是 `npm.cmd run build` 生成目录，通常不应提交。
 
@@ -305,14 +305,9 @@ http://localhost:5173/tasks/task-1/class-review
 
 优先方向：
 
-1. 先补一次人工浏览器预览：
-   - 在本机可见终端中执行 `cd D:\wenjie-writewise-ai\app` 和 `npm.cmd run dev`。
-   - 打开 `/tasks/task-1/essays/task-1-essay-1`。
-   - 确认左侧问题句 marker 足够轻、不满屏刺眼。
-   - 点击语言问题和逻辑问题 marker，确认右侧自动切到“问题批改”并选中对应卡片。
-   - 切到“编辑 OCR”确认 marker 隐藏，回到阅读模式后按新 OCR 文本重算。
-2. 预览通过后，可以合并或发 PR，将 `codex/ocr-clickable-issue-sentences-v0` 并入 `main`。
-3. 下一轮产品开发建议进入“原卷旁批视图路线设计 v0.2”或“课堂讲评素材整理增强”，但仍不接真实 OCR 坐标、不做复杂图片批注，先明确信息架构和低风险 mock 结构。
+1. 合并并推送 `codex/ocr-clickable-issue-sentences-v0` 到 `main`。
+2. 下一轮产品开发建议进入“原卷旁批视图路线设计 v0.2”或“课堂讲评素材整理增强”，但仍不接真实 OCR 坐标、不做复杂图片批注，先明确信息架构和低风险 mock 结构。
+3. 如果继续做原卷旁批，请先定义 mock 坐标结构和图片/文本双视图的信息边界，再进入实现。
 
 ## 后续工作注意事项
 
