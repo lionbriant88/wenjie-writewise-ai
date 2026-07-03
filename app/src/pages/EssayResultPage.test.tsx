@@ -31,10 +31,9 @@ function getIssueCardButton(name: RegExp) {
   return issueCard
 }
 
-function getSourceModeButton(mode: 'read' | 'paper' | 'edit') {
+function getSourceModeButton(mode: 'read' | 'edit') {
   const keywordsByMode = {
     read: ['阅读定位', '阅读', '闃呰'],
-    paper: ['原卷视图', '原卷', '鍘熷嵎', '瑙嗗浘'],
     edit: ['编辑 OCR', '缂栬緫 OCR', 'OCR'],
   } satisfies Record<typeof mode, string[]>
   const modeButton = screen
@@ -43,6 +42,22 @@ function getSourceModeButton(mode: 'read' | 'paper' | 'edit') {
 
   if (!modeButton) {
     throw new Error(`Source mode button not found: ${mode}`)
+  }
+
+  return modeButton
+}
+
+function getWorkspaceModeButton(mode: 'grading' | 'paper') {
+  const keywordsByMode = {
+    grading: ['批改工作台', '鎵规敼宸ヤ綔鍙?'],
+    paper: ['原卷视图', '鍘熷嵎瑙嗗浘'],
+  } satisfies Record<typeof mode, string[]>
+  const modeButton = screen
+    .getAllByRole('button')
+    .find((button) => keywordsByMode[mode].some((keyword) => button.textContent?.includes(keyword)))
+
+  if (!modeButton) {
+    throw new Error(`Workspace mode button not found: ${mode}`)
   }
 
   return modeButton
@@ -189,9 +204,15 @@ describe('EssayResultPage teacher decision workflow', () => {
     const user = userEvent.setup()
     renderEssayDetail()
 
+    expect(getWorkspaceModeButton('grading')).toHaveAttribute('aria-pressed', 'true')
+    expect(getWorkspaceModeButton('paper')).toHaveAttribute('aria-pressed', 'false')
     expect(getSourceModeButton('read')).toBeInTheDocument()
-    expect(getSourceModeButton('paper')).toBeInTheDocument()
     expect(getSourceModeButton('edit')).toBeInTheDocument()
+    expect(
+      screen
+        .getAllByRole('button')
+        .filter((button) => button.textContent?.includes('原卷视图') || button.textContent?.includes('鍘熷嵎瑙嗗浘')),
+    ).toHaveLength(1)
     expect(screen.queryByLabelText('学生作文原文')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('tab', { name: '问题批改' }))
@@ -257,43 +278,73 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.getByText('未在原文中精确定位，请手动核对')).toBeInTheDocument()
   })
 
-  it('shows the original paper view placeholder without text issue markers', async () => {
+  it('switches to a page-level original paper workspace without grading content', async () => {
     const user = userEvent.setup()
     const view = renderEssayDetail()
 
+    expect(getWorkspaceModeButton('grading')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('tab', { name: '评分诊断' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '问题批改' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '全文优化' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '教师反馈' })).toBeInTheDocument()
+    expect(getSourceModeButton('read')).toBeInTheDocument()
+    expect(getSourceModeButton('edit')).toBeInTheDocument()
     expect(view.container.querySelector('[data-issue-source="language"]')).not.toBeNull()
-    expect(view.container.querySelector('[data-issue-source="logic"]')).not.toBeNull()
 
-    await user.click(getSourceModeButton('paper'))
+    await user.click(getWorkspaceModeButton('paper'))
 
-    expect(screen.getByRole('heading', { name: '原卷视图 · 阶段三预留' })).toBeInTheDocument()
-    expect(screen.getByText(/卷面定位/)).toBeInTheDocument()
-    expect(screen.getByText(/图片区域高亮/)).toBeInTheDocument()
-    expect(screen.getByText(/批注卡片联动/)).toBeInTheDocument()
-    expect(screen.getByText('暂不支持')).toBeInTheDocument()
-    expect(screen.getByText(/图片批注/)).toBeInTheDocument()
-    expect(screen.getByText(/框选/)).toBeInTheDocument()
-    expect(screen.getByText(/手写痕迹/)).toBeInTheDocument()
-    expect(screen.getByText(/拖拽批注/)).toBeInTheDocument()
-    expect(screen.getByText(/OCR 坐标定位/)).toBeInTheDocument()
-    expect(screen.getByText('Page 1')).toBeInTheDocument()
+    expect(getWorkspaceModeButton('paper')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('paper-workspace')).toBeInTheDocument()
+    expect(screen.getByTestId('paper-image-stage')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '返回批改工作台' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '返回批改进度' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '上一篇' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '下一篇' })).toBeInTheDocument()
+    expect(screen.getByText('第 1 / 1 页')).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: '评分诊断' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: '问题批改' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: '全文优化' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: '教师反馈' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '诊断摘要' })).not.toBeInTheDocument()
+    expect(screen.queryByText('AI 置信度')).not.toBeInTheDocument()
+    expect(screen.queryByRole('spinbutton', { name: /语言准确性/ })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('学生作文原文')).not.toBeInTheDocument()
     expect(view.container.querySelector('[data-issue-source="language"]')).toBeNull()
     expect(view.container.querySelector('[data-issue-source="logic"]')).toBeNull()
-    expect(screen.queryByLabelText('学生作文原文')).not.toBeInTheDocument()
-    expect(screen.queryByText(/旁批/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/假坐标|假批注|旁批/)).not.toBeInTheDocument()
   })
 
-  it('restores OCR reading markers after switching away from original paper view', async () => {
+  it('returns from original paper workspace with grading workflows intact', async () => {
     const user = userEvent.setup()
     const view = renderEssayDetail()
 
-    await user.click(getSourceModeButton('paper'))
+    await user.click(getWorkspaceModeButton('paper'))
     expect(view.container.querySelector('[data-issue-source="language"]')).toBeNull()
 
-    await user.click(getSourceModeButton('read'))
+    await user.click(screen.getByRole('button', { name: '返回批改工作台' }))
 
+    expect(getWorkspaceModeButton('grading')).toHaveAttribute('aria-pressed', 'true')
+    expect(getSourceModeButton('read')).toBeInTheDocument()
+    expect(getSourceModeButton('edit')).toBeInTheDocument()
     expect(view.container.querySelector('[data-issue-source="language"]')).not.toBeNull()
     expect(view.container.querySelector('[data-issue-source="logic"]')).not.toBeNull()
+
+    await user.click(screen.getByRole('tab', { name: '问题批改' }))
+    await user.click(getIssueCardButton(/I suggest you joins the club\./))
+    expect(screen.getByText('已定位')).toBeInTheDocument()
+
+    await user.click(getSourceModeButton('edit'))
+    expect(screen.getByLabelText('学生作文原文')).toBeInTheDocument()
+
+    await user.click(getSourceModeButton('read'))
+    await user.click(screen.getAllByRole('button', { name: '加入班级总览' })[0])
+    expect(screen.getByRole('button', { name: '已加入班级总览' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: '全文优化' }))
+    expect(screen.getByRole('heading', { name: '全文优化稿' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: '教师反馈' }))
+    expect(screen.getByLabelText('AI 总评')).toBeInTheDocument()
   })
 
   it('saves teacher comment adjustments with lightweight feedback', async () => {
