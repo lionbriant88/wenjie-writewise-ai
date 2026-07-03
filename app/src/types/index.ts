@@ -21,6 +21,9 @@ export interface Task {
   essayType: string
   fullScore: number
   scoringTemplateId: string
+  writingGenre?: WritingGenre
+  promptInfo?: TaskPromptInfo
+  rubricDraft?: TaskRubricDraft
   status: TaskStatus
   totalEssayCount: number
   completedEssayCount: number
@@ -28,6 +31,43 @@ export interface Task {
   createdAt: string
   updatedAt: string
   generateClassReview: boolean
+}
+
+export type WritingGenre = 'practical_writing' | 'continuation_writing'
+
+export interface ContinuationPrompt {
+  sourceText: string
+  paragraph1Opening: string
+  paragraph2Opening: string
+}
+
+export interface TaskPromptInfo {
+  writingGenre: WritingGenre
+  practicalWritingType?: string
+  manualPromptText: string
+  teacherRequirements?: string
+  deductionFocus?: string
+  excellentFocus?: string
+  continuationPrompt?: ContinuationPrompt
+}
+
+export interface RubricDimension {
+  id: string
+  name: string
+  weight: number
+  description: string
+  deductionFocus: string[]
+}
+
+export interface TaskRubricDraft {
+  source: 'mock_ai' | 'ai' | 'teacher'
+  writingGoal: string
+  offTopicCriteria: string[]
+  dimensions: RubricDimension[]
+  excellentFeatures: string[]
+  reviewTriggers: string[]
+  teacherEditableNotes?: string
+  status: 'draft' | 'confirmed'
 }
 
 export interface EssayPage {
@@ -222,5 +262,8 @@ export interface CreateTaskInput {
   essayType: string
   fullScore: number
   scoringTemplateId: string
+  writingGenre?: WritingGenre
+  promptInfo?: TaskPromptInfo
+  rubricDraft?: TaskRubricDraft
   generateClassReview: boolean
 }

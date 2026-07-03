@@ -2,6 +2,26 @@
 
 最后更新：2026-07-03
 
+## 本次新增进展：创建任务页题目信息与任务评分标准确认 v0.2
+
+- 创建任务页已从单页基础表单升级为三步式流程：基础信息、题目信息、评分标准确认。
+- 基础信息中新增写作大类：应用文 / 读后续写；应用文保留建议信、邀请信、申请信、感谢信、通知、演讲稿、报道、咨询信、倡议书、For and Against essay，读后续写当前预留“故事续写”。
+- 题目信息按写作大类切换：
+  - 应用文必填“题目要求 / 写作任务”。
+  - 读后续写必填“读后续写原文”“Paragraph 1 开头句”“Paragraph 2 开头句”。
+  - 教师补充要求、特别扣分点、优秀作文关注点均为选填。
+- 原题材料上传仅保留阶段三轻占位，文案说明后续将支持原题图片 / PDF / 文档；本轮没有提供上传解析按钮，也没有出现“上传并识别”“解析题目”“提取题目要求”等误导性入口。
+- 评分标准确认区新增 mock 生成流程：必填题目信息完整后可生成应用文 / 读后续写对应 mock rubric；教师补充要求为空也允许生成，填写后会显示“已参考教师补充要求”。
+- 教师确认评分标准后才允许进入上传整理页，继续复用现有上传、OCR mock、批改队列、单篇详情和班级总览流程。
+- 切换写作大类后，已生成评分标准会重置为“待生成”，并提示“写作大类已切换，请重新生成本任务评分标准。”。
+- 任务数据结构轻量预留 `writingGenre`、`promptInfo` 和 `rubricDraft`，不接真实 AI、不解析原题文件、不做权重编辑器、不做读后续写真情节推理或复杂 rubric 后台。
+- 本轮验证结果：
+  - `npm.cmd test -- src/pages/CreateTaskPage.test.tsx`：1 个测试文件，5 个用例通过。
+  - `npm.cmd test`：23 个测试文件，114 个用例通过。
+  - `npm.cmd run lint`：通过。
+  - `npm.cmd run build`：通过。
+- GitHub：当前功能分支 `codex/task-writing-rubric-setup-v02` 已推送，并已创建 PR #5：`https://github.com/lionbriant88/wenjie-writewise-ai/pull/5`。
+
 ## 本次新增进展：上传整理页多来源导入入口占位 v0.2
 
 - 在上传整理页顶部新增“选择导入方式”区域，作为阶段三多来源导入能力的入口占位。
@@ -185,16 +205,17 @@
 - 项目根目录：`D:\wenjie-writewise-ai`
 - 前端应用：`D:\wenjie-writewise-ai\app`
 - 远程仓库：`https://github.com/lionbriant88/wenjie-writewise-ai.git`
-- 当前本地开发分支：`codex/upload-source-roadmap-v02`
+- 当前本地开发分支：`codex/task-writing-rubric-setup-v02`
 - 当前远端分支：仅 `origin/main`
-- 当前本地 `main` 与 `origin/main` 一致。
-- 当前最新主线提交：`735198f docs: record paper workspace merge`
-- 当前功能分支已包含上传来源路线文档、实现计划、上传来源入口实现、测试和开发状态记忆更新。
+- 当前本地 `main` 与 `origin/main` 一致，且已包含上传整理页多来源导入入口占位 v0.2。
+- 当前最新主线提交：`ce3c32e docs: record upload source preview approval`
+- 当前功能分支已包含创建任务页题目信息与任务评分标准确认 v0.2 的实现、测试和开发状态记忆更新，并已推送到 `origin/codex/task-writing-rubric-setup-v02`。
 - `main` 已包含班级总览讲评素材池闭环 v0.1 和 OCR 原文可点击问题句 v0.1。
 - `main` 已包含 PR #2：阶段一信息架构与界面打磨。
 - `main` 已包含 PR #3：批改进度页队列体验优化 v2。
 - `main` 已包含 PR #4：原卷视图修正为页面级卷面批阅画布 v0.2。
-- 已合并的历史功能分支已清理；远端当前只保留 `origin/main`，本地当前正在 `codex/upload-source-roadmap-v02` 上开发。
+- 当前打开 PR #5：创建任务页题目信息与任务评分标准确认 v0.2，等待合并回 `main`。
+- 已合并的历史功能分支已清理；远端当前只保留 `origin/main`，本地当前正在 `codex/task-writing-rubric-setup-v02` 上开发。
 
 ## 已完成工作
 
@@ -296,7 +317,7 @@ cd D:\wenjie-writewise-ai\app
 最新验证命令：
 
 ```powershell
-npm.cmd test -- src/pages/UploadPage.test.tsx
+npm.cmd test -- src/pages/CreateTaskPage.test.tsx
 npm.cmd test
 npm.cmd run lint
 npm.cmd run build
@@ -304,13 +325,13 @@ npm.cmd run build
 
 最新结果：
 
-- 上传整理页聚焦测试：1 个测试文件，13 个用例通过。
-- 全量测试：22 个测试文件，109 个用例通过。
+- 创建任务页聚焦测试：1 个测试文件，5 个用例通过。
+- 全量测试：23 个测试文件，114 个用例通过。
 - Lint：通过。
 - Build：通过。
-- 范围扫描：
-  - 生产代码未出现“打开摄像头”“连接扫描仪”“开始展台采集”“展台截图”“选择扫描件”“使用本地图片模拟”等假硬件入口。
-  - 生产代码未出现 `navigator.mediaDevices`、`getUserMedia`、扫描仪 API 或 PDF 解析实现。
+- 范围确认：
+  - 本轮没有接真实 AI、原题图片 / PDF / Word 解析、真实题目识别、真实评分标准生成、权重编辑器或复杂 rubric 后台。
+  - 上传整理、OCR mock、批改队列、单篇详情和班级总览核心流程保持复用。
 
 `app\dist` 是 `npm.cmd run build` 生成目录，通常不应提交。
 
@@ -337,13 +358,13 @@ http://localhost:5173/tasks/task-1/class-review
 
 ## 下一步最合理开发内容
 
-当前功能分支 `codex/upload-source-roadmap-v02` 已完成上传整理页多来源导入入口占位 v0.2 的本地实现、验证和浏览器预览确认，下一步是推送到 GitHub 并按需要创建 PR。
+当前功能分支 `codex/task-writing-rubric-setup-v02` 已完成创建任务页题目信息与任务评分标准确认 v0.2 的实现、验证、推送和 PR 创建，下一步是合并 PR #5 回 `main`，再从最新 `main` 开启后续任务。
 
 优先方向：
 
-1. 本轮优先收尾：推送 `codex/upload-source-roadmap-v02` 并创建 PR，合并后再从 `main` 继续下一项。
-2. 若继续围绕上传整理页推进，可做“多来源导入阶段三接入前置清单”，但仍不接真实摄像头、扫描仪、希沃视频流、PDF 解析或即时 OCR。
-3. 若转回批改侧，建议选择“课堂讲评素材整理增强”或“阶段二验收清单”，把 mock 闭环中已完成、暂缓和进入阶段三的能力明确分层。
+1. 本轮优先收尾：在 GitHub 合并 PR #5：`https://github.com/lionbriant88/wenjie-writewise-ai/pull/5`。
+2. 合并后可围绕创建任务继续做“rubric 结果在上传 / 进度 / 详情页中的轻量展示占位”，但仍不接真实 AI 或评分引擎。
+3. 若回到阶段二验收，可整理“阶段二 mock 闭环验收清单”，把已完成、暂缓和阶段三能力边界明确分层。
 
 ## 后续工作注意事项
 
