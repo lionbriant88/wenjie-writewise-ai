@@ -2,6 +2,20 @@
 
 最后更新：2026-07-03
 
+## 本次收尾：阶段二验收与阶段三入口清单
+
+- PR #5“创建任务页题目信息与任务评分标准确认 v0.2”已合并回 `main`，远端功能分支和本地功能分支均已清理。
+- 当前仓库只保留 `main`，本地 `main` 与 `origin/main` 一致。
+- 新增阶段二验收与阶段三入口清单：`docs/phase_2_acceptance_and_phase_3_entry.md`。
+- 阶段二核心 mock 闭环完成度判断为 90% - 95%，可以进入阶段三准备。
+- 建议阶段三第一刀优先选择“真实 OCR 接入 v0.1”，并保留现有 OCR 草稿编辑与 mock 回退路径。
+- 本轮收尾不新增产品功能，不接真实 OCR / AI / 后端 / 硬件，只做阶段状态校准、验收清单和全量验证。
+- 本轮收尾验证结果：
+  - `npm.cmd test -- src/pages/CreateTaskPage.test.tsx`：1 个测试文件，5 个用例通过。
+  - `npm.cmd test`：23 个测试文件，114 个用例通过。
+  - `npm.cmd run lint`：通过。
+  - `npm.cmd run build`：通过。
+
 ## 本次新增进展：创建任务页题目信息与任务评分标准确认 v0.2
 
 - 创建任务页已从单页基础表单升级为三步式流程：基础信息、题目信息、评分标准确认。
@@ -20,7 +34,7 @@
   - `npm.cmd test`：23 个测试文件，114 个用例通过。
   - `npm.cmd run lint`：通过。
   - `npm.cmd run build`：通过。
-- GitHub：当前功能分支 `codex/task-writing-rubric-setup-v02` 已推送，并已创建 PR #5：`https://github.com/lionbriant88/wenjie-writewise-ai/pull/5`。
+- GitHub：功能分支 `codex/task-writing-rubric-setup-v02` 已通过 PR #5 合并回 `main`，远端功能分支已删除。
 
 ## 本次新增进展：上传整理页多来源导入入口占位 v0.2
 
@@ -205,17 +219,17 @@
 - 项目根目录：`D:\wenjie-writewise-ai`
 - 前端应用：`D:\wenjie-writewise-ai\app`
 - 远程仓库：`https://github.com/lionbriant88/wenjie-writewise-ai.git`
-- 当前本地开发分支：`codex/task-writing-rubric-setup-v02`
+- 当前本地开发分支：`main`
 - 当前远端分支：仅 `origin/main`
 - 当前本地 `main` 与 `origin/main` 一致，且已包含上传整理页多来源导入入口占位 v0.2。
-- 当前最新主线提交：`ce3c32e docs: record upload source preview approval`
-- 当前功能分支已包含创建任务页题目信息与任务评分标准确认 v0.2 的实现、测试和开发状态记忆更新，并已推送到 `origin/codex/task-writing-rubric-setup-v02`。
+- 当前最新主线提交：`777296a Merge pull request #5 from lionbriant88/codex/task-writing-rubric-setup-v02`
+- `main` 已包含创建任务页题目信息与任务评分标准确认 v0.2。
 - `main` 已包含班级总览讲评素材池闭环 v0.1 和 OCR 原文可点击问题句 v0.1。
 - `main` 已包含 PR #2：阶段一信息架构与界面打磨。
 - `main` 已包含 PR #3：批改进度页队列体验优化 v2。
 - `main` 已包含 PR #4：原卷视图修正为页面级卷面批阅画布 v0.2。
-- 当前打开 PR #5：创建任务页题目信息与任务评分标准确认 v0.2，等待合并回 `main`。
-- 已合并的历史功能分支已清理；远端当前只保留 `origin/main`，本地当前正在 `codex/task-writing-rubric-setup-v02` 上开发。
+- `main` 已包含 PR #5：创建任务页题目信息与任务评分标准确认 v0.2。
+- 已合并的历史功能分支已清理；远端当前只保留 `origin/main`，本地当前在 `main` 上，可直接从最新主线新建后续开发分支。
 
 ## 已完成工作
 
@@ -330,8 +344,8 @@ npm.cmd run build
 - Lint：通过。
 - Build：通过。
 - 范围确认：
-  - 本轮没有接真实 AI、原题图片 / PDF / Word 解析、真实题目识别、真实评分标准生成、权重编辑器或复杂 rubric 后台。
-  - 上传整理、OCR mock、批改队列、单篇详情和班级总览核心流程保持复用。
+  - 阶段二收尾没有新增产品功能，也没有接真实 AI、真实 OCR、后端、硬件或文件解析。
+  - 上传整理、OCR mock、批改队列、单篇详情和班级总览核心流程保持复用，阶段三入口已在验收清单中分层记录。
 
 `app\dist` 是 `npm.cmd run build` 生成目录，通常不应提交。
 
@@ -358,13 +372,13 @@ http://localhost:5173/tasks/task-1/class-review
 
 ## 下一步最合理开发内容
 
-当前功能分支 `codex/task-writing-rubric-setup-v02` 已完成创建任务页题目信息与任务评分标准确认 v0.2 的实现、验证、推送和 PR 创建，下一步是合并 PR #5 回 `main`，再从最新 `main` 开启后续任务。
+阶段二核心 mock 闭环已经完成阶段收尾，当前仓库在最新 `main` 上，下一步可以从 `main` 新建阶段三功能分支。
 
 优先方向：
 
-1. 本轮优先收尾：在 GitHub 合并 PR #5：`https://github.com/lionbriant88/wenjie-writewise-ai/pull/5`。
-2. 合并后可围绕创建任务继续做“rubric 结果在上传 / 进度 / 详情页中的轻量展示占位”，但仍不接真实 AI 或评分引擎。
-3. 若回到阶段二验收，可整理“阶段二 mock 闭环验收清单”，把已完成、暂缓和阶段三能力边界明确分层。
+1. 推荐阶段三第一刀：真实 OCR 接入 v0.1，继续复用上传整理、OCR 草稿编辑和批改队列。
+2. 备选阶段三第一刀：真实 AI 批改接入 v0.1，但建议先只支持应用文，并保持读后续写 mock。
+3. 阶段三每个任务都应保留阶段二 mock 回退路径，并明确不做清单，避免同时接 OCR、AI、原卷坐标和硬件。
 
 ## 后续工作注意事项
 
