@@ -20,6 +20,7 @@
   - `npm.cmd test`：23 个测试文件，114 个用例通过。
   - `npm.cmd run lint`：通过。
   - `npm.cmd run build`：通过。
+- GitHub：当前功能分支 `codex/task-writing-rubric-setup-v02` 已推送，并已创建 PR #5：`https://github.com/lionbriant88/wenjie-writewise-ai/pull/5`。
 
 ## 本次新增进展：上传整理页多来源导入入口占位 v0.2
 
@@ -208,11 +209,12 @@
 - 当前远端分支：仅 `origin/main`
 - 当前本地 `main` 与 `origin/main` 一致，且已包含上传整理页多来源导入入口占位 v0.2。
 - 当前最新主线提交：`ce3c32e docs: record upload source preview approval`
-- 当前功能分支已包含创建任务页题目信息与任务评分标准确认 v0.2 的实现、测试和开发状态记忆更新。
+- 当前功能分支已包含创建任务页题目信息与任务评分标准确认 v0.2 的实现、测试和开发状态记忆更新，并已推送到 `origin/codex/task-writing-rubric-setup-v02`。
 - `main` 已包含班级总览讲评素材池闭环 v0.1 和 OCR 原文可点击问题句 v0.1。
 - `main` 已包含 PR #2：阶段一信息架构与界面打磨。
 - `main` 已包含 PR #3：批改进度页队列体验优化 v2。
 - `main` 已包含 PR #4：原卷视图修正为页面级卷面批阅画布 v0.2。
+- 当前打开 PR #5：创建任务页题目信息与任务评分标准确认 v0.2，等待合并回 `main`。
 - 已合并的历史功能分支已清理；远端当前只保留 `origin/main`，本地当前正在 `codex/task-writing-rubric-setup-v02` 上开发。
 
 ## 已完成工作
@@ -356,11 +358,11 @@ http://localhost:5173/tasks/task-1/class-review
 
 ## 下一步最合理开发内容
 
-当前功能分支 `codex/task-writing-rubric-setup-v02` 已完成创建任务页题目信息与任务评分标准确认 v0.2 的本地实现和验证，下一步是提交、推送到 GitHub，并按需要创建 PR。
+当前功能分支 `codex/task-writing-rubric-setup-v02` 已完成创建任务页题目信息与任务评分标准确认 v0.2 的实现、验证、推送和 PR 创建，下一步是合并 PR #5 回 `main`，再从最新 `main` 开启后续任务。
 
 优先方向：
 
-1. 本轮优先收尾：提交并推送 `codex/task-writing-rubric-setup-v02`，创建 PR 后合并回 `main`。
+1. 本轮优先收尾：在 GitHub 合并 PR #5：`https://github.com/lionbriant88/wenjie-writewise-ai/pull/5`。
 2. 合并后可围绕创建任务继续做“rubric 结果在上传 / 进度 / 详情页中的轻量展示占位”，但仍不接真实 AI 或评分引擎。
 3. 若回到阶段二验收，可整理“阶段二 mock 闭环验收清单”，把已完成、暂缓和阶段三能力边界明确分层。
 
