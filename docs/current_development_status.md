@@ -2,6 +2,29 @@
 
 最后更新：2026-07-02
 
+## 本次新增进展：原卷视图修正为页面级卷面批阅画布 v0.2
+
+- `原卷视图` 已从左侧 OCR 原文卡片的小 Tab 调整为单篇详情页页面级 workspace。
+- 单篇详情页现在默认进入 `批改工作台`，并可切换到 `原卷视图`。
+- `EssaySourcePanel` 内部恢复为 `阅读定位 / 编辑 OCR`，不再承载原卷视图。
+- `原卷视图` 当前为阶段三预留卷面批阅画布：原卷区域为视觉中心，左侧、右侧、底部预留未来批注空间。
+- 当前不实现 OCR 坐标、图片框选、图片区域高亮、真实批注、假坐标或 AppState 数据结构变更。
+- 本轮验证结果：
+  - `npm.cmd test -- src/pages/EssayResultPage.test.tsx`：通过。
+  - `npm.cmd run lint`：通过。
+- GitHub：当前分支 `codex/original-paper-view-roadmap-v02` 已推送，并已创建 PR #4：`https://github.com/lionbriant88/wenjie-writewise-ai/pull/4`。
+
+## 本次新增进展：原卷视图入口与原卷批阅路线占位 v0.2
+
+- 单篇作文详情页左侧模式从 `阅读定位 / 编辑 OCR` 扩展为 `阅读定位 / 原卷视图 / 编辑 OCR`，默认仍进入 `阅读定位`。
+- `原卷视图` 当前只展示阶段三预留说明和原卷图片预览，明确后续方向为卷面定位、图片区域高亮和批注卡片联动。
+- 当前占位视图不展示 OCR 文本层 marker，不生成图片问题框，不接 OCR 坐标，不新增 AppState 数据结构。
+- 保留 `查看原图` 弹窗、OCR 文本编辑、左右问题定位、加入班级总览素材池、全文优化稿和进度页最新完成入口。
+- 本轮验证结果：
+  - `npm.cmd test -- src/pages/EssayResultPage.test.tsx`：通过，15 个用例通过。
+  - `npm.cmd run lint`：通过。
+  - `npm.cmd run build`：通过。
+
 ## 本次新增进展：OCR 原文可点击问题句 v0.1
 
 - 在单篇详情页左侧“学生作文原文”的阅读定位模式中，新增轻量问题句 marker，不显示编号，不插入额外文字。
@@ -142,7 +165,7 @@
 - 项目根目录：`D:\wenjie-writewise-ai`
 - 前端应用：`D:\wenjie-writewise-ai\app`
 - 远程仓库：`https://github.com/lionbriant88/wenjie-writewise-ai.git`
-- 当前本地分支：`main`
+- 当前本地开发分支：`codex/original-paper-view-roadmap-v02`
 - 当前远端分支：仅 `origin/main`
 - 当前本地 `main` 与 `origin/main` 一致。
 - 当前最新主线提交：`24989b8 docs: record ocr marker preview approval`

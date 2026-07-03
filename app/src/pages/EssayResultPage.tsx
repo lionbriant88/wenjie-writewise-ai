@@ -7,6 +7,7 @@ import { EssayPageSorter } from '../components/EssayPageSorter'
 import { EssaySourcePanel } from '../components/EssaySourcePanel'
 import { FullTextRevisionPanel } from '../components/FullTextRevisionPanel'
 import { IssueCorrectionList } from '../components/IssueCorrectionList'
+import { OriginalPaperWorkspace } from '../components/OriginalPaperWorkspace'
 import { useAppState } from '../context/useAppState'
 import { AppLayout } from '../layout/AppLayout'
 import { buildClassReviewMaterialFromIssue } from '../utils/classReviewMaterials'
@@ -17,6 +18,7 @@ import { findTextMatch } from '../utils/textHighlight'
 import { findEssay, findEssaysByTask, findResultByEssayId, findTask } from '../utils/taskLookup'
 
 type EssayDetailTab = 'scoring' | 'issues' | 'revision' | 'feedback'
+type EssayWorkspaceMode = 'grading' | 'paper'
 
 const essayDetailTabs: Array<{ id: EssayDetailTab; label: string }> = [
   { id: 'scoring', label: '评分诊断' },
@@ -111,6 +113,7 @@ export function EssayResultPage() {
   } = useAppState()
   const [saveNotice, setSaveNotice] = useState('')
   const [activeDetailTab, setActiveDetailTab] = useState<EssayDetailTab>('scoring')
+  const [workspaceMode, setWorkspaceMode] = useState<EssayWorkspaceMode>('grading')
   const [activeIssueId, setActiveIssueId] = useState<string | null>(null)
   const [showOriginalImage, setShowOriginalImage] = useState(false)
   const saveTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
@@ -189,7 +192,36 @@ export function EssayResultPage() {
       focusedReview
     >
       <div className="space-y-5">
-        <div
+        <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-1">
+          {[
+            { mode: 'grading' as const, label: '批改工作台' },
+            { mode: 'paper' as const, label: '原卷视图' },
+          ].map((modeOption) => (
+            <button
+              key={modeOption.mode}
+              type="button"
+              aria-pressed={workspaceMode === modeOption.mode}
+              onClick={() => setWorkspaceMode(modeOption.mode)}
+              className={`tech-focus rounded-md px-4 py-2 text-sm font-semibold transition ${
+                workspaceMode === modeOption.mode ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              {modeOption.label}
+            </button>
+          ))}
+        </div>
+
+        {workspaceMode === 'paper' ? (
+          <OriginalPaperWorkspace
+            essay={essay}
+            taskId={task.id}
+            previousEssayId={previousEssayId}
+            nextEssayId={nextEssayId}
+            onBackToGrading={() => setWorkspaceMode('grading')}
+          />
+        ) : (
+          <>
+            <div
           role="region"
           aria-label="顶部批改操作"
           className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm"
@@ -365,6 +397,8 @@ export function EssayResultPage() {
           nextEssayId={nextEssayId}
           taskId={task.id}
         />
+          </>
+        )}
       </div>
       {showOriginalImage ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 px-4 py-6">

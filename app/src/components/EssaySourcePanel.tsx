@@ -6,6 +6,13 @@ import type { SourceIssueMarker } from '../utils/sourceIssueMarkers'
 import { splitTextByIssueMarkers } from '../utils/sourceIssueMarkers'
 import { findTextMatch, splitTextByMatch } from '../utils/textHighlight'
 
+type SourcePanelMode = 'read' | 'edit'
+
+const SOURCE_PANEL_MODE_OPTIONS: Array<{ mode: SourcePanelMode; label: string }> = [
+  { mode: 'read', label: '阅读定位' },
+  { mode: 'edit', label: '编辑 OCR' },
+]
+
 interface EssaySourcePanelProps {
   essay: Essay
   activeHighlightText?: string
@@ -25,7 +32,7 @@ export function EssaySourcePanel({
   onOcrTextChange,
   onViewOriginalImage,
 }: EssaySourcePanelProps) {
-  const [mode, setMode] = useState<'read' | 'edit'>('read')
+  const [mode, setMode] = useState<SourcePanelMode>('read')
   const highlightedRef = useRef<HTMLElement | null>(null)
   const match = useMemo(
     () => findTextMatch(essay.ocrText, activeHighlightText ?? ''),
@@ -62,16 +69,16 @@ export function EssaySourcePanel({
         </button>
       </div>
       <div className="mt-4 inline-flex rounded-lg border border-slate-200 bg-slate-100 p-1">
-        {(['read', 'edit'] as const).map((modeOption) => (
+        {SOURCE_PANEL_MODE_OPTIONS.map((modeOption) => (
           <button
-            key={modeOption}
+            key={modeOption.mode}
             type="button"
-            onClick={() => setMode(modeOption)}
+            onClick={() => setMode(modeOption.mode)}
             className={`tech-focus rounded-md px-3 py-1.5 text-xs font-semibold transition ${
-              mode === modeOption ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+              mode === modeOption.mode ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-900'
             }`}
           >
-            {modeOption === 'read' ? '阅读定位' : '编辑 OCR'}
+            {modeOption.label}
           </button>
         ))}
       </div>
