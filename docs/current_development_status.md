@@ -19,6 +19,7 @@
   - `npm.cmd run lint`：通过。
   - `npm.cmd run build`：通过。
   - 范围扫描确认生产代码未出现假硬件按钮、摄像头 API、扫描仪 API 或 PDF 解析实现。
+- 浏览器预览状态：已打开 `http://127.0.0.1:5173/tasks/task-1/upload`，确认“选择导入方式”、图片 / 文件导入、拍照采集、扫描件导入、希沃展台采集均可见。
 
 ## 本次新增进展：原卷视图修正为页面级卷面批阅画布 v0.2
 
@@ -188,7 +189,7 @@
 - 当前远端分支：仅 `origin/main`
 - 当前本地 `main` 与 `origin/main` 一致。
 - 当前最新主线提交：`735198f docs: record paper workspace merge`
-- 当前功能分支最新提交：`0e2e6b1 feat: add upload source selector placeholder`
+- 当前功能分支已包含上传来源路线文档、实现计划、上传来源入口实现、测试和开发状态记忆更新。
 - `main` 已包含班级总览讲评素材池闭环 v0.1 和 OCR 原文可点击问题句 v0.1。
 - `main` 已包含 PR #2：阶段一信息架构与界面打磨。
 - `main` 已包含 PR #3：批改进度页队列体验优化 v2。
@@ -336,7 +337,7 @@ http://localhost:5173/tasks/task-1/class-review
 
 ## 下一步最合理开发内容
 
-当前功能分支 `codex/upload-source-roadmap-v02` 已完成上传整理页多来源导入入口占位 v0.2 的本地实现与验证，尚未推送和创建 PR。
+当前功能分支 `codex/upload-source-roadmap-v02` 已完成上传整理页多来源导入入口占位 v0.2 的本地实现、验证和浏览器预览确认，下一步是推送到 GitHub 并按需要创建 PR。
 
 优先方向：
 
