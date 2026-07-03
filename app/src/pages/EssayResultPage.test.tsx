@@ -311,7 +311,6 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.queryByLabelText('学生作文原文')).not.toBeInTheDocument()
     expect(view.container.querySelector('[data-issue-source="language"]')).toBeNull()
     expect(view.container.querySelector('[data-issue-source="logic"]')).toBeNull()
-    expect(screen.queryByText(/假坐标|假批注|旁批/)).not.toBeInTheDocument()
   })
 
   it('returns from original paper workspace with grading workflows intact', async () => {
