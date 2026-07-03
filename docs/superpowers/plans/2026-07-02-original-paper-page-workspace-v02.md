@@ -1,10 +1,21 @@
 # Original Paper Page Workspace v0.2 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Move `原卷视图` out of `EssaySourcePanel` and implement it as a page-level `paper` workspace inside `EssayResultPage`.
 
-**Architecture:** `EssayResultPage` owns a local `workspaceMode: 'grading' | 'paper'`. The existing grading workspace remains largely intact. `EssaySourcePanel` returns to source-only modes (`read | edit`), while a new focused `OriginalPaperWorkspace` component renders the page-level canvas with a large original-paper stage and left/right/bottom annotation placeholders.
+**Architecture:** `EssayResultPage` owns local `workspaceMode: 'grading' | 'paper'`. The existing grading workspace remains intact. `EssaySourcePanel` returns to source-only modes (`read | edit`), while a new `OriginalPaperWorkspace` component renders the page-level canvas with a large original-paper stage and left/right/bottom reserved annotation areas.
+
+**Important constraints:**
+
+- Do not add AppStateContext fields.
+- Do not change upload, progress, class review, or route structure.
+- Do not rewrite `activeDetailTab`, `activeIssueId`, OCR clickable source markers, class review material flow, full-text revision, or teacher feedback logic.
+- `paper` mode is only a page-level conditional render in `EssayResultPage`.
+- Runtime UI must not use the term `旁批`; use `原卷视图 / 原卷批阅 / 卷面批阅 / 图片区域高亮 / 批注联动`.
+- Prioritize true original image URLs from the essay page (`previewUrl`, `imageUrl`, `imageUrls[0]`, `url`). Show the large placeholder only when no image is available.
+- Multi-page support stays light: page counter and simple previous/next page buttons only.
+- Do not commit failing tests. Tests may be written first, but Tasks 1-4 are committed together only after the focused test is green.
 
 **Tech Stack:** React, TypeScript, React Router, React Testing Library, Vitest, Tailwind utility classes, existing `Essay` / `EssayPage` mock data.
 
@@ -14,8 +25,9 @@
 
 - Create: `app/src/components/OriginalPaperWorkspace.tsx`
   - Renders the `paper` workspace only.
-  - Shows top navigation, large paper image/placeholder stage, page counter, and annotation placeholder rails.
-  - Uses local component state for current paper page only.
+  - Shows top navigation, large paper image/placeholder stage, page counter, and left/right/bottom reserved annotation areas.
+  - Uses local component state for the current paper page only.
+  - Resets page index to `0` when `essay.id` changes.
   - Does not read or write AppState.
 
 - Modify: `app/src/components/EssaySourcePanel.tsx`
@@ -28,7 +40,7 @@
   - Add local `workspaceMode` state.
   - Add page-level switch `批改工作台 / 原卷视图`.
   - Conditionally render grading workspace or `OriginalPaperWorkspace`.
-  - Preserve existing `activeDetailTab`, `activeIssueId`, class review material flow, full-text revision, teacher feedback, original-image modal, and previous/next essay navigation.
+  - Preserve existing grading-state variables and handlers.
 
 - Modify: `app/src/pages/EssayResultPage.test.tsx`
   - Replace the old source-panel paper tests with page-level workspace tests.
@@ -39,68 +51,35 @@
   - Record that `原卷视图` was corrected from left-side small tab to page-level workspace.
   - Record verification results.
 
-No AppStateContext, upload page, progress page, class review page, OCR coordinate model, image anchor model, or route changes in this round.
-
 ---
 
-### Task 1: Replace Tests for Page-Level Paper Workspace
+## Task 1: Replace Tests for Page-Level Paper Workspace
 
 **Files:**
+
 - Modify: `app/src/pages/EssayResultPage.test.tsx`
 
 - [ ] **Step 1: Narrow source mode helper**
 
-Replace:
-
-```ts
-function getSourceModeButton(mode: 'read' | 'paper' | 'edit') {
-  const keywordsByMode = {
-    read: ['阅读定位', '阅读', '闃呰'],
-    paper: ['原卷视图', '原卷', '鍘熷嵎', '瑙嗗浘'],
-    edit: ['编辑 OCR', '缂栬緫 OCR', 'OCR'],
-  } satisfies Record<typeof mode, string[]>
-  const modeButton = screen
-    .getAllByRole('button')
-    .find((button) => keywordsByMode[mode].some((keyword) => button.textContent?.includes(keyword)))
-
-  if (!modeButton) {
-    throw new Error(`Source mode button not found: ${mode}`)
-  }
-
-  return modeButton
-}
-```
-
-With:
+Update `getSourceModeButton` to accept only:
 
 ```ts
 function getSourceModeButton(mode: 'read' | 'edit') {
-  const keywordsByMode = {
-    read: ['阅读定位', '阅读', '闃呰'],
-    edit: ['编辑 OCR', '缂栬緫 OCR', 'OCR'],
-  } satisfies Record<typeof mode, string[]>
-  const modeButton = screen
-    .getAllByRole('button')
-    .find((button) => keywordsByMode[mode].some((keyword) => button.textContent?.includes(keyword)))
-
-  if (!modeButton) {
-    throw new Error(`Source mode button not found: ${mode}`)
-  }
-
-  return modeButton
-}
 ```
+
+Remove the `paper` keywords from this helper.
 
 - [ ] **Step 2: Add a page workspace helper**
 
-Add below `getSourceModeButton`:
+Add a separate helper for the page-level workspace switch:
 
 ```ts
 function getWorkspaceModeButton(mode: 'grading' | 'paper') {
   const keywordsByMode = {
-    grading: ['批改工作台', '鎵规敼宸ヤ綔鍙?],
+    grading: ['批改工作台', '鎵规敼宸ヤ綔鍙?'],
     paper: ['原卷视图', '鍘熷嵎瑙嗗浘'],
   } satisfies Record<typeof mode, string[]>
+
   const modeButton = screen
     .getAllByRole('button')
     .find((button) => keywordsByMode[mode].some((keyword) => button.textContent?.includes(keyword)))
@@ -113,121 +92,60 @@ function getWorkspaceModeButton(mode: 'grading' | 'paper') {
 }
 ```
 
-- [ ] **Step 3: Update the source mode assertion**
+This fixes the previous plan typo where the mojibake fallback string was not closed correctly.
 
-In `highlights the matching source text when an issue card is selected`, replace:
+- [ ] **Step 3: Update existing source mode assertions**
 
-```ts
-expect(getSourceModeButton('read')).toBeInTheDocument()
-expect(getSourceModeButton('paper')).toBeInTheDocument()
-expect(getSourceModeButton('edit')).toBeInTheDocument()
-```
+In the source-marker tests:
 
-With:
-
-```ts
-expect(getWorkspaceModeButton('grading')).toHaveAttribute('aria-pressed', 'true')
-expect(getWorkspaceModeButton('paper')).toHaveAttribute('aria-pressed', 'false')
-expect(getSourceModeButton('read')).toBeInTheDocument()
-expect(getSourceModeButton('edit')).toBeInTheDocument()
-expect(
-  screen
-    .getAllByRole('button')
-    .filter((button) => button.textContent?.includes('原卷视图') || button.textContent?.includes('鍘熷嵎瑙嗗浘')),
-).toHaveLength(1)
-```
+- Assert `getWorkspaceModeButton('grading')` is pressed.
+- Assert `getWorkspaceModeButton('paper')` exists and is not pressed.
+- Assert only `read` and `edit` source mode buttons are present inside the source panel.
+- Assert there is only one `原卷视图` button on the page, and it belongs to the page-level workspace switch.
 
 - [ ] **Step 4: Remove old source-panel paper tests**
 
-Delete the entire test block named `shows the original paper view placeholder without text issue markers`.
-
-Delete the entire test block named `restores OCR reading markers after switching away from original paper view`.
+Delete tests that expect `原卷视图` to be a mode inside `EssaySourcePanel`.
 
 - [ ] **Step 5: Add page-level paper workspace test**
 
-Add this test before `saves teacher comment adjustments with lightweight feedback`:
+Add a test that:
 
-```ts
-it('switches to a page-level original paper workspace without grading content', async () => {
-  const user = userEvent.setup()
-  const view = renderEssayDetail()
+- Renders the essay detail page in grading mode by default.
+- Confirms grading tabs are visible before switching.
+- Clicks `getWorkspaceModeButton('paper')`.
+- Confirms the paper workspace appears.
+- Confirms paper top navigation is present: `返回批改工作台`, `返回批改进度`, essay label, previous essay, next essay.
+- Confirms the large paper stage exists via a stable selector such as `data-testid="paper-image-stage"`.
+- Confirms the page counter exists.
+- Confirms grading-only UI is absent in paper mode:
+  - scoring diagnosis container/heading
+  - AI confidence text
+  - dimension score controls or score input groups
+  - grading tabs
+  - OCR textarea/source panel
+  - OCR issue markers
+  - issue correction cards
+  - full-text revision
+  - teacher feedback
 
-  expect(getWorkspaceModeButton('grading')).toHaveAttribute('aria-pressed', 'true')
-  expect(screen.getByRole('tab', { name: '评分诊断' })).toBeInTheDocument()
-  expect(screen.getByRole('tab', { name: '问题批改' })).toBeInTheDocument()
-  expect(screen.getByRole('tab', { name: '全文优化' })).toBeInTheDocument()
-  expect(screen.getByRole('tab', { name: '教师反馈' })).toBeInTheDocument()
-  expect(getSourceModeButton('read')).toBeInTheDocument()
-  expect(getSourceModeButton('edit')).toBeInTheDocument()
-  expect(view.container.querySelector('[data-issue-source="language"]')).not.toBeNull()
-
-  await user.click(getWorkspaceModeButton('paper'))
-
-  expect(getWorkspaceModeButton('paper')).toHaveAttribute('aria-pressed', 'true')
-  expect(screen.getByRole('heading', { name: '原卷视图 · 阶段三预留' })).toBeInTheDocument()
-  expect(screen.getByText('左侧批注区')).toBeInTheDocument()
-  expect(screen.getByText('右侧批注区')).toBeInTheDocument()
-  expect(screen.getByText('底部批注区')).toBeInTheDocument()
-  expect(screen.getByText('第 1 / 1 页')).toBeInTheDocument()
-  expect(screen.getByTestId('paper-image-stage')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: '返回批改工作台' })).toBeInTheDocument()
-  expect(screen.getByRole('link', { name: '返回批改进度' })).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: '上一篇' })).toBeInTheDocument()
-  expect(screen.getByRole('link', { name: '下一篇' })).toBeInTheDocument()
-  expect(screen.queryByRole('tab', { name: '评分诊断' })).not.toBeInTheDocument()
-  expect(screen.queryByRole('tab', { name: '问题批改' })).not.toBeInTheDocument()
-  expect(screen.queryByRole('tab', { name: '全文优化' })).not.toBeInTheDocument()
-  expect(screen.queryByRole('tab', { name: '教师反馈' })).not.toBeInTheDocument()
-  expect(screen.queryByLabelText('学生作文原文')).not.toBeInTheDocument()
-  expect(view.container.querySelector('[data-issue-source="language"]')).toBeNull()
-  expect(screen.queryByText('诊断摘要')).not.toBeInTheDocument()
-  expect(screen.queryByText('/ 15')).not.toBeInTheDocument()
-  expect(screen.queryByText(/AI 置信度/)).not.toBeInTheDocument()
-  expect(screen.queryByText(/假坐标|假批注|图片框选/)).not.toBeInTheDocument()
-})
-```
-
-If the test file still uses mojibake visible labels, use the actual rendered strings from existing tests for `评分诊断 / 问题批改 / 全文优化 / 教师反馈 / 学生作文原文 / AI 置信度`. For new UI text, use clear Chinese strings.
+Do not use brittle assertions such as `queryByText('/ 15')`.
 
 - [ ] **Step 6: Add return-to-grading regression test**
 
-Add this test after the page-level paper workspace test:
+Add a test that:
 
-```ts
-it('returns from original paper workspace with grading workflows intact', async () => {
-  const user = userEvent.setup()
-  const view = renderEssayDetail()
+- Switches to paper workspace.
+- Clicks `返回批改工作台`.
+- Confirms grading mode is pressed again.
+- Confirms OCR read/edit modes exist.
+- Confirms OCR clickable issue markers return.
+- Confirms selecting an issue card still updates active state/location status.
+- Confirms adding a material to class review still works.
+- Confirms full-text revision tab still renders.
+- Confirms teacher feedback tab still renders.
 
-  await user.click(getWorkspaceModeButton('paper'))
-  await user.click(screen.getByRole('button', { name: '返回批改工作台' }))
-
-  expect(getWorkspaceModeButton('grading')).toHaveAttribute('aria-pressed', 'true')
-  expect(getSourceModeButton('read')).toBeInTheDocument()
-  expect(getSourceModeButton('edit')).toBeInTheDocument()
-  expect(view.container.querySelector('[data-issue-source="language"]')).not.toBeNull()
-
-  await user.click(screen.getByRole('tab', { name: '问题批改' }))
-  await user.click(getIssueCardButton(/I suggest you joins the club\./))
-  expect(screen.getByText('已定位')).toBeInTheDocument()
-
-  await user.click(getSourceModeButton('edit'))
-  expect(screen.getByLabelText('学生作文原文')).toBeInTheDocument()
-
-  await user.click(getSourceModeButton('read'))
-  await user.click(screen.getAllByRole('button', { name: '加入班级总览' })[0])
-  expect(screen.getByRole('button', { name: '已加入班级总览' })).toBeInTheDocument()
-
-  await user.click(screen.getByRole('tab', { name: '全文优化' }))
-  expect(screen.getByRole('heading', { name: '全文优化稿' })).toBeInTheDocument()
-
-  await user.click(screen.getByRole('tab', { name: '教师反馈' }))
-  expect(screen.getByLabelText('AI 总评')).toBeInTheDocument()
-})
-```
-
-Use the actual rendered mojibake strings if existing tests require them. The behavioral checks should remain the same.
-
-- [ ] **Step 7: Run the focused test and verify it fails for the expected reason**
+- [ ] **Step 7: Run focused test for feedback only**
 
 Run:
 
@@ -236,101 +154,47 @@ cd D:\wenjie-writewise-ai\app
 npm.cmd test -- src/pages/EssayResultPage.test.tsx
 ```
 
-Expected:
+Expected at this point:
 
 ```text
 FAIL src/pages/EssayResultPage.test.tsx
 ```
 
-The expected failure is missing page-level workspace controls and old source panel still containing `paper`.
-
-- [ ] **Step 8: Commit failing tests**
-
-Run:
-
-```powershell
-git add app/src/pages/EssayResultPage.test.tsx
-git commit -m "test: cover page-level original paper workspace"
-```
+This failure is expected because implementation is not complete. Do not commit yet.
 
 ---
 
-### Task 2: Restore `EssaySourcePanel` to OCR Source Modes Only
+## Task 2: Restore `EssaySourcePanel` to OCR Source Modes Only
 
 **Files:**
+
 - Modify: `app/src/components/EssaySourcePanel.tsx`
 
-- [ ] **Step 1: Remove unused paper workspace imports and constants**
+- [ ] **Step 1: Remove paper source mode**
 
 Remove:
 
-```ts
-import { EssayPageSorter } from './EssayPageSorter'
-```
+- `EssayPageSorter` import.
+- `SourcePanelMode = 'read' | 'paper' | 'edit'`.
+- `paper` option from `SOURCE_PANEL_MODE_OPTIONS`.
+- unsupported paper feature constants used only by the old in-panel placeholder.
 
-Replace:
-
-```ts
-type SourcePanelMode = 'read' | 'paper' | 'edit'
-
-const SOURCE_PANEL_MODE_OPTIONS: Array<{ mode: SourcePanelMode; label: string }> = [
-  { mode: 'read', label: '阅读定位' },
-  { mode: 'paper', label: '原卷视图' },
-  { mode: 'edit', label: '编辑 OCR' },
-]
-
-const UNSUPPORTED_PAPER_FEATURES = [
-  '图片批注',
-  '框选',
-  '手写痕迹',
-  '拖拽批注',
-  '自由绘图',
-  'OCR 坐标定位',
-  '图片与问题卡片联动',
-]
-```
-
-With:
+Use:
 
 ```ts
 type SourcePanelMode = 'read' | 'edit'
-
-const SOURCE_PANEL_MODE_OPTIONS: Array<{ mode: SourcePanelMode; label: string }> = [
-  { mode: 'read', label: '阅读定位' },
-  { mode: 'edit', label: '编辑 OCR' },
-]
 ```
 
-- [ ] **Step 2: Remove the `paper` rendering branch**
+- [ ] **Step 2: Remove the paper rendering branch**
 
-Remove the full branch that starts with:
+Delete the `mode === 'paper'` branch that renders the small in-panel paper placeholder.
 
-```tsx
-) : mode === 'paper' ? (
-```
+Keep a two-way branch:
 
-That branch currently renders the small in-panel paper placeholder. Delete that entire branch, including the wrapping scroll container whose class list starts with `mt-4 max-h-[520px] overflow-y-auto`.
+- `edit`: textarea OCR editing.
+- `read`: existing source text rendering with `splitTextByIssueMarkers`, `data-issue-source`, and `data-active`.
 
-Then keep the conditional as a two-way edit/read branch:
-
-```tsx
-{mode === 'edit' ? (
-  <textarea
-    aria-label="学生作文原文"
-    value={essay.ocrText}
-    onChange={(event) => onOcrTextChange(essay.id, event.target.value)}
-    className="mt-4 min-h-[320px] w-full resize-y rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-800 outline-none focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100"
-  />
-) : (
-  <div className="mt-4 max-h-[520px] overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-4">
-    {/* keep the existing read-mode source text branch unchanged */}
-  </div>
-)}
-```
-
-The read-mode source text branch must still include the fallback message, `splitTextByIssueMarkers`, `data-issue-source`, and `data-active`.
-
-- [ ] **Step 3: Run focused test**
+- [ ] **Step 3: Run focused test for feedback only**
 
 Run:
 
@@ -339,35 +203,28 @@ cd D:\wenjie-writewise-ai\app
 npm.cmd test -- src/pages/EssayResultPage.test.tsx
 ```
 
-Expected: still FAIL, because page-level workspace is not implemented yet.
-
-- [ ] **Step 4: Commit source panel cleanup**
-
-Run:
-
-```powershell
-git add app/src/components/EssaySourcePanel.tsx
-git commit -m "refactor: keep source panel to OCR modes"
-```
+Expected: still failing until Tasks 3-4 are complete. Do not commit yet.
 
 ---
 
-### Task 3: Add Page-Level `OriginalPaperWorkspace`
+## Task 3: Add Page-Level `OriginalPaperWorkspace`
 
 **Files:**
+
 - Create: `app/src/components/OriginalPaperWorkspace.tsx`
 
-- [ ] **Step 1: Create the component file**
+- [ ] **Step 1: Create component and props**
 
-Add:
+Use:
 
 ```tsx
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react'
 import type { Essay, EssayPage } from '../types'
 
 type EssayPageWithPossibleImages = EssayPage & {
+  previewUrl?: string
   imageUrl?: string
   imageUrls?: string[]
   url?: string
@@ -380,198 +237,89 @@ interface OriginalPaperWorkspaceProps {
   nextEssayId?: string
   onBackToGrading: () => void
 }
+```
 
-const unsupportedPaperFeatures = [
-  '图片批注',
-  '图片框选',
-  '手写痕迹',
-  '拖拽批注',
-  '自由绘图',
-  'OCR 坐标定位',
-  '点击批注定位图片区域',
-  '点击图片区域定位批注',
-  '右侧问题卡片定位到图片区域',
-]
+- [ ] **Step 2: Add image URL helper**
 
+Use a small helper that prioritizes real image fields:
+
+```ts
 function getOriginalImageUrl(page?: EssayPage) {
   if (!page) return undefined
   const pageWithImages = page as EssayPageWithPossibleImages
   return pageWithImages.previewUrl ?? pageWithImages.imageUrl ?? pageWithImages.imageUrls?.[0] ?? pageWithImages.url
 }
-
-function PaperEssaySwitchLink({
-  direction,
-  essayId,
-  taskId,
-}: {
-  direction: 'previous' | 'next'
-  essayId?: string
-  taskId: string
-}) {
-  const label = direction === 'previous' ? '上一篇' : '下一篇'
-  const Icon = direction === 'previous' ? ChevronLeft : ChevronRight
-  const className = 'tech-focus inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-sm font-semibold transition'
-
-  if (!essayId) {
-    return (
-      <button
-        type="button"
-        disabled
-        className={`${className} cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400`}
-      >
-        {direction === 'previous' ? <Icon className="h-4 w-4" /> : null}
-        {label}
-        {direction === 'next' ? <Icon className="h-4 w-4" /> : null}
-      </button>
-    )
-  }
-
-  return (
-    <Link
-      to={`/tasks/${taskId}/essays/${essayId}`}
-      className={`${className} border-slate-200 bg-white text-slate-700 hover:border-cyan-200 hover:bg-cyan-50`}
-    >
-      {direction === 'previous' ? <Icon className="h-4 w-4" /> : null}
-      {label}
-      {direction === 'next' ? <Icon className="h-4 w-4" /> : null}
-    </Link>
-  )
-}
-
-export function OriginalPaperWorkspace({
-  essay,
-  taskId,
-  previousEssayId,
-  nextEssayId,
-  onBackToGrading,
-}: OriginalPaperWorkspaceProps) {
-  const [pageIndex, setPageIndex] = useState(0)
-  const pages = essay.pages
-  const currentPage = pages[pageIndex]
-  const originalImageUrl = getOriginalImageUrl(currentPage)
-  const pageCount = Math.max(pages.length, 1)
-
-  return (
-    <section data-testid="paper-workspace" className="space-y-4">
-      <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={onBackToGrading}
-              className="tech-focus inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-cyan-200 hover:bg-cyan-50"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              返回批改工作台
-            </button>
-            <Link
-              to={`/tasks/${taskId}/progress`}
-              className="tech-focus inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-cyan-200 hover:bg-cyan-50"
-            >
-              返回批改进度
-            </Link>
-          </div>
-          <div className="text-center">
-            <h2 className="text-base font-semibold text-slate-950">{essay.essayNumber} · 原卷视图</h2>
-            <p className="mt-0.5 text-xs text-slate-500">原卷视图 · 阶段三预留</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <PaperEssaySwitchLink direction="previous" essayId={previousEssayId} taskId={taskId} />
-            <PaperEssaySwitchLink direction="next" essayId={nextEssayId} taskId={taskId} />
-          </div>
-        </div>
-      </div>
-
-      <div
-        data-testid="paper-canvas"
-        className="grid gap-3 rounded-lg border border-slate-200 bg-slate-100 p-3 xl:grid-cols-[220px_minmax(520px,1fr)_280px] xl:grid-rows-[minmax(560px,70vh)_auto]"
-      >
-        <aside className="rounded-lg border border-dashed border-slate-300 bg-white/80 p-4">
-          <h3 className="text-sm font-semibold text-slate-800">左侧批注区</h3>
-          <p className="mt-2 text-sm leading-6 text-slate-500">后续用于显示靠近卷面左侧的批注。</p>
-        </aside>
-
-        <div
-          data-testid="paper-image-stage"
-          className="flex min-h-[560px] items-center justify-center overflow-hidden rounded-lg border border-slate-300 bg-white p-5"
-        >
-          {originalImageUrl ? (
-            <img
-              src={originalImageUrl}
-              alt={`${essay.essayNumber} 原卷第 ${pageIndex + 1} 页`}
-              className="max-h-[72vh] w-full object-contain"
-            />
-          ) : (
-            <div
-              className="flex min-h-[520px] w-full max-w-3xl flex-col items-center justify-center rounded-lg border border-slate-300 bg-white p-8 text-center"
-              style={{
-                background: currentPage?.accent
-                  ? `linear-gradient(135deg, ${currentPage.accent}22, #ffffff)`
-                  : undefined,
-              }}
-            >
-              <h3 className="text-lg font-semibold text-slate-800">当前作文暂无原卷图片预览</h3>
-              <p className="mt-3 max-w-md text-sm leading-6 text-slate-500">
-                后续接入 OCR 坐标后，将在此处展示原卷批阅能力。
-              </p>
-            </div>
-          )}
-        </div>
-
-        <aside className="rounded-lg border border-dashed border-slate-300 bg-white/80 p-4">
-          <h3 className="text-sm font-semibold text-slate-800">右侧批注区</h3>
-          <p className="mt-2 text-sm leading-6 text-slate-500">
-            后续用于显示语言问题、逻辑问题和表达问题的批注卡片。
-          </p>
-          <p className="mt-4 text-xs font-semibold text-slate-500">当前不支持</p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {unsupportedPaperFeatures.map((feature) => (
-              <span
-                key={feature}
-                className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600"
-              >
-                {feature}
-              </span>
-            ))}
-          </div>
-        </aside>
-
-        <section className="rounded-lg border border-dashed border-slate-300 bg-white/80 p-4 xl:col-span-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-semibold text-slate-800">底部批注区</h3>
-              <p className="mt-2 text-sm leading-6 text-slate-500">
-                后续用于显示综合批注、跨句批注或较长说明。
-              </p>
-            </div>
-            <div className="flex items-center gap-2 text-sm font-semibold text-slate-600">
-              <button
-                type="button"
-                disabled={pageIndex === 0}
-                onClick={() => setPageIndex((current) => Math.max(0, current - 1))}
-                className="tech-focus rounded-lg border border-slate-200 bg-white px-3 py-2 disabled:cursor-not-allowed disabled:text-slate-300"
-              >
-                上一页
-              </button>
-              <span>第 {pageIndex + 1} / {pageCount} 页</span>
-              <button
-                type="button"
-                disabled={pageIndex >= pages.length - 1}
-                onClick={() => setPageIndex((current) => Math.min(pages.length - 1, current + 1))}
-                className="tech-focus rounded-lg border border-slate-200 bg-white px-3 py-2 disabled:cursor-not-allowed disabled:text-slate-300"
-              >
-                下一页
-              </button>
-            </div>
-          </div>
-        </section>
-      </div>
-    </section>
-  )
-}
 ```
 
-- [ ] **Step 2: Run focused test**
+- [ ] **Step 3: Add local page state and reset on essay change**
+
+Inside `OriginalPaperWorkspace`:
+
+```tsx
+const [pageIndex, setPageIndex] = useState(0)
+
+useEffect(() => {
+  setPageIndex(0)
+}, [essay.id])
+```
+
+This prevents stale page index when switching previous/next essays while staying in the paper workspace.
+
+- [ ] **Step 4: Render top navigation**
+
+Top navigation should include:
+
+- `返回批改工作台` button.
+- `返回批改进度` link.
+- essay label and `原卷视图`.
+- previous/next essay links or disabled buttons.
+
+Do not show:
+
+- total score
+- AI confidence
+- scoring tags
+- dimension scores
+- major deduction items
+- diagnostic summary
+
+- [ ] **Step 5: Render paper canvas**
+
+Render a page-level canvas:
+
+- left reserved annotation area
+- center large original paper stage
+- right reserved annotation area
+- bottom reserved annotation area
+
+Use a responsive layout equivalent to:
+
+```css
+grid-template-columns: 220px minmax(520px, 1fr) 280px;
+grid-template-rows: minmax(560px, 70vh) auto;
+```
+
+The center stage must:
+
+- show `<img>` with the real image URL when available
+- use `object-contain`
+- target a large visual area, around `70vh`
+- expose `data-testid="paper-image-stage"`
+- show only the large no-image placeholder when no real image exists
+
+The no-image placeholder copy should be:
+
+```text
+当前作文暂无原卷图片预览。后续接入 OCR 坐标后，将在此处展示原卷批阅能力。
+```
+
+- [ ] **Step 6: Add light page controls**
+
+Show `第 X / N 页`.
+
+If `N > 1`, simple previous/next page buttons are allowed. Do not add thumbnails, drag sorting, or complex multi-page management.
+
+- [ ] **Step 7: Run focused test for feedback only**
 
 Run:
 
@@ -580,74 +328,48 @@ cd D:\wenjie-writewise-ai\app
 npm.cmd test -- src/pages/EssayResultPage.test.tsx
 ```
 
-Expected: still FAIL, because `EssayResultPage` does not render the component yet.
-
-- [ ] **Step 3: Commit component**
-
-Run:
-
-```powershell
-git add app/src/components/OriginalPaperWorkspace.tsx
-git commit -m "feat: add original paper workspace canvas"
-```
+Expected: still failing until Task 4 wires the component. Do not commit yet.
 
 ---
 
-### Task 4: Wire Page-Level Workspace Mode in `EssayResultPage`
+## Task 4: Wire Page-Level Workspace Mode in `EssayResultPage`
 
 **Files:**
+
 - Modify: `app/src/pages/EssayResultPage.tsx`
 
 - [ ] **Step 1: Import the new component**
-
-Add:
 
 ```ts
 import { OriginalPaperWorkspace } from '../components/OriginalPaperWorkspace'
 ```
 
-- [ ] **Step 2: Add workspace mode type and state**
+- [ ] **Step 2: Add local workspace mode**
 
-After `type EssayDetailTab = 'scoring' | 'issues' | 'revision' | 'feedback'`, add:
+After `type EssayDetailTab = ...`, add:
 
 ```ts
 type EssayWorkspaceMode = 'grading' | 'paper'
 ```
 
-Inside `EssayResultPage`, after `activeDetailTab` state, add:
+Inside `EssayResultPage`, add local state:
 
 ```ts
 const [workspaceMode, setWorkspaceMode] = useState<EssayWorkspaceMode>('grading')
 ```
 
-- [ ] **Step 3: Add the page-level mode switch**
+- [ ] **Step 3: Add page-level mode switch**
 
-Inside the returned `<div className="space-y-5">`, immediately before the existing top action region, add:
+Add a switch with two buttons:
 
-```tsx
-<div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-1">
-  {[
-    { mode: 'grading' as const, label: '批改工作台' },
-    { mode: 'paper' as const, label: '原卷视图' },
-  ].map((modeOption) => (
-    <button
-      key={modeOption.mode}
-      type="button"
-      aria-pressed={workspaceMode === modeOption.mode}
-      onClick={() => setWorkspaceMode(modeOption.mode)}
-      className={`tech-focus rounded-md px-4 py-2 text-sm font-semibold transition ${
-        workspaceMode === modeOption.mode ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-900'
-      }`}
-    >
-      {modeOption.label}
-    </button>
-  ))}
-</div>
-```
+- `批改工作台`
+- `原卷视图`
 
-- [ ] **Step 4: Conditionally render paper workspace before grading content**
+Each button should use `aria-pressed={workspaceMode === modeOption.mode}` for stable tests.
 
-After the workspace switch, render:
+- [ ] **Step 4: Conditionally render paper before grading content**
+
+Structure the page as:
 
 ```tsx
 {workspaceMode === 'paper' ? (
@@ -660,20 +382,32 @@ After the workspace switch, render:
   />
 ) : (
   <>
-    {/* existing top action region, grading grid, and bottom ReviewActionBar */}
+    {/* existing top action region, grading grid, and ReviewActionBar */}
   </>
 )}
 ```
 
-Move the existing top action region, grading grid, and bottom `ReviewActionBar` inside the `grading` fragment without changing their internals. Keep the `showOriginalImage` modal outside this conditional so the existing original image modal still works in grading mode.
+Keep the existing original-image modal outside this conditional if needed so grading mode behavior is unchanged.
 
 - [ ] **Step 5: Preserve grading behavior**
 
-Do not change the existing `EssaySourcePanel`, `IssueCorrectionList`, `FullTextRevisionPanel`, or teacher-feedback JSX blocks except for indentation needed to wrap them in the grading fragment.
+Do not move or rewrite:
 
-Do not move `activeDetailTab`, `activeIssueId`, `reviewIssueItems`, `sourceIssueMarkers`, `getMaterialInput`, `addClassReviewMaterial`, or `isClassReviewMaterialAdded` into the paper component.
+- `activeDetailTab`
+- `activeIssueId`
+- `reviewIssueItems`
+- `sourceIssueMarkers`
+- `getMaterialInput`
+- `addClassReviewMaterial`
+- `isClassReviewMaterialAdded`
+- `EssaySourcePanel`
+- `IssueCorrectionList`
+- `FullTextRevisionPanel`
+- teacher-feedback JSX
 
-- [ ] **Step 6: Run focused test**
+Only wrap the existing grading workspace in the `grading` fragment.
+
+- [ ] **Step 6: Run focused test and verify green**
 
 Run:
 
@@ -688,25 +422,26 @@ Expected:
 PASS src/pages/EssayResultPage.test.tsx
 ```
 
-- [ ] **Step 7: Commit page wiring**
+- [ ] **Step 7: Commit the green feature set**
 
-Run:
+Only after the focused test passes, commit Tasks 1-4 together:
 
 ```powershell
-git add app/src/pages/EssayResultPage.tsx
-git commit -m "feat: switch essay detail to paper workspace"
+git add app/src/pages/EssayResultPage.test.tsx app/src/components/EssaySourcePanel.tsx app/src/components/OriginalPaperWorkspace.tsx app/src/pages/EssayResultPage.tsx
+git commit -m "feat: add page-level original paper workspace"
 ```
 
 ---
 
-### Task 5: Update Progress Memory and Run Focused Verification
+## Task 5: Update Progress Memory and Run Focused Verification
 
 **Files:**
+
 - Modify: `docs/current_development_status.md`
 
 - [ ] **Step 1: Add the new progress entry**
 
-Near the top of `docs/current_development_status.md`, after the `最后更新：2026-07-02` line, add:
+Near the top of `docs/current_development_status.md`, add a short entry:
 
 ```markdown
 ## 本次新增进展：原卷视图修正为页面级卷面批阅画布 v0.2
@@ -749,9 +484,10 @@ git commit -m "docs: record page-level paper workspace"
 
 ---
 
-### Task 6: Final Verification Before Completion
+## Task 6: Final Verification Before Completion
 
 **Files:**
+
 - Verify only; no planned file edits.
 
 - [ ] **Step 1: Run final regression commands**
@@ -781,7 +517,7 @@ Run:
 cd D:\wenjie-writewise-ai
 git status --short --branch
 git log --oneline -8
-rg -n "旁批|IssueImageAnchor|OcrPage|OcrTextBlock|bbox|fake|假坐标|假批注" app\src
+rg -n "IssueImageAnchor|OcrPage|OcrTextBlock|bbox|fake|假坐标|假批注|旁批" app\src
 ```
 
 Expected:
@@ -790,7 +526,7 @@ Expected:
 ## codex/original-paper-view-roadmap-v02
 ```
 
-The `rg` command may find existing design-doc content only if run outside `app\src`; within `app\src` it should not find runtime OCR coordinate types or fake annotation implementation. Chinese strings `假坐标` and `假批注` should not appear in runtime UI.
+The `rg` command should not find runtime OCR coordinate types, fake annotation implementation, fake coordinate UI, fake annotation UI, or unsupported naming in `app/src`.
 
 - [ ] **Step 3: Final response**
 
@@ -812,15 +548,22 @@ Do not push unless the user explicitly asks.
   - Page-level `批改工作台 / 原卷视图` switch is covered in Task 4.
   - `EssaySourcePanel` removing paper mode is covered in Task 2.
   - Local `workspaceMode` state is covered in Task 4.
-  - Large image/placeholder canvas, annotation rails, top navigation, and page counter are covered in Task 3.
+  - Large image/placeholder canvas, reserved annotation areas, top navigation, and page counter are covered in Task 3.
+  - True image URL priority is covered in Task 3.
+  - Page index reset on essay switch is covered in Task 3.
   - No AppState, route, upload, progress, class review, OCR coordinate, fake overlay, or fake annotation changes are included.
   - Tests cover hidden grading content in paper mode and restored grading workflows after return.
 
-- Placeholder scan:
-  - The plan contains concrete files, code, commands, expected results, and commit messages.
-  - No unresolved placeholders are present.
+- Review feedback incorporated:
+  - Fixed `getWorkspaceModeButton` grading fallback string.
+  - Added `previewUrl?: string` to `EssayPageWithPossibleImages`.
+  - Added `useEffect(() => setPageIndex(0), [essay.id])`.
+  - Removed red-test commit steps.
+  - Replaced brittle score-text assertion with absence checks for grading UI.
+  - Reaffirmed real image priority and large placeholder fallback.
+  - Reaffirmed no large grading workspace refactor.
+  - Reaffirmed no unsupported naming in runtime UI.
 
-- Type consistency:
-  - `EssayWorkspaceMode` is local to `EssayResultPage`.
-  - `SourcePanelMode` is local to `EssaySourcePanel`.
-  - `OriginalPaperWorkspace` uses existing `Essay` and `EssayPage` types and a local non-persistent type guard for possible image URL fields.
+- Placeholder scan:
+  - The plan contains concrete files, commands, expected results, and commit messages.
+  - No unresolved placeholders are present.
