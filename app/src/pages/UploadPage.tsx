@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { EmptyState } from '../components/EmptyState'
 import { EssayImagePreview } from '../components/EssayImagePreview'
-import { UploadPanel } from '../components/UploadPanel'
+import { UploadSourceSelector } from '../components/UploadSourceSelector'
 import { useAppState } from '../context/useAppState'
 import { AppLayout } from '../layout/AppLayout'
 import type { EssayPage } from '../types'
@@ -304,11 +304,7 @@ export function UploadPage() {
       description="一口气上传作文图片，按页数规则整理成作文组，再批量模拟 OCR 与批改。"
     >
       <div className="space-y-6">
-        <UploadPanel
-          onAddPage={addPage}
-          onSelectFiles={addLocalFiles}
-          onSubmit={() => navigate(`/tasks/${task.id}/progress`)}
-        />
+        <UploadSourceSelector onAddMockImage={addPage} onSelectImages={addLocalFiles} />
         <div className="rounded-lg border border-slate-200 bg-white p-5">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>

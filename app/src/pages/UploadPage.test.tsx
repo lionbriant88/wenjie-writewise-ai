@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -37,6 +37,41 @@ describe('UploadPage', () => {
     localStorage.clear()
   })
 
+  it('shows compact upload source entries with stage-three placeholders', () => {
+    renderUploadPage()
+
+    const sourceRegion = screen.getByRole('region', { name: '选择导入方式' })
+
+    expect(within(sourceRegion).getByRole('heading', { name: '选择导入方式' })).toBeInTheDocument()
+    expect(within(sourceRegion).getByText(/当前版本支持图片 \/ 文件导入/)).toBeInTheDocument()
+
+    const fileImport = within(sourceRegion).getByRole('group', { name: '图片 / 文件导入' })
+    expect(within(fileImport).getByText('当前可用')).toBeInTheDocument()
+    expect(within(fileImport).getByText(/从当前设备选择已经存在的作文图片或文件/)).toBeInTheDocument()
+    expect(within(fileImport).getByLabelText('选择图片')).toBeInTheDocument()
+    expect(within(fileImport).getByRole('button', { name: '添加模拟图片' })).toBeInTheDocument()
+
+    const cameraCapture = within(sourceRegion).getByRole('group', { name: '拍照采集' })
+    expect(within(cameraCapture).getByText('阶段三接入')).toBeInTheDocument()
+    expect(within(cameraCapture).getByText(/软件内调用手机、平板或电脑摄像头现场拍摄作文/)).toBeInTheDocument()
+
+    const scannerImport = within(sourceRegion).getByRole('group', { name: '扫描件导入' })
+    expect(within(scannerImport).getByText('阶段三接入')).toBeInTheDocument()
+    expect(within(scannerImport).getByText(/学校扫描仪或阅卷系统已经生成的作文图片、PDF 或文件夹/)).toBeInTheDocument()
+
+    const seewoCapture = within(sourceRegion).getByRole('group', { name: '希沃展台采集' })
+    expect(within(seewoCapture).getByText('课堂即时批改')).toBeInTheDocument()
+    expect(within(seewoCapture).getByText('批量采集上传')).toBeInTheDocument()
+    expect(within(seewoCapture).getAllByText('阶段三接入').length).toBeGreaterThanOrEqual(3)
+
+    expect(screen.queryByRole('button', { name: '打开摄像头' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '连接扫描仪' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '开始展台采集' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '展台截图' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '选择扫描件' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '使用本地图片模拟' })).not.toBeInTheDocument()
+  })
+
   it('adds selected local images to the organizer with real preview thumbnails', async () => {
     const user = userEvent.setup()
     vi.stubGlobal('URL', {
@@ -47,7 +82,7 @@ describe('UploadPage', () => {
     renderUploadPage()
 
     const file = new File(['image-bytes'], 'essay-photo.png', { type: 'image/png' })
-    await user.upload(screen.getByLabelText('选择本地图片'), file)
+    await user.upload(screen.getByLabelText('选择图片'), file)
 
     expect(screen.getByText('essay-photo.png')).toBeInTheDocument()
     expect(screen.getByRole('img', { name: 'essay-photo.png 预览' })).toHaveAttribute(
@@ -67,7 +102,7 @@ describe('UploadPage', () => {
     renderUploadPage()
 
     const file = new File(['image-bytes'], 'essay-photo.png', { type: 'image/png' })
-    await user.upload(screen.getByLabelText('选择本地图片'), file)
+    await user.upload(screen.getByLabelText('选择图片'), file)
     await user.click(screen.getByRole('button', { name: '删除 essay-photo.png' }))
 
     expect(screen.queryByText('essay-photo.png')).not.toBeInTheDocument()
