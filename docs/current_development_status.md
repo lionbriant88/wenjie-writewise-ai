@@ -12,6 +12,7 @@
 - 本轮验证结果：
   - `npm.cmd test -- src/pages/EssayResultPage.test.tsx`：通过。
   - `npm.cmd run lint`：通过。
+- GitHub：当前分支 `codex/original-paper-view-roadmap-v02` 已推送，并已创建 PR #4：`https://github.com/lionbriant88/wenjie-writewise-ai/pull/4`。
 
 ## 本次新增进展：原卷视图入口与原卷批阅路线占位 v0.2
 
