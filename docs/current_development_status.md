@@ -1,6 +1,24 @@
 # 当前开发状态
 
-最后更新：2026-07-02
+最后更新：2026-07-03
+
+## 本次新增进展：上传整理页多来源导入入口占位 v0.2
+
+- 在上传整理页顶部新增“选择导入方式”区域，作为阶段三多来源导入能力的入口占位。
+- 当前可用入口统一命名为“图片 / 文件导入”，但当前实际按钮只提供“选择图片”和“添加模拟图片”，不暗示已支持 PDF、文件夹或通用文件解析。
+- 新增三个阶段三入口占位：
+  - “拍照采集”：未来用于软件内调用手机、平板或电脑摄像头现场拍摄作文。
+  - “扫描件导入”：未来用于学校扫描仪或阅卷系统已经生成的图片、PDF 或文件夹导入，本轮不提供“选择扫描件”按钮。
+  - “希沃展台采集”：未来作为采集来源，明确展示“课堂即时批改”和“批量采集上传”两种模式。
+- 新增 `UploadSourceSelector` 展示组件，只通过 props 接收 `onSelectImages` 和 `onAddMockImage`，不直接读写 AppState，也不拥有上传状态、OCR 草稿、分组或队列逻辑。
+- 保留现有图片上传、真实缩略图预览、排序、删除、一张一篇 / 每 2 张一篇 / 混合页数整理、OCR mock 和批改队列流程。
+- 当前版本不接入真实摄像头、扫描仪、希沃视频流、PDF 解析、即时 OCR 或即时 AI 批改，也不显示“打开摄像头”“连接扫描仪”“开始展台采集”“展台截图”等假硬件 UI。
+- 本轮验证结果：
+  - `npm.cmd test -- src/pages/UploadPage.test.tsx`：1 个测试文件，13 个用例通过。
+  - `npm.cmd test`：22 个测试文件，109 个用例通过。
+  - `npm.cmd run lint`：通过。
+  - `npm.cmd run build`：通过。
+  - 范围扫描确认生产代码未出现假硬件按钮、摄像头 API、扫描仪 API 或 PDF 解析实现。
 
 ## 本次新增进展：原卷视图修正为页面级卷面批阅画布 v0.2
 
@@ -166,14 +184,16 @@
 - 项目根目录：`D:\wenjie-writewise-ai`
 - 前端应用：`D:\wenjie-writewise-ai\app`
 - 远程仓库：`https://github.com/lionbriant88/wenjie-writewise-ai.git`
-- 当前本地开发分支：`codex/original-paper-view-roadmap-v02`
+- 当前本地开发分支：`codex/upload-source-roadmap-v02`
 - 当前远端分支：仅 `origin/main`
 - 当前本地 `main` 与 `origin/main` 一致。
-- 当前最新主线提交：`24989b8 docs: record ocr marker preview approval`
+- 当前最新主线提交：`735198f docs: record paper workspace merge`
+- 当前功能分支最新提交：`0e2e6b1 feat: add upload source selector placeholder`
 - `main` 已包含班级总览讲评素材池闭环 v0.1 和 OCR 原文可点击问题句 v0.1。
 - `main` 已包含 PR #2：阶段一信息架构与界面打磨。
 - `main` 已包含 PR #3：批改进度页队列体验优化 v2。
-- 已合并的本地/远端历史功能分支已清理，当前仓库只保留 `main`。
+- `main` 已包含 PR #4：原卷视图修正为页面级卷面批阅画布 v0.2。
+- 已合并的历史功能分支已清理；远端当前只保留 `origin/main`，本地当前正在 `codex/upload-source-roadmap-v02` 上开发。
 
 ## 已完成工作
 
@@ -275,11 +295,7 @@ cd D:\wenjie-writewise-ai\app
 最新验证命令：
 
 ```powershell
-npm.cmd test -- src/pages/ClassReviewPage.test.tsx
-npm.cmd test -- src/utils/sourceIssueMarkers.test.ts
-npm.cmd test -- src/pages/EssayResultPage.test.tsx
-npm.cmd test -- src/pages/ProgressPage.test.tsx
-npm.cmd test -- src/pages/DetailNavigation.test.tsx
+npm.cmd test -- src/pages/UploadPage.test.tsx
 npm.cmd test
 npm.cmd run lint
 npm.cmd run build
@@ -287,19 +303,13 @@ npm.cmd run build
 
 最新结果：
 
-- 班级总览聚焦测试：1 个测试文件，2 个用例通过。
-- OCR 原文 marker 工具测试：1 个测试文件，4 个用例通过。
-- 单篇详情页聚焦测试：1 个测试文件，13 个用例通过。
-- 批改进度页聚焦测试：1 个测试文件，8 个用例通过。
-- 详情页导航聚焦测试：1 个测试文件，9 个用例通过。
-- 全量测试：22 个测试文件，106 个用例通过。
+- 上传整理页聚焦测试：1 个测试文件，13 个用例通过。
+- 全量测试：22 个测试文件，109 个用例通过。
 - Lint：通过。
 - Build：通过。
-- 浏览器预览：用户已在本机预览并确认没有问题。
-- 浏览器交互验收：
-  - 左侧问题句 marker 视觉通过人工检查。
-  - 点击语言问题 / 逻辑问题 marker 后，右侧切到“问题批改”并选中对应卡片。
-  - 切到“编辑 OCR”后 marker 隐藏，回到阅读模式后按最新 OCR 文本重算。
+- 范围扫描：
+  - 生产代码未出现“打开摄像头”“连接扫描仪”“开始展台采集”“展台截图”“选择扫描件”“使用本地图片模拟”等假硬件入口。
+  - 生产代码未出现 `navigator.mediaDevices`、`getUserMedia`、扫描仪 API 或 PDF 解析实现。
 
 `app\dist` 是 `npm.cmd run build` 生成目录，通常不应提交。
 
@@ -326,13 +336,13 @@ http://localhost:5173/tasks/task-1/class-review
 
 ## 下一步最合理开发内容
 
-当前 `main` 已包含 OCR 原文可点击问题句 v0.1，GitHub 和本地历史功能分支已清理，仓库处于单主线状态。
+当前功能分支 `codex/upload-source-roadmap-v02` 已完成上传整理页多来源导入入口占位 v0.2 的本地实现与验证，尚未推送和创建 PR。
 
 优先方向：
 
-1. 下一轮产品开发建议进入“原卷旁批视图路线设计 v0.2”或“课堂讲评素材整理增强”，但仍不接真实 OCR 坐标、不做复杂图片批注，先明确信息架构和低风险 mock 结构。
-2. 如果继续做原卷旁批，请先定义 mock 坐标结构和图片/文本双视图的信息边界，再进入实现。
-3. 阶段二收尾前建议补一份验收清单，把 mock 闭环中已完成、暂缓和进入阶段三的能力明确分层。
+1. 本轮优先收尾：推送 `codex/upload-source-roadmap-v02` 并创建 PR，合并后再从 `main` 继续下一项。
+2. 若继续围绕上传整理页推进，可做“多来源导入阶段三接入前置清单”，但仍不接真实摄像头、扫描仪、希沃视频流、PDF 解析或即时 OCR。
+3. 若转回批改侧，建议选择“课堂讲评素材整理增强”或“阶段二验收清单”，把 mock 闭环中已完成、暂缓和进入阶段三的能力明确分层。
 
 ## 后续工作注意事项
 
