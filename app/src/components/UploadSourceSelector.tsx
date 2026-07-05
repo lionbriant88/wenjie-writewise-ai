@@ -3,6 +3,7 @@ import { Camera, FileImage, FileScan, MonitorUp } from 'lucide-react'
 interface UploadSourceSelectorProps {
   onSelectImages: (files: File[]) => void
   onAddMockImage: () => void
+  disabled?: boolean
 }
 
 function statusClass(available: boolean) {
@@ -11,7 +12,7 @@ function statusClass(available: boolean) {
     : 'bg-slate-100 text-slate-500 ring-1 ring-slate-200'
 }
 
-export function UploadSourceSelector({ onSelectImages, onAddMockImage }: UploadSourceSelectorProps) {
+export function UploadSourceSelector({ onSelectImages, onAddMockImage, disabled = false }: UploadSourceSelectorProps) {
   return (
     <section
       role="region"
@@ -44,15 +45,21 @@ export function UploadSourceSelector({ onSelectImages, onAddMockImage }: UploadS
             从当前设备选择已经存在的作文图片或文件，例如相册照片、电脑文件夹图片、扫描仪或阅卷系统导出的图片 / PDF。
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
-            <label className="tech-focus inline-flex cursor-pointer rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100">
+            <label
+              className={`tech-focus inline-flex rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 ${
+                disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
+              }`}
+            >
               选择图片
               <input
                 type="file"
                 accept="image/*"
                 multiple
+                disabled={disabled}
                 aria-label="选择图片"
                 className="sr-only"
                 onChange={(event) => {
+                  if (disabled) return
                   onSelectImages(Array.from(event.target.files ?? []))
                   event.target.value = ''
                 }}
@@ -61,7 +68,8 @@ export function UploadSourceSelector({ onSelectImages, onAddMockImage }: UploadS
             <button
               type="button"
               onClick={onAddMockImage}
-              className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100"
+              disabled={disabled}
+              className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
             >
               添加模拟图片
             </button>

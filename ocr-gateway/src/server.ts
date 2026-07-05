@@ -104,7 +104,7 @@ export function createServer(options: CreateServerOptions = {}) {
     try {
       const provider = getProvider(options.providerName)
       if (options.providerName === 'throws_for_test') {
-        throw new Error('provider stack with SECRET_SHOULD_NOT_LEAK')
+        throw new Error('provider internal failure')
       }
       const result = await provider.recognize({ essayGroupId, pages })
       response.json({ results: [result] })

@@ -5,21 +5,15 @@ import { EssayImagePreview } from '../components/EssayImagePreview'
 import { UploadSourceSelector } from '../components/UploadSourceSelector'
 import { useAppState } from '../context/useAppState'
 import { AppLayout } from '../layout/AppLayout'
+import { buildOcrDraftsFromResults, hasEmptyTextWarning } from '../services/ocr/normalizeOcrResult'
+import { createOcrClient, getDefaultOcrMode } from '../services/ocr/ocrClient'
+import type { OcrEssayResult, OcrMode, OcrRunStatus } from '../services/ocr/types'
 import type { EssayPage } from '../types'
 import type { UploadEssayGroup, UploadGroupingMode } from '../utils/essayGrouping'
 import { createEssayImageGroups, renumberEssayGroups } from '../utils/essayGrouping'
 import { findEssaysByTask, findTask } from '../utils/taskLookup'
 
 const mixedGuideStorageKey = 'wenjie-hide-mixed-grouping-guide'
-
-function buildPageOcrDraft(page: EssayPage, index: number) {
-  return [
-    `作文图片 ${index + 1}：${page.label}`,
-    'Dear Sir or Madam,',
-    'I am writing to share my suggestion for this activity.',
-    'I believe it will help students improve their English writing.',
-  ].join('\n')
-}
 
 function groupingButtonClass(active: boolean) {
   return active
@@ -48,10 +42,16 @@ export function UploadPage() {
     createEssayImageGroups(initialPages, 'single'),
   )
   const [selectedPageIds, setSelectedPageIds] = useState<string[]>([])
-  const [mockOcrStatus, setMockOcrStatus] = useState<'idle' | 'completed'>('idle')
+  const [ocrMode, setOcrMode] = useState<OcrMode>(() => getDefaultOcrMode())
+  const [ocrStatus, setOcrStatus] = useState<OcrRunStatus>('idle')
+  const [, setOcrResults] = useState<OcrEssayResult[]>([])
+  const [ocrError, setOcrError] = useState('')
+  const [emptyTextWarning, setEmptyTextWarning] = useState(false)
+  const [ocrFallbackNotice, setOcrFallbackNotice] = useState('')
   const [ocrDrafts, setOcrDrafts] = useState<string[]>([])
   const [showMixedGuide, setShowMixedGuide] = useState(false)
   const localPreviewUrlsRef = useRef<string[]>([])
+  const localFilesByPageIdRef = useRef<Map<string, File>>(new Map())
 
   const pagesById = useMemo(() => new Map(pages.map((page) => [page.id, page])), [pages])
   const pageOrderIndex = useMemo(() => new Map(pages.map((page, index) => [page.id, index])), [pages])
@@ -89,6 +89,8 @@ export function UploadPage() {
   }, [groupingMode, mixedGroups, pageOrderIndex, pages, pagesById])
 
   const essaySubmissionCount = visibleEssayGroups.length
+  const visibleGroupIds = useMemo(() => visibleEssayGroups.map((group) => group.id), [visibleEssayGroups])
+  const isOcrRunning = ocrStatus === 'running'
 
   useEffect(() => {
     const localPreviewUrls = localPreviewUrlsRef.current
@@ -103,11 +105,16 @@ export function UploadPage() {
   }
 
   const resetOcrDraft = () => {
-    setMockOcrStatus('idle')
+    setOcrStatus('idle')
+    setOcrResults([])
+    setOcrError('')
+    setEmptyTextWarning(false)
+    setOcrFallbackNotice('')
     setOcrDrafts([])
   }
 
   const setGroupingMode = (mode: UploadGroupingMode) => {
+    if (isOcrRunning) return
     if (mode === 'mixed' && groupingMode !== 'mixed') {
       setMixedGroups(createEssayImageGroups(pages, 'single'))
       setShowMixedGuide(localStorage.getItem(mixedGuideStorageKey) !== 'true')
@@ -121,6 +128,7 @@ export function UploadPage() {
   }
 
   const addPage = () => {
+    if (isOcrRunning) return
     const next = pages.length + 1
     const nextPage: EssayPage = {
       id: `uploaded-page-${Date.now()}`,
@@ -136,16 +144,19 @@ export function UploadPage() {
   }
 
   const addLocalFiles = (files: File[]) => {
+    if (isOcrRunning) return
     if (files.length === 0) return
 
     setPages((current) => {
       const start = current.length + 1
       const nextPages = files.map((file, index): EssayPage => {
+        const pageId = `local-page-${Date.now()}-${index}`
         const previewUrl = URL.createObjectURL(file)
         localPreviewUrlsRef.current.push(previewUrl)
+        localFilesByPageIdRef.current.set(pageId, file)
 
         return {
-          id: `local-page-${Date.now()}-${index}`,
+          id: pageId,
           label: file.name,
           pageNumber: start + index,
           quality: 'clear',
@@ -170,6 +181,7 @@ export function UploadPage() {
   }
 
   const movePage = (pageId: string, direction: 'up' | 'down') => {
+    if (isOcrRunning) return
     setPages((current) => {
       const index = current.findIndex((page) => page.id === pageId)
       const target = direction === 'up' ? index - 1 : index + 1
@@ -183,6 +195,8 @@ export function UploadPage() {
   }
 
   const removePage = (pageId: string) => {
+    if (isOcrRunning) return
+    localFilesByPageIdRef.current.delete(pageId)
     setPages((current) => {
       const target = current.find((page) => page.id === pageId)
       if (target?.previewUrl) {
@@ -205,6 +219,7 @@ export function UploadPage() {
   }
 
   const togglePageSelection = (pageId: string) => {
+    if (isOcrRunning) return
     if (groupingMode !== 'mixed') return
     setSelectedPageIds((current) =>
       current.includes(pageId) ? current.filter((currentPageId) => currentPageId !== pageId) : [...current, pageId],
@@ -212,6 +227,7 @@ export function UploadPage() {
   }
 
   const mergeSelectedPages = () => {
+    if (isOcrRunning) return
     if (selectedPageIds.length < 2) return
 
     const selectedSet = new Set(selectedPageIds)
@@ -239,6 +255,7 @@ export function UploadPage() {
   }
 
   const splitEssayGroup = (groupIndex: number) => {
+    if (isOcrRunning) return
     const targetGroup = visibleEssayGroups[groupIndex]
     if (!targetGroup || targetGroup.pageIds.length <= 1) return
 
@@ -260,15 +277,68 @@ export function UploadPage() {
   const getGroupPages = (group: UploadEssayGroup) =>
     group.pageIds.map((pageId) => pagesById.get(pageId)).filter((page): page is EssayPage => Boolean(page))
 
-  const startMockOcr = () => {
-    setOcrDrafts(
-      visibleEssayGroups.map((group) =>
-        getGroupPages(group)
-          .map((page) => buildPageOcrDraft(page, pageOrderIndex.get(page.id) ?? 0))
-          .join('\n\n'),
-      ),
-    )
-    setMockOcrStatus('completed')
+  const applyOcrResults = (results: OcrEssayResult[], groupIdsSnapshot = visibleGroupIds) => {
+    setOcrResults(results)
+    const drafts = buildOcrDraftsFromResults(results, groupIdsSnapshot)
+    setOcrDrafts(drafts)
+    setEmptyTextWarning(hasEmptyTextWarning(results))
+
+    const failedResult = results.find((result) => result.status === 'failed')
+    if (failedResult) {
+      setOcrStatus('failed')
+      setOcrError(failedResult.error ?? 'OCR 识别失败。')
+      return
+    }
+
+    setOcrStatus('success')
+    setOcrError('')
+  }
+
+  const startOcr = async () => {
+    if (pages.length === 0 || isOcrRunning) return
+
+    const groupsSnapshot = visibleEssayGroups
+    const groupIdsSnapshot = groupsSnapshot.map((group) => group.id)
+    const pageOrderSnapshot = new Map(pageOrderIndex)
+    const client = createOcrClient(ocrMode)
+
+    setOcrStatus('running')
+    setOcrResults([])
+    setOcrError('')
+    setEmptyTextWarning(false)
+    setOcrFallbackNotice('')
+
+    const results = await client.recognize({
+      groups: groupsSnapshot,
+      getGroupPages,
+      getPageFile: (pageId) => localFilesByPageIdRef.current.get(pageId),
+      pageOrderIndex: pageOrderSnapshot,
+    })
+
+    applyOcrResults(results, groupIdsSnapshot)
+  }
+
+  const useMockDraftFallback = async () => {
+    const groupsSnapshot = visibleEssayGroups
+    const groupIdsSnapshot = groupsSnapshot.map((group) => group.id)
+    const results = await createOcrClient('mock').recognize({
+      groups: groupsSnapshot,
+      getGroupPages,
+      getPageFile: (pageId) => localFilesByPageIdRef.current.get(pageId),
+      pageOrderIndex,
+    })
+
+    applyOcrResults(results, groupIdsSnapshot)
+    setOcrFallbackNotice('已使用 mock OCR 草稿作为回退。')
+  }
+
+  const startManualOcrInput = () => {
+    setOcrStatus('success')
+    setOcrResults([])
+    setOcrError('')
+    setEmptyTextWarning(false)
+    setOcrFallbackNotice('')
+    setOcrDrafts(visibleEssayGroups.map(() => ''))
   }
 
   const getEssayGroups = () =>
@@ -277,12 +347,15 @@ export function UploadPage() {
       ocrText: ocrDrafts[groupIndex] ?? '',
     }))
 
-  const canConfirmMockOcr =
+  const canConfirmOcr =
+    ocrStatus === 'success' &&
     visibleEssayGroups.length > 0 &&
     ocrDrafts.length === visibleEssayGroups.length &&
     ocrDrafts.every((draft) => draft.trim().length > 0)
 
   const confirmMockOcrText = () => {
+    if (!canConfirmOcr) return
+
     confirmMockOcrEssay({
       taskId: task.id,
       essayGroups: getEssayGroups(),
@@ -304,7 +377,7 @@ export function UploadPage() {
       description="一口气上传作文图片，按页数规则整理成作文组，再批量模拟 OCR 与批改。"
     >
       <div className="space-y-6">
-        <UploadSourceSelector onAddMockImage={addPage} onSelectImages={addLocalFiles} />
+        <UploadSourceSelector onAddMockImage={addPage} onSelectImages={addLocalFiles} disabled={isOcrRunning} />
         <div className="rounded-lg border border-slate-200 bg-white p-5">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
@@ -313,14 +386,40 @@ export function UploadPage() {
                 当前 {pages.length} 张图片，预计生成 {essaySubmissionCount} 篇作文
               </p>
             </div>
-            <button
-              type="button"
-              onClick={startMockOcr}
-              disabled={pages.length === 0}
-              className="rounded-lg bg-blue-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
-            >
-              开始模拟 OCR（预计 {essaySubmissionCount} 篇）
-            </button>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+                <button
+                  type="button"
+                  aria-pressed={ocrMode === 'mock'}
+                  onClick={() => setOcrMode('mock')}
+                  disabled={isOcrRunning}
+                  className={`rounded-md px-3 py-1.5 text-sm font-semibold ${
+                    ocrMode === 'mock' ? 'bg-white text-blue-800 shadow-sm' : 'text-slate-600 hover:text-blue-700'
+                  } disabled:cursor-not-allowed disabled:opacity-50`}
+                >
+                  mock OCR
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={ocrMode === 'real'}
+                  onClick={() => setOcrMode('real')}
+                  disabled={isOcrRunning}
+                  className={`rounded-md px-3 py-1.5 text-sm font-semibold ${
+                    ocrMode === 'real' ? 'bg-white text-blue-800 shadow-sm' : 'text-slate-600 hover:text-blue-700'
+                  } disabled:cursor-not-allowed disabled:opacity-50`}
+                >
+                  real OCR 链路测试
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={startOcr}
+                disabled={pages.length === 0 || isOcrRunning}
+                className="rounded-lg bg-blue-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+              >
+                {isOcrRunning ? 'OCR 识别中...' : `开始 OCR 识别（预计 ${essaySubmissionCount} 篇）`}
+              </button>
+            </div>
           </div>
 
           <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4">
@@ -334,6 +433,7 @@ export function UploadPage() {
                   type="button"
                   aria-pressed={groupingMode === 'single'}
                   onClick={() => setGroupingMode('single')}
+                  disabled={isOcrRunning}
                   className={groupingButtonClass(groupingMode === 'single')}
                 >
                   一张一篇
@@ -342,6 +442,7 @@ export function UploadPage() {
                   type="button"
                   aria-pressed={groupingMode === 'fixed-2'}
                   onClick={() => setGroupingMode('fixed-2')}
+                  disabled={isOcrRunning}
                   className={groupingButtonClass(groupingMode === 'fixed-2')}
                 >
                   每 2 张一篇
@@ -350,6 +451,7 @@ export function UploadPage() {
                   type="button"
                   aria-pressed={groupingMode === 'mixed'}
                   onClick={() => setGroupingMode('mixed')}
+                  disabled={isOcrRunning}
                   className={groupingButtonClass(groupingMode === 'mixed')}
                 >
                   混合页数
@@ -404,14 +506,16 @@ export function UploadPage() {
                 <button
                   type="button"
                   onClick={mergeSelectedPages}
-                  className="rounded-lg bg-blue-700 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-800"
+                  disabled={isOcrRunning}
+                  className="rounded-lg bg-blue-700 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   合并为一篇作文（已选 {selectedPageIds.length} 张）
                 </button>
                 <button
                   type="button"
                   onClick={() => setSelectedPageIds([])}
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  disabled={isOcrRunning}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   取消选择
                 </button>
@@ -437,7 +541,8 @@ export function UploadPage() {
                           <button
                             type="button"
                             onClick={() => splitEssayGroup(groupIndex)}
-                            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                            disabled={isOcrRunning}
+                            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             拆分此作文 {groupIndex + 1}
                           </button>
@@ -458,6 +563,7 @@ export function UploadPage() {
                                   aria-label={`选择第 ${displayIndex} 张图片`}
                                   aria-pressed={selected}
                                   onClick={() => togglePageSelection(page.id)}
+                                  disabled={isOcrRunning}
                                   className="block w-full rounded-lg text-left"
                                 >
                                   <EssayImagePreview page={page} />
@@ -468,7 +574,7 @@ export function UploadPage() {
                               <div className="mt-2 grid grid-cols-3 gap-2">
                                 <button
                                   type="button"
-                                  disabled={displayIndex === 1}
+                                  disabled={displayIndex === 1 || isOcrRunning}
                                   onClick={() => movePage(page.id, 'up')}
                                   className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 disabled:opacity-40"
                                 >
@@ -476,7 +582,7 @@ export function UploadPage() {
                                 </button>
                                 <button
                                   type="button"
-                                  disabled={displayIndex === pages.length}
+                                  disabled={displayIndex === pages.length || isOcrRunning}
                                   onClick={() => movePage(page.id, 'down')}
                                   className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 disabled:opacity-40"
                                 >
@@ -485,8 +591,9 @@ export function UploadPage() {
                                 <button
                                   type="button"
                                   onClick={() => removePage(page.id)}
+                                  disabled={isOcrRunning}
                                   aria-label={`删除 ${page.label}`}
-                                  className="rounded-md border border-rose-100 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50"
+                                  className="rounded-md border border-rose-100 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                   删除
                                 </button>
@@ -508,20 +615,62 @@ export function UploadPage() {
           </div>
         </div>
 
-        {mockOcrStatus === 'completed' ? (
+        {ocrStatus === 'success' || ocrStatus === 'failed' ? (
           <section className="rounded-lg border border-cyan-100 bg-white p-5 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-semibold text-cyan-700">OCR 识别完成</p>
-                <h3 className="mt-1 font-semibold text-slate-950">模拟 OCR 文本草稿</h3>
+                <p className="text-sm font-semibold text-cyan-700">
+                  {ocrStatus === 'failed' ? 'OCR 识别失败' : 'OCR 识别完成'}
+                </p>
+                <h3 className="mt-1 font-semibold text-slate-950">OCR 文本草稿</h3>
                 <p className="mt-1 text-sm text-slate-500">
                   当前整理方式会提交 {essaySubmissionCount} 篇作文，每个文本框对应一篇作文。
                 </p>
               </div>
               <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
-                置信度 88%
+                {ocrMode === 'real' ? 'Gateway mock provider' : 'mock OCR'}
               </span>
             </div>
+            {ocrError ? (
+              <div className="mt-4 rounded-lg border border-rose-100 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">
+                {ocrError}
+              </div>
+            ) : null}
+            {emptyTextWarning ? (
+              <div className="mt-4 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+                识别结果为空，请检查图片或手动输入。
+              </div>
+            ) : null}
+            {ocrFallbackNotice ? (
+              <div className="mt-4 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700">
+                {ocrFallbackNotice}
+              </div>
+            ) : null}
+            {ocrStatus === 'failed' ? (
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={useMockDraftFallback}
+                  className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50"
+                >
+                  使用 mock 草稿
+                </button>
+                <button
+                  type="button"
+                  onClick={startManualOcrInput}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  手动输入 OCR 文本
+                </button>
+                <button
+                  type="button"
+                  onClick={startOcr}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  重试 OCR
+                </button>
+              </div>
+            ) : null}
             <div className="mt-4 grid gap-3 lg:grid-cols-2">
               {visibleEssayGroups.map((group, groupIndex) => (
                 <label key={`ocr-${group.id}`} className="block rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -546,7 +695,7 @@ export function UploadPage() {
               <button
                 type="button"
                 onClick={confirmMockOcrText}
-                disabled={!canConfirmMockOcr}
+                disabled={!canConfirmOcr}
                 className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
               >
                 确认 OCR 文本

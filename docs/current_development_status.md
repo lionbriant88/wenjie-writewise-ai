@@ -1,6 +1,25 @@
 # 当前开发状态
 
-最后更新：2026-07-03
+最后更新：2026-07-04
+
+## 本次新增进展：真实 OCR Gateway 接入 v0.1
+
+- 阶段三第一刀已启动：新增最小 `ocr-gateway`，前端不直接调用云 OCR，也不保存任何 OCR provider key。
+- Gateway v0.1 使用 `mock` provider 跑通 real OCR 形态链路，并提供 `mock_failure` 受控失败能力；当前仍未接入腾讯、百度、OpenAI、PaddleOCR 或其他真实 OCR 厂商。
+- Gateway 使用 multer memory storage，本轮不做图片长期存储、不写数据库、不上传对象存储；输入限制为 PNG / JPEG / WebP、单张 8MB、单次最多 10 页。
+- 前端新增统一 OCR Client，支持 `mock OCR` 与 `real OCR 链路测试`；前端只读取 `VITE_OCR_MODE` 和 `VITE_OCR_API_BASE` 两个非敏感配置。
+- 上传整理页 real OCR 链路测试成功后回填现有 OCR 草稿区；失败后提供“使用 mock 草稿”“手动输入 OCR 文本”“重试 OCR”。
+- OCR 识别中会锁定图片删除、排序、分组模式切换、合并 / 拆分等整理操作，避免 OCR 返回结果和当前分组错位。
+- OCR 成功但文本为空时会提示“识别结果为空，请检查图片或手动输入。”，不会静默进入批改队列。
+- 新增 `app/.env.example` 与 `ocr-gateway/.env.example`；真实 provider secret 只允许放在 Gateway 环境变量中，不能写入前端 `VITE_*`。
+- 当前仍不接真实 AI 批改、不解析 PDF / Word / 文件夹、不接扫描仪 / 摄像头 / 希沃展台、不做 OCR 坐标或原卷图片区域高亮。
+- 本轮验证结果：
+  - `npm.cmd test -- src/pages/UploadPage.test.tsx`：1 个测试文件，17 个用例通过。
+  - `npm.cmd test`：26 个测试文件，125 个用例通过。
+  - `npm.cmd run lint`：通过。
+  - `npm.cmd run build`：通过。
+  - `ocr-gateway`：`npm.cmd test` 2 个测试文件，10 个用例通过；`npm.cmd run typecheck` 通过。
+  - 安全扫描：`app/src` 与 `ocr-gateway/src` 生产代码未出现真实密钥、厂商 key 或 provider-specific SDK 逻辑。
 
 ## 本次收尾：阶段二验收与阶段三入口清单
 
@@ -219,10 +238,10 @@
 - 项目根目录：`D:\wenjie-writewise-ai`
 - 前端应用：`D:\wenjie-writewise-ai\app`
 - 远程仓库：`https://github.com/lionbriant88/wenjie-writewise-ai.git`
-- 当前本地开发分支：`main`
-- 当前远端分支：仅 `origin/main`
-- 当前本地 `main` 与 `origin/main` 一致，且已包含上传整理页多来源导入入口占位 v0.2。
-- 当前最新主线提交：`777296a Merge pull request #5 from lionbriant88/codex/task-writing-rubric-setup-v02`
+- 当前本地开发分支：`codex/real-ocr-gateway-v01`
+- 当前远端主线：`origin/main`
+- 当前分支基于最新阶段二收尾后的 `main` 开发，包含真实 OCR Gateway 接入 v0.1 的阶段三第一刀改动。
+- 当前最新主线提交：`b46c759 docs: add phase 2 acceptance checklist`
 - `main` 已包含创建任务页题目信息与任务评分标准确认 v0.2。
 - `main` 已包含班级总览讲评素材池闭环 v0.1 和 OCR 原文可点击问题句 v0.1。
 - `main` 已包含 PR #2：阶段一信息架构与界面打磨。
@@ -331,21 +350,27 @@ cd D:\wenjie-writewise-ai\app
 最新验证命令：
 
 ```powershell
-npm.cmd test -- src/pages/CreateTaskPage.test.tsx
+npm.cmd test -- src/pages/UploadPage.test.tsx
 npm.cmd test
 npm.cmd run lint
 npm.cmd run build
+cd D:\wenjie-writewise-ai\ocr-gateway
+npm.cmd test
+npm.cmd run typecheck
 ```
 
 最新结果：
 
-- 创建任务页聚焦测试：1 个测试文件，5 个用例通过。
-- 全量测试：23 个测试文件，114 个用例通过。
+- 上传整理页聚焦测试：1 个测试文件，17 个用例通过。
+- 前端全量测试：26 个测试文件，125 个用例通过。
 - Lint：通过。
 - Build：通过。
+- OCR Gateway 测试：2 个测试文件，10 个用例通过。
+- OCR Gateway Typecheck：通过。
+- 安全扫描：生产代码未发现真实密钥、厂商 key 或 provider-specific SDK 逻辑。
 - 范围确认：
-  - 阶段二收尾没有新增产品功能，也没有接真实 AI、真实 OCR、后端、硬件或文件解析。
-  - 上传整理、OCR mock、批改队列、单篇详情和班级总览核心流程保持复用，阶段三入口已在验收清单中分层记录。
+  - 本轮只打通最小 OCR Gateway 与统一 OCR Client 链路，Gateway 当前使用 mock provider。
+  - 未接真实 AI、真实 OCR 厂商、数据库、扫描仪、摄像头、希沃展台、PDF / Word / 文件夹解析或 OCR 坐标。
 
 `app\dist` 是 `npm.cmd run build` 生成目录，通常不应提交。
 
@@ -372,13 +397,13 @@ http://localhost:5173/tasks/task-1/class-review
 
 ## 下一步最合理开发内容
 
-阶段二核心 mock 闭环已经完成阶段收尾，当前仓库在最新 `main` 上，下一步可以从 `main` 新建阶段三功能分支。
+阶段三第一刀“真实 OCR Gateway 接入 v0.1”已在 `codex/real-ocr-gateway-v01` 分支完成最小链路。当前 real OCR 链路仍由 Gateway mock provider 支撑，尚未接真实 OCR 厂商。
 
 优先方向：
 
-1. 推荐阶段三第一刀：真实 OCR 接入 v0.1，继续复用上传整理、OCR 草稿编辑和批改队列。
-2. 备选阶段三第一刀：真实 AI 批改接入 v0.1，但建议先只支持应用文，并保持读后续写 mock。
-3. 阶段三每个任务都应保留阶段二 mock 回退路径，并明确不做清单，避免同时接 OCR、AI、原卷坐标和硬件。
+1. 选择具体 OCR provider，新增一个真实 provider adapter，并继续保持 mock / mock_failure 回退能力。
+2. 在选择 provider 前，可以先做 Gateway 启动脚本、健康检查提示和本地联调说明，让老师/开发者更容易跑通预览。
+3. 下一轮不要同时接真实 AI、OCR 坐标、扫描仪、摄像头或希沃展台；每次只打通一个真实能力边界。
 
 ## 后续工作注意事项
 

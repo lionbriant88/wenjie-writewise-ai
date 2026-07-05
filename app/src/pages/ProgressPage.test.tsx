@@ -130,7 +130,7 @@ describe('ProgressPage', () => {
     const user = userEvent.setup()
     renderUploadProgressAndDetailFlow()
 
-    await user.click(screen.getByRole('button', { name: '开始模拟 OCR（预计 6 篇）' }))
+    await user.click(screen.getByRole('button', { name: '开始 OCR 识别（预计 6 篇）' }))
     const ocrDraft = screen.getByRole('textbox', { name: '作文 1 OCR 文本' })
     await user.clear(ocrDraft)
     await user.type(ocrDraft, 'Confirmed OCR essay text')

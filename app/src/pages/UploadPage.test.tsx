@@ -31,9 +31,19 @@ function renderUploadToProgressFlow() {
   )
 }
 
+async function clearOrganizerImages(user: ReturnType<typeof userEvent.setup>) {
+  let deleteButton = screen.queryAllByRole('button', { name: /^删除 / })[0]
+
+  while (deleteButton) {
+    await user.click(deleteButton)
+    deleteButton = screen.queryAllByRole('button', { name: /^删除 / })[0]
+  }
+}
+
 describe('UploadPage', () => {
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.unstubAllEnvs()
     localStorage.clear()
   })
 
@@ -113,7 +123,7 @@ describe('UploadPage', () => {
     const user = userEvent.setup()
     renderUploadPage()
 
-    await user.click(screen.getByRole('button', { name: '开始模拟 OCR（预计 6 篇）' }))
+    await user.click(screen.getByRole('button', { name: '开始 OCR 识别（预计 6 篇）' }))
 
     expect(screen.getByText('OCR 识别完成')).toBeInTheDocument()
     const ocrDraft = screen.getByRole('textbox', { name: '作文 1 OCR 文本' }) as HTMLTextAreaElement
@@ -124,7 +134,7 @@ describe('UploadPage', () => {
     const user = userEvent.setup()
     renderUploadToProgressFlow()
 
-    await user.click(screen.getByRole('button', { name: '开始模拟 OCR（预计 6 篇）' }))
+    await user.click(screen.getByRole('button', { name: '开始 OCR 识别（预计 6 篇）' }))
     const ocrDraft = screen.getByRole('textbox', { name: '作文 1 OCR 文本' })
     await user.clear(ocrDraft)
     await user.type(ocrDraft, 'Confirmed OCR essay text')
@@ -142,7 +152,7 @@ describe('UploadPage', () => {
     expect(screen.getByRole('button', { name: '每 2 张一篇' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '混合页数' })).toBeInTheDocument()
     expect(screen.getByText('当前按上传顺序排列，自动分组将按此顺序生成作文。')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '开始模拟 OCR（预计 6 篇）' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '开始 OCR 识别（预计 6 篇）' })).toBeInTheDocument()
 
     expect(screen.queryByRole('button', { name: '合并为多页作文' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '拆分页' })).not.toBeInTheDocument()
@@ -160,7 +170,7 @@ describe('UploadPage', () => {
     expect(screen.getByText('作文 1 · 共 2 页')).toBeInTheDocument()
     expect(screen.getByText('作文 3 · 共 2 页')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: '开始模拟 OCR（预计 3 篇）' }))
+    await user.click(screen.getByRole('button', { name: '开始 OCR 识别（预计 3 篇）' }))
     await user.click(screen.getByRole('button', { name: '确认 OCR 文本' }))
 
     expect(screen.getByRole('heading', { name: '批改进度' })).toBeInTheDocument()
@@ -199,7 +209,7 @@ describe('UploadPage', () => {
     const user = userEvent.setup()
     renderUploadToProgressFlow()
 
-    await user.click(screen.getByRole('button', { name: '开始模拟 OCR（预计 6 篇）' }))
+    await user.click(screen.getByRole('button', { name: '开始 OCR 识别（预计 6 篇）' }))
     await user.click(screen.getByRole('button', { name: '确认 OCR 文本' }))
 
     expect(screen.getByRole('heading', { name: '批改进度' })).toBeInTheDocument()
@@ -248,7 +258,7 @@ describe('UploadPage', () => {
     await user.click(screen.getByRole('button', { name: '选择第 2 张图片' }))
     await user.click(screen.getByRole('button', { name: '选择第 3 张图片' }))
     await user.click(screen.getByRole('button', { name: '合并为一篇作文（已选 2 张）' }))
-    await user.click(screen.getByRole('button', { name: '开始模拟 OCR（预计 5 篇）' }))
+    await user.click(screen.getByRole('button', { name: '开始 OCR 识别（预计 5 篇）' }))
 
     expect(screen.getByRole('textbox', { name: '作文 1 OCR 文本' })).toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: '作文 2 OCR 文本' })).toBeInTheDocument()
@@ -262,5 +272,181 @@ describe('UploadPage', () => {
     expect(screen.getByRole('heading', { name: '批改进度' })).toBeInTheDocument()
     expect(screen.getAllByText('作文 11').length).toBeGreaterThan(0)
     expect(screen.getAllByText('作文 12').length).toBeGreaterThan(0)
+  })
+
+  it('runs the real OCR link test through the Gateway client and fills editable OCR drafts', async () => {
+    const user = userEvent.setup()
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL: vi.fn(() => 'blob:essay-photo-preview'),
+      revokeObjectURL: vi.fn(),
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url, init) => {
+        const essayGroupId = ((init as RequestInit).body as FormData).get('essayGroupId') as string
+
+        return {
+          ok: true,
+          text: async () =>
+            JSON.stringify({
+            results: [
+              {
+                essayGroupId,
+                text: 'Gateway recognized essay text',
+                pages: [{ pageId: 'local-page', text: 'Gateway recognized essay text' }],
+                provider: 'remote',
+                status: 'success',
+              },
+            ],
+          }),
+        }
+      }),
+    )
+    vi.stubEnv('VITE_OCR_API_BASE', 'http://localhost:4317')
+    renderUploadPage()
+
+    await clearOrganizerImages(user)
+    await user.upload(screen.getByLabelText('选择图片'), new File(['image'], 'essay-photo.png', { type: 'image/png' }))
+
+    await user.click(screen.getByRole('button', { name: 'real OCR 链路测试' }))
+    await user.click(screen.getByRole('button', { name: '开始 OCR 识别（预计 1 篇）' }))
+
+    expect(await screen.findByText('OCR 识别完成')).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: '作文 1 OCR 文本' })).toHaveValue('Gateway recognized essay text')
+  })
+
+  it('shows real OCR link-test failure with mock and manual fallback actions', async () => {
+    const user = userEvent.setup()
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL: vi.fn(() => 'blob:essay-photo-preview'),
+      revokeObjectURL: vi.fn(),
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url, init) => {
+        const essayGroupId = ((init as RequestInit).body as FormData).get('essayGroupId') as string
+
+        return {
+          ok: true,
+          text: async () =>
+            JSON.stringify({
+            results: [
+              {
+                essayGroupId,
+                text: '',
+                pages: [],
+                provider: 'remote',
+                status: 'failed',
+                error: 'OCR Gateway mock failure: 请使用 mock 草稿或手动输入。',
+              },
+            ],
+          }),
+        }
+      }),
+    )
+    vi.stubEnv('VITE_OCR_API_BASE', 'http://localhost:4317')
+    renderUploadPage()
+
+    await clearOrganizerImages(user)
+    await user.upload(screen.getByLabelText('选择图片'), new File(['image'], 'essay-photo.png', { type: 'image/png' }))
+
+    await user.click(screen.getByRole('button', { name: 'real OCR 链路测试' }))
+    await user.click(screen.getByRole('button', { name: '开始 OCR 识别（预计 1 篇）' }))
+
+    expect(await screen.findByText(/OCR Gateway mock failure/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '使用 mock 草稿' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '手动输入 OCR 文本' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '使用 mock 草稿' }))
+    expect(await screen.findByText('已使用 mock OCR 草稿作为回退。')).toBeInTheDocument()
+    expect((screen.getByRole('textbox', { name: '作文 1 OCR 文本' }) as HTMLTextAreaElement).value).toContain(
+      '作文图片 1',
+    )
+  })
+
+  it('allows manual OCR input after real OCR link-test failure', async () => {
+    const user = userEvent.setup()
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL: vi.fn(() => 'blob:essay-photo-preview'),
+      revokeObjectURL: vi.fn(),
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url, init) => {
+        const essayGroupId = ((init as RequestInit).body as FormData).get('essayGroupId') as string
+
+        return {
+          ok: true,
+          text: async () =>
+            JSON.stringify({
+            results: [
+              {
+                essayGroupId,
+                text: '',
+                pages: [],
+                provider: 'remote',
+                status: 'failed',
+                error: 'OCR Gateway mock failure: 请使用 mock 草稿或手动输入。',
+              },
+            ],
+          }),
+        }
+      }),
+    )
+    vi.stubEnv('VITE_OCR_API_BASE', 'http://localhost:4317')
+    renderUploadPage()
+
+    await clearOrganizerImages(user)
+    await user.upload(screen.getByLabelText('选择图片'), new File(['image'], 'essay-photo.png', { type: 'image/png' }))
+
+    await user.click(screen.getByRole('button', { name: 'real OCR 链路测试' }))
+    await user.click(screen.getByRole('button', { name: '开始 OCR 识别（预计 1 篇）' }))
+    await user.click(await screen.findByRole('button', { name: '手动输入 OCR 文本' }))
+
+    expect(screen.getByRole('textbox', { name: '作文 1 OCR 文本' })).toHaveValue('')
+  })
+
+  it('shows an empty-text warning when OCR succeeds with no text', async () => {
+    const user = userEvent.setup()
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL: vi.fn(() => 'blob:essay-photo-preview'),
+      revokeObjectURL: vi.fn(),
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url, init) => {
+        const essayGroupId = ((init as RequestInit).body as FormData).get('essayGroupId') as string
+
+        return {
+          ok: true,
+          text: async () =>
+            JSON.stringify({
+            results: [
+              {
+                essayGroupId,
+                text: '',
+                pages: [{ pageId: 'local-page', text: '', warnings: ['empty_text'] }],
+                provider: 'remote',
+                status: 'success',
+              },
+            ],
+          }),
+        }
+      }),
+    )
+    vi.stubEnv('VITE_OCR_API_BASE', 'http://localhost:4317')
+    renderUploadPage()
+
+    await clearOrganizerImages(user)
+    await user.upload(screen.getByLabelText('选择图片'), new File(['image'], 'essay-photo.png', { type: 'image/png' }))
+
+    await user.click(screen.getByRole('button', { name: 'real OCR 链路测试' }))
+    await user.click(screen.getByRole('button', { name: '开始 OCR 识别（预计 1 篇）' }))
+
+    expect(await screen.findByText('识别结果为空，请检查图片或手动输入。')).toBeInTheDocument()
   })
 })
