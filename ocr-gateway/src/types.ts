@@ -4,7 +4,7 @@ export const MAX_PAGES_PER_REQUEST = 10
 export const allowedImageMimeTypes = ['image/png', 'image/jpeg', 'image/webp'] as const
 
 export type AllowedImageMimeType = (typeof allowedImageMimeTypes)[number]
-export type GatewayProviderName = 'mock' | 'mock_failure'
+export type GatewayProviderName = 'mock' | 'mock_failure' | 'paddle_local'
 export type OcrProviderName = 'mock' | 'remote'
 export type OcrStatus = 'success' | 'partial' | 'failed'
 
