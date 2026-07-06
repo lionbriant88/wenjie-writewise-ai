@@ -1,6 +1,19 @@
 # 当前开发状态
 
-最后更新：2026-07-04
+最后更新：2026-07-07
+
+## 本次新增进展：PaddleOCR 本地真实 OCR Provider 接入 v0.2
+
+- OCR Gateway 已新增 `paddle_local` provider。
+- real OCR 现在可走本地 PaddleOCR runner，不再只有 Gateway `mock` provider 可用。
+- PaddleOCR provider 只存在于 Gateway；前端仍然只认 `mock OCR` / `real OCR`，`app/src` 不得出现 PaddleOCR / `paddle_local` / `PADDLE_OCR` / Python runner 逻辑。
+- Node 侧通过 `child_process.spawn` 启动 `scripts/paddle_ocr_runner.py --manifest <manifestPath> --output <outputPath> --lang <lang>`，不使用 `exec`、字符串 shell 或 `shell: true`。
+- 临时文件使用 `fs.mkdtemp(os.tmpdir())` 创建在 `wenjie-paddle-ocr-*` 目录下，并在 `finally` 中清理。
+- 超时会杀掉 Python 进程；环境失败返回脱敏后的 environment message，不暴露 traceback、path、args 或 env。
+- 结果会统一归一化为 `OcrEssayResult`；单页局部失败保留 `paddle_page_failed`；成功页回填 OCR draft；失败时仍保留 mock / manual / retry 路径。
+- 本次只新增样本评估文档，不新增页面、dashboard、chart 或产品功能。
+- 非目标仍包括：真实 AI、OCR 坐标、原图高亮、PDF / Word / 文件夹解析、扫描仪 / 摄像头 / 希沃。
+- 当前可引用的验证证据：Gateway provider / runner 聚焦测试与 typecheck 已通过；若需要说明 Python 校验，则当前 shell 下 `python` / `py` 不可用，因此未运行 `py_compile`。这里不宣称最终全量验收完成，Task 7 会继续做完整验证。
 
 ## 本次新增进展：真实 OCR Gateway 接入 v0.1
 
