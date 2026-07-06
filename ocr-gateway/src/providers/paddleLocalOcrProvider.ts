@@ -11,13 +11,16 @@ const defaultTimeoutMs = 30_000
 const environmentError = 'PaddleOCR 本地环境未就绪，请检查 Python 依赖，或使用 mock 草稿 / 手动输入。'
 const genericError = 'PaddleOCR 识别失败，请使用 mock 草稿或手动输入。'
 
+type CleanupDir = (tempDir: string) => Promise<void>
+
 interface PaddleLocalOcrProviderOptions {
   readonly runner?: PaddleRunner
   readonly timeoutMs?: number
+  readonly cleanupDir?: CleanupDir
 }
 
 interface PaddleOutput {
-  readonly pages?: OcrPageResult[]
+  readonly pages?: unknown
 }
 
 function extensionForPage(page: GatewayPageInput): string {
@@ -46,24 +49,58 @@ function failedResult(input: GatewayRecognizeInput, error: string): OcrEssayResu
   }
 }
 
-function parsePages(output: string): OcrPageResult[] {
-  const parsed = JSON.parse(output) as PaddleOutput | OcrPageResult[]
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function normalizePage(rawPage: unknown): OcrPageResult | undefined {
+  if (!isObject(rawPage) || typeof rawPage.pageId !== 'string') {
+    return undefined
+  }
+
+  const page: OcrPageResult = {
+    pageId: rawPage.pageId,
+    text: typeof rawPage.text === 'string' ? rawPage.text : '',
+  }
+
+  if (typeof rawPage.confidence === 'number') {
+    page.confidence = rawPage.confidence
+  }
+
+  if (Array.isArray(rawPage.warnings) && rawPage.warnings.every((warning) => typeof warning === 'string')) {
+    page.warnings = rawPage.warnings
+  }
+
+  return page
+}
+
+function outputPages(parsed: unknown): unknown[] {
   if (Array.isArray(parsed)) {
     return parsed
   }
-  if (Array.isArray(parsed.pages)) {
-    return parsed.pages
+  if (isObject(parsed) && Array.isArray((parsed as PaddleOutput).pages)) {
+    return (parsed as { pages: unknown[] }).pages
   }
   throw new Error('Paddle output JSON did not contain pages.')
+}
+
+function parsePages(output: string): OcrPageResult[] {
+  return outputPages(JSON.parse(output)).map(normalizePage).filter((page): page is OcrPageResult => page !== undefined)
+}
+
+async function defaultCleanupDir(tempDir: string): Promise<void> {
+  await rm(tempDir, { recursive: true, force: true })
 }
 
 export class PaddleLocalOcrProvider implements OcrProvider {
   private readonly runner: PaddleRunner
   private readonly timeoutMs: number
+  private readonly cleanupDir: CleanupDir
 
   constructor(options: PaddleLocalOcrProviderOptions = {}) {
     this.runner = options.runner ?? new NodePaddleRunner()
     this.timeoutMs = options.timeoutMs ?? defaultTimeoutMs
+    this.cleanupDir = options.cleanupDir ?? defaultCleanupDir
   }
 
   async recognize(input: GatewayRecognizeInput): Promise<OcrEssayResult> {
@@ -114,7 +151,11 @@ export class PaddleLocalOcrProvider implements OcrProvider {
       return failedResult(input, genericError)
     } finally {
       if (tempDir) {
-        await rm(tempDir, { recursive: true, force: true })
+        try {
+          await this.cleanupDir(tempDir)
+        } catch {
+          // Cleanup is best-effort and must not replace the OCR result or sanitized error.
+        }
       }
     }
   }
