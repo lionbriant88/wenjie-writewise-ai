@@ -20,7 +20,7 @@ describe('NodePaddleRunner', () => {
     })
 
     const runPromise = runner.run('input manifest.json', 'output file.json', 1000)
-    child.emit('exit', 0)
+    child.emit('close', 0, null)
 
     await expect(runPromise).resolves.toBeUndefined()
     expect(spawnProcess).toHaveBeenCalledWith(
@@ -63,23 +63,27 @@ describe('NodePaddleRunner', () => {
       const runPromise = runner.run('manifest.json', 'output.json', 50)
       vi.advanceTimersByTime(50)
 
+      await expect(Promise.race([runPromise, Promise.resolve('pending')])).resolves.toBe('pending')
+      expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+
+      child.emit('close', null, 'SIGTERM')
+
       await expect(runPromise).rejects.toMatchObject({
         kind: 'timeout',
       })
-      expect(child.kill).toHaveBeenCalledWith('SIGTERM')
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('maps nonzero exit to an execution error', async () => {
+  it('maps nonzero close to an execution error', async () => {
     const child = new FakeChildProcess()
     const spawnProcess = vi.fn(() => child)
     const runner = new NodePaddleRunner({ spawnProcess })
 
     const runPromise = runner.run('manifest.json', 'output.json', 1000)
     child.stderr.emit('data', Buffer.from('traceback text'))
-    child.emit('exit', 7)
+    child.emit('close', 7, null)
 
     await expect(runPromise).rejects.toMatchObject({
       kind: 'execution',

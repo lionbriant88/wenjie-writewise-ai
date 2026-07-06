@@ -24,7 +24,7 @@ export interface SpawnPythonProcess {
   }
   kill(signal: NodeJS.Signals): unknown
   once(event: 'error', listener: (error: NodeJS.ErrnoException) => void): this
-  once(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this
+  once(event: 'close', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this
 }
 
 type SpawnPython = (
@@ -74,6 +74,7 @@ export class NodePaddleRunner implements PaddleRunner {
     return new Promise((resolveRun, rejectRun) => {
       let settled = false
       let stderr = ''
+      let timedOut = false
       let timeout: NodeJS.Timeout | undefined
 
       const settle = (callback: () => void): void => {
@@ -105,11 +106,19 @@ export class NodePaddleRunner implements PaddleRunner {
       })
 
       child.once('error', (error) => {
+        if (timedOut) {
+          return
+        }
         const kind: PaddleRunnerErrorKind = error.code === 'ENOENT' ? 'environment' : 'execution'
         settle(() => rejectRun(new PaddleRunnerError(kind, error.message)))
       })
 
-      child.once('exit', (code, signal) => {
+      child.once('close', (code, signal) => {
+        if (timedOut) {
+          settle(() => rejectRun(new PaddleRunnerError('timeout', `Paddle OCR runner timed out after ${timeoutMs}ms`)))
+          return
+        }
+
         if (code === 0) {
           settle(resolveRun)
           return
@@ -120,8 +129,8 @@ export class NodePaddleRunner implements PaddleRunner {
       })
 
       timeout = setTimeout(() => {
+        timedOut = true
         child.kill('SIGTERM')
-        settle(() => rejectRun(new PaddleRunnerError('timeout', `Paddle OCR runner timed out after ${timeoutMs}ms`)))
       }, timeoutMs)
       timeout.unref()
     })
