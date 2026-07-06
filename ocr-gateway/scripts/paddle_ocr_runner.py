@@ -21,6 +21,15 @@ def write_json(output_path: str, payload: Dict[str, Any]) -> None:
     )
 
 
+def write_json_guarded(output_path: str, payload: Dict[str, Any]) -> bool:
+    try:
+        write_json(output_path, payload)
+        return True
+    except Exception:
+        log("Failed to write OCR output.")
+        return False
+
+
 def read_manifest(manifest_path: str) -> Dict[str, Any]:
     try:
         manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
@@ -177,24 +186,27 @@ def main() -> int:
         manifest = read_manifest(args.manifest)
     except Exception as error:
         log(str(error))
-        write_json(args.output, {"error": str(error)})
+        if not write_json_guarded(args.output, {"error": str(error)}):
+            return 1
         return 0
 
     try:
         ocr = load_paddle_ocr(args.lang)
     except Exception as error:
         log(str(error))
-        write_json(
+        if not write_json_guarded(
             args.output,
             {
                 "error": str(error),
                 "errorCode": ENVIRONMENT_ERROR_CODE,
             },
-        )
+        ):
+            return 1
         return 0
 
     pages = [recognize_page(ocr, page) for page in manifest["pages"]]
-    write_json(args.output, {"pages": pages})
+    if not write_json_guarded(args.output, {"pages": pages}):
+        return 1
     return 0
 
 

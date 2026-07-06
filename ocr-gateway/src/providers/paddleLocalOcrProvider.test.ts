@@ -193,6 +193,38 @@ describe('PaddleLocalOcrProvider', () => {
     expect(existsSync(tempDir)).toBe(false)
   })
 
+  it('maps structured runner errors to the generic failed message without exposing raw error text', async () => {
+    const runner = new FakePaddleRunner()
+    runner.run.mockImplementation(async (_manifestPath, outputPath) => {
+      await writeRunnerOutput(outputPath, { error: 'Invalid manifest' })
+    })
+    const provider = new PaddleLocalOcrProvider({ runner })
+
+    const result = await provider.recognize(inputWithPages([{ pageId: 'page-1', originalName: 'page.png' }]))
+
+    expect(result.status).toBe('failed')
+    expect(result.error).toBe(genericError)
+    expect(result.error).not.toContain('Invalid manifest')
+  })
+
+  it('maps structured environment runner errors to the local setup message without exposing raw error text', async () => {
+    const runner = new FakePaddleRunner()
+    runner.run.mockImplementation(async (_manifestPath, outputPath) => {
+      await writeRunnerOutput(outputPath, {
+        error: 'PaddleOCR failed',
+        errorCode: 'paddle_environment',
+      })
+    })
+    const provider = new PaddleLocalOcrProvider({ runner })
+
+    const result = await provider.recognize(inputWithPages([{ pageId: 'page-1', originalName: 'page.png' }]))
+
+    expect(result.status).toBe('failed')
+    expect(result.error).toBe(environmentError)
+    expect(result.error).not.toContain('PaddleOCR failed')
+    expect(result.error).not.toContain('paddle_environment')
+  })
+
   it('returns a generic failed result and cleans the temp directory on timeout', async () => {
     const runner = new FakePaddleRunner()
     runner.run.mockRejectedValue(new PaddleRunnerError('timeout', 'Python runner timed out.'))

@@ -21,7 +21,13 @@ interface PaddleLocalOcrProviderOptions {
 
 interface PaddleOutput {
   readonly pages?: unknown
+  readonly error?: unknown
+  readonly errorCode?: unknown
 }
+
+type ParsedPaddleOutput =
+  | { kind: 'pages'; pages: OcrPageResult[] }
+  | { kind: 'error'; message: string }
 
 function extensionForPage(page: GatewayPageInput): string {
   if (page.mimeType === 'image/jpeg') {
@@ -84,8 +90,19 @@ function outputPages(parsed: unknown): unknown[] {
   throw new Error('Paddle output JSON did not contain pages.')
 }
 
-function parsePages(output: string): OcrPageResult[] {
-  return outputPages(JSON.parse(output)).map(normalizePage).filter((page): page is OcrPageResult => page !== undefined)
+function parseOutput(output: string): ParsedPaddleOutput {
+  const parsed = JSON.parse(output)
+  if (isObject(parsed) && typeof parsed.error === 'string') {
+    return {
+      kind: 'error',
+      message: parsed.errorCode === 'paddle_environment' ? environmentError : genericError,
+    }
+  }
+
+  return {
+    kind: 'pages',
+    pages: outputPages(parsed).map(normalizePage).filter((page): page is OcrPageResult => page !== undefined),
+  }
 }
 
 async function defaultCleanupDir(tempDir: string): Promise<void> {
@@ -140,9 +157,12 @@ export class PaddleLocalOcrProvider implements OcrProvider {
       )
 
       await this.runner.run(manifestPath, outputPath, this.timeoutMs)
-      const providerPages = parsePages(await readFile(outputPath, 'utf8'))
+      const parsedOutput = parseOutput(await readFile(outputPath, 'utf8'))
+      if (parsedOutput.kind === 'error') {
+        return failedResult(input, parsedOutput.message)
+      }
 
-      return normalizeProviderResult({ input, providerPages })
+      return normalizeProviderResult({ input, providerPages: parsedOutput.pages })
     } catch (error) {
       if (error instanceof PaddleRunnerError && error.kind === 'environment') {
         return failedResult(input, environmentError)
