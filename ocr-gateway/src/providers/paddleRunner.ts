@@ -44,6 +44,7 @@ const defaultScriptPath = resolve(
   dirname(fileURLToPath(import.meta.url)),
   '../../scripts/paddle_ocr_runner.py',
 )
+const stderrBufferLimit = 4096
 
 export class NodePaddleRunner implements PaddleRunner {
   private readonly pythonCommand: string
@@ -74,7 +75,6 @@ export class NodePaddleRunner implements PaddleRunner {
     return new Promise((resolveRun, rejectRun) => {
       let settled = false
       let stderr = ''
-      let timedOut = false
       let timeout: NodeJS.Timeout | undefined
 
       const settle = (callback: () => void): void => {
@@ -102,35 +102,28 @@ export class NodePaddleRunner implements PaddleRunner {
       }
 
       child.stderr.on('data', (chunk) => {
-        stderr += chunk.toString()
+        stderr = (stderr + chunk.toString()).slice(-stderrBufferLimit)
       })
 
       child.once('error', (error) => {
-        if (timedOut) {
-          return
-        }
         const kind: PaddleRunnerErrorKind = error.code === 'ENOENT' ? 'environment' : 'execution'
         settle(() => rejectRun(new PaddleRunnerError(kind, error.message)))
       })
 
       child.once('close', (code, signal) => {
-        if (timedOut) {
-          settle(() => rejectRun(new PaddleRunnerError('timeout', `Paddle OCR runner timed out after ${timeoutMs}ms`)))
-          return
-        }
-
         if (code === 0) {
           settle(resolveRun)
           return
         }
 
-        const reason = stderr.trim() || `Paddle OCR runner exited with code ${code ?? 'null'} signal ${signal ?? 'null'}`
-        settle(() => rejectRun(new PaddleRunnerError('execution', reason)))
+        void stderr
+        void signal
+        settle(() => rejectRun(new PaddleRunnerError('execution', 'Python runner exited with a nonzero status.')))
       })
 
       timeout = setTimeout(() => {
-        timedOut = true
         child.kill('SIGTERM')
+        settle(() => rejectRun(new PaddleRunnerError('timeout', 'Python runner timed out.')))
       }, timeoutMs)
       timeout.unref()
     })

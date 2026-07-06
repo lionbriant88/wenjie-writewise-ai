@@ -63,31 +63,31 @@ describe('NodePaddleRunner', () => {
       const runPromise = runner.run('manifest.json', 'output.json', 50)
       vi.advanceTimersByTime(50)
 
-      await expect(Promise.race([runPromise, Promise.resolve('pending')])).resolves.toBe('pending')
-      expect(child.kill).toHaveBeenCalledWith('SIGTERM')
-
-      child.emit('close', null, 'SIGTERM')
-
       await expect(runPromise).rejects.toMatchObject({
         kind: 'timeout',
+        message: 'Python runner timed out.',
       })
+      expect(child.kill).toHaveBeenCalledWith('SIGTERM')
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('maps nonzero close to an execution error', async () => {
+  it('maps nonzero close to a generic execution error without leaking stderr', async () => {
     const child = new FakeChildProcess()
     const spawnProcess = vi.fn(() => child)
     const runner = new NodePaddleRunner({ spawnProcess })
 
     const runPromise = runner.run('manifest.json', 'output.json', 1000)
-    child.stderr.emit('data', Buffer.from('traceback text'))
+    child.stderr.emit('data', Buffer.from('Traceback /secret/input.png --manifest private args'))
     child.emit('close', 7, null)
 
     await expect(runPromise).rejects.toMatchObject({
       kind: 'execution',
-      message: expect.stringContaining('traceback text'),
+      message: 'Python runner exited with a nonzero status.',
     })
+    await expect(runPromise).rejects.not.toHaveProperty('message', expect.stringContaining('Traceback'))
+    await expect(runPromise).rejects.not.toHaveProperty('message', expect.stringContaining('/secret/input.png'))
+    await expect(runPromise).rejects.not.toHaveProperty('message', expect.stringContaining('--manifest'))
   })
 })
