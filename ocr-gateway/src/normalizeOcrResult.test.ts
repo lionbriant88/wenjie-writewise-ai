@@ -53,4 +53,33 @@ describe('normalizeProviderResult', () => {
       warnings: ['page_not_recognized', 'empty_text'],
     } satisfies OcrPageResult)
   })
+
+  it('returns partial when one requested page has a paddle page failure warning', () => {
+    const result = normalizeProviderResult({
+      input: inputWithPages(['page-1', 'page-2']),
+      providerPages: [
+        { pageId: 'page-1', text: '', warnings: ['paddle_page_failed'] },
+        { pageId: 'page-2', text: 'Recognized second page' },
+      ],
+    })
+
+    expect(result.status).toBe('partial')
+    expect(result.text).toBe('Recognized second page')
+    expect(result.pages[0].warnings).toEqual(['paddle_page_failed', 'empty_text'])
+    expect(result.error).toBeUndefined()
+  })
+
+  it('returns failed when every requested page has a paddle page failure warning', () => {
+    const result = normalizeProviderResult({
+      input: inputWithPages(['page-1', 'page-2']),
+      providerPages: [
+        { pageId: 'page-1', text: '', warnings: ['paddle_page_failed'] },
+        { pageId: 'page-2', text: '', warnings: ['paddle_page_failed'] },
+      ],
+    })
+
+    expect(result.status).toBe('failed')
+    expect(result.text).toBe('')
+    expect(result.error).toBe('OCR 识别失败，请使用 mock 草稿或手动输入。')
+  })
 })

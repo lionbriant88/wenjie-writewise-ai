@@ -9,6 +9,10 @@ function normalizeText(text: string | undefined) {
   return (text ?? '').trim()
 }
 
+function hasPageFailure(page: OcrPageResult) {
+  return page.warnings?.some((warning) => warning === 'page_not_recognized' || warning === 'paddle_page_failed') ?? false
+}
+
 export function normalizeProviderResult({ input, providerPages }: NormalizeProviderResultInput): OcrEssayResult {
   const pagesById = new Map(providerPages.map((page) => [page.pageId, page]))
 
@@ -28,8 +32,8 @@ export function normalizeProviderResult({ input, providerPages }: NormalizeProvi
     }
   })
 
-  const missingPageCount = pages.filter((page) => page.warnings?.includes('page_not_recognized')).length
-  const status = missingPageCount === 0 ? 'success' : missingPageCount === pages.length ? 'failed' : 'partial'
+  const failedPageCount = pages.filter(hasPageFailure).length
+  const status = failedPageCount === 0 ? 'success' : failedPageCount === pages.length ? 'failed' : 'partial'
 
   return {
     essayGroupId: input.essayGroupId,
