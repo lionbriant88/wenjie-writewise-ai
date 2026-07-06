@@ -16,4 +16,12 @@ describe('getProvider', () => {
   it('selects the local PaddleOCR provider', () => {
     expect(getProvider('paddle_local')).toBeInstanceOf(PaddleLocalOcrProvider)
   })
+
+  it('rejects unsupported provider names', () => {
+    expect(() => getProvider('paddle')).toThrow('Unsupported OCR provider.')
+  })
+
+  it('rejects provider names with accidental whitespace', () => {
+    expect(() => getProvider('paddle_local ')).toThrow('Unsupported OCR provider.')
+  })
 })
