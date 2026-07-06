@@ -44,13 +44,37 @@ describe('NodePaddleRunner', () => {
     const runner = new NodePaddleRunner({ spawnProcess })
 
     const runPromise = runner.run('manifest.json', 'output.json', 1000)
-    const enoent = Object.assign(new Error('spawn python ENOENT'), { code: 'ENOENT' })
+    const enoent = Object.assign(
+      new Error('spawn C:\\secret\\python.exe ENOENT --manifest SECRET'),
+      { code: 'ENOENT' },
+    )
     child.emit('error', enoent)
 
     await expect(runPromise).rejects.toMatchObject({
       kind: 'environment',
+      message: 'Python command is not available.',
     })
+    await expect(runPromise).rejects.not.toHaveProperty('message', expect.stringContaining('C:\\secret\\python.exe'))
+    await expect(runPromise).rejects.not.toHaveProperty('message', expect.stringContaining('--manifest'))
+    await expect(runPromise).rejects.not.toHaveProperty('message', expect.stringContaining('SECRET'))
     await expect(runPromise).rejects.toBeInstanceOf(PaddleRunnerError)
+  })
+
+  it('maps spawn startup failures to a generic execution error', async () => {
+    const spawnProcess = vi.fn(() => {
+      throw new Error('spawn C:\\secret\\python.exe EACCES --manifest SECRET')
+    })
+    const runner = new NodePaddleRunner({ spawnProcess })
+
+    const runPromise = runner.run('manifest.json', 'output.json', 1000)
+
+    await expect(runPromise).rejects.toMatchObject({
+      kind: 'execution',
+      message: 'Python runner failed to start.',
+    })
+    await expect(runPromise).rejects.not.toHaveProperty('message', expect.stringContaining('C:\\secret\\python.exe'))
+    await expect(runPromise).rejects.not.toHaveProperty('message', expect.stringContaining('--manifest'))
+    await expect(runPromise).rejects.not.toHaveProperty('message', expect.stringContaining('SECRET'))
   })
 
   it('kills python with SIGTERM and rejects with a timeout error', async () => {

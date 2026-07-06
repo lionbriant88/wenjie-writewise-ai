@@ -46,6 +46,10 @@ const defaultScriptPath = resolve(
 )
 const stderrBufferLimit = 4096
 
+function startupErrorMessage(kind: PaddleRunnerErrorKind): string {
+  return kind === 'environment' ? 'Python command is not available.' : 'Python runner failed to start.'
+}
+
 export class NodePaddleRunner implements PaddleRunner {
   private readonly pythonCommand: string
   private readonly scriptPath: string
@@ -97,7 +101,7 @@ export class NodePaddleRunner implements PaddleRunner {
       } catch (error) {
         const spawnError = error as NodeJS.ErrnoException
         const kind: PaddleRunnerErrorKind = spawnError.code === 'ENOENT' ? 'environment' : 'execution'
-        settle(() => rejectRun(new PaddleRunnerError(kind, spawnError.message)))
+        settle(() => rejectRun(new PaddleRunnerError(kind, startupErrorMessage(kind))))
         return
       }
 
@@ -107,7 +111,7 @@ export class NodePaddleRunner implements PaddleRunner {
 
       child.once('error', (error) => {
         const kind: PaddleRunnerErrorKind = error.code === 'ENOENT' ? 'environment' : 'execution'
-        settle(() => rejectRun(new PaddleRunnerError(kind, error.message)))
+        settle(() => rejectRun(new PaddleRunnerError(kind, startupErrorMessage(kind))))
       })
 
       child.once('close', (code, signal) => {
