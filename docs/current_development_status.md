@@ -13,7 +13,13 @@
 - 结果会统一归一化为 `OcrEssayResult`；单页局部失败保留 `paddle_page_failed`；成功页回填 OCR draft；失败时仍保留 mock / manual / retry 路径。
 - 本次只新增样本评估文档，不新增页面、dashboard、chart 或产品功能。
 - 非目标仍包括：真实 AI、OCR 坐标、原图高亮、PDF / Word / 文件夹解析、扫描仪 / 摄像头 / 希沃。
-- 当前可引用的验证证据：Gateway provider / runner 聚焦测试与 typecheck 已通过；若需要说明 Python 校验，则当前 shell 下 `python` / `py` 不可用，因此未运行 `py_compile`。这里不宣称最终全量验收完成，Task 7 会继续做完整验证。
+- 本轮验证结果：
+  - `ocr-gateway`：`npm.cmd test` 5 个测试文件、32 个用例通过；`npm.cmd run typecheck` 通过。
+  - 前端 OCR service：`npm.cmd test -- src/services/ocr` 3 个测试文件、7 个用例通过。
+  - 上传整理页回归：`npm.cmd test -- src/pages/UploadPage.test.tsx` 1 个测试文件、17 个用例通过。
+  - 前端全量：`npm.cmd test` 26 个测试文件、125 个用例通过；`npm.cmd run lint` 通过；`npm.cmd run build` 通过。
+  - 安全扫描：`app/src` 生产代码未出现 PaddleOCR / `paddle_local` / `PADDLE_OCR` / Python runner / 云 OCR 密钥相关逻辑；`ocr-gateway/src` 未出现 `exec(` 或 `shell: true`，`node:child_process` 只出现在 `paddleRunner.ts`。
+  - 当前 shell 下 `python` / `py` 不可用，因此未运行 `py_compile` 或真实 PaddleOCR smoke test；自动化测试仍不依赖真实 PaddleOCR 安装。
 
 ## 本次新增进展：真实 OCR Gateway 接入 v0.1
 
