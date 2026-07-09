@@ -26,7 +26,7 @@
 ## 本次新增进展：真实 OCR Gateway 接入 v0.1
 
 - 阶段三第一刀已启动：新增最小 `ocr-gateway`，前端不直接调用云 OCR，也不保存任何 OCR provider key。
-- Gateway v0.1 使用 `mock` provider 跑通 real OCR 形态链路，并提供 `mock_failure` 受控失败能力；当前仍未接入腾讯、百度、OpenAI、PaddleOCR 或其他真实 OCR 厂商。
+- Gateway v0.1 当时使用 `mock` provider 跑通 real OCR 形态链路，并提供 `mock_failure` 受控失败能力；该历史阶段尚未接入腾讯、百度、OpenAI、PaddleOCR 或其他真实 OCR 厂商。
 - Gateway 使用 multer memory storage，本轮不做图片长期存储、不写数据库、不上传对象存储；输入限制为 PNG / JPEG / WebP、单张 8MB、单次最多 10 页。
 - 前端新增统一 OCR Client，支持 `mock OCR` 与 `real OCR 链路测试`；前端只读取 `VITE_OCR_MODE` 和 `VITE_OCR_API_BASE` 两个非敏感配置。
 - 上传整理页 real OCR 链路测试成功后回填现有 OCR 草稿区；失败后提供“使用 mock 草稿”“手动输入 OCR 文本”“重试 OCR”。
@@ -390,7 +390,7 @@ npm.cmd run typecheck
 - OCR Gateway Typecheck：通过。
 - 安全扫描：生产代码未发现真实密钥、厂商 key 或 provider-specific SDK 逻辑。
 - 范围确认：
-  - 本轮只打通最小 OCR Gateway 与统一 OCR Client 链路，Gateway 当前使用 mock provider。
+  - 本轮只打通最小 OCR Gateway 与统一 OCR Client 链路，Gateway 当时使用 mock provider。
   - 未接真实 AI、真实 OCR 厂商、数据库、扫描仪、摄像头、希沃展台、PDF / Word / 文件夹解析或 OCR 坐标。
 
 `app\dist` 是 `npm.cmd run build` 生成目录，通常不应提交。
@@ -418,13 +418,13 @@ http://localhost:5173/tasks/task-1/class-review
 
 ## 下一步最合理开发内容
 
-阶段三第一刀“真实 OCR Gateway 接入 v0.1”已在 `codex/real-ocr-gateway-v01` 分支完成最小链路。当前 real OCR 链路仍由 Gateway mock provider 支撑，尚未接真实 OCR 厂商。
+PaddleOCR 本地真实 OCR Provider 接入 v0.2 已完成。下一步不建议立刻扩展 OCR 坐标、PDF / Word、扫描仪或真实 AI，而是先用真实样本验证本地 OCR 环境和作文文本质量。
 
 优先方向：
 
-1. 选择具体 OCR provider，新增一个真实 provider adapter，并继续保持 mock / mock_failure 回退能力。
-2. 在选择 provider 前，可以先做 Gateway 启动脚本、健康检查提示和本地联调说明，让老师/开发者更容易跑通预览。
-3. 下一轮不要同时接真实 AI、OCR 坐标、扫描仪、摄像头或希沃展台；每次只打通一个真实能力边界。
+1. 在已安装 Python / PaddleOCR 的机器上跑一次真实 smoke test，确认 runner 协议、模型加载和错误脱敏都符合预期。
+2. 使用 `docs/ocr_provider_evaluation_paddle_v02.md` 记录 5 - 10 份真实作文样本的成功率、空文本、部分页失败和人工修正量。
+3. 根据评测结果决定下一刀是优化 PaddleOCR 环境说明、接入 OCR 坐标，还是进入 PDF / Word / 文件夹解析；一次只推进一个真实能力边界。
 
 ## 后续工作注意事项
 

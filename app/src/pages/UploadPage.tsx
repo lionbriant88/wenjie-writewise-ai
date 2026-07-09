@@ -628,7 +628,7 @@ export function UploadPage() {
                 </p>
               </div>
               <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
-                {ocrMode === 'real' ? 'Gateway mock provider' : 'mock OCR'}
+                {ocrMode === 'real' ? 'Gateway OCR' : 'mock OCR'}
               </span>
             </div>
             {ocrError ? (

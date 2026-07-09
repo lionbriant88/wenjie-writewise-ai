@@ -313,6 +313,8 @@ describe('UploadPage', () => {
     await user.click(screen.getByRole('button', { name: '开始 OCR 识别（预计 1 篇）' }))
 
     expect(await screen.findByText('OCR 识别完成')).toBeInTheDocument()
+    expect(screen.getByText('Gateway OCR')).toBeInTheDocument()
+    expect(screen.queryByText('Gateway mock provider')).not.toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: '作文 1 OCR 文本' })).toHaveValue('Gateway recognized essay text')
   })
 
