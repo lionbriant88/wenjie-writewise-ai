@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { PaddleLocalOcrProvider } from './paddleLocalOcrProvider.js'
 import { PaddleRunnerError, type PaddleRunner } from './paddleRunner.js'
@@ -14,6 +14,9 @@ const genericError = 'PaddleOCR 识别失败，请使用 mock 草稿或手动输
 class FakePaddleRunner implements PaddleRunner {
   readonly run = vi.fn<(manifestPath: string, outputPath: string, timeoutMs: number) => Promise<void>>()
 }
+
+const originalPaddleOcrTimeoutMs = process.env.PADDLE_OCR_TIMEOUT_MS
+const originalOcrTimeoutMs = process.env.OCR_TIMEOUT_MS
 
 function inputWithPages(pages: Array<{ pageId: string; originalName: string; buffer?: Buffer }>): GatewayRecognizeInput {
   return {
@@ -43,6 +46,25 @@ async function writeRunnerOutput(outputPath: string, output: unknown) {
 }
 
 describe('PaddleLocalOcrProvider', () => {
+  beforeEach(() => {
+    delete process.env.PADDLE_OCR_TIMEOUT_MS
+    delete process.env.OCR_TIMEOUT_MS
+  })
+
+  afterEach(() => {
+    if (originalPaddleOcrTimeoutMs === undefined) {
+      delete process.env.PADDLE_OCR_TIMEOUT_MS
+    } else {
+      process.env.PADDLE_OCR_TIMEOUT_MS = originalPaddleOcrTimeoutMs
+    }
+
+    if (originalOcrTimeoutMs === undefined) {
+      delete process.env.OCR_TIMEOUT_MS
+    } else {
+      process.env.OCR_TIMEOUT_MS = originalOcrTimeoutMs
+    }
+  })
+
   it('writes a manifest, runs paddle, normalizes output in request page order, and cleans temp files', async () => {
     const runner = new FakePaddleRunner()
     let observedManifest:
@@ -106,6 +128,46 @@ describe('PaddleLocalOcrProvider', () => {
     expect(result.status).toBe('partial')
     expect(result.text).toBe('Recognized page')
     expect(result.pages[0].warnings).toEqual(['paddle_page_failed', 'empty_text'])
+  })
+
+  it('uses PADDLE_OCR_TIMEOUT_MS when no timeout option is injected', async () => {
+    process.env.PADDLE_OCR_TIMEOUT_MS = '60000'
+    const runner = new FakePaddleRunner()
+    runner.run.mockImplementation(async (_manifestPath, outputPath) => {
+      await writeRunnerOutput(outputPath, { pages: [{ pageId: 'page-1', text: 'Recognized page' }] })
+    })
+    const provider = new PaddleLocalOcrProvider({ runner })
+
+    await provider.recognize(inputWithPages([{ pageId: 'page-1', originalName: 'page.png' }]))
+
+    expect(firstRunPaths(runner).timeoutMs).toBe(60000)
+  })
+
+  it('falls back to OCR_TIMEOUT_MS when PADDLE_OCR_TIMEOUT_MS is absent', async () => {
+    process.env.OCR_TIMEOUT_MS = '45000'
+    const runner = new FakePaddleRunner()
+    runner.run.mockImplementation(async (_manifestPath, outputPath) => {
+      await writeRunnerOutput(outputPath, { pages: [{ pageId: 'page-1', text: 'Recognized page' }] })
+    })
+    const provider = new PaddleLocalOcrProvider({ runner })
+
+    await provider.recognize(inputWithPages([{ pageId: 'page-1', originalName: 'page.png' }]))
+
+    expect(firstRunPaths(runner).timeoutMs).toBe(45000)
+  })
+
+  it('falls back to the provider default when timeout env vars are invalid', async () => {
+    process.env.PADDLE_OCR_TIMEOUT_MS = '0'
+    process.env.OCR_TIMEOUT_MS = 'invalid'
+    const runner = new FakePaddleRunner()
+    runner.run.mockImplementation(async (_manifestPath, outputPath) => {
+      await writeRunnerOutput(outputPath, { pages: [{ pageId: 'page-1', text: 'Recognized page' }] })
+    })
+    const provider = new PaddleLocalOcrProvider({ runner })
+
+    await provider.recognize(inputWithPages([{ pageId: 'page-1', originalName: 'page.png' }]))
+
+    expect(firstRunPaths(runner).timeoutMs).toBe(60000)
   })
 
   it('ignores malformed page fields instead of casting them into normalized output', async () => {

@@ -7,7 +7,7 @@ import type { GatewayPageInput, GatewayRecognizeInput, OcrEssayResult, OcrPageRe
 import { NodePaddleRunner, PaddleRunnerError, type PaddleRunner } from './paddleRunner.js'
 import type { OcrProvider } from './providerTypes.js'
 
-const defaultTimeoutMs = 30_000
+const defaultTimeoutMs = 60_000
 const environmentError = 'PaddleOCR 本地环境未就绪，请检查 Python 依赖，或使用 mock 草稿 / 手动输入。'
 const genericError = 'PaddleOCR 识别失败，请使用 mock 草稿或手动输入。'
 
@@ -28,6 +28,27 @@ interface PaddleOutput {
 type ParsedPaddleOutput =
   | { kind: 'pages'; pages: OcrPageResult[] }
   | { kind: 'error'; message: string }
+
+function positiveTimeoutFromEnv(value: string | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined
+  }
+
+  const timeoutMs = Number(value)
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return undefined
+  }
+
+  return timeoutMs
+}
+
+function providerTimeoutFromEnv(): number {
+  return (
+    positiveTimeoutFromEnv(process.env.PADDLE_OCR_TIMEOUT_MS) ??
+    positiveTimeoutFromEnv(process.env.OCR_TIMEOUT_MS) ??
+    defaultTimeoutMs
+  )
+}
 
 function extensionForPage(page: GatewayPageInput): string {
   if (page.mimeType === 'image/jpeg') {
@@ -116,7 +137,7 @@ export class PaddleLocalOcrProvider implements OcrProvider {
 
   constructor(options: PaddleLocalOcrProviderOptions = {}) {
     this.runner = options.runner ?? new NodePaddleRunner()
-    this.timeoutMs = options.timeoutMs ?? defaultTimeoutMs
+    this.timeoutMs = options.timeoutMs ?? providerTimeoutFromEnv()
     this.cleanupDir = options.cleanupDir ?? defaultCleanupDir
   }
 

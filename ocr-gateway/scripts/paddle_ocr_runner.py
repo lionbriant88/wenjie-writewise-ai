@@ -1,6 +1,7 @@
 import argparse
 import contextlib
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -16,7 +17,7 @@ def log(message: str) -> None:
 
 def write_json(output_path: str, payload: Dict[str, Any]) -> None:
     Path(output_path).write_text(
-        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False),
         encoding="utf-8",
     )
 
@@ -71,7 +72,10 @@ def load_paddle_ocr(lang: str) -> Any:
 def confidence_value(value: Any) -> Optional[float]:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return float(value)
+    confidence = float(value)
+    if not math.isfinite(confidence):
+        return None
+    return confidence
 
 
 def extract_dict_lines(value: Dict[str, Any]) -> List[Tuple[str, Optional[float]]]:
