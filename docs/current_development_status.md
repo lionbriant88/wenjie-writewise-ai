@@ -16,7 +16,7 @@
 - 本次只新增样本评估文档，不新增页面、dashboard、chart 或产品功能。
 - 非目标仍包括：真实 AI、OCR 坐标、原图高亮、PDF / Word / 文件夹解析、扫描仪 / 摄像头 / 希沃。
 - 本轮验证结果：
-  - `ocr-gateway`：`npm.cmd test` 5 个测试文件、32 个用例通过；final-review 修复后 `npm.cmd test -- src/providers/paddleLocalOcrProvider.test.ts` 13 个用例通过；`npm.cmd run typecheck` 通过。
+  - `ocr-gateway`：final verification `npm.cmd test` 5 个测试文件、35 个用例通过；`npm.cmd run typecheck` 通过。
   - 前端 OCR service：`npm.cmd test -- src/services/ocr` 3 个测试文件、7 个用例通过。
   - 上传整理页回归：`npm.cmd test -- src/pages/UploadPage.test.tsx` 1 个测试文件、17 个用例通过。
   - 前端全量：`npm.cmd test` 26 个测试文件、125 个用例通过；`npm.cmd run lint` 通过；`npm.cmd run build` 通过。
