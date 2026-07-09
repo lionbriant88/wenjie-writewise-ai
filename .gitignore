@@ -10,6 +10,18 @@ coverage/
 .env
 .env.*
 !.env.example
+.venv/
+__pycache__/
+*.pyc
+tmp/
+temp/
+*.ocr.json
+*.local.json
+local-samples/
+smoke-samples/
+.paddle-home/
+.paddle-cache/
+.paddleocr/
 
 # Logs
 *.log

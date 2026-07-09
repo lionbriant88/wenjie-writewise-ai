@@ -2,6 +2,18 @@
 
 最后更新：2026-07-09
 
+## 本次新增进展：PaddleOCR 本地真实识别 smoke test v0.2.1
+
+- 已在 `ocr-gateway/.venv` 创建项目本地 Python 环境，使用 Codex bundled Python 3.12.13。
+- 已安装 PaddleOCR 本地依赖：PaddleOCR 2.10.0、PaddlePaddle 2.6.2；并补充 `setuptools>=70` 到 `ocr-gateway/requirements.txt`，避免 PaddlePaddle import 时缺少 setuptools。
+- 已将 `.venv/`、Python 缓存、Paddle 模型缓存、local smoke 样本和 OCR 输出加入 `.gitignore`，避免本地环境、真实样本或临时产物进入 Git。
+- 受限 Windows 环境下，Paddle 默认会尝试写 `C:\Users\lionb\.cache\paddle`；本轮 smoke 将 `USERPROFILE` / `HOME` / `XDG_CACHE_HOME` 重定向到 `ocr-gateway/.paddle-home` / `ocr-gateway/.paddle-cache`。
+- runner 级合成图 smoke 已跑通：`scripts/paddle_ocr_runner.py --manifest local-samples/manifest.json --output local-samples/output.json --lang en` 返回结构化 JSON，识别出 3 行英文文本，confidence 约 0.984。
+- Gateway 合成图 smoke 已跑通：Express app -> `paddle_local` provider -> Python runner -> PaddleOCR -> unified `OcrEssayResult` 返回 `status: success`。
+- Dev server `/health` 临时 smoke 已通过：`http://127.0.0.1:8791/health` 返回 200；curl multipart OCR 因 PowerShell/curl 的 `pageIds` 引号传递问题被服务正确拒绝，未作为产品问题处理。
+- 本轮没有提供真实学生作文图片，因此未执行真实学生样本 UploadPage 手工 smoke test；下一步应准备不入 Git 的 1-3 张真实样本后再做浏览器上传验证。
+- 本轮没有新增产品 UI、没有改 UploadPage 主流程、没有让前端知道 PaddleOCR、没有接真实 AI、没有做 OCR 坐标 / PDF / Word / 硬件能力。
+
 ## 本次新增进展：PaddleOCR 本地真实 OCR Provider 接入 v0.2
 
 - OCR Gateway 已新增 `paddle_local` provider。
