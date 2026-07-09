@@ -1,6 +1,6 @@
 # 当前开发状态
 
-最后更新：2026-07-07
+最后更新：2026-07-09
 
 ## 本次新增进展：PaddleOCR 本地真实 OCR Provider 接入 v0.2
 
@@ -9,12 +9,14 @@
 - PaddleOCR provider 只存在于 Gateway；前端仍然只认 `mock OCR` / `real OCR`，`app/src` 不得出现 PaddleOCR / `paddle_local` / `PADDLE_OCR` / Python runner 逻辑。
 - Node 侧通过 `child_process.spawn` 启动 `scripts/paddle_ocr_runner.py --manifest <manifestPath> --output <outputPath> --lang <lang>`，不使用 `exec`、字符串 shell 或 `shell: true`。
 - 临时文件使用 `fs.mkdtemp(os.tmpdir())` 创建在 `wenjie-paddle-ocr-*` 目录下，并在 `finally` 中清理。
-- 超时会杀掉 Python 进程；环境失败返回脱敏后的 environment message，不暴露 traceback、path、args 或 env。
+- 超时会杀掉 Python 进程；`PADDLE_OCR_TIMEOUT_MS` 优先，其次回退 `OCR_TIMEOUT_MS`，无效或缺失时默认 60000ms。
+- 环境失败返回脱敏后的 environment message，不暴露 traceback、path、args 或 env。
 - 结果会统一归一化为 `OcrEssayResult`；单页局部失败保留 `paddle_page_failed`；成功页回填 OCR draft；失败时仍保留 mock / manual / retry 路径。
+- Python runner 会过滤 NaN / Infinity 等非有限 confidence，confidence 缺失或异常不阻断文本返回。
 - 本次只新增样本评估文档，不新增页面、dashboard、chart 或产品功能。
 - 非目标仍包括：真实 AI、OCR 坐标、原图高亮、PDF / Word / 文件夹解析、扫描仪 / 摄像头 / 希沃。
 - 本轮验证结果：
-  - `ocr-gateway`：`npm.cmd test` 5 个测试文件、32 个用例通过；`npm.cmd run typecheck` 通过。
+  - `ocr-gateway`：`npm.cmd test` 5 个测试文件、32 个用例通过；final-review 修复后 `npm.cmd test -- src/providers/paddleLocalOcrProvider.test.ts` 13 个用例通过；`npm.cmd run typecheck` 通过。
   - 前端 OCR service：`npm.cmd test -- src/services/ocr` 3 个测试文件、7 个用例通过。
   - 上传整理页回归：`npm.cmd test -- src/pages/UploadPage.test.tsx` 1 个测试文件、17 个用例通过。
   - 前端全量：`npm.cmd test` 26 个测试文件、125 个用例通过；`npm.cmd run lint` 通过；`npm.cmd run build` 通过。
