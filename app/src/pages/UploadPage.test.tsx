@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AppStateProvider } from '../context/AppStateContext'
+import { useAppState } from '../context/useAppState'
+import type { Essay } from '../types'
 import { ProgressPage } from './ProgressPage'
 import { UploadPage } from './UploadPage'
 
@@ -29,6 +31,56 @@ function renderUploadToProgressFlow() {
       </MemoryRouter>
     </AppStateProvider>,
   )
+}
+
+function AuditProbe() {
+  const { essays } = useAppState()
+  const createdEssay = essays.find((essay) => essay.id.includes('-uploaded-')) ?? essays.at(-1)
+  return <pre data-testid="audit-probe">{JSON.stringify(createdEssay ?? null)}</pre>
+}
+
+function renderUploadToAuditProbe() {
+  render(
+    <AppStateProvider>
+      <MemoryRouter initialEntries={['/tasks/task-1/upload']}>
+        <Routes>
+          <Route path="/tasks/:taskId/upload" element={<UploadPage />} />
+          <Route path="/tasks/:taskId/progress" element={<AuditProbe />} />
+        </Routes>
+      </MemoryRouter>
+    </AppStateProvider>,
+  )
+}
+
+function readAuditProbe(): Essay {
+  return JSON.parse(screen.getByTestId('audit-probe').textContent ?? 'null') as Essay
+}
+
+function stubRealOcr(resultForAttempt: (essayGroupId: string, attempt: number) => Record<string, unknown>) {
+  let attempt = 0
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (_url, init) => {
+      attempt += 1
+      const essayGroupId = ((init as RequestInit).body as FormData).get('essayGroupId') as string
+      return {
+        ok: true,
+        text: async () => JSON.stringify({ results: [resultForAttempt(essayGroupId, attempt)] }),
+      }
+    }),
+  )
+  vi.stubEnv('VITE_OCR_API_BASE', 'http://localhost:4317')
+}
+
+async function prepareSingleRealImage(user: ReturnType<typeof userEvent.setup>) {
+  vi.stubGlobal('URL', {
+    ...URL,
+    createObjectURL: vi.fn(() => 'blob:essay-photo-preview'),
+    revokeObjectURL: vi.fn(),
+  })
+  await clearOrganizerImages(user)
+  await user.upload(screen.getByLabelText('选择图片'), new File(['image'], 'essay-photo.png', { type: 'image/png' }))
+  await user.click(screen.getByRole('button', { name: 'real OCR 链路测试' }))
 }
 
 async function clearOrganizerImages(user: ReturnType<typeof userEvent.setup>) {
@@ -450,5 +502,158 @@ describe('UploadPage', () => {
     await user.click(screen.getByRole('button', { name: '开始 OCR 识别（预计 1 篇）' }))
 
     expect(await screen.findByText('识别结果为空，请检查图片或手动输入。')).toBeInTheDocument()
+  })
+
+  it('captures mock source text before teacher edits without exposing audit UI', async () => {
+    const user = userEvent.setup()
+    renderUploadToAuditProbe()
+
+    await user.click(screen.getByRole('button', { name: '开始 OCR 识别（预计 6 篇）' }))
+    const draft = screen.getByRole('textbox', { name: '作文 1 OCR 文本' })
+    const sourceText = (draft as HTMLTextAreaElement).value
+    await user.clear(draft)
+    await user.type(draft, 'Teacher confirmed mock text')
+
+    expect(screen.queryByText(/OCR 质量|建议复核|影子评估|自动放行/)).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '确认 OCR 文本' }))
+
+    const essay = readAuditProbe()
+    expect(essay.ocrAudit?.sourceKind).toBe('mock')
+    expect(essay.ocrAudit?.sourceText).toBe(sourceText)
+    expect(essay.ocrAudit?.confirmedTranscript).toBe('Teacher confirmed mock text')
+  })
+
+  it('captures remote source text and invisible partial assessment before teacher edits', async () => {
+    const user = userEvent.setup()
+    stubRealOcr((essayGroupId) => ({
+      essayGroupId,
+      text: 'Remote partial source',
+      pages: [{ pageId: 'remote-page', text: 'Remote partial source', warnings: ['paddle_page_failed'] }],
+      provider: 'remote',
+      status: 'partial',
+    }))
+    renderUploadToAuditProbe()
+    await prepareSingleRealImage(user)
+
+    await user.click(screen.getByRole('button', { name: '开始 OCR 识别（预计 1 篇）' }))
+    const draft = await screen.findByRole('textbox', { name: '作文 1 OCR 文本' })
+    await user.clear(draft)
+    await user.type(draft, 'Teacher confirmed remote text')
+    expect(screen.queryByText(/OCR 质量|建议复核|影子评估|自动放行/)).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '确认 OCR 文本' }))
+
+    const essay = readAuditProbe()
+    expect(essay.ocrAudit?.sourceKind).toBe('remote')
+    expect(essay.ocrAudit?.sourceText).toBe('Remote partial source')
+    expect(essay.ocrAudit?.confirmedTranscript).toBe('Teacher confirmed remote text')
+    expect(essay.ocrAudit?.shadowAssessment.outcome).toBe('review_recommended')
+  })
+
+  it('replaces a failed remote source with mock fallback only', async () => {
+    const user = userEvent.setup()
+    stubRealOcr((essayGroupId) => ({
+      essayGroupId,
+      text: '',
+      pages: [],
+      provider: 'remote',
+      status: 'failed',
+      error: 'Synthetic remote failure',
+    }))
+    renderUploadToAuditProbe()
+    await prepareSingleRealImage(user)
+
+    await user.click(screen.getByRole('button', { name: '开始 OCR 识别（预计 1 篇）' }))
+    await user.click(await screen.findByRole('button', { name: '使用 mock 草稿' }))
+    const draft = await screen.findByRole('textbox', { name: '作文 1 OCR 文本' })
+    const mockSource = (draft as HTMLTextAreaElement).value
+    await user.click(screen.getByRole('button', { name: '确认 OCR 文本' }))
+
+    const essay = readAuditProbe()
+    expect(essay.ocrAudit?.sourceKind).toBe('mock')
+    expect(essay.ocrAudit?.sourceText).toBe(mockSource)
+    expect(essay.ocrAudit?.sourceText).not.toContain('Synthetic remote failure')
+  })
+
+  it('uses an empty source after remote failure and manual fallback', async () => {
+    const user = userEvent.setup()
+    stubRealOcr((essayGroupId) => ({
+      essayGroupId,
+      text: '',
+      pages: [],
+      provider: 'remote',
+      status: 'failed',
+      error: 'Synthetic remote failure',
+    }))
+    renderUploadToAuditProbe()
+    await prepareSingleRealImage(user)
+
+    await user.click(screen.getByRole('button', { name: '开始 OCR 识别（预计 1 篇）' }))
+    await user.click(await screen.findByRole('button', { name: '手动输入 OCR 文本' }))
+    await user.type(screen.getByRole('textbox', { name: '作文 1 OCR 文本' }), 'Manual faithful text')
+    await user.click(screen.getByRole('button', { name: '确认 OCR 文本' }))
+
+    const essay = readAuditProbe()
+    expect(essay.ocrAudit?.sourceKind).toBe('manual')
+    expect(essay.ocrAudit?.sourceText).toBe('')
+    expect(essay.ocrAudit?.confirmedTranscript).toBe('Manual faithful text')
+  })
+
+  it('retains only the latest successful remote retry', async () => {
+    const user = userEvent.setup()
+    stubRealOcr((essayGroupId, attempt) => ({
+      essayGroupId,
+      text: attempt === 1 ? 'First remote source' : 'Latest remote source',
+      pages: [{ pageId: 'remote-page', text: attempt === 1 ? 'First remote source' : 'Latest remote source' }],
+      provider: 'remote',
+      status: 'success',
+    }))
+    renderUploadToAuditProbe()
+    await prepareSingleRealImage(user)
+
+    await user.click(screen.getByRole('button', { name: '开始 OCR 识别（预计 1 篇）' }))
+    await screen.findByDisplayValue('First remote source')
+    await user.click(screen.getByRole('button', { name: '开始 OCR 识别（预计 1 篇）' }))
+    await screen.findByDisplayValue('Latest remote source')
+    await user.click(screen.getByRole('button', { name: '确认 OCR 文本' }))
+
+    const essay = readAuditProbe()
+    expect(essay.ocrAudit?.sourceText).toBe('Latest remote source')
+    expect(essay.ocrAudit).not.toHaveProperty('previousRuns')
+  })
+
+  it('does not restore an earlier successful source after a failed retry', async () => {
+    const user = userEvent.setup()
+    stubRealOcr((essayGroupId, attempt) =>
+      attempt === 1
+        ? {
+            essayGroupId,
+            text: 'First remote source',
+            pages: [{ pageId: 'remote-page', text: 'First remote source' }],
+            provider: 'remote',
+            status: 'success',
+          }
+        : {
+            essayGroupId,
+            text: '',
+            pages: [],
+            provider: 'remote',
+            status: 'failed',
+            error: 'Retry failed',
+          },
+    )
+    renderUploadToAuditProbe()
+    await prepareSingleRealImage(user)
+
+    await user.click(screen.getByRole('button', { name: '开始 OCR 识别（预计 1 篇）' }))
+    await screen.findByDisplayValue('First remote source')
+    await user.click(screen.getByRole('button', { name: '开始 OCR 识别（预计 1 篇）' }))
+    await user.click(await screen.findByRole('button', { name: '手动输入 OCR 文本' }))
+    await user.type(screen.getByRole('textbox', { name: '作文 1 OCR 文本' }), 'Manual after failed retry')
+    await user.click(screen.getByRole('button', { name: '确认 OCR 文本' }))
+
+    const essay = readAuditProbe()
+    expect(essay.ocrAudit?.sourceKind).toBe('manual')
+    expect(essay.ocrAudit?.sourceText).toBe('')
+    expect(essay.ocrAudit?.sourceText).not.toBe('First remote source')
   })
 })

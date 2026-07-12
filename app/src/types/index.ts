@@ -1,3 +1,5 @@
+import type { OcrTranscriptAudit } from '../services/ocr/audit/types'
+
 export type TaskStatus = 'draft' | 'processing' | 'ready' | 'needs_review'
 
 export type EssayStatus =
@@ -87,6 +89,7 @@ export interface Essay {
   pageCount: number
   pageOrder: string[]
   ocrText: string
+  ocrAudit?: OcrTranscriptAudit
   ocrConfidence: number
   status: EssayStatus
   exceptionReasons: ExceptionReason[]

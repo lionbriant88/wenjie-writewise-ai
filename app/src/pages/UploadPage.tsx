@@ -5,6 +5,8 @@ import { EssayImagePreview } from '../components/EssayImagePreview'
 import { UploadSourceSelector } from '../components/UploadSourceSelector'
 import { useAppState } from '../context/useAppState'
 import { AppLayout } from '../layout/AppLayout'
+import { confirmOcrAudit, createManualPendingOcrAudit, createPendingOcrAudit } from '../services/ocr/audit/transcriptAudit'
+import type { PendingOcrTranscriptAudit } from '../services/ocr/audit/types'
 import { buildOcrDraftsFromResults, hasEmptyTextWarning } from '../services/ocr/normalizeOcrResult'
 import { createOcrClient, getDefaultOcrMode } from '../services/ocr/ocrClient'
 import type { OcrEssayResult, OcrMode, OcrRunStatus } from '../services/ocr/types'
@@ -49,6 +51,7 @@ export function UploadPage() {
   const [emptyTextWarning, setEmptyTextWarning] = useState(false)
   const [ocrFallbackNotice, setOcrFallbackNotice] = useState('')
   const [ocrDrafts, setOcrDrafts] = useState<string[]>([])
+  const [pendingOcrAudits, setPendingOcrAudits] = useState<PendingOcrTranscriptAudit[]>([])
   const [showMixedGuide, setShowMixedGuide] = useState(false)
   const localPreviewUrlsRef = useRef<string[]>([])
   const localFilesByPageIdRef = useRef<Map<string, File>>(new Map())
@@ -89,7 +92,6 @@ export function UploadPage() {
   }, [groupingMode, mixedGroups, pageOrderIndex, pages, pagesById])
 
   const essaySubmissionCount = visibleEssayGroups.length
-  const visibleGroupIds = useMemo(() => visibleEssayGroups.map((group) => group.id), [visibleEssayGroups])
   const isOcrRunning = ocrStatus === 'running'
 
   useEffect(() => {
@@ -111,6 +113,7 @@ export function UploadPage() {
     setEmptyTextWarning(false)
     setOcrFallbackNotice('')
     setOcrDrafts([])
+    setPendingOcrAudits([])
   }
 
   const setGroupingMode = (mode: UploadGroupingMode) => {
@@ -277,11 +280,32 @@ export function UploadPage() {
   const getGroupPages = (group: UploadEssayGroup) =>
     group.pageIds.map((pageId) => pagesById.get(pageId)).filter((page): page is EssayPage => Boolean(page))
 
-  const applyOcrResults = (results: OcrEssayResult[], groupIdsSnapshot = visibleGroupIds) => {
+  const applyOcrResults = (
+    results: OcrEssayResult[],
+    sourceKind: 'mock' | 'remote',
+    groupsSnapshot: UploadEssayGroup[],
+    assessedAt: string,
+  ) => {
     setOcrResults(results)
-    const drafts = buildOcrDraftsFromResults(results, groupIdsSnapshot)
+    const drafts = buildOcrDraftsFromResults(results, groupsSnapshot.map((group) => group.id))
     setOcrDrafts(drafts)
     setEmptyTextWarning(hasEmptyTextWarning(results))
+
+    const resultsByGroupId = new Map(results.map((result) => [result.essayGroupId, result]))
+    setPendingOcrAudits(
+      groupsSnapshot.map((group) => {
+        const result = resultsByGroupId.get(group.id) ?? {
+          essayGroupId: group.id,
+          text: '',
+          pages: [],
+          provider: sourceKind,
+          status: 'failed' as const,
+          warnings: ['missing_result'],
+        }
+
+        return createPendingOcrAudit({ sourceKind, result, expectedPageIds: group.pageIds, assessedAt })
+      }),
+    )
 
     const failedResult = results.find((result) => result.status === 'failed')
     if (failedResult) {
@@ -298,7 +322,6 @@ export function UploadPage() {
     if (pages.length === 0 || isOcrRunning) return
 
     const groupsSnapshot = visibleEssayGroups
-    const groupIdsSnapshot = groupsSnapshot.map((group) => group.id)
     const pageOrderSnapshot = new Map(pageOrderIndex)
     const client = createOcrClient(ocrMode)
 
@@ -307,6 +330,7 @@ export function UploadPage() {
     setOcrError('')
     setEmptyTextWarning(false)
     setOcrFallbackNotice('')
+    setPendingOcrAudits([])
 
     const results = await client.recognize({
       groups: groupsSnapshot,
@@ -315,12 +339,16 @@ export function UploadPage() {
       pageOrderIndex: pageOrderSnapshot,
     })
 
-    applyOcrResults(results, groupIdsSnapshot)
+    applyOcrResults(
+      results,
+      ocrMode === 'real' ? 'remote' : 'mock',
+      groupsSnapshot,
+      new Date().toISOString(),
+    )
   }
 
   const useMockDraftFallback = async () => {
     const groupsSnapshot = visibleEssayGroups
-    const groupIdsSnapshot = groupsSnapshot.map((group) => group.id)
     const results = await createOcrClient('mock').recognize({
       groups: groupsSnapshot,
       getGroupPages,
@@ -328,7 +356,7 @@ export function UploadPage() {
       pageOrderIndex,
     })
 
-    applyOcrResults(results, groupIdsSnapshot)
+    applyOcrResults(results, 'mock', groupsSnapshot, new Date().toISOString())
     setOcrFallbackNotice('已使用 mock OCR 草稿作为回退。')
   }
 
@@ -339,26 +367,38 @@ export function UploadPage() {
     setEmptyTextWarning(false)
     setOcrFallbackNotice('')
     setOcrDrafts(visibleEssayGroups.map(() => ''))
+    const assessedAt = new Date().toISOString()
+    setPendingOcrAudits(
+      visibleEssayGroups.map((group) => createManualPendingOcrAudit(group.pageIds, assessedAt)),
+    )
   }
-
-  const getEssayGroups = () =>
-    visibleEssayGroups.map((group, groupIndex) => ({
-      pages: getGroupPages(group),
-      ocrText: ocrDrafts[groupIndex] ?? '',
-    }))
 
   const canConfirmOcr =
     ocrStatus === 'success' &&
     visibleEssayGroups.length > 0 &&
     ocrDrafts.length === visibleEssayGroups.length &&
+    pendingOcrAudits.length === visibleEssayGroups.length &&
     ocrDrafts.every((draft) => draft.trim().length > 0)
 
   const confirmMockOcrText = () => {
     if (!canConfirmOcr) return
 
+    const confirmedAt = new Date().toISOString()
+    const essayGroups = visibleEssayGroups.map((group, groupIndex) => {
+      const confirmedTranscript = ocrDrafts[groupIndex] ?? ''
+      const pendingAudit = pendingOcrAudits[groupIndex]
+      if (!pendingAudit) throw new Error('OCR audit source is missing.')
+
+      return {
+        pages: getGroupPages(group),
+        ocrText: confirmedTranscript,
+        ocrAudit: confirmOcrAudit(pendingAudit, confirmedTranscript, confirmedAt),
+      }
+    })
+
     confirmMockOcrEssay({
       taskId: task.id,
-      essayGroups: getEssayGroups(),
+      essayGroups,
     })
     resetOcrDraft()
     navigate(`/tasks/${task.id}/progress`)

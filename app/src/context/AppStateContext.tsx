@@ -10,6 +10,7 @@ import type {
   Task,
   TaskStatus,
 } from '../types'
+import { confirmOcrAudit } from '../services/ocr/audit/transcriptAudit'
 import { getClassReviewMaterialKey } from '../utils/classReviewMaterials'
 import { AppStateContext, type ConfirmMockOcrEssayInput } from './appStateContextValue'
 
@@ -199,6 +200,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           pageCount: essayPages.length,
           pageOrder: essayPages.map((page) => page.id),
           ocrText: group.ocrText,
+          ocrAudit: group.ocrAudit,
           ocrConfidence: 0.88,
           status: 'pending_grading',
           exceptionReasons: [],
@@ -213,13 +215,20 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  const updateEssayOcrText = useCallback((essayId: string, text: string) => {
+  const updateEssayOcrText = useCallback((essayId: string, text: string, confirmedAt?: string) => {
+    const timestamp = confirmedAt ?? new Date().toISOString()
+
     setEssays((current) =>
-      current.map((essay) =>
-        essay.id === essayId
-          ? { ...essay, ocrText: text, updatedAt: new Date().toISOString() }
-          : essay,
-      ),
+      current.map((essay) => {
+        if (essay.id !== essayId) return essay
+
+        return {
+          ...essay,
+          ocrText: text,
+          ocrAudit: essay.ocrAudit ? confirmOcrAudit(essay.ocrAudit, text, timestamp) : undefined,
+          updatedAt: timestamp,
+        }
+      }),
     )
   }, [])
 

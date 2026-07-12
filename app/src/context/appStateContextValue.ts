@@ -1,4 +1,5 @@
 import { createContext } from 'react'
+import type { OcrTranscriptAudit } from '../services/ocr/audit/types'
 import type {
   ClassInsight,
   ClassReviewMaterial,
@@ -13,6 +14,7 @@ import type {
 export interface ConfirmMockOcrEssayGroup {
   pages: EssayPage[]
   ocrText: string
+  ocrAudit: OcrTranscriptAudit
 }
 
 export interface ConfirmMockOcrEssayInput {
@@ -28,7 +30,7 @@ export interface AppState {
   classReviewMaterials: ClassReviewMaterial[]
   createTask: (input: CreateTaskInput) => string
   confirmMockOcrEssay: (input: ConfirmMockOcrEssayInput) => void
-  updateEssayOcrText: (essayId: string, text: string) => void
+  updateEssayOcrText: (essayId: string, text: string, confirmedAt?: string) => void
   markEssayManual: (essayId: string) => void
   completeEssayWithMockResult: (essayId: string) => void
   updateGradingResult: (essayId: string, patch: Partial<GradingResult>) => void
