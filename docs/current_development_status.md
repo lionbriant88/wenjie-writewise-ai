@@ -1,6 +1,32 @@
 # 当前开发状态
 
-最后更新：2026-07-09
+最后更新：2026-07-12
+
+## 本次新增进展：OCR 质量评估影子模式与选择性复核基础 v0.3a
+
+- 已新增版本化审计数据：`OcrTranscriptAudit.auditVersion = ocr-audit-v1`，`OcrShadowAssessment.assessmentVersion = ocr-shadow-v1`。
+- `sourceText` 固定表示现有前端 OCR Client 最终交给 UploadPage、且尚未经过教师编辑的统一来源文本；它不是 PaddleOCR 原始文本或 Python 原始输出。
+- 教师确认后的忠实转写保存为 `confirmedTranscript`；兼容字段 `ocrText` 与最新确认转写同步，后续忠实修订不会覆盖 `sourceText`。
+- mock、remote、manual、fallback、partial 和多次重试均按最终已应用来源替换审计记录，不保留或静默恢复更早尝试。
+- 影子评估接收显式 `expectedPageIds`，使用 `pageId` 集合差集判断页面结果缺失；文本长度异常不被称为漏行，漏行只能由人工基准转写对比确认。
+- `assessedAt` 和 `confirmedAt` 由调用边界注入，Provider 无关的纯函数不读取系统时间。
+- 编辑距离、变更字符数、CER 和 WER 集中在 `ocr-text-metrics-v1` 纯函数 service 中，UploadPage 与 benchmark 不重复实现指标算法。
+- 影子评估保持不可见，不显示质量卡片、建议、徽标或自动放行结果，不改变教师确认和进入批改队列的现有行为。
+- 已新增一次性本地私有 benchmark：直接构造现有 `NodePaddleRunner` 与 `PaddleLocalOcrProvider`，并通过 Provider 内部复用 `normalizeProviderResult`；脚本不启动 Express，不监听 8787。
+- benchmark TypeScript 已进入 Gateway `tsconfig`、typecheck 和 Vitest 范围；固定退出码为 `0 = 全部完成`、`1 = 命令级致命失败`、`2 = 完成但存在样本失败`，`partial` 本身仍属于已完成样本。
+- 私有输入只允许位于 ignored 的 `ocr-gateway/local-private-samples/`，匿名结果只允许写入 ignored 的 `ocr-gateway/local-private-results/`；日志和结果不包含作文全文、确认转写全文、本机绝对路径或学生身份信息。
+- 当前应用状态仍仅保存在 React 内存中，刷新后不会持久化审计记录。
+- 本轮自动化测试只使用合成 fixture 与 fake runner，没有读取或运行任何真实私有样本，也没有声明真实样本 CER/WER 指标。
+- 本轮验证结果：
+  - 前端审计 service：3 个测试文件、14 个用例通过。
+  - AppState 审计生命周期：1 个测试文件、1 个用例通过。
+  - UploadPage：1 个测试文件、23 个用例通过，覆盖 mock、remote、manual、fallback、partial、成功重试、失败重试、不可见性和原有入队行为。
+  - 前端全量：30 个测试文件、146 个用例通过；`npm.cmd run lint` 与 `npm.cmd run build` 通过。
+  - 私有 benchmark：2 个测试文件、10 个用例通过。
+  - OCR Gateway 全量：7 个测试文件、45 个用例通过；`npm.cmd run typecheck` 通过。
+  - 边界扫描：`app/src` 生产代码 Provider-specific 命中 0，可见影子提示命中 0；benchmark 服务监听命中 0；纯审计 service 内部系统时间调用命中 0。
+- 未新增 `normalizedText`、自动断词合并、字符级 `correctionEvents`、可见质量卡片、自动放行、AI OCR、Provider 更换或真实 AI 批改。
+- 下一步建议：由用户准备匿名且不入 Git 的 20-40 篇私有样本并显式运行一次性 benchmark，仅用于决定后续优化方向，不用于制定生产级自动放行阈值。
 
 ## 本次新增进展：PaddleOCR 本地真实识别 smoke test v0.2.1
 

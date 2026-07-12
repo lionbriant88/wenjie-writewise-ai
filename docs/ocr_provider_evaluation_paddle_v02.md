@@ -2,6 +2,19 @@
 
 > 本文档仅用于评估记录与样本观察，不是页面、dashboard、chart 或产品功能说明。
 
+## v0.3a 影子审计与本地私有基准
+
+- 产品已具备不可见的 OCR 转写审计和影子评估基础，但不会在教师 UI 显示质量卡片、建议、徽标或自动放行结果，也不改变确认和入队流程。
+- `sourceText` 指现有前端 OCR Client 最终交给 UploadPage、且尚未经过教师编辑的统一来源文本；它不是 PaddleOCR 原始文本、Python stdout 或 Provider 未归一化输出。
+- 教师确认后的忠实转写保存在 `confirmedTranscript`，兼容字段 `ocrText` 始终与最新确认转写同步；后续修订不会覆盖 `sourceText`。
+- 文本比较统一使用 `ocr-text-metrics-v1`，CER、WER、编辑距离和变更字符数由 Provider 无关的纯函数计算。
+- 影子评估使用显式 `expectedPageIds` 与结果 `pageId` 集合差集确认页面结果缺失；文本长度异常不会被直接称为漏行，漏行只能由人工基准转写对比确认。
+- 私有评测命令 `npm.cmd run benchmark:private` 是一次性本地命令，不启动 Express，也不监听 8787；它直接复用现有 `NodePaddleRunner`、`PaddleLocalOcrProvider` 和 Provider 内部归一化链路。
+- 私有输入仅允许位于 ignored 的 `ocr-gateway/local-private-samples/`，结果仅允许写入 ignored 的 `ocr-gateway/local-private-results/`；样本只使用匿名 `sampleId`。
+- 结果和日志只记录匿名 ID、状态、warning code、置信度与指标，不记录作文全文、确认转写全文、本机绝对路径或学生身份信息。
+- 20-40 篇样本仅用于决定后续优化方向，不用于制定生产级自动放行阈值。
+- 自动化实现和验证只使用合成 fixture 与 fake runner；本轮没有运行真实私有样本 benchmark，因此不声明任何真实样本指标。
+
 ## 评估目的
 
 - 验证 PaddleOCR 本地真实 OCR Provider 在作文场景中的可用性。
