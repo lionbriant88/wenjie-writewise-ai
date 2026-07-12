@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
+    "benchmark:private": "tsx scripts/privateOcrBenchmark/cli.ts",
     "test": "vitest run",
+    "test:benchmark": "vitest run scripts/privateOcrBenchmark",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

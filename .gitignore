@@ -19,6 +19,8 @@ temp/
 *.local.json
 local-samples/
 smoke-samples/
+local-private-samples/
+local-private-results/
 .paddle-home/
 .paddle-cache/
 .paddleocr/

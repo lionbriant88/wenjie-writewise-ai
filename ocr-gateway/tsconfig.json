@@ -9,5 +9,9 @@
     "skipLibCheck": true,
     "types": ["node", "vitest"]
   },
-  "include": ["src"]
+  "include": [
+    "src/**/*.ts",
+    "scripts/**/*.ts",
+    "../app/src/services/ocr/audit/textMetrics.ts"
+  ]
 }
