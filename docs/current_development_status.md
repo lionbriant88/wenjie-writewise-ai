@@ -1,6 +1,30 @@
 # 当前开发状态
 
-最后更新：2026-07-12
+最后更新：2026-07-20
+
+## 本次新增进展：真实 AI 批改 Gateway、DeepSeek Provider 与教师确认闭环 v0.1（自动化阶段）
+
+- 已建立 Provider 无关的 `GradingRequestV1`、`AiGradingResultV1` 与 `GradingFailureV1`；前端只投影允许字段，并完整校验嵌套结构、HTTP 成功/失败类型、`requestId` 和 `essayId` 绑定。
+- 新结果通过唯一适配器进入现有 `GradingResult`，没有建立第二套页面状态模型。Gateway mock、Gateway mock_failure、浏览器本地 mock 回退和真实 Provider 共用同一结果契约。
+- Grading Gateway 已提供 `POST /grading/grade`，包含 256 KB JSON 限制、统一 400/413 安全错误、CORS、超时、Prompt、结构化结果归一化和失败映射；错误不会回显作文、原始 body、上游响应或 stack。
+- 已实现 DeepSeek Provider 代码，默认模型 `deepseek-v4-flash`，显式 thinking mode、temperature 和 max_tokens；本轮所有自动化测试只使用 fake transport，没有使用真实 API key、网络请求或模型额度。
+- JSON Prompt 包含 `json` 指令和最小完整示例；Provider 测试覆盖空 content、空 choices、content filter、资源不足、tool calls、400、422，以及 `finish_reason` 缺失、null 和未知值。
+- MVP 进度页改为逐篇批改，不做批量并发或后台队列；处理中禁用重复点击，不自动重试。失败后保留显式重试、浏览器本地 mock 回退和转人工路径。
+- `requestId` 只用于追踪和忽略旧成功、旧失败及转人工后的迟到响应，不提供严格幂等；显式重试仍可能产生第二次真实调用费用。
+- 真实 AI 或 mock 结果返回后进入 `grading_ready` 且 `teacherReviewed=false`；编辑评分或评语不会确认，只有教师点击“确认本篇批改”后才进入 `completed` 且 `teacherReviewed=true`。
+- 详情页使用 Provider 中立的“真实 AI”或“mock 回退”来源标签，展示教师复核原因；模型自报 confidence 不进入教师 UI，也不驱动正确率或复核建议。
+- 分数档次由任务满分动态计算；班级统计只纳入教师已确认结果。教师精选素材继续进入现有流程，现有高频问题和改写练习仍明确标记为 mock 洞察，不宣称已实现真实 AI 班级洞察。
+- AI 批改与教师确认结果仍只保存在当前 React 状态生命周期，刷新或重启不保证恢复。读后续写真实批改仍不在本轮范围内。
+- 隐私边界：真实验收仅允许教师自建合成作文或彻底去身份化的测试作文；真实未成年学生数据投入使用前，仍需另行补充并评审数据处理、授权、去标识化和删除规则。
+- 自动化验证结果：
+  - 前端全量：38 个测试文件、219 个用例通过；`npm.cmd run lint` 与 `npm.cmd run build` 通过。
+  - Grading Gateway：9 个测试文件、85 个用例通过；`npm.cmd run typecheck` 通过；跨目录导入共享计分规则的真实 `tsx` 运行验证通过。
+  - OCR Gateway 回归：7 个测试文件、45 个用例通过；`npm.cmd run typecheck` 通过。
+  - Provider 边界扫描：`app/src` 非测试生产文件没有 DeepSeek、Provider 配置或 Authorization 命中。
+  - 密钥边界扫描：仅扫描 Git tracked 文件与 Git 判断可提交的 untracked 文件，未读取 ignored `.env`，未发现疑似密钥。
+  - ignore 方向验证：`grading-gateway/.env` 被忽略；`grading-gateway/.env.example` 与 `app/.env.example` 均未被忽略。
+- 已新增无密钥运行与隐私说明：`docs/real_ai_grading_gateway_deepseek_v01.md`。
+- 尚未完成：真实 DeepSeek API 与完整 UI 纵向 smoke。Task 12 保持在人工授权闸门前，未经用户明确授权不得发起真实请求。
 
 ## 本次新增进展：OCR 质量评估影子模式与选择性复核基础 v0.3a
 
@@ -112,7 +136,7 @@
   - `npm.cmd test`：23 个测试文件，114 个用例通过。
   - `npm.cmd run lint`：通过。
   - `npm.cmd run build`：通过。
-- GitHub：功能分支 `codex/task-writing-rubric-setup-v02` 已通过 PR #5 合并回 `main`，远端功能分支已删除。
+- GitHub：对应功能分支已通过 PR #5 合并回 `main`，远端功能分支已删除。
 
 ## 本次新增进展：上传整理页多来源导入入口占位 v0.2
 
@@ -297,17 +321,17 @@
 - 项目根目录：`D:\wenjie-writewise-ai`
 - 前端应用：`D:\wenjie-writewise-ai\app`
 - 远程仓库：`https://github.com/lionbriant88/wenjie-writewise-ai.git`
-- 当前本地开发分支：`codex/real-ocr-gateway-v01`
+- 当前本地开发分支：`codex/real-ai-grading-deepseek-mvp-v01`
 - 当前远端主线：`origin/main`
-- 当前分支基于最新阶段二收尾后的 `main` 开发，包含真实 OCR Gateway 接入 v0.1 的阶段三第一刀改动。
-- 当前最新主线提交：`b46c759 docs: add phase 2 acceptance checklist`
+- 当前功能分支基于 `main` 开发，包含真实 AI 批改 Gateway v0.1 的 Tasks 1–11 自动化实现；Task 12 真实 API smoke 尚未获授权。
+- 当前本地 `main` 提交：`166cf98`；功能分支自动化实现最新提交会随本轮文档提交更新。
 - `main` 已包含创建任务页题目信息与任务评分标准确认 v0.2。
 - `main` 已包含班级总览讲评素材池闭环 v0.1 和 OCR 原文可点击问题句 v0.1。
 - `main` 已包含 PR #2：阶段一信息架构与界面打磨。
 - `main` 已包含 PR #3：批改进度页队列体验优化 v2。
 - `main` 已包含 PR #4：原卷视图修正为页面级卷面批阅画布 v0.2。
 - `main` 已包含 PR #5：创建任务页题目信息与任务评分标准确认 v0.2。
-- 已合并的历史功能分支已清理；远端当前只保留 `origin/main`，本地当前在 `main` 上，可直接从最新主线新建后续开发分支。
+- 已合并的历史功能分支状态属于此前主工作区记录；本轮实现位于独立功能工作树，不改写或自动推送远端分支。
 
 ## 已完成工作
 
@@ -398,7 +422,7 @@
   - “表达升级建议”同步压缩为同类信息密度，避免示例卡片过高。
   - mock 学生原文已覆盖问题句和表达升级原表达，便于演示左侧定位对应关系。
 
-## 最新验证
+## 历史验证：真实 OCR Gateway v0.1 阶段
 
 执行目录：
 
@@ -456,13 +480,9 @@ http://localhost:5173/tasks/task-1/class-review
 
 ## 下一步最合理开发内容
 
-PaddleOCR 本地真实 OCR Provider 接入 v0.2 已完成。下一步不建议立刻扩展 OCR 坐标、PDF / Word、扫描仪或真实 AI，而是先用真实样本验证本地 OCR 环境和作文文本质量。
+Tasks 1–11 的无密钥实现和自动化验证已经完成。下一步是 Task 12 人工授权闸门：在用户自行配置 ignored `grading-gateway/.env`、确认使用教师自建合成或彻底去身份化材料，并明确授权一次真实调用后，完成一篇应用文的 DeepSeek UI 纵向 smoke。未经授权不得启动该真实请求。
 
-优先方向：
-
-1. 在已安装 Python / PaddleOCR 的机器上跑一次真实 smoke test，确认 runner 协议、模型加载和错误脱敏都符合预期。
-2. 使用 `docs/ocr_provider_evaluation_paddle_v02.md` 记录 5 - 10 份真实作文样本的成功率、空文本、部分页失败和人工修正量。
-3. 根据评测结果决定下一刀是优化 PaddleOCR 环境说明、接入 OCR 坐标，还是进入 PDF / Word / 文件夹解析；一次只推进一个真实能力边界。
+Task 12 通过后再决定是否扩大到 3–5 篇合成样本；批量并发、持久化、真实学生数据、读后续写、其他 Provider、OCR 坐标和文档解析仍不是当前优先项。
 
 ## 后续工作注意事项
 
@@ -470,4 +490,4 @@ PaddleOCR 本地真实 OCR Provider 接入 v0.2 已完成。下一步不建议�
 - 所有视觉优化都要用右侧浏览器验证。
 - 保持简洁、专业、轻科技感。
 - 不要为了“丰富”而堆信息，优先减少教师判断成本。
-- 阶段二仍以 mock 闭环为主，真实 OCR / AI 接口接入可放到后续阶段。
+- 当前真实 AI MVP 仍应坚持逐篇、人工确认、可回退和最小数据范围；Task 12 以前不得把自动化通过误写为真实 API 验收通过。
