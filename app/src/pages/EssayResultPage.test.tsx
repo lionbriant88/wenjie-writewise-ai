@@ -1,10 +1,13 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { AppStateProvider } from '../context/AppStateContext'
+import { createMockGradingClient } from '../services/grading/mockGradingClient'
+import type { GradingClient } from '../services/grading/types'
 import { ClassReviewPage } from './ClassReviewPage'
-import { EssayResultPage } from './EssayResultPage'
+import { EssayResultPage, GradingReviewBanner } from './EssayResultPage'
+import { ProgressPage } from './ProgressPage'
 
 function renderEssayDetail(path = '/tasks/task-1/essays/task-1-essay-1') {
   return render(
@@ -13,6 +16,19 @@ function renderEssayDetail(path = '/tasks/task-1/essays/task-1-essay-1') {
         <Routes>
           <Route path="/tasks/:taskId/essays/:essayId" element={<EssayResultPage />} />
           <Route path="/tasks/:taskId/class-review" element={<ClassReviewPage />} />
+        </Routes>
+      </AppStateProvider>
+    </MemoryRouter>,
+  )
+}
+
+function renderPendingReviewFlow(gradingClient: GradingClient) {
+  return render(
+    <MemoryRouter initialEntries={['/tasks/task-2/progress']}>
+      <AppStateProvider gradingClient={gradingClient}>
+        <Routes>
+          <Route path="/tasks/:taskId/progress" element={<ProgressPage />} />
+          <Route path="/tasks/:taskId/essays/:essayId" element={<EssayResultPage />} />
         </Routes>
       </AppStateProvider>
     </MemoryRouter>,
@@ -64,6 +80,99 @@ function getWorkspaceModeButton(mode: 'grading' | 'paper') {
 }
 
 describe('EssayResultPage teacher decision workflow', () => {
+  it('renders a provider-neutral remote review and confirms only through the explicit action', async () => {
+    const user = userEvent.setup()
+    const localClient = createMockGradingClient()
+    const gradingClient: GradingClient = {
+      grade: async (request) => {
+        const response = await localClient.grade(request)
+        if (response.status === 'failed') return response
+
+        return {
+          ...response,
+          provider: 'remote',
+          modelSelfConfidence: 0.99,
+          reviewReasons: ['请复核合成作文中的改写建议。'],
+        }
+      },
+    }
+    renderPendingReviewFlow(gradingClient)
+
+    await user.click(screen.getByRole('button', { name: '开始批改' }))
+    await user.click(await screen.findByRole('link', { name: '查看并确认' }))
+
+    expect(screen.getByText('真实 AI')).toBeInTheDocument()
+    expect(screen.getByText('请复核合成作文中的改写建议。')).toBeInTheDocument()
+    expect(document.body.textContent).not.toMatch(/DeepSeek|模型自报置信度|AI 置信度/i)
+    expect(screen.getByRole('button', { name: '确认本篇批改' })).toBeEnabled()
+
+    const scoreInput = screen.getAllByRole('spinbutton')[0]
+    fireEvent.change(scoreInput, { target: { value: '1' } })
+    expect(screen.getByRole('button', { name: '确认本篇批改' })).toBeEnabled()
+
+    await user.click(screen.getByRole('tab', { name: '全文优化' }))
+    expect(document.body.textContent).not.toMatch(/已保留原意|是否保留原意：是/)
+
+    await user.click(screen.getByRole('button', { name: '确认本篇批改' }))
+    expect(screen.queryByRole('button', { name: '确认本篇批改' })).not.toBeInTheDocument()
+  })
+
+  it('labels browser-local recovery as mock fallback', async () => {
+    const user = userEvent.setup()
+    const gradingClient: GradingClient = {
+      grade: vi.fn(async (request) => ({
+        requestId: request.requestId,
+        status: 'failed' as const,
+        error: { code: 'provider_timeout' as const, message: '安全失败。', retryable: true },
+      })),
+    }
+    renderPendingReviewFlow(gradingClient)
+
+    await user.click(screen.getByRole('button', { name: '开始批改' }))
+    await user.click(await screen.findByRole('button', { name: '使用 mock 回退' }))
+    await user.click(await screen.findByRole('link', { name: '查看并确认' }))
+
+    expect(screen.getByText('mock 回退')).toBeInTheDocument()
+  })
+
+  it('shows confirmation only for grading-ready state and disables it without a result', async () => {
+    const user = userEvent.setup()
+    const onConfirm = vi.fn()
+    const view = render(
+      <GradingReviewBanner
+        essayStatus="grading_ready"
+        hasResult={false}
+        reviewReasons={[]}
+        onConfirm={onConfirm}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: '确认本篇批改' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: '确认本篇批改' }))
+    expect(onConfirm).not.toHaveBeenCalled()
+
+    view.rerender(
+      <GradingReviewBanner
+        essayStatus="grading_ready"
+        hasResult
+        reviewReasons={[]}
+        onConfirm={onConfirm}
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: '确认本篇批改' }))
+    expect(onConfirm).toHaveBeenCalledTimes(1)
+
+    view.rerender(
+      <GradingReviewBanner
+        essayStatus="completed"
+        hasResult
+        reviewReasons={[]}
+        onConfirm={onConfirm}
+      />,
+    )
+    expect(screen.queryByRole('button', { name: '确认本篇批改' })).not.toBeInTheDocument()
+  })
+
   it('shows a compact diagnostic summary with editable dimension scores', () => {
     renderEssayDetail()
 

@@ -31,9 +31,9 @@ export function DiagnosticScoreSummary({
 }: DiagnosticScoreSummaryProps) {
   const safeFullScore = fullScore ?? 15
   const totalScore = calculateTotalScore(dimensions, safeFullScore)
-  const gradeBand = getGradeBand(totalScore)
+  const gradeBand = getGradeBand(totalScore, safeFullScore)
   const mainDeductions = getMainDeductionDimensions(dimensions)
-  const reviewRecommendation = getReviewRecommendation({ totalScore, issues })
+  const reviewRecommendation = getReviewRecommendation({ totalScore, issues, fullScore: safeFullScore })
 
   return (
     <section className="rounded-lg border border-blue-100 bg-white p-4 shadow-sm" aria-labelledby="diagnostic-summary-title">

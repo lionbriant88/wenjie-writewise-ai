@@ -6,6 +6,7 @@ import {
   formatConfidence,
   formatDimensionScore,
   formatTotalScore,
+  getDynamicScoreBands,
   getGradeBand,
   getMainDeductionDimensions,
   getReviewRecommendation,
@@ -95,6 +96,27 @@ describe('grading diagnostics', () => {
     expect(getGradeBand(4).label).toBe('待提升')
     expect(getGradeBand(3).label).toBe('基础薄弱')
     expect(getGradeBand(0).label).toBe('基础薄弱')
+  })
+
+  it('scales grade bands from the task full score', () => {
+    expect(getGradeBand(13, 15).label).toBe('优秀')
+    expect(getGradeBand(10, 15).label).toBe('良好')
+    expect(getGradeBand(26, 30).label).toBe('优秀')
+    expect(getGradeBand(20, 30).label).toBe('良好')
+    expect(getDynamicScoreBands(15).map((band) => band.label)).toEqual([
+      '0-3',
+      '4-6',
+      '7-9',
+      '10-12',
+      '13-15',
+    ])
+    expect(getDynamicScoreBands(30).map((band) => band.label)).toEqual([
+      '0-7',
+      '8-13',
+      '14-19',
+      '20-25',
+      '26-30',
+    ])
   })
 
   it('returns the lowest score-rate dimensions as main deductions and tolerates zero max score', () => {

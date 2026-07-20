@@ -110,17 +110,18 @@ export function ClassReviewPage() {
   const task = findTask(tasks, taskId)
   const insight = findClassInsight(classInsights, taskId)
   const taskMaterials = classReviewMaterials.filter((material) => material.taskId === taskId)
-  const stats = getClassOverviewStats(findEssaysByTask(essays, taskId), gradingResults)
+
+  if (!task) {
+    return <EmptyState title="找不到任务" description="请返回任务列表重新选择一个批改任务。" />
+  }
+
+  const stats = getClassOverviewStats(findEssaysByTask(essays, taskId), gradingResults, task.fullScore)
   const summaryStats = [
     { label: '作文总数', value: stats.totalEssayCount.toString() },
     { label: '平均分', value: formatScore(stats.averageScore) },
     { label: '最高分', value: formatScore(stats.highestScore) },
     { label: '最低分', value: formatScore(stats.lowestScore) },
   ]
-
-  if (!task) {
-    return <EmptyState title="找不到任务" description="请返回任务列表重新选择一个批改任务。" />
-  }
 
   if (!insight) {
     return (
@@ -142,6 +143,10 @@ export function ClassReviewPage() {
     >
       <div className="space-y-5">
         <ClassReviewTabList activeTab={activeTab} onTabChange={setActiveTab} />
+
+        <p className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-xs leading-5 text-slate-500">
+          分数统计仅包含教师已确认结果；高频问题与改写练习仍为现有 mock 洞察，不代表真实 AI 班级洞察。
+        </p>
 
         {activeTab === 'overview' ? (
           <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">

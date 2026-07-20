@@ -46,7 +46,7 @@ describe('getClassOverviewStats', () => {
       result('e3', 8.6),
       result('e4', 12.4),
       result('e5', 12.6),
-    ])
+    ], 15)
 
     expect(stats.totalEssayCount).toBe(6)
     expect(stats.scoredEssayCount).toBe(5)
@@ -54,7 +54,7 @@ describe('getClassOverviewStats', () => {
     expect(stats.highestScore).toBe(12.6)
     expect(stats.lowestScore).toBe(2.4)
     expect(stats.bands).toEqual([
-      { label: '1-3', count: 1, percent: 20 },
+      { label: '0-3', count: 1, percent: 20 },
       { label: '4-6', count: 1, percent: 20 },
       { label: '7-9', count: 1, percent: 20 },
       { label: '10-12', count: 1, percent: 20 },
@@ -63,7 +63,7 @@ describe('getClassOverviewStats', () => {
   })
 
   it('returns empty score summaries when no essays have scores yet', () => {
-    const stats = getClassOverviewStats([essay('e1')], [])
+    const stats = getClassOverviewStats([essay('e1')], [], 15)
 
     expect(stats.totalEssayCount).toBe(1)
     expect(stats.scoredEssayCount).toBe(0)
@@ -71,5 +71,30 @@ describe('getClassOverviewStats', () => {
     expect(stats.highestScore).toBeNull()
     expect(stats.lowestScore).toBeNull()
     expect(stats.bands.every((band) => band.count === 0 && band.percent === 0)).toBe(true)
+  })
+
+  it('includes only teacher-confirmed results and scales the distribution', () => {
+    const confirmed = essay('confirmed')
+    const ready = {
+      ...essay('ready'),
+      status: 'grading_ready' as const,
+      teacherReviewed: false,
+    }
+
+    const stats = getClassOverviewStats(
+      [confirmed, ready],
+      [result('confirmed', 26), result('ready', 30)],
+      30,
+    )
+
+    expect(stats.scoredEssayCount).toBe(1)
+    expect(stats.averageScore).toBe(26)
+    expect(stats.bands).toEqual([
+      { label: '0-7', count: 0, percent: 0 },
+      { label: '8-13', count: 0, percent: 0 },
+      { label: '14-19', count: 0, percent: 0 },
+      { label: '20-25', count: 0, percent: 0 },
+      { label: '26-30', count: 1, percent: 100 },
+    ])
   })
 })

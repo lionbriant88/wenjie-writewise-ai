@@ -1,12 +1,5 @@
 import type { Essay, GradingResult } from '../types'
-
-const scoreBands = [
-  { label: '1-3', min: 1, max: 3 },
-  { label: '4-6', min: 4, max: 6 },
-  { label: '7-9', min: 7, max: 9 },
-  { label: '10-12', min: 10, max: 12 },
-  { label: '13-15', min: 13, max: 15 },
-] as const
+import { getDynamicScoreBands } from './gradingDiagnostics'
 
 export interface ClassOverviewBand {
   label: string
@@ -30,13 +23,18 @@ function roundToOneDecimal(value: number) {
 export function getClassOverviewStats(
   essays: Essay[],
   gradingResults: GradingResult[],
+  fullScore: number,
 ): ClassOverviewStats {
-  const essayIds = new Set(essays.map((essay) => essay.id))
+  const confirmedEssayIds = new Set(
+    essays
+      .filter((essay) => essay.status === 'completed' && essay.teacherReviewed)
+      .map((essay) => essay.id),
+  )
   const scores = gradingResults
-    .filter((result) => essayIds.has(result.essayId) && Number.isFinite(result.totalScore))
+    .filter((result) => confirmedEssayIds.has(result.essayId) && Number.isFinite(result.totalScore))
     .map((result) => result.totalScore)
 
-  const bands = scoreBands.map<ClassOverviewBand>((band) => {
+  const bands = getDynamicScoreBands(fullScore).map<ClassOverviewBand>((band) => {
     const count = scores.filter((score) => {
       const roundedScore = Math.round(score)
       return roundedScore >= band.min && roundedScore <= band.max
