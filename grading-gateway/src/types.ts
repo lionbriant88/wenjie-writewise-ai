@@ -73,3 +73,105 @@ export interface GradingRequestV1 {
 export type ValidationResult<T> =
   | { ok: true; value: T }
   | { ok: false; error: { code: 'invalid_request'; message: string } }
+
+export type GradingChangeType =
+  | 'grammar'
+  | 'spelling'
+  | 'word_choice'
+  | 'sentence_upgrade'
+  | 'coherence'
+  | 'logic_bridge'
+  | 'delete_suggestion'
+  | 'replace_sentence'
+  | 'reference_clarification'
+
+export interface ProviderGradingPayloadV1 {
+  reportedTotalScore?: number
+  dimensionScores: Array<{ dimensionId: string; score: number; reason: string; evidence: string }>
+  issues: Array<{
+    type: 'grammar' | 'spelling' | 'word_choice' | 'structure'
+    severity: 'low' | 'medium' | 'high'
+    originalText: string
+    suggestion: string
+    explanation: string
+    requiresTeacherReview?: boolean
+  }>
+  sentenceRevisions: Array<{ originalText: string; revisedText: string; note: string }>
+  expressionUpgrades: Array<{ originalText: string; upgradedText: string; note: string }>
+  fullTextRevision: {
+    correctedText: string
+    improvedText?: string
+    sentencePairs: Array<{
+      originalText: string
+      correctedText: string
+      improvedText: string
+      changeTypes: GradingChangeType[]
+      explanation: string
+      requiresTeacherReview?: boolean
+    }>
+    logicNotes: string[]
+  }
+  overallComment: string
+  modelSelfConfidence?: number
+  reviewReasons?: string[]
+}
+
+export interface AiGradingResultV1 {
+  resultVersion: 'grading-result-v1'
+  requestId: string
+  essayId: string
+  provider: GradingProviderName
+  status: 'success' | 'partial'
+  totalScore: number
+  maxScore: number
+  dimensionScores: Array<{
+    dimensionId: string
+    name: string
+    score: number
+    maxScore: number
+    weight: number
+    reason: string
+    evidence: string
+  }>
+  issues: Array<{
+    id: string
+    type: 'grammar' | 'spelling' | 'word_choice' | 'structure'
+    severity: 'low' | 'medium' | 'high'
+    originalText: string
+    suggestion: string
+    explanation: string
+    requiresTeacherReview: boolean
+  }>
+  sentenceRevisions: Array<{
+    id: string
+    relatedIssueId?: string
+    originalText: string
+    revisedText: string
+    note: string
+  }>
+  expressionUpgrades: Array<{
+    id: string
+    originalText: string
+    upgradedText: string
+    note: string
+  }>
+  fullTextRevision?: {
+    originalText: string
+    correctedText: string
+    improvedText: string
+    sentencePairs: Array<{
+      id: string
+      originalText: string
+      correctedText: string
+      improvedText: string
+      changeTypes: GradingChangeType[]
+      explanation: string
+      requiresTeacherReview: boolean
+    }>
+    logicNotes: string[]
+  }
+  overallComment: string
+  modelSelfConfidence?: number
+  reviewReasons: string[]
+  createdAt: string
+}
