@@ -71,7 +71,7 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.getByRole('tab', { name: '问题批改' })).toHaveAttribute('aria-selected', 'false')
     expect(screen.getByText('学生作文原文')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '诊断摘要' })).toBeInTheDocument()
-    expect(screen.getByText('AI 置信度')).toBeInTheDocument()
+    expect(screen.queryByText('AI 置信度')).not.toBeInTheDocument()
     expect(screen.getByText('主要扣分项')).toBeInTheDocument()
     expect(screen.getByText('讲评建议')).toBeInTheDocument()
     expect(screen.getByText('优秀')).toBeInTheDocument()
@@ -173,7 +173,7 @@ describe('EssayResultPage teacher decision workflow', () => {
 
     await user.click(screen.getByRole('tab', { name: '全文优化' }))
     expect(screen.getByRole('heading', { name: '全文优化稿' })).toBeInTheDocument()
-    expect(screen.getAllByText(/保留学生原文思路/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/是否忠实于原意仍需教师复核/).length).toBeGreaterThan(0)
     expect(screen.getByRole('button', { name: '纠错版' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '提升版' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: '逐句对照' })).toBeInTheDocument()
@@ -186,7 +186,7 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.getAllByText(/I suggest you join the club\./).length).toBeGreaterThan(0)
 
     await user.click(screen.getByRole('button', { name: '逐句对照' }))
-    expect(screen.getAllByText(/是否保留原意/).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/是否保留原意/)).not.toBeInTheDocument()
     expect(screen.getAllByText('建议教师复核').length).toBeGreaterThan(0)
   })
 

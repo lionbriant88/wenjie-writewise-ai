@@ -140,7 +140,6 @@ export const createMockFullTextRevision = (essayId: string): FullTextRevision =>
       polished: 'I suggest that you join the club.',
       changeTypes: ['grammar', 'sentence_upgrade'],
       explanation: 'suggest 后的宾语从句使用动词原形；提升版让句式更自然。',
-      preservesOriginalIntent: true,
     },
     {
       id: `${essayId}-pair-2`,
@@ -149,7 +148,6 @@ export const createMockFullTextRevision = (essayId: string): FullTextRevision =>
       polished: 'We should protect the environment when reading in public places.',
       changeTypes: ['spelling', 'sentence_upgrade'],
       explanation: '修正 environment 拼写，并让时间状语表达更简洁。',
-      preservesOriginalIntent: true,
     },
     {
       id: `${essayId}-pair-3`,
@@ -158,7 +156,6 @@ export const createMockFullTextRevision = (essayId: string): FullTextRevision =>
       polished: 'It can help you gain a lot of knowledge.',
       changeTypes: ['word_choice'],
       explanation: 'knowledge 是不可数名词，搭配 gain a lot of knowledge 更自然。',
-      preservesOriginalIntent: true,
     },
     {
       id: `${essayId}-pair-4`,
@@ -167,7 +164,6 @@ export const createMockFullTextRevision = (essayId: string): FullTextRevision =>
       polished: '提升版暂不保留该句，等待教师复核后决定是否补充原因、改写或删除。',
       changeTypes: ['coherence', 'replace_sentence'],
       explanation: '该句与上下文关联度差，不能擅自补写原因，建议教师复核。',
-      preservesOriginalIntent: false,
       needsTeacherReview: true,
     },
   ],
@@ -190,7 +186,7 @@ export const createMockFullTextRevision = (essayId: string): FullTextRevision =>
   ],
   logicNotes: [
     '第 4 句与上下文关联度差，提升版没有擅自编造新情节，而是提示教师复核。',
-    '其余修改主要是语法纠错、拼写纠错和表达升级，保留学生原文思路。',
+    '其余修改主要是语法纠错、拼写纠错和表达升级，仍需教师复核是否忠实于原意。',
   ],
 })
 

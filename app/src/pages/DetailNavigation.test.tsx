@@ -45,15 +45,13 @@ describe('detail flow back navigation', () => {
     expect(screen.getByRole('region', { name: '顶部批改操作' })).toBeInTheDocument()
   })
 
-  it('shows top review controls with score, confidence, and previous or next essay links', () => {
+  it('shows top review controls with score and previous or next essay links without model confidence', () => {
     renderWithRoute('/tasks/task-1/essays/task-1-essay-1', <EssayResultPage />)
 
     const topActions = screen.getByRole('region', { name: '顶部批改操作' })
     expect(screen.getAllByText('作文 1 批改结果').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('13 / 15')).toBeInTheDocument()
-    expect(
-      within(topActions).getAllByText((_, element) => element?.textContent?.includes('AI 置信度 86%') ?? false).length,
-    ).toBeGreaterThanOrEqual(1)
+    expect(within(topActions).queryByText(/AI 置信度/)).not.toBeInTheDocument()
     expect(within(topActions).getByRole('button', { name: '上一篇' })).toBeDisabled()
     expect(within(topActions).getByRole('link', { name: '下一篇' })).toHaveAttribute(
       'href',

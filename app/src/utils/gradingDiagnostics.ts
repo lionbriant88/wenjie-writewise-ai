@@ -61,17 +61,13 @@ export function getSeverityImpactLabel(severity: ErrorAnnotation['severity']) {
 
 export function getReviewRecommendation({
   totalScore,
-  aiConfidence,
   issues,
 }: {
   totalScore: number
-  aiConfidence: number
   issues: ErrorAnnotation[]
 }) {
-  const normalizedConfidence = normalizeConfidence(aiConfidence)
   const highSeverityCount = issues.filter((issue) => issue.severity === 'high').length
 
-  if (normalizedConfidence < 0.7) return '建议教师复核'
   if (highSeverityCount >= 2) return '建议重点讲评'
   if (totalScore >= 13) return '可作为优秀范例'
   if (totalScore >= 10) return '普通反馈'

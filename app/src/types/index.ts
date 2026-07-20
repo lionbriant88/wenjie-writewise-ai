@@ -185,7 +185,6 @@ export interface FullTextSentencePair {
   polished: string
   changeTypes: FullTextChangeType[]
   explanation: string
-  preservesOriginalIntent: boolean
   needsTeacherReview?: boolean
 }
 
@@ -209,7 +208,10 @@ export interface GradingResult {
   fullTextRevision?: FullTextRevision
   overallComment: string
   teacherSuggestion?: string
-  aiConfidence: number
+  aiConfidence?: number
+  resultVersion?: 'grading-result-v1'
+  source?: 'mock' | 'remote'
+  reviewReasons?: string[]
   teacherAdjusted: boolean
   createdAt: string
   updatedAt: string

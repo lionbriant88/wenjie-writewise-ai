@@ -127,12 +127,11 @@ describe('grading diagnostics', () => {
     expect(formatConfidence(86)).toBe('86%')
   })
 
-  it('builds review recommendations from integer score, normalized confidence, and issue severity', () => {
-    expect(getReviewRecommendation({ totalScore: 14, aiConfidence: 0.9, issues: [] })).toBe('可作为优秀范例')
-    expect(getReviewRecommendation({ totalScore: 12, aiConfidence: 0.9, issues: [] })).toBe('普通反馈')
-    expect(getReviewRecommendation({ totalScore: 9, aiConfidence: 0.9, issues: [] })).toBe('建议关注主要问题')
-    expect(getReviewRecommendation({ totalScore: 6, aiConfidence: 0.9, issues: [] })).toBe('建议教师复核')
-    expect(getReviewRecommendation({ totalScore: 12, aiConfidence: 66, issues: [] })).toBe('建议教师复核')
-    expect(getReviewRecommendation({ totalScore: 12, aiConfidence: 0.9, issues: highIssues })).toBe('建议重点讲评')
+  it('builds review recommendations from integer score and issue severity, not model confidence', () => {
+    expect(getReviewRecommendation({ totalScore: 14, issues: [] })).toBe('可作为优秀范例')
+    expect(getReviewRecommendation({ totalScore: 12, issues: [] })).toBe('普通反馈')
+    expect(getReviewRecommendation({ totalScore: 9, issues: [] })).toBe('建议关注主要问题')
+    expect(getReviewRecommendation({ totalScore: 6, issues: [] })).toBe('建议教师复核')
+    expect(getReviewRecommendation({ totalScore: 12, issues: highIssues })).toBe('建议重点讲评')
   })
 })

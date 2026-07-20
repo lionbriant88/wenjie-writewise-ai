@@ -11,7 +11,7 @@ import { OriginalPaperWorkspace } from '../components/OriginalPaperWorkspace'
 import { useAppState } from '../context/useAppState'
 import { AppLayout } from '../layout/AppLayout'
 import { buildClassReviewMaterialFromIssue } from '../utils/classReviewMaterials'
-import { calculateTotalScore, clampDimensionScore, formatConfidence, formatTotalScore } from '../utils/gradingDiagnostics'
+import { calculateTotalScore, clampDimensionScore, formatTotalScore } from '../utils/gradingDiagnostics'
 import { buildReviewIssueItems } from '../utils/reviewIssueItems'
 import { buildSourceIssueMarkers } from '../utils/sourceIssueMarkers'
 import { findTextMatch } from '../utils/textHighlight'
@@ -239,8 +239,6 @@ export function EssayResultPage() {
                 <p className="text-sm font-semibold text-slate-950">{essay.essayNumber} 批改结果</p>
                 <p className="mt-0.5 text-xs text-slate-500">
                   总分 <span className="font-semibold text-blue-700">{formatTotalScore(totalScore)} / {fullScore}</span>
-                  <span className="mx-2 text-slate-300">|</span>
-                  AI 置信度 {formatConfidence(result.aiConfidence)}
                 </p>
               </div>
             </div>
@@ -310,7 +308,6 @@ export function EssayResultPage() {
 
             {activeDetailTab === 'scoring' ? (
               <DiagnosticScoreSummary
-                aiConfidence={result.aiConfidence}
                 dimensions={result.dimensionScores}
                 fullScore={fullScore}
                 issues={result.errorAnnotations}

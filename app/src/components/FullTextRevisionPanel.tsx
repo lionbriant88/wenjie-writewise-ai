@@ -59,7 +59,7 @@ export function FullTextRevisionPanel({ revision, upgrades }: FullTextRevisionPa
           全文优化稿
         </h3>
         <p className="mt-1 text-xs leading-5 text-slate-500">
-          保留学生原文思路，只纠正语言错误、优化表达，并在必要时提示逻辑衔接问题。
+          修改建议以语言纠错和表达优化为目标；是否忠实于原意仍需教师复核。
         </p>
       </div>
 
@@ -101,13 +101,6 @@ export function FullTextRevisionPanel({ revision, upgrades }: FullTextRevisionPa
                     {changeTypeLabel[type]}
                   </span>
                 ))}
-                <span
-                  className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                    pair.preservesOriginalIntent ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
-                  }`}
-                >
-                  是否保留原意：{pair.preservesOriginalIntent ? '是' : '需复核'}
-                </span>
                 {pair.needsTeacherReview ? (
                   <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
                     建议教师复核

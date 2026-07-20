@@ -1,7 +1,6 @@
 import type { ErrorAnnotation, ScoreDimension } from '../types'
 import {
   calculateTotalScore,
-  formatConfidence,
   formatDimensionScore,
   formatTotalScore,
   getGradeBand,
@@ -18,7 +17,6 @@ const gradeToneClass = {
 }
 
 interface DiagnosticScoreSummaryProps {
-  aiConfidence: number
   dimensions: ScoreDimension[]
   fullScore: number
   issues: ErrorAnnotation[]
@@ -26,7 +24,6 @@ interface DiagnosticScoreSummaryProps {
 }
 
 export function DiagnosticScoreSummary({
-  aiConfidence,
   dimensions,
   fullScore,
   issues,
@@ -36,7 +33,7 @@ export function DiagnosticScoreSummary({
   const totalScore = calculateTotalScore(dimensions, safeFullScore)
   const gradeBand = getGradeBand(totalScore)
   const mainDeductions = getMainDeductionDimensions(dimensions)
-  const reviewRecommendation = getReviewRecommendation({ totalScore, aiConfidence, issues })
+  const reviewRecommendation = getReviewRecommendation({ totalScore, issues })
 
   return (
     <section className="rounded-lg border border-blue-100 bg-white p-4 shadow-sm" aria-labelledby="diagnostic-summary-title">
@@ -59,17 +56,13 @@ export function DiagnosticScoreSummary({
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
         <div>
           <p className="text-xs font-semibold text-slate-500">总分</p>
           <p className="mt-1 text-3xl font-semibold text-slate-950">
             {formatTotalScore(totalScore)}
             <span className="ml-1 text-base font-medium text-slate-500">/ {safeFullScore}</span>
           </p>
-        </div>
-        <div>
-          <p className="text-xs font-semibold text-slate-500">AI 置信度</p>
-          <p className="mt-2 text-sm font-semibold text-slate-800">{formatConfidence(aiConfidence)}</p>
         </div>
         <div>
           <p className="text-xs font-semibold text-slate-500">主要扣分项</p>
