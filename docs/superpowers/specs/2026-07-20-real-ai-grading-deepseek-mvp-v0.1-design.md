@@ -228,11 +228,12 @@ interface GradingRequestV1 {
 
 - 真实模式只读取 `essay.ocrAudit.confirmedTranscript`。
 - 不得用未确认的 `sourceText`、Paddle 原始结果或图片。
-- 预置旧 mock 作文缺少确认审计时，不得进入真实 Provider；仍可使用 mock 回退。
+- 请求构建器必须显式接收转写策略：`confirmed_only` 或 `allow_legacy_mock`。真实 Client 只能使用 `confirmed_only`；只有完全位于浏览器本地、不会发往 Gateway 的 mock 回退可以使用 `allow_legacy_mock` 并读取兼容字段 `essay.ocrText`。
+- 预置旧 mock 作文缺少确认审计时，不得进入真实 Provider；本地 mock 回退仍可使用兼容字段。
 - `rubric.status` 必须为 `confirmed`。
 - 应用文 `taskRequirement` 必填。
 - 读后续写三项材料必填，但 DeepSeek v0.1 对该类型返回受控不支持。
-- `fullScore` 必须是有限正数。
+- `fullScore` 必须是 1–100 之间的有限正整数。
 - rubric 维度 ID 必须唯一，权重必须为有限非负数，权重和必须为 100。
 - `confirmedTranscript` 去除首尾空白后不能为空，最大 20,000 字符。
 - 单个 ID 最大 128 字符；Gateway JSON body 上限固定为 256 KB，超过上限直接拒绝。
@@ -437,7 +438,7 @@ interface GradingFailureV1 {
 
 ### 10.2 档次
 
-`scoreBand` 不属于模型输出和 Gateway 结果。产品层基于 `totalScore / fullScore` 动态计算档次。为保持当前 15 分制体验，阈值按现有 `13/15`、`10/15`、`7/15`、`4/15` 比例缩放；15 分制显示保持不变，其他满分制动态生成显示范围。
+`scoreBand` 不属于模型输出和 Gateway 结果。产品层基于 `totalScore / fullScore` 动态计算档次。阈值按现有 `13/15`、`10/15`、`7/15`、`4/15` 比例缩放；15 分制的主要阈值保持不变，但最低档显式覆盖 0 分并显示为 `0-3`，其他满分制动态生成完整且不重叠的显示范围。
 
 ### 10.3 原句引用
 
@@ -462,6 +463,7 @@ interface GradingFailureV1 {
 - 生成业务 ID、时间戳、Provider 类别。
 - 使用 rubric 补齐维度名称、权重和最大分。
 - 用产品规则重算总分。
+- 模型自评置信度缺失或不在 `[0, 1]` 时使用 `0.5` 并标记 `partial`；该值不得被描述为经过校准的准确率。
 
 不能安全修复：
 
@@ -570,13 +572,12 @@ interface GradingRunState {
 
 `GradingResult` 只做兼容性扩展，不新增第二个页面结果数组：
 
+在现有 `GradingResult` 内追加以下可选字段，其余字段保持不变：
+
 ```ts
-interface GradingResult {
-  // existing fields
-  resultVersion?: 'grading-result-v1'
-  source?: 'mock' | 'remote'
-  reviewReasons?: string[]
-}
+resultVersion?: 'grading-result-v1'
+source?: 'mock' | 'remote'
+reviewReasons?: string[]
 ```
 
 ### 14.2 状态转换
@@ -601,7 +602,7 @@ grading_ready
 
 - `gradeEssay(essayId)`：构建请求、调用 Client、写入结果或失败状态。
 - `retryGradeEssay(essayId)`：显式重新调用当前模式。
-- `fallbackToMockGrading(essayId)`：通过 mock Client 生成同契约结果。
+- `fallbackToMockGrading(essayId)`：使用 `allow_legacy_mock` 构建策略，通过只在浏览器本地运行的 mock Client 生成同契约结果；该请求不得发送到 Gateway。
 - `confirmGradingResult(essayId)`：把 `grading_ready` 变为 `completed` 并设置 `teacherReviewed: true`。
 - `updateGradingResult`：继续负责教师编辑，但编辑本身不等于最终确认。
 - `markEssayManual`：保留人工路径。
