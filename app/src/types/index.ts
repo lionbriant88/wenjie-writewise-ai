@@ -7,6 +7,7 @@ export type EssayStatus =
   | 'ocr_running'
   | 'pending_grading'
   | 'grading'
+  | 'grading_ready'
   | 'completed'
   | 'needs_review'
   | 'manual'
@@ -94,10 +95,32 @@ export interface Essay {
   status: EssayStatus
   exceptionReasons: ExceptionReason[]
   aiResultId?: string
+  gradingRun?: GradingRunState
   teacherReviewed: boolean
   createdAt: string
   updatedAt: string
 }
+
+export type GradingRunState =
+  | { status: 'idle' }
+  | { status: 'running'; requestId: string; startedAt: string }
+  | {
+      status: 'success' | 'partial'
+      requestId: string
+      source: 'mock' | 'remote'
+      reviewReasons: string[]
+      startedAt: string
+      completedAt: string
+    }
+  | {
+      status: 'failed'
+      requestId: string
+      errorCode: string
+      errorMessage: string
+      retryable: boolean
+      startedAt?: string
+      completedAt: string
+    }
 
 export interface ScoreDimension {
   id: string

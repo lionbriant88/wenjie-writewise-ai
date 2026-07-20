@@ -32,6 +32,10 @@ export interface AppState {
   confirmMockOcrEssay: (input: ConfirmMockOcrEssayInput) => void
   updateEssayOcrText: (essayId: string, text: string, confirmedAt?: string) => void
   markEssayManual: (essayId: string) => void
+  gradeEssay: (essayId: string) => Promise<void>
+  retryGradeEssay: (essayId: string) => Promise<void>
+  fallbackToMockGrading: (essayId: string) => Promise<void>
+  confirmGradingResult: (essayId: string) => void
   completeEssayWithMockResult: (essayId: string) => void
   updateGradingResult: (essayId: string, patch: Partial<GradingResult>) => void
   addClassReviewMaterial: (input: ClassReviewMaterialInput) => ClassReviewMaterial

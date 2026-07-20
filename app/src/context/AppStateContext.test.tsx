@@ -1,9 +1,11 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { confirmOcrAudit, createPendingOcrAudit } from '../services/ocr/audit/transcriptAudit'
 import type { Essay } from '../types'
+import type { GradingClient, GradingRequestV1 } from '../services/grading/types'
 import { AppStateProvider } from './AppStateContext'
+import type { AppState } from './appStateContextValue'
 import { useAppState } from './useAppState'
 
 const pendingAudit = createPendingOcrAudit({
@@ -78,5 +80,236 @@ describe('AppStateContext OCR audit lifecycle', () => {
     expect(updatedEssay.ocrAudit?.sourceText).toBe('Client final source')
     expect(updatedEssay.ocrAudit?.confirmedTranscript).toBe('Later faithful correction')
     expect(updatedEssay.ocrAudit?.reviewOutcome.confirmedAt).toBe('2026-07-12T03:05:00.000Z')
+  })
+})
+
+let latestState: AppState
+
+function StateProbe() {
+  latestState = useAppState()
+  return null
+}
+
+function resultFor(request: GradingRequestV1, provider: 'mock' | 'remote' = 'remote') {
+  const dimensionScores = request.task.rubric.dimensions.map((dimension) => ({
+    dimensionId: dimension.id,
+    name: dimension.name,
+    score: request.task.fullScore,
+    maxScore: request.task.fullScore,
+    weight: dimension.weight,
+    reason: 'Synthetic reason.',
+    evidence: request.essay.confirmedTranscript,
+  }))
+  return {
+    resultVersion: 'grading-result-v1' as const,
+    requestId: request.requestId,
+    essayId: request.essay.essayId,
+    provider,
+    status: 'success' as const,
+    totalScore: request.task.fullScore,
+    maxScore: request.task.fullScore,
+    dimensionScores,
+    issues: [],
+    sentenceRevisions: [],
+    expressionUpgrades: [],
+    overallComment: 'Synthetic result.',
+    reviewReasons: [],
+    createdAt: '2026-07-20T01:00:00.000Z',
+  }
+}
+
+function createConfirmedEssay() {
+  let taskId = ''
+  act(() => {
+    taskId = latestState.createTask({
+      taskName: 'Synthetic grading task',
+      className: 'Synthetic class',
+      essayType: 'letter',
+      fullScore: 15,
+      scoringTemplateId: 'synthetic',
+      writingGenre: 'practical_writing',
+      promptInfo: {
+        writingGenre: 'practical_writing',
+        manualPromptText: 'Write a synthetic letter.',
+      },
+      rubricDraft: {
+        source: 'teacher',
+        writingGoal: 'Complete the task.',
+        offTopicCriteria: [],
+        dimensions: [{ id: 'all', name: 'All', weight: 100, description: 'All', deductionFocus: [] }],
+        excellentFeatures: [],
+        reviewTriggers: [],
+        status: 'confirmed',
+      },
+      generateClassReview: true,
+    })
+  })
+  act(() => {
+    latestState.confirmMockOcrEssay({
+      taskId,
+      essayGroups: [{
+        pages: [{ id: 'synthetic-page', label: 'Synthetic page', pageNumber: 1, quality: 'clear', accent: '#000' }],
+        ocrText: 'Teacher-confirmed synthetic transcript.',
+        ocrAudit: confirmOcrAudit(
+          createPendingOcrAudit({
+            sourceKind: 'remote',
+            result: {
+              essayGroupId: 'synthetic-group', text: 'Synthetic OCR source.',
+              pages: [{ pageId: 'synthetic-page', text: 'Synthetic OCR source.' }],
+              provider: 'mock', status: 'success',
+            },
+            expectedPageIds: ['synthetic-page'],
+            assessedAt: '2026-07-20T00:00:00.000Z',
+          }),
+          'Teacher-confirmed synthetic transcript.',
+          '2026-07-20T00:01:00.000Z',
+        ),
+      }],
+    })
+  })
+  const created = latestState.essays.find((essay) => essay.taskId === taskId)
+  if (!created) throw new Error('Synthetic essay was not created')
+  return { taskId, essayId: created.id }
+}
+
+function renderGradingState(gradingClient: GradingClient) {
+  return render(<AppStateProvider gradingClient={gradingClient}><StateProbe /></AppStateProvider>)
+}
+
+describe('AppStateContext grading lifecycle', () => {
+  it('keeps a real AI result unreviewed until explicit confirmation', async () => {
+    const client: GradingClient = { async grade(request) { return resultFor(request) } }
+    renderGradingState(client)
+    const { taskId, essayId } = createConfirmedEssay()
+
+    await act(async () => { await latestState.gradeEssay(essayId) })
+    expect(latestState.essays.find((essay) => essay.id === essayId)).toMatchObject({
+      status: 'grading_ready', teacherReviewed: false,
+    })
+    expect(latestState.gradingResults.find((result) => result.essayId === essayId)?.source).toBe('remote')
+    expect(latestState.tasks.find((task) => task.id === taskId)?.completedEssayCount).toBe(0)
+
+    act(() => latestState.confirmGradingResult(essayId))
+    expect(latestState.essays.find((essay) => essay.id === essayId)).toMatchObject({
+      status: 'completed', teacherReviewed: true,
+    })
+    expect(latestState.tasks.find((task) => task.id === taskId)?.completedEssayCount).toBe(1)
+  })
+
+  it('returns a failed attempt to pending without automatic retry', async () => {
+    const grade = vi.fn(async (request: GradingRequestV1) => ({
+      requestId: request.requestId, status: 'failed' as const,
+      error: { code: 'provider_timeout' as const, message: 'Timed out.', retryable: true },
+    }))
+    renderGradingState({ grade })
+    const { essayId } = createConfirmedEssay()
+    await act(async () => { await latestState.gradeEssay(essayId) })
+    expect(latestState.essays.find((essay) => essay.id === essayId)).toMatchObject({
+      status: 'pending_grading', teacherReviewed: false,
+      gradingRun: { status: 'failed', errorCode: 'provider_timeout', retryable: true },
+    })
+    expect(grade).toHaveBeenCalledTimes(1)
+  })
+
+  it('prevents duplicate clicks and gives an explicit retry a fresh request id', async () => {
+    let resolveFirst!: (value: ReturnType<typeof resultFor>) => void
+    const firstResponse = new Promise<ReturnType<typeof resultFor>>((resolve) => { resolveFirst = resolve })
+    const requestIds: string[] = []
+    const grade = vi.fn((request: GradingRequestV1) => {
+      requestIds.push(request.requestId)
+      if (requestIds.length === 1) return firstResponse
+      return Promise.resolve({
+        requestId: request.requestId, status: 'failed' as const,
+        error: { code: 'provider_timeout' as const, message: 'Timed out.', retryable: true },
+      })
+    })
+    renderGradingState({ grade })
+    const { essayId } = createConfirmedEssay()
+    let first!: Promise<void>
+    let duplicate!: Promise<void>
+    act(() => {
+      first = latestState.gradeEssay(essayId)
+      duplicate = latestState.gradeEssay(essayId)
+    })
+    expect(grade).toHaveBeenCalledTimes(1)
+    const request = grade.mock.calls[0][0]
+    resolveFirst(resultFor(request))
+    await act(async () => { await Promise.all([first, duplicate]) })
+
+    act(() => latestState.markEssayManual(essayId))
+    expect(grade).toHaveBeenCalledTimes(1)
+
+    const failingGrade = vi.fn(async (nextRequest: GradingRequestV1) => ({
+      requestId: nextRequest.requestId, status: 'failed' as const,
+      error: { code: 'provider_timeout' as const, message: 'Timed out.', retryable: true },
+    }))
+    const secondView = renderGradingState({ grade: failingGrade })
+    const second = createConfirmedEssay()
+    await act(async () => { await latestState.gradeEssay(second.essayId) })
+    await act(async () => { await latestState.retryGradeEssay(second.essayId) })
+    expect(failingGrade).toHaveBeenCalledTimes(2)
+    expect(failingGrade.mock.calls[0][0].requestId).not.toBe(failingGrade.mock.calls[1][0].requestId)
+    secondView.unmount()
+  })
+
+  it('does not call the client for an invalid request and uses local mock only on fallback', async () => {
+    const grade = vi.fn()
+    renderGradingState({ grade })
+    const legacyPending = latestState.essays.find((essay) => essay.status === 'pending_grading')
+    if (!legacyPending) throw new Error('Expected a legacy pending fixture')
+    await act(async () => { await latestState.gradeEssay(legacyPending.id) })
+    expect(grade).not.toHaveBeenCalled()
+
+    const { essayId } = createConfirmedEssay()
+    await act(async () => { await latestState.fallbackToMockGrading(essayId) })
+    expect(grade).not.toHaveBeenCalled()
+    expect(latestState.gradingResults.find((result) => result.essayId === essayId)?.source).toBe('mock')
+  })
+
+  it('editing does not confirm and confirmation is ignored outside grading_ready', async () => {
+    renderGradingState({ async grade(request) { return resultFor(request) } })
+    const { essayId } = createConfirmedEssay()
+    act(() => latestState.confirmGradingResult(essayId))
+    expect(latestState.essays.find((essay) => essay.id === essayId)?.status).toBe('pending_grading')
+
+    await act(async () => { await latestState.gradeEssay(essayId) })
+    act(() => latestState.updateGradingResult(essayId, { overallComment: 'Teacher edit.' }))
+    expect(latestState.essays.find((essay) => essay.id === essayId)).toMatchObject({
+      status: 'grading_ready', teacherReviewed: false,
+    })
+  })
+
+  it.each(['success', 'failure'] as const)('ignores a late %s after manual handling', async (kind) => {
+    let resolve!: (value: Awaited<ReturnType<GradingClient['grade']>>) => void
+    const deferred = new Promise<Awaited<ReturnType<GradingClient['grade']>>>((done) => { resolve = done })
+    const grade = vi.fn((_request: GradingRequestV1) => deferred)
+    renderGradingState({ grade })
+    const { taskId, essayId } = createConfirmedEssay()
+    let pending!: Promise<void>
+    act(() => { pending = latestState.gradeEssay(essayId) })
+    act(() => latestState.markEssayManual(essayId))
+    const countsAfterManual = latestState.tasks.find((task) => task.id === taskId)?.completedEssayCount
+    const request = grade.mock.calls[0][0]
+    resolve(kind === 'success'
+      ? resultFor(request)
+      : {
+          requestId: request.requestId, status: 'failed',
+          error: { code: 'provider_timeout', message: 'Timed out.', retryable: true },
+        })
+    await act(async () => { await pending })
+    expect(latestState.essays.find((essay) => essay.id === essayId)).toMatchObject({
+      status: 'manual', teacherReviewed: true,
+    })
+    expect(latestState.gradingResults.find((result) => result.essayId === essayId)).toBeUndefined()
+    expect(latestState.tasks.find((task) => task.id === taskId)?.completedEssayCount).toBe(countsAfterManual)
+  })
+
+  it('resets added in-memory grading data on provider remount', () => {
+    const view = renderGradingState({ async grade(request) { return resultFor(request) } })
+    const { taskId } = createConfirmedEssay()
+    expect(latestState.tasks.some((task) => task.id === taskId)).toBe(true)
+    view.unmount()
+    renderGradingState({ async grade(request) { return resultFor(request) } })
+    expect(latestState.tasks.some((task) => task.id === taskId)).toBe(false)
   })
 })
