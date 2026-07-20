@@ -46,24 +46,26 @@ describe('progressQueue', () => {
       essay('作文 5', 'grading'),
       essay('作文 6', 'pending_ocr'),
       essay('作文 7', 'ocr_running'),
+      essay('作文 8', 'grading_ready'),
     ]
 
     expect(getProgressQueueStats(essays)).toEqual({
-      total: 7,
+      total: 8,
       completed: 1,
       processing: 4,
-      reviewNeeded: 1,
+      reviewNeeded: 2,
       pending: 2,
-      completionRate: 14,
-      processable: 4,
+      completionRate: 13,
+      processable: 1,
     })
   })
 
-  it('identifies only mock-processable statuses', () => {
-    expect(isProcessableEssayStatus('pending_ocr')).toBe(true)
-    expect(isProcessableEssayStatus('ocr_running')).toBe(true)
+  it('identifies only pending grading as processable', () => {
+    expect(isProcessableEssayStatus('pending_ocr')).toBe(false)
+    expect(isProcessableEssayStatus('ocr_running')).toBe(false)
     expect(isProcessableEssayStatus('pending_grading')).toBe(true)
-    expect(isProcessableEssayStatus('grading')).toBe(true)
+    expect(isProcessableEssayStatus('grading')).toBe(false)
+    expect(isProcessableEssayStatus('grading_ready')).toBe(false)
     expect(isProcessableEssayStatus('completed')).toBe(false)
     expect(isProcessableEssayStatus('needs_review')).toBe(false)
     expect(isProcessableEssayStatus('manual')).toBe(false)
@@ -76,6 +78,7 @@ describe('progressQueue', () => {
       essay('作文 3', 'needs_review'),
       essay('作文 4', 'pending_grading'),
       essay('作文 5', 'grading'),
+      essay('作文 6', 'grading_ready'),
     ]
 
     expect(filterEssaysByProgressTab(essays, 'all').map((item) => item.id)).toEqual([
@@ -84,12 +87,13 @@ describe('progressQueue', () => {
       '作文 3',
       '作文 4',
       '作文 5',
+      '作文 6',
     ])
     expect(filterEssaysByProgressTab(essays, 'processing').map((item) => item.id)).toEqual([
       '作文 4',
       '作文 5',
     ])
-    expect(filterEssaysByProgressTab(essays, 'review').map((item) => item.id)).toEqual(['作文 3'])
+    expect(filterEssaysByProgressTab(essays, 'review').map((item) => item.id)).toEqual(['作文 3', '作文 6'])
     expect(filterEssaysByProgressTab(essays, 'completed').map((item) => item.id)).toEqual(['作文 1'])
   })
 })

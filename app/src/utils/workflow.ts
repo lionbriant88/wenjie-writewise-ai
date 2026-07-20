@@ -62,6 +62,19 @@ export function getProgressNextAction(task: Task, essays: Essay[]): NextAction {
     }
   }
 
+  const readyEssay = essays.find((essay) => essay.status === 'grading_ready')
+  if (readyEssay) {
+    return {
+      tone: 'info',
+      title: 'AI 批改已完成，等待教师确认',
+      description: '请检查评分、问题与修改建议；只有明确确认后才计入完成和班级统计。',
+      primaryLabel: '查看并确认批改',
+      primaryTo: `/tasks/${task.id}/essays/${readyEssay.id}`,
+      secondaryLabel: '返回批改进度',
+      secondaryTo: `/tasks/${task.id}/progress`,
+    }
+  }
+
   if (essays.length > 0 && terminalCount === essays.length) {
     return {
       tone: 'success',
@@ -74,9 +87,9 @@ export function getProgressNextAction(task: Task, essays: Essay[]): NextAction {
 
   return {
     tone: 'info',
-    title: activeCount > 0 ? `${activeCount} 篇作文仍在模拟处理中` : '等待作文进入批改队列',
-    description: '阶段一原型使用本地 mock 数据模拟 OCR 与 AI 批改状态。',
-    primaryLabel: '模拟完成下一篇',
+    title: activeCount > 0 ? `${activeCount} 篇作文仍在处理队列中` : '等待作文进入批改队列',
+    description: 'OCR 确认后可逐篇启动批改；运行中不会自动重试或批量并发。',
+    primaryLabel: '开始批改',
     primaryTo: `/tasks/${task.id}/progress`,
     secondaryLabel: '查看异常队列',
     secondaryTo: `/tasks/${task.id}/exceptions`,

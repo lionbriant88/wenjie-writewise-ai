@@ -102,6 +102,10 @@ describe('workflow helpers', () => {
       label: '已完成',
       showCheck: true,
     })
+    expect(getEssayStatusMeta('grading_ready')).toMatchObject({
+      label: '待教师确认',
+    })
+    expect(Boolean(getEssayStatusMeta('grading_ready').animated)).toBe(false)
   })
 
   it.each([
@@ -109,6 +113,7 @@ describe('workflow helpers', () => {
     ['ocr_running', '识别中', true, false],
     ['pending_grading', '待批改', false, false],
     ['grading', '批改中', true, false],
+    ['grading_ready', '待教师确认', false, false],
     ['completed', '已完成', false, true],
     ['needs_review', '需人工复核', false, false],
     ['manual', '人工批改', false, true],
@@ -123,4 +128,13 @@ describe('workflow helpers', () => {
       expect(meta.className).toEqual(expect.any(String))
     },
   )
+
+  it('points a ready AI result to teacher detail review without treating it as terminal', () => {
+    const next = getProgressNextAction(task, [essay('作文 1', 'grading_ready')])
+    expect(next).toMatchObject({
+      tone: 'info',
+      primaryLabel: '查看并确认批改',
+      primaryTo: '/tasks/task-1/essays/作文 1',
+    })
+  })
 })

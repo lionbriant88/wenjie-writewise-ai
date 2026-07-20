@@ -1,23 +1,35 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { AppStateProvider } from '../context/AppStateContext'
-import { ClassReviewPage } from './ClassReviewPage'
+import type { GradingClient, GradingRequestV1 } from '../services/grading/types'
 import { EssayResultPage } from './EssayResultPage'
 import { ExceptionsPage } from './ExceptionsPage'
 import { ProgressPage } from './ProgressPage'
 import { UploadPage } from './UploadPage'
 
-function renderUploadProgressAndDetailFlow() {
+function renderProgressFlow(taskId = 'task-2', gradingClient?: GradingClient) {
+  render(
+    <AppStateProvider gradingClient={gradingClient}>
+      <MemoryRouter initialEntries={[`/tasks/${taskId}/progress`]}>
+        <Routes>
+          <Route path="/tasks/:taskId/progress" element={<ProgressPage />} />
+          <Route path="/tasks/:taskId/exceptions" element={<ExceptionsPage />} />
+          <Route path="/tasks/:taskId/essays/:essayId" element={<EssayResultPage />} />
+        </Routes>
+      </MemoryRouter>
+    </AppStateProvider>,
+  )
+}
+
+function renderUploadFlow() {
   render(
     <AppStateProvider>
       <MemoryRouter initialEntries={['/tasks/task-1/upload']}>
         <Routes>
           <Route path="/tasks/:taskId/upload" element={<UploadPage />} />
           <Route path="/tasks/:taskId/progress" element={<ProgressPage />} />
-          <Route path="/tasks/:taskId/exceptions" element={<ExceptionsPage />} />
-          <Route path="/tasks/:taskId/class-review" element={<ClassReviewPage />} />
           <Route path="/tasks/:taskId/essays/:essayId" element={<EssayResultPage />} />
         </Routes>
       </MemoryRouter>
@@ -25,140 +37,105 @@ function renderUploadProgressAndDetailFlow() {
   )
 }
 
-function renderProgressFlow(taskId = 'task-1') {
-  render(
-    <AppStateProvider>
-      <MemoryRouter initialEntries={[`/tasks/${taskId}/progress`]}>
-        <Routes>
-          <Route path="/tasks/:taskId/progress" element={<ProgressPage />} />
-          <Route path="/tasks/:taskId/exceptions" element={<ExceptionsPage />} />
-          <Route path="/tasks/:taskId/class-review" element={<ClassReviewPage />} />
-          <Route path="/tasks/:taskId/essays/:essayId" element={<EssayResultPage />} />
-        </Routes>
-      </MemoryRouter>
-    </AppStateProvider>,
-  )
+function failedClient(grade = vi.fn(async (request: GradingRequestV1) => ({
+  requestId: request.requestId,
+  status: 'failed' as const,
+  error: { code: 'provider_timeout' as const, message: '安全超时提示。', retryable: true },
+}))) {
+  return { client: { grade } satisfies GradingClient, grade }
 }
 
 describe('ProgressPage', () => {
-  it('shows queue operation bar and status tabs without replacing the summary cards', async () => {
+  it('offers one-at-a-time grading without batch controls and documents memory-only state', () => {
     renderProgressFlow()
-
-    expect(screen.getAllByText('作文总数').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('已完成').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('需复核').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('整体进度').length).toBeGreaterThan(0)
-
-    expect(screen.getByText(/当前队列：/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '模拟完成下一篇' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '模拟完成全部可处理' })).not.toBeInTheDocument()
-    expect(screen.getByRole('link', { name: '查看异常队列' })).toBeInTheDocument()
-
-    expect(screen.getByRole('tab', { name: /全部/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '开始批改' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: /全部|批量/ })).not.toBeInTheDocument()
+    expect(screen.getByText(/结果仅保存在当前页面状态中/)).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /处理中/ })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /需复核/ })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: /已完成/ })).toBeInTheDocument()
+    expect(document.body.textContent).not.toMatch(/DeepSeek|API.?key/i)
   })
 
-  it('shows batch completion only when multiple essays are processable', () => {
-    renderProgressFlow('task-2')
-
-    expect(screen.getByRole('button', { name: '模拟完成下一篇' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '模拟完成全部可处理' })).toBeInTheDocument()
-  })
-
-  it('filters progress table by review and completed tabs', async () => {
+  it('starts only the next pending essay and exposes its ready result for teacher review', async () => {
     const user = userEvent.setup()
     renderProgressFlow()
+    await user.click(screen.getByRole('button', { name: '开始批改' }))
+    expect((await screen.findAllByText('待教师确认')).length).toBeGreaterThan(0)
+    expect(screen.getByRole('link', { name: '查看并确认' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /批量/ })).not.toBeInTheDocument()
+  })
 
+  it('shows a disabled running-row action and does not automatically retry', async () => {
+    const user = userEvent.setup()
+    let resolve!: (value: Awaited<ReturnType<GradingClient['grade']>>) => void
+    const deferred = new Promise<Awaited<ReturnType<GradingClient['grade']>>>((done) => { resolve = done })
+    const grade = vi.fn((_request: GradingRequestV1) => deferred)
+    renderProgressFlow('task-2', { grade })
+    await user.click(screen.getByRole('button', { name: '开始批改' }))
+    expect(await screen.findByRole('button', { name: '批改中' })).toBeDisabled()
+    expect(grade).toHaveBeenCalledTimes(1)
+    const request = grade.mock.calls[0][0]
+    resolve({
+      requestId: request.requestId,
+      status: 'failed',
+      error: { code: 'provider_timeout', message: '安全超时提示。', retryable: true },
+    })
+  })
+
+  it('renders safe failure recovery and explicit retry creates one additional call', async () => {
+    const user = userEvent.setup()
+    const { client, grade } = failedClient()
+    renderProgressFlow('task-2', client)
+    await user.click(screen.getByRole('button', { name: '开始批改' }))
+    expect(await screen.findByText('安全超时提示。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重试批改' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '使用 mock 回退' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '转人工处理' })).toBeEnabled()
+    expect(screen.getByText(/可能产生第二次真实 Provider 费用/)).toBeInTheDocument()
+    expect(grade).toHaveBeenCalledTimes(1)
+    await user.click(screen.getByRole('button', { name: '重试批改' }))
+    expect(grade).toHaveBeenCalledTimes(2)
+    expect(grade.mock.calls[0][0].requestId).not.toBe(grade.mock.calls[1][0].requestId)
+  })
+
+  it('keeps mock fallback and manual handling actionable after failure', async () => {
+    const user = userEvent.setup()
+    const first = failedClient()
+    renderProgressFlow('task-2', first.client)
+    await user.click(screen.getByRole('button', { name: '开始批改' }))
+    await user.click(await screen.findByRole('button', { name: '使用 mock 回退' }))
+    expect((await screen.findAllByText('待教师确认')).length).toBeGreaterThan(0)
+    expect(first.grade).toHaveBeenCalledTimes(1)
+
+    const second = failedClient()
+    renderProgressFlow('task-2', second.client)
+    const startButtons = screen.getAllByRole('button', { name: '开始批改' })
+    await user.click(startButtons[startButtons.length - 1])
+    const manualButtons = await screen.findAllByRole('button', { name: '转人工处理' })
+    await user.click(manualButtons[manualButtons.length - 1])
+    expect(screen.getAllByText('已转人工处理').length).toBeGreaterThan(0)
+  })
+
+  it('includes grading_ready in review filtering and preserves OCR exception navigation', async () => {
+    const user = userEvent.setup()
+    renderProgressFlow('task-1')
     await user.click(screen.getByRole('tab', { name: /需复核/ }))
-    expect(screen.getByText('当前显示：需复核')).toBeInTheDocument()
-    expect(screen.getAllByText('去复核').length).toBeGreaterThan(0)
-    expect(screen.queryByText('模拟进度')).not.toBeInTheDocument()
-
-    await user.click(screen.getByRole('tab', { name: /已完成/ }))
-    expect(screen.getByText('当前显示：已完成')).toBeInTheDocument()
-    expect(screen.getAllByRole('link', { name: '查看结果' }).length).toBeGreaterThan(0)
-    expect(screen.queryByRole('link', { name: '去复核' })).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('progress-review-row').length).toBeGreaterThan(0)
+    expect(screen.getAllByRole('link', { name: '去复核 OCR' }).length).toBeGreaterThan(0)
   })
 
-  it('shows the latest completed essay entry after completing one essay', async () => {
+  it('takes a teacher-confirmed OCR upload through local grading into the detail page', async () => {
     const user = userEvent.setup()
-    renderProgressFlow()
-
-    await user.click(screen.getByRole('button', { name: '模拟完成下一篇' }))
-
-    expect(screen.getByRole('status')).toHaveTextContent(/已生成批改结果/)
-    const latestLink = screen.getByRole('link', { name: '查看详情' })
-    await user.click(latestLink)
-
-    expect(screen.getByRole('heading', { name: /批改结果/ })).toBeInTheDocument()
-  })
-
-  it('batch-completes all processable essays without completing review-needed essays', async () => {
-    const user = userEvent.setup()
-    renderProgressFlow('task-2')
-
-    await user.click(screen.getByRole('button', { name: '模拟完成全部可处理' }))
-
-    expect(screen.getByRole('status')).toHaveTextContent(/已完成 \d+ 篇作文的模拟批改/)
-    expect(screen.queryByRole('button', { name: '模拟完成下一篇' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '模拟完成全部可处理' })).not.toBeInTheDocument()
-
-    await user.click(screen.getByRole('tab', { name: /需复核/ }))
-    expect(screen.getAllByRole('link', { name: '去复核' }).length).toBeGreaterThan(0)
-  })
-
-  it('keeps exception navigation available from the queue operation bar', async () => {
-    const user = userEvent.setup()
-    renderProgressFlow()
-
-    await user.click(screen.getByRole('link', { name: '查看异常队列' }))
-
-    expect(screen.getByRole('heading', { name: '异常复核' })).toBeInTheDocument()
-  })
-
-  it('marks review-needed rows for quick scanning', () => {
-    renderProgressFlow()
-
-    const reviewRows = screen.getAllByTestId('progress-review-row')
-    expect(reviewRows.length).toBeGreaterThan(0)
-    expect(reviewRows[0]).toHaveClass('bg-rose-50')
-  })
-
-  it('completes the next queued OCR essay and opens its generated review result', async () => {
-    const user = userEvent.setup()
-    renderUploadProgressAndDetailFlow()
-
-    await user.click(screen.getByRole('button', { name: '开始 OCR 识别（预计 6 篇）' }))
+    renderUploadFlow()
+    await user.click(screen.getByRole('button', { name: /开始 OCR 识别/ }))
     const ocrDraft = screen.getByRole('textbox', { name: '作文 1 OCR 文本' })
     await user.clear(ocrDraft)
-    await user.type(ocrDraft, 'Confirmed OCR essay text')
+    await user.type(ocrDraft, 'Confirmed synthetic OCR essay text.')
     await user.click(screen.getByRole('button', { name: '确认 OCR 文本' }))
-
-    expect(screen.getByRole('heading', { name: '批改进度' })).toBeInTheDocument()
-    expect(screen.getAllByText('作文 11').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('模拟进度').length).toBeGreaterThan(0)
-
-    await user.click(screen.getByRole('button', { name: '模拟完成下一篇' }))
-    expect(screen.getByRole('status')).toHaveTextContent('最新完成：作文 9 已生成批改结果')
-
-    await user.click(screen.getByRole('button', { name: '模拟完成下一篇' }))
-    expect(screen.getByRole('status')).toHaveTextContent('最新完成：作文 11 已生成批改结果')
-    const resultLinks = screen.getAllByRole('link', { name: '查看结果' })
-    await user.click(resultLinks[resultLinks.length - 1])
-
-    expect(screen.getByRole('heading', { name: '作文 11 批改结果' })).toBeInTheDocument()
-    expect(screen.getByText('Confirmed OCR essay text')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '编辑 OCR' }))
-    expect(screen.getByDisplayValue('Confirmed OCR essay text')).toBeInTheDocument()
-
-    expect(screen.getByRole('tab', { name: '评分诊断' })).toHaveAttribute('aria-selected', 'true')
-    await user.click(screen.getByRole('tab', { name: '问题批改' }))
-    expect(screen.getByText('问题与修改建议')).toBeInTheDocument()
-    await user.click(screen.getByRole('tab', { name: '全文优化' }))
-    expect(screen.getByRole('heading', { name: '全文优化稿' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '本文重点提升点' })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: '表达升级建议' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '开始批改' }))
+    const detailLinks = await screen.findAllByRole('link', { name: '查看并确认' })
+    await user.click(detailLinks[detailLinks.length - 1])
+    expect(screen.getByRole('heading', { name: /批改结果/ })).toBeInTheDocument()
+    expect(screen.getByText('Confirmed synthetic OCR essay text.')).toBeInTheDocument()
   })
 })

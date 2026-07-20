@@ -7,8 +7,11 @@ import type {
   GradingResult,
   Task,
 } from '../types'
+import { confirmOcrAudit, createPendingOcrAudit } from '../services/ocr/audit/transcriptAudit'
 
 const baseDate = '2026-06-25T09:00:00.000Z'
+const mockEssayText =
+  'Dear Peter,\n\nI am glad to hear that you are interested in our reading festival. I suggest you joins the club. We should protect the enviroment when we read in public places. It can make you know many knowledge.\n\nI think you can join the English corner and share your favorite book with classmates. This activity is very important because it will help you learn more words and make friends. My mother was angry.\n\nI hope my advice can help you.'
 
 const page = (
   essayId: string,
@@ -41,6 +44,26 @@ const essay = (
   const pages = Array.from({ length: pageCount }, (_, pageIndex) =>
     page(id, pageIndex + 1, quality),
   )
+  const ocrAudit = confirmOcrAudit(
+    createPendingOcrAudit({
+      sourceKind: 'mock',
+      result: {
+        essayGroupId: id,
+        text: mockEssayText,
+        pages: pages.map((essayPage) => ({
+          pageId: essayPage.id,
+          text: mockEssayText,
+          confidence: ocrConfidence,
+        })),
+        provider: 'mock',
+        status: 'success',
+      },
+      expectedPageIds: pages.map((essayPage) => essayPage.id),
+      assessedAt: baseDate,
+    }),
+    mockEssayText,
+    baseDate,
+  )
 
   return {
     id,
@@ -49,8 +72,8 @@ const essay = (
     pages,
     pageCount,
     pageOrder: pages.map((essayPage) => essayPage.id),
-    ocrText:
-      'Dear Peter,\n\nI am glad to hear that you are interested in our reading festival. I suggest you joins the club. We should protect the enviroment when we read in public places. It can make you know many knowledge.\n\nI think you can join the English corner and share your favorite book with classmates. This activity is very important because it will help you learn more words and make friends. My mother was angry.\n\nI hope my advice can help you.',
+    ocrText: mockEssayText,
+    ocrAudit,
     ocrConfidence,
     status,
     exceptionReasons:
@@ -267,6 +290,27 @@ const resultFor = (essayId: string, seed: number): GradingResult => ({
   updatedAt: baseDate,
 })
 
+const mockPromptInfo: NonNullable<Task['promptInfo']> = {
+  writingGenre: 'practical_writing',
+  practicalWritingType: 'letter',
+  manualPromptText: 'Write a letter giving practical advice.',
+  teacherRequirements: 'Use a clear structure and appropriate tone.',
+}
+
+const mockRubricDraft: NonNullable<Task['rubricDraft']> = {
+  source: 'teacher',
+  writingGoal: 'Complete the practical-writing task clearly and accurately.',
+  offTopicCriteria: ['Does not address the practical-writing task'],
+  dimensions: [
+    { id: 'content', name: 'Content', weight: 40, description: 'Relevant and complete content', deductionFocus: [] },
+    { id: 'language', name: 'Language', weight: 35, description: 'Accurate language', deductionFocus: [] },
+    { id: 'structure', name: 'Structure', weight: 25, description: 'Clear organization', deductionFocus: [] },
+  ],
+  excellentFeatures: ['Specific and useful details'],
+  reviewTriggers: ['Possible topic drift or invented information'],
+  status: 'confirmed',
+}
+
 export const mockTasks: Task[] = [
   {
     id: 'task-1',
@@ -275,6 +319,9 @@ export const mockTasks: Task[] = [
     essayType: '建议信',
     fullScore: 15,
     scoringTemplateId: 'default-15',
+    writingGenre: 'practical_writing',
+    promptInfo: mockPromptInfo,
+    rubricDraft: mockRubricDraft,
     status: 'needs_review',
     totalEssayCount: 10,
     completedEssayCount: 7,
@@ -290,6 +337,9 @@ export const mockTasks: Task[] = [
     essayType: '邀请信',
     fullScore: 15,
     scoringTemplateId: 'default-15',
+    writingGenre: 'practical_writing',
+    promptInfo: mockPromptInfo,
+    rubricDraft: mockRubricDraft,
     status: 'processing',
     totalEssayCount: 8,
     completedEssayCount: 4,
@@ -305,6 +355,9 @@ export const mockTasks: Task[] = [
     essayType: '通知',
     fullScore: 15,
     scoringTemplateId: 'default-15',
+    writingGenre: 'practical_writing',
+    promptInfo: mockPromptInfo,
+    rubricDraft: mockRubricDraft,
     status: 'ready',
     totalEssayCount: 12,
     completedEssayCount: 12,

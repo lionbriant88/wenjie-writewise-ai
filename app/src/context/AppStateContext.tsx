@@ -257,10 +257,6 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
     (essayId: string) => runGrading(essayId, localMockGradingClient, 'allow_legacy_mock'),
     [runGrading],
   )
-  const completeEssayWithMockResult = useCallback((essayId: string) => {
-    void fallbackToMockGrading(essayId)
-  }, [fallbackToMockGrading])
-
   const confirmGradingResult = useCallback((essayId: string) => {
     const timestamp = new Date().toISOString()
     commitEssayTransition(confirmGradingTransition(essaysRef.current, essayId, timestamp), timestamp)
@@ -308,7 +304,6 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
     retryGradeEssay,
     fallbackToMockGrading,
     confirmGradingResult,
-    completeEssayWithMockResult,
     updateGradingResult,
     addClassReviewMaterial,
     removeClassReviewMaterial,
@@ -327,7 +322,6 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
     retryGradeEssay,
     fallbackToMockGrading,
     confirmGradingResult,
-    completeEssayWithMockResult,
     updateGradingResult,
     addClassReviewMaterial,
     removeClassReviewMaterial,

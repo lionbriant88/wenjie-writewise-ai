@@ -36,7 +36,6 @@ export interface AppState {
   retryGradeEssay: (essayId: string) => Promise<void>
   fallbackToMockGrading: (essayId: string) => Promise<void>
   confirmGradingResult: (essayId: string) => void
-  completeEssayWithMockResult: (essayId: string) => void
   updateGradingResult: (essayId: string, patch: Partial<GradingResult>) => void
   addClassReviewMaterial: (input: ClassReviewMaterialInput) => ClassReviewMaterial
   removeClassReviewMaterial: (materialId: string) => void
