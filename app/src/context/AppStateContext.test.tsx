@@ -172,6 +172,44 @@ function createConfirmedEssay() {
   return { taskId, essayId: created.id }
 }
 
+function createInvalidRequestEssay() {
+  let taskId = ''
+  act(() => {
+    taskId = latestState.createTask({
+      taskName: 'Incomplete synthetic grading task',
+      className: 'Synthetic class',
+      essayType: 'letter',
+      fullScore: 15,
+      scoringTemplateId: 'synthetic',
+      generateClassReview: true,
+    })
+    latestState.confirmMockOcrEssay({
+      taskId,
+      essayGroups: [{
+        pages: [{ id: 'invalid-page', label: 'Synthetic page', pageNumber: 1, quality: 'clear', accent: '#000' }],
+        ocrText: 'Teacher-confirmed synthetic transcript.',
+        ocrAudit: confirmOcrAudit(
+          createPendingOcrAudit({
+            sourceKind: 'mock',
+            result: {
+              essayGroupId: 'invalid-group', text: 'Synthetic source.',
+              pages: [{ pageId: 'invalid-page', text: 'Synthetic source.' }],
+              provider: 'mock', status: 'success',
+            },
+            expectedPageIds: ['invalid-page'],
+            assessedAt: '2026-07-20T00:00:00.000Z',
+          }),
+          'Teacher-confirmed synthetic transcript.',
+          '2026-07-20T00:01:00.000Z',
+        ),
+      }],
+    })
+  })
+  const created = latestState.essays.find((essay) => essay.taskId === taskId)
+  if (!created) throw new Error('Invalid-request essay was not created')
+  return created.id
+}
+
 function renderGradingState(gradingClient: GradingClient) {
   return render(<AppStateProvider gradingClient={gradingClient}><StateProbe /></AppStateProvider>)
 }
@@ -255,9 +293,8 @@ describe('AppStateContext grading lifecycle', () => {
   it('does not call the client for an invalid request and uses local mock only on fallback', async () => {
     const grade = vi.fn()
     renderGradingState({ grade })
-    const legacyPending = latestState.essays.find((essay) => essay.status === 'pending_grading')
-    if (!legacyPending) throw new Error('Expected a legacy pending fixture')
-    await act(async () => { await latestState.gradeEssay(legacyPending.id) })
+    const invalidEssayId = createInvalidRequestEssay()
+    await act(async () => { await latestState.gradeEssay(invalidEssayId) })
     expect(grade).not.toHaveBeenCalled()
 
     const { essayId } = createConfirmedEssay()
