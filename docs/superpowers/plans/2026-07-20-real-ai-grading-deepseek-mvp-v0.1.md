@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- The design source is `docs/superpowers/specs/2026-07-20-real-ai-grading-deepseek-mvp-v0.1-design.md`; do not execute this plan until the user approves both documents.
+- The design source is `docs/superpowers/specs/2026-07-20-real-ai-grading-deepseek-mvp-v0.1-design.md`. This reviewed revision authorizes execution of Tasks 1–11. Task 12 remains outside that authorization and must stop at its explicit live-request gate.
 - At execution time, use `superpowers:using-git-worktrees` and create an isolated branch named `codex/real-ai-grading-deepseek-mvp-v01` from the design commit or its descendant; do not branch from `main`, because `main` does not yet contain the OCR work.
 - The only real Provider in v0.1 is DeepSeek; the default model is exactly `deepseek-v4-flash`.
 - Do not use the legacy `deepseek-chat` model name.
@@ -49,12 +49,14 @@
 - Create `app/src/services/grading/mockGradingClient.test.ts`: both-genre mock contract tests.
 - Create `app/src/services/grading/remoteGradingClient.ts`: Gateway HTTP client with injected `fetch`.
 - Create `app/src/services/grading/remoteGradingClient.test.ts`: success, partial, HTTP, non-JSON, and network tests.
+- Create `app/src/services/grading/projectGradingClientResponse.ts` and test: complete nested field projection, HTTP-kind checks, and request/essay binding.
 - Create `app/src/services/grading/gradingClient.ts`: environment-mode client selection.
 - Create `app/src/services/grading/gradingClient.test.ts`: mock/real selection tests.
 
 ### Grading Gateway
 
 - Create `grading-gateway/package.json`, `grading-gateway/package-lock.json`, `grading-gateway/tsconfig.json`, and `grading-gateway/.env.example`.
+- Create `grading-gateway/scripts/verifySharedScoringRuntime.ts`: real `tsx` runtime proof for the cross-directory shared scoring import.
 - Create `grading-gateway/src/types.ts`: server request, Provider payload, normalized result, and error types.
 - Create `grading-gateway/src/validateGradingRequest.ts` and test: strict input allowlist and limits.
 - Create `grading-gateway/src/matchTranscriptQuote.ts` and test: exact/whitespace quote matching.
@@ -75,6 +77,7 @@
 - Modify `app/src/data/mockData.ts`, `app/src/components/FullTextRevisionPanel.tsx`, and their affected tests: remove the UI claim that original intent was verified and rely on teacher-review markers only.
 - Modify `app/src/components/DiagnosticScoreSummary.tsx`, `app/src/pages/EssayResultPage.tsx`, and diagnostics/detail tests: remove model self-confidence from teacher UI and recommendation logic while leaving OCR confidence behavior intact.
 - Modify `app/src/context/appStateContextValue.ts`: async grading, fallback, retry, and confirmation operations.
+- Create `app/src/context/gradingStateTransitions.ts` and test: request-aware pure start/success/failure/manual/confirmation transitions.
 - Modify `app/src/context/AppStateContext.tsx`: grading state machine and injected client seam.
 - Modify `app/src/context/AppStateContext.test.tsx`: lifecycle and teacher-confirmation tests.
 - Modify `app/src/pages/ProgressPage.tsx` and test: per-essay start, running, ready, partial, failed, retry/mock/manual; remove batch real grading.
@@ -209,6 +212,8 @@ export type GradingErrorCode =
   | 'provider_content_filtered'
   | 'provider_unexpected_tool_call'
   | 'provider_invalid_response'
+  | 'request_too_large'
+  | 'gateway_invalid_response'
   | 'gateway_unavailable'
 
 export interface GradingRequestV1 {
@@ -744,17 +749,33 @@ git commit -m "feat: adapt grading results into existing state"
 **Files:**
 - Create: `app/src/services/grading/remoteGradingClient.ts`
 - Test: `app/src/services/grading/remoteGradingClient.test.ts`
+- Create: `app/src/services/grading/projectGradingClientResponse.ts`
+- Test: `app/src/services/grading/projectGradingClientResponse.test.ts`
 - Create: `app/src/services/grading/gradingClient.ts`
 - Test: `app/src/services/grading/gradingClient.test.ts`
 - Modify: `app/.env.example`
 
 **Interfaces:**
 - Consumes: `GradingClient`, `GradingRequestV1`, and `GradingClientResponse`.
-- Produces: `createRemoteGradingClient({ apiBase, fetchImpl })` and `createConfiguredGradingClient(env)`.
+- Produces: `projectGradingClientResponse(value, expected)`, `createRemoteGradingClient({ apiBase, fetchImpl })`, and `createConfiguredGradingClient(env)`.
 
 - [ ] **Step 1: Write failing remote-client tests**
 
-Cover: POST URL/body, success JSON, partial JSON, typed failure JSON, missing base URL, network rejection, and HTML/non-JSON response. The network test must assert the client resolves a failure instead of throwing. Every test must assert one call only: the remote client has no internal retry, and it preserves the caller's trace `requestId` without treating it as an idempotency guarantee.
+Cover HTTP behavior separately from schema projection:
+
+- a 2xx response accepts only a fully valid `AiGradingResultV1`;
+- a non-2xx response accepts only a fully valid `GradingFailureV1`;
+- a non-2xx response containing a structurally valid success result becomes `gateway_invalid_response`;
+- a 2xx response containing a structurally valid failure also becomes `gateway_invalid_response`;
+- response `requestId` must equal the current request ID;
+- success `essayId` must equal `request.essay.essayId`;
+- invalid JSON, HTML, a missing nested field, wrong nested primitive, wrong enum, malformed array item, mismatched ID, and unknown response kind all become the same redacted `gateway_invalid_response` failure;
+- unknown fields at any level are not copied into the projected result;
+- missing base URL and network rejection remain `gateway_unavailable`.
+
+Every test must assert one fetch call only: the remote client has no internal retry, and it preserves the caller's trace `requestId` without treating it as an idempotency guarantee.
+
+The POST test must also assert `X-Grading-Request-Id: request.requestId`. This identity-free trace header lets Express return a bound failure even when its JSON parser cannot safely parse an oversized or malformed body; it does not add idempotency.
 
 ```ts
 it('converts a network rejection into a safe failure', async () => {
@@ -774,14 +795,78 @@ it('converts a network rejection into a safe failure', async () => {
 })
 ```
 
+Add focused projection tests that mutate one nested field at a time. At minimum cover `dimensionScores[0].score`, `issues[0].severity`, `sentenceRevisions[0].id`, `expressionUpgrades[0].note`, `fullTextRevision.sentencePairs[0].changeTypes`, `reviewReasons[0]`, `createdAt`, `error.code`, `error.message`, and `error.retryable`.
+
 - [ ] **Step 2: Run remote-client tests and confirm RED**
 
 ```powershell
 cd D:\wenjie-writewise-ai\app
-npm.cmd test -- src/services/grading/remoteGradingClient.test.ts
+npm.cmd test -- src/services/grading/projectGradingClientResponse.test.ts src/services/grading/remoteGradingClient.test.ts
 ```
 
-- [ ] **Step 3: Implement the remote client with injected fetch**
+- [ ] **Step 3: Implement complete nested response projection**
+
+In `projectGradingClientResponse.ts`, project field by field and return only trusted objects. Do not cast the raw value to a wire type. Use this public boundary:
+
+```ts
+interface ExpectedGradingResponse {
+  httpOk: boolean
+  requestId: string
+  essayId: string
+}
+
+export function projectGradingClientResponse(
+  value: unknown,
+  expected: ExpectedGradingResponse,
+): GradingClientResponse
+```
+
+Implement `isRecord`, `readString`, `readOptionalString`, `readFiniteNumber`, `readBoolean`, `readStringArray`, and `projectArray`. Then implement all of these projectors; each returns `null` if any required nested field is invalid:
+
+```ts
+projectDimensionScore(value): AiGradingResultV1['dimensionScores'][number] | null
+projectIssue(value): AiGradingResultV1['issues'][number] | null
+projectSentenceRevision(value): AiGradingResultV1['sentenceRevisions'][number] | null
+projectExpressionUpgrade(value): AiGradingResultV1['expressionUpgrades'][number] | null
+projectSentencePair(value): NonNullable<AiGradingResultV1['fullTextRevision']>['sentencePairs'][number] | null
+projectFullTextRevision(value): NonNullable<AiGradingResultV1['fullTextRevision']> | null
+projectSuccess(value, expected): AiGradingResultV1 | null
+projectFailure(value, expected): GradingFailureV1 | null
+```
+
+Every projector must construct a new object containing only the contract fields. Validate finite numeric scores and maximums; exact enum membership; arrays item by item; `modelSelfConfidence` only when finite in `[0, 1]`; and `createdAt` as a non-empty string whose `Date.parse` result is finite. `fullTextRevision` is optional, but if present its entire nested shape must validate. `relatedIssueId` is optional. Required strings may not be blank. Validate failure codes against the exact `GradingErrorCode` union.
+
+Use this discriminator and binding logic exactly:
+
+```ts
+export function projectGradingClientResponse(value: unknown, expected: ExpectedGradingResponse) {
+  const projected = expected.httpOk
+    ? projectSuccess(value, expected)
+    : projectFailure(value, expected)
+
+  return projected ?? gatewayInvalidResponse(expected.requestId)
+}
+```
+
+`projectSuccess` must require `resultVersion === 'grading-result-v1'`, `status === 'success' || status === 'partial'`, `requestId === expected.requestId`, and `essayId === expected.essayId`. `projectFailure` must require `status === 'failed'` and `requestId === expected.requestId`. This means non-2xx success, 2xx failure, and ID mismatches fail closed.
+
+Export `gatewayInvalidResponse()` from the projection module for JSON parse failures; it returns only:
+
+```ts
+export function gatewayInvalidResponse(requestId: string): GradingFailureV1 {
+  return {
+    requestId,
+    status: 'failed',
+    error: {
+      code: 'gateway_invalid_response',
+      message: '批改服务返回了无法安全使用的响应，请重试或使用 mock 回退。',
+      retryable: true,
+    },
+  }
+}
+```
+
+- [ ] **Step 4: Implement the remote client with injected fetch**
 
 ```ts
 interface RemoteClientOptions {
@@ -807,14 +892,16 @@ export function createRemoteGradingClient({
         }
       }
 
+      let response: Response
       try {
-        const response = await fetchImpl(`${apiBase.replace(/\/$/, '')}/grading/grade`, {
+        response = await fetchImpl(`${apiBase.replace(/\/$/, '')}/grading/grade`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Grading-Request-Id': request.requestId,
+          },
           body: JSON.stringify(request),
         })
-        const body: unknown = await response.json()
-        return parseGradingClientResponse(body, request.requestId)
       } catch {
         return {
           requestId: request.requestId,
@@ -826,14 +913,26 @@ export function createRemoteGradingClient({
           },
         }
       }
+
+      let body: unknown
+      try {
+        body = await response.json()
+      } catch {
+        return gatewayInvalidResponse(request.requestId)
+      }
+      return projectGradingClientResponse(body, {
+        httpOk: response.ok,
+        requestId: request.requestId,
+        essayId: request.essay.essayId,
+      })
     },
   }
 }
 ```
 
-Implement `parseGradingClientResponse` as a strict top-level guard: accept only `grading-result-v1` success/partial or a typed failed response. Never return unknown Provider fields.
+Keep the `catch` around the fetch call only. JSON parsing and projection failures must map to `gateway_invalid_response`, not masquerade as a network outage. Never return raw or unknown Provider fields.
 
-- [ ] **Step 4: Implement mode selection tests and code**
+- [ ] **Step 5: Implement mode selection tests and code**
 
 Test `mock`, `real`, and invalid/missing mode. Missing and invalid modes must use local mock so ordinary development is not blocked.
 
@@ -854,7 +953,7 @@ VITE_GRADING_MODE=mock
 VITE_GRADING_API_BASE=http://127.0.0.1:8790
 ```
 
-- [ ] **Step 5: Run all frontend grading-service tests**
+- [ ] **Step 6: Run all frontend grading-service tests**
 
 ```powershell
 npm.cmd test -- src/services/grading
@@ -864,11 +963,11 @@ npm.cmd run build
 
 Expected: grading service PASS; lint and build PASS.
 
-- [ ] **Step 6: Commit Task 3**
+- [ ] **Step 7: Commit Task 3**
 
 ```powershell
 cd D:\wenjie-writewise-ai
-git add -- app/.env.example app/src/services/grading/remoteGradingClient.ts app/src/services/grading/remoteGradingClient.test.ts app/src/services/grading/gradingClient.ts app/src/services/grading/gradingClient.test.ts
+git add -- app/.env.example app/src/services/grading/projectGradingClientResponse.ts app/src/services/grading/projectGradingClientResponse.test.ts app/src/services/grading/remoteGradingClient.ts app/src/services/grading/remoteGradingClient.test.ts app/src/services/grading/gradingClient.ts app/src/services/grading/gradingClient.test.ts
 git diff --cached --name-only
 git diff --cached
 git commit -m "feat: add configurable grading client"
@@ -883,6 +982,7 @@ git commit -m "feat: add configurable grading client"
 - Create: `grading-gateway/package-lock.json`
 - Create: `grading-gateway/tsconfig.json`
 - Create: `grading-gateway/.env.example`
+- Create: `grading-gateway/scripts/verifySharedScoringRuntime.ts`
 - Create: `grading-gateway/src/types.ts`
 - Create: `grading-gateway/src/validateGradingRequest.ts`
 - Test: `grading-gateway/src/validateGradingRequest.test.ts`
@@ -891,7 +991,7 @@ git commit -m "feat: add configurable grading client"
 
 **Interfaces:**
 - Consumes: raw Express JSON bodies.
-- Produces: `validateGradingRequest(value): ValidationResult<GradingRequestV1>` and `createServer(options)` with `GET /health`.
+- Produces: `validateGradingRequest(value): ValidationResult<GradingRequestV1>`, redacted 400/413 JSON parser failures, `createServer(options)` with `GET /health`, and an executable `tsx` shared-scoring runtime check.
 
 - [ ] **Step 1: Create package metadata and install dependencies**
 
@@ -906,7 +1006,8 @@ Use the same tested versions as the existing OCR Gateway where applicable:
   "scripts": {
     "dev": "tsx src/index.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify:shared-scoring-runtime": "tsx scripts/verifySharedScoringRuntime.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -940,7 +1041,7 @@ Create `grading-gateway/tsconfig.json` exactly as follows:
     "skipLibCheck": true,
     "types": ["node", "vitest"]
   },
-  "include": ["src/**/*.ts", "../app/src/services/grading/scoringRules.ts"]
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "../app/src/services/grading/scoringRules.ts"]
 }
 ```
 
@@ -954,7 +1055,11 @@ Expected: `package-lock.json` is created. If dependency download is blocked, req
 
 - [ ] **Step 2: Write failing request-validation tests**
 
-Cover: valid practical request, wrong version, empty transcript, transcript over 20,000 chars, unconfirmed rubric, missing requirement, continuation missing opening, invalid full score, duplicate dimension IDs, negative weights, decimal weights, weights not totaling 100, unknown top-level identity fields, and oversized body at the Express boundary.
+Cover: valid practical request, wrong version, empty transcript, transcript over 20,000 chars, unconfirmed rubric, missing requirement, continuation missing opening, invalid full score, duplicate dimension IDs, negative weights, decimal weights, weights not totaling 100, and unknown top-level identity fields. At the Express boundary, add separate tests for malformed JSON and a body larger than 256 KB:
+
+- malformed JSON returns HTTP 400, `application/json`, and the exact safe `GradingFailureV1` shape;
+- oversized JSON returns HTTP 413, `application/json`, and the exact safe `GradingFailureV1` shape;
+- neither response contains Express HTML, stack, parser error text, original body, or a unique marker embedded in the attempted essay content.
 
 ```ts
 it('rejects unexpected identity-bearing fields', () => {
@@ -966,6 +1071,49 @@ it('rejects unexpected identity-bearing fields', () => {
     ok: false,
     error: { code: 'invalid_request', message: '批改请求包含不允许的字段。' },
   })
+})
+```
+
+Add these server-boundary assertions in `server.test.ts`:
+
+```ts
+it('returns redacted JSON for malformed JSON', async () => {
+  const response = await request(createServer())
+    .post('/grading/grade')
+    .set('Content-Type', 'application/json')
+    .set('X-Grading-Request-Id', 'malformed-request')
+    .send('{"essay":{"confirmedTranscript":"PRIVATE-MARKER"}')
+    .expect(400)
+    .expect('Content-Type', /json/)
+
+  expect(response.body).toEqual({
+    requestId: 'malformed-request',
+    status: 'failed',
+    error: { code: 'invalid_request', message: '批改请求 JSON 无效。', retryable: false },
+  })
+  expect(JSON.stringify(response.body)).not.toMatch(/PRIVATE-MARKER|SyntaxError|<html|stack/i)
+})
+
+it('returns redacted JSON for a body larger than 256 KB', async () => {
+  const oversizedBody = JSON.stringify({
+    requestVersion: 'grading-request-v1',
+    requestId: 'oversized-request',
+    essay: { confirmedTranscript: `PRIVATE-MARKER-${'x'.repeat(257 * 1024)}` },
+  })
+  const response = await request(createServer())
+    .post('/grading/grade')
+    .set('Content-Type', 'application/json')
+    .set('X-Grading-Request-Id', 'oversized-request')
+    .send(oversizedBody)
+    .expect(413)
+    .expect('Content-Type', /json/)
+
+  expect(response.body).toEqual({
+    requestId: 'oversized-request',
+    status: 'failed',
+    error: { code: 'request_too_large', message: '批改请求超过 256 KB 限制。', retryable: false },
+  })
+  expect(JSON.stringify(response.body)).not.toMatch(/PRIVATE-MARKER|entity\.too\.large|<html|stack/i)
 })
 ```
 
@@ -1024,7 +1172,10 @@ Implementation baseline:
 ```ts
 export function createServer(options: CreateServerOptions = {}) {
   const app = express()
-  app.use(cors({ origin: options.allowedOrigin ?? 'http://127.0.0.1:5173' }))
+  app.use(cors({
+    origin: options.allowedOrigin ?? 'http://127.0.0.1:5173',
+    allowedHeaders: ['Content-Type', 'X-Grading-Request-Id'],
+  }))
   app.use(express.json({ limit: '256kb' }))
   app.get('/health', (_request, response) => {
     response.json({ ok: true, service: 'grading-gateway' })
@@ -1033,7 +1184,107 @@ export function createServer(options: CreateServerOptions = {}) {
 }
 ```
 
-- [ ] **Step 6: Add safe environment example and ignore verification**
+Add an OPTIONS preflight test with `Access-Control-Request-Headers: content-type,x-grading-request-id` and assert the configured local origin and both allowed headers are returned. This protects the browser path introduced by the parser-error request-ID header.
+
+- [ ] **Step 6: Implement JSON parser security errors**
+
+Register a four-argument Express error middleware immediately after `express.json({ limit: '256kb' })` and before the routes. Bind parser failures to the bounded identity-free `X-Grading-Request-Id` header sent by Task 3; use `unavailable` only for malformed third-party calls without a valid header. Do not inspect, serialize, log, or return `error.body`.
+
+```ts
+import type { ErrorRequestHandler, Request } from 'express'
+
+function errorRecord(error: unknown): Record<string, unknown> | null {
+  return typeof error === 'object' && error !== null
+    ? error as Record<string, unknown>
+    : null
+}
+
+function parserErrorRequestId(request: Request): string {
+  const value = request.get('X-Grading-Request-Id')?.trim()
+  return value && value.length <= 128
+    ? value
+    : 'unavailable'
+}
+
+export const jsonParserErrorHandler: ErrorRequestHandler = (error, request, response, next) => {
+  const record = errorRecord(error)
+  const status = record?.status
+  const type = record?.type
+  const requestId = parserErrorRequestId(request)
+
+  if (status === 413 || type === 'entity.too.large') {
+    response.status(413).json({
+      requestId,
+      status: 'failed',
+      error: {
+        code: 'request_too_large',
+        message: '批改请求超过 256 KB 限制。',
+        retryable: false,
+      },
+    })
+    return
+  }
+
+  if (error instanceof SyntaxError && status === 400 && record && 'body' in record) {
+    response.status(400).json({
+      requestId,
+      status: 'failed',
+      error: {
+        code: 'invalid_request',
+        message: '批改请求 JSON 无效。',
+        retryable: false,
+      },
+    })
+    return
+  }
+
+  next(error)
+}
+```
+
+Mount with:
+
+```ts
+app.use(express.json({ limit: '256kb' }))
+app.use(jsonParserErrorHandler)
+```
+
+The oversized-body and malformed-JSON tests from Step 2 must pass against this middleware before Task 4 is complete. This explicitly prevents Express's default HTML error page for both known parser failures.
+
+- [ ] **Step 7: Add a real `tsx` cross-directory runtime check**
+
+Create `grading-gateway/scripts/verifySharedScoringRuntime.ts` using the repository's established NodeNext `.js` import spelling for a TypeScript source file:
+
+```ts
+import {
+  calculateDimensionMaxScore,
+  calculateTotalScore,
+  roundScore2,
+} from '../../app/src/services/grading/scoringRules.js'
+
+if (calculateDimensionMaxScore(15, 25) !== 3.75) {
+  throw new Error('shared dimension maximum runtime check failed')
+}
+if (roundScore2(2.345) !== 2.35) {
+  throw new Error('shared score rounding runtime check failed')
+}
+if (calculateTotalScore([3.75, 3.75, 3.75, 0.75], 15) !== 12) {
+  throw new Error('shared total runtime check failed')
+}
+
+process.stdout.write('shared scoring runtime ok\n')
+```
+
+Run:
+
+```powershell
+cd D:\wenjie-writewise-ai\grading-gateway
+npm.cmd run verify:shared-scoring-runtime
+```
+
+Expected: exit 0 and exactly `shared scoring runtime ok`. This proves the production `tsx` loader can resolve the cross-directory shared module; Vitest/typecheck alone are not sufficient evidence.
+
+- [ ] **Step 8: Add safe environment example and verify all ignore directions**
 
 Create `grading-gateway/.env.example` with no secret value:
 
@@ -1050,32 +1301,40 @@ DEEPSEEK_MAX_TOKENS=8192
 DEEPSEEK_API_KEY=
 ```
 
-The path does not need to exist for `git check-ignore`; do not create or read a real `.env` during this task. Run:
+Do not create or read a real `.env` during this task. Verify the private file is ignored and both example files are explicitly available to Git:
 
 ```powershell
 cd D:\wenjie-writewise-ai
-git check-ignore -v grading-gateway/.env
+$privateEnvIgnored = (git check-ignore -q --no-index -- grading-gateway/.env; $LASTEXITCODE -eq 0)
+$gatewayExampleIgnored = (git check-ignore -q --no-index -- grading-gateway/.env.example; $LASTEXITCODE -eq 0)
+$appExampleIgnored = (git check-ignore -q --no-index -- app/.env.example; $LASTEXITCODE -eq 0)
+if (-not $privateEnvIgnored) { throw 'grading-gateway/.env must be ignored' }
+if ($gatewayExampleIgnored) { throw 'grading-gateway/.env.example must not be ignored' }
+if ($appExampleIgnored) { throw 'app/.env.example must not be ignored' }
 ```
 
-Expected: root `.gitignore` reports that the path is ignored. No file is created or removed by this check.
+Expected: exit 0 and no output. The current root `!.env.example` rule already makes both example paths available. If these assertions fail because ignore rules changed before execution, add `!**/.env.example` immediately after `.env.*`, rerun all three assertions, and include only that exact `.gitignore` correction in the Task 4 commit. Never use `Get-Content` or a recursive scanner on a real `.env`.
 
-- [ ] **Step 7: Run Gateway tests and typecheck**
+- [ ] **Step 9: Run Gateway tests, runtime check, and typecheck**
 
 ```powershell
 cd D:\wenjie-writewise-ai\grading-gateway
 npm.cmd test
+npm.cmd run verify:shared-scoring-runtime
 npm.cmd run typecheck
 ```
 
-- [ ] **Step 8: Commit Task 4**
+- [ ] **Step 10: Commit Task 4**
 
 ```powershell
 cd D:\wenjie-writewise-ai
-git add -- grading-gateway/package.json grading-gateway/package-lock.json grading-gateway/tsconfig.json grading-gateway/.env.example grading-gateway/src/types.ts grading-gateway/src/validateGradingRequest.ts grading-gateway/src/validateGradingRequest.test.ts grading-gateway/src/server.ts grading-gateway/src/server.test.ts
+git add -- grading-gateway/package.json grading-gateway/package-lock.json grading-gateway/tsconfig.json grading-gateway/.env.example grading-gateway/scripts/verifySharedScoringRuntime.ts grading-gateway/src/types.ts grading-gateway/src/validateGradingRequest.ts grading-gateway/src/validateGradingRequest.test.ts grading-gateway/src/server.ts grading-gateway/src/server.test.ts
 git diff --cached --name-only
 git diff --cached
 git commit -m "feat: add validated grading gateway skeleton"
 ```
+
+Only if Step 8 actually added the exact `!**/.env.example` rule, inspect `git diff -- .gitignore` and then stage `.gitignore` with a separate `git add -- .gitignore`. Do not stage unrelated ignore-rule changes.
 
 ---
 
@@ -1449,6 +1708,7 @@ Assert:
 - only `choices[0].message.content` is parsed;
 - `finish_reason=length` fails;
 - empty `choices`, null/empty/whitespace content fail as `provider_invalid_response`;
+- missing, `null`, or unknown `finish_reason` fails as retryable `provider_invalid_response`;
 - `finish_reason=content_filter` fails as non-retryable `provider_content_filtered`;
 - `finish_reason=insufficient_system_resource` fails as retryable `provider_unavailable`;
 - `finish_reason=tool_calls` or non-empty `message.tool_calls` fails as non-retryable `provider_unexpected_tool_call`;
@@ -1500,7 +1760,9 @@ export class DeepSeekGradingProvider implements GradingProvider {
 }
 ```
 
-`extractCompletedContent()` must project only the first choice and apply the finish-reason mapping before reading content. It must reject an empty choices array, any non-`stop` supported failure reason above, non-empty `message.tool_calls`, and null/blank content. It must never return or log `reasoning_content`, raw choices, token usage, system fingerprint, or the upstream body.
+`extractCompletedContent()` must project only the first choice and apply the finish-reason mapping before reading content. Only the exact string `stop` may proceed to content parsing. Missing, `null`, unknown, and `length` finish reasons map to retryable `provider_invalid_response`; `content_filter`, `insufficient_system_resource`, and `tool_calls` retain their dedicated mappings. It must also reject an empty choices array, non-empty `message.tool_calls`, and null/blank content. It must never return or log `reasoning_content`, raw choices, token usage, system fingerprint, or the upstream body.
+
+Add a table-driven test with `finish_reason` values `undefined`, `null`, `'future_vendor_reason'`, and `'length'`; all four must reject with `{ code: 'provider_invalid_response', retryable: true }` and must not attempt `JSON.parse` on content.
 
 - [ ] **Step 5: Wire Provider selection and local startup**
 
@@ -1561,12 +1823,14 @@ git commit -m "feat: add DeepSeek grading provider"
 **Files:**
 - Modify: `app/src/types/index.ts`
 - Modify: `app/src/context/appStateContextValue.ts`
+- Create: `app/src/context/gradingStateTransitions.ts`
+- Test: `app/src/context/gradingStateTransitions.test.ts`
 - Modify: `app/src/context/AppStateContext.tsx`
 - Modify: `app/src/context/AppStateContext.test.tsx`
 
 **Interfaces:**
 - Consumes: configured `GradingClient`, mock fallback client, request builder, result adapter.
-- Produces: `gradeEssay`, `retryGradeEssay`, `fallbackToMockGrading`, `confirmGradingResult`; new `grading_ready` state.
+- Produces: `gradeEssay`, `retryGradeEssay`, `fallbackToMockGrading`, `confirmGradingResult`; request-aware pure state transitions; new `grading_ready` state.
 
 - [ ] **Step 1: Write failing state-lifecycle tests**
 
@@ -1598,6 +1862,32 @@ it('returns a failed attempt to an actionable pending state', async () => {
 
 Also test: duplicate click while `grading` invokes the client once; a failure is not automatically retried; explicit retry invokes the client exactly one additional time with a different `requestId`; invalid request does not call the client; mock fallback uses source `mock`; editing does not confirm; confirmation only works from `grading_ready`. A provider remount test must document that results reset to initial in-memory fixtures—MVP does not recover grading state or results after refresh/restart.
 
+Add focused race tests in `gradingStateTransitions.test.ts`:
+
+```ts
+it('ignores a late success from an older request', () => {
+  const current = essayRunning('request-new')
+  const transition = settleGradingSuccess([current], 'essay-1', 'request-old', successResult)
+  expect(transition.applied).toBe(false)
+  expect(transition.essays).toEqual([current])
+})
+
+it('ignores a late failure from an older request', () => {
+  const current = essayRunning('request-new')
+  const transition = settleGradingFailure([current], 'essay-1', 'request-old', failureResult)
+  expect(transition.applied).toBe(false)
+  expect(transition.essays).toEqual([current])
+})
+
+it('ignores a response after the essay was moved to manual handling', () => {
+  const manualEssay = { ...essayRunning('request-1'), status: 'manual' as const }
+  expect(settleGradingSuccess([manualEssay], 'essay-1', 'request-1', successResult).applied).toBe(false)
+  expect(settleGradingFailure([manualEssay], 'essay-1', 'request-1', failureResult).applied).toBe(false)
+})
+```
+
+In `AppStateContext.test.tsx`, use a deferred client Promise: start grading, call `markEssayManual()` before resolving the Promise, resolve once with success and once with failure in separate tests, and assert status remains `manual`, no result is inserted, task counts are unchanged by the late response, and `teacherReviewed` retains the manual-path value.
+
 - [ ] **Step 2: Run context tests and confirm RED**
 
 ```powershell
@@ -1618,16 +1908,30 @@ export type EssayStatus =
   | 'needs_review'
   | 'manual'
 
-export interface GradingRunState {
-  status: 'idle' | 'running' | 'success' | 'partial' | 'failed'
-  source?: 'mock' | 'remote'
-  errorCode?: string
-  errorMessage?: string
-  retryable?: boolean
-  reviewReasons?: string[]
-  startedAt?: string
-  completedAt?: string
-}
+export type GradingRunState =
+  | { status: 'idle' }
+  | {
+      status: 'running'
+      requestId: string
+      startedAt: string
+    }
+  | {
+      status: 'success' | 'partial'
+      requestId: string
+      source: 'mock' | 'remote'
+      reviewReasons: string[]
+      startedAt: string
+      completedAt: string
+    }
+  | {
+      status: 'failed'
+      requestId: string
+      errorCode: string
+      errorMessage: string
+      retryable: boolean
+      startedAt?: string
+      completedAt: string
+    }
 
 // Add this property inside the existing Essay interface:
 gradingRun?: GradingRunState
@@ -1660,10 +1964,187 @@ Retain the existing provider body after this signature; do not change production
 
 - [ ] **Step 5: Implement one internal grading runner**
 
-Avoid duplicating real, retry, and mock state transitions:
+Put attempt guards in pure functions inside `gradingStateTransitions.ts`. A success or failure is applicable only when both the essay status and request ID still identify the same running attempt:
 
 ```ts
-const gradingInFlightRef = useRef(new Set<string>())
+export interface EssayTransition {
+  applied: boolean
+  essays: Essay[]
+  taskId?: string
+}
+
+function replaceCurrentAttempt(
+  essays: Essay[],
+  essayId: string,
+  requestId: string,
+  update: (essay: Essay) => Essay,
+): EssayTransition {
+  const target = essays.find((essay) => essay.id === essayId)
+  if (
+    !target
+    || target.status !== 'grading'
+    || target.gradingRun?.status !== 'running'
+    || target.gradingRun.requestId !== requestId
+  ) {
+    return { applied: false, essays }
+  }
+  return {
+    applied: true,
+    taskId: target.taskId,
+    essays: essays.map((essay) => essay.id === essayId ? update(essay) : essay),
+  }
+}
+
+export function beginGradingAttempt(
+  essays: Essay[],
+  essayId: string,
+  requestId: string,
+  startedAt: string,
+): EssayTransition {
+  const target = essays.find((essay) => essay.id === essayId)
+  if (!target || !['pending_grading', 'grading_ready'].includes(target.status)) {
+    return { applied: false, essays }
+  }
+  return {
+    applied: true,
+    taskId: target.taskId,
+    essays: essays.map((essay) => essay.id === essayId
+      ? {
+          ...essay,
+          status: 'grading',
+          teacherReviewed: false,
+          gradingRun: { status: 'running', requestId, startedAt },
+        }
+      : essay),
+  }
+}
+
+export function settleGradingSuccess(
+  essays: Essay[],
+  essayId: string,
+  requestId: string,
+  resultId: string,
+  response: AiGradingResultV1,
+): EssayTransition {
+  if (response.requestId !== requestId || response.essayId !== essayId) {
+    return { applied: false, essays }
+  }
+  return replaceCurrentAttempt(essays, essayId, requestId, (essay) => ({
+    ...essay,
+    status: 'grading_ready',
+    aiResultId: resultId,
+    teacherReviewed: false,
+    gradingRun: {
+      status: response.status,
+      requestId,
+      source: response.provider,
+      reviewReasons: [...response.reviewReasons],
+      startedAt: essay.gradingRun?.status === 'running' ? essay.gradingRun.startedAt : response.createdAt,
+      completedAt: response.createdAt,
+    },
+  }))
+}
+
+export function settleGradingFailure(
+  essays: Essay[],
+  essayId: string,
+  requestId: string,
+  failure: GradingFailureV1,
+  completedAt: string,
+): EssayTransition {
+  if (failure.requestId !== requestId) {
+    return { applied: false, essays }
+  }
+  return replaceCurrentAttempt(essays, essayId, requestId, (essay) => ({
+    ...essay,
+    status: 'pending_grading',
+    teacherReviewed: false,
+    gradingRun: {
+      status: 'failed',
+      requestId,
+      errorCode: failure.error.code,
+      errorMessage: failure.error.message,
+      retryable: failure.error.retryable,
+      startedAt: essay.gradingRun?.status === 'running' ? essay.gradingRun.startedAt : undefined,
+      completedAt,
+    },
+  }))
+}
+```
+
+Create the manual and confirmation transitions explicitly. Moving to manual replaces a running attempt with a terminal local marker, so `replaceCurrentAttempt()` rejects any late response:
+
+```ts
+export function markEssayManualTransition(
+  essays: Essay[],
+  essayId: string,
+  timestamp: string,
+): EssayTransition {
+  const target = essays.find((essay) => essay.id === essayId)
+  if (!target) return { applied: false, essays }
+  const gradingRun = target.gradingRun?.status === 'running'
+    ? {
+        status: 'failed' as const,
+        requestId: target.gradingRun.requestId,
+        errorCode: 'manual_override',
+        errorMessage: '教师已转为人工处理。',
+        retryable: false,
+        startedAt: target.gradingRun.startedAt,
+        completedAt: timestamp,
+      }
+    : target.gradingRun
+  return {
+    applied: true,
+    taskId: target.taskId,
+    essays: essays.map((essay) => essay.id === essayId
+      ? { ...essay, status: 'manual', teacherReviewed: true, gradingRun, updatedAt: timestamp }
+      : essay),
+  }
+}
+
+export function confirmGradingTransition(
+  essays: Essay[],
+  essayId: string,
+  timestamp: string,
+): EssayTransition {
+  const target = essays.find((essay) => essay.id === essayId)
+  if (!target || target.status !== 'grading_ready' || !target.aiResultId) {
+    return { applied: false, essays }
+  }
+  return {
+    applied: true,
+    taskId: target.taskId,
+    essays: essays.map((essay) => essay.id === essayId
+      ? { ...essay, status: 'completed', teacherReviewed: true, updatedAt: timestamp }
+      : essay),
+  }
+}
+```
+
+In `AppStateContext.tsx`, maintain the latest essay snapshot and commit transitions without nesting state setters:
+
+```ts
+const essaysRef = useRef(essays)
+useEffect(() => {
+  essaysRef.current = essays
+}, [essays])
+
+const commitEssayTransition = useCallback((transition: EssayTransition, timestamp: string) => {
+  if (!transition.applied || !transition.taskId) return false
+  essaysRef.current = transition.essays
+  setEssays(transition.essays)
+  setTasks((currentTasks) =>
+    updateTasksFromEssays(currentTasks, transition.taskId!, transition.essays, timestamp))
+  return true
+}, [])
+```
+
+`setTasks()` is a separate call made after the pure transition is computed; it must never appear inside a `setEssays()` updater. Refactor the existing `confirmMockOcrEssay`, `markEssayManual`, and confirmation paths to the same compute-then-commit pattern. `completeEssayWithMockResult` is removed. After Task 8, no `setEssays((current) => { ... setTasks(...) ... })` pattern may remain in `AppStateContext.tsx`.
+
+Use a request-aware in-flight map and apply the settlement before writing a result:
+
+```ts
+const gradingInFlightRef = useRef(new Map<string, string>())
 
 const runGrading = useCallback(async (
   essayId: string,
@@ -1671,80 +2152,66 @@ const runGrading = useCallback(async (
   transcriptPolicy: 'confirmed_only' | 'allow_legacy_mock',
 ) => {
   if (gradingInFlightRef.current.has(essayId)) return
-  gradingInFlightRef.current.add(essayId)
+  const targetEssay = essaysRef.current.find((essay) => essay.id === essayId)
+  if (!targetEssay) return
+  const task = tasks.find((item) => item.id === targetEssay.taskId)
+  if (!task) return
+
+  const requestId = `grading-${essayId}-${crypto.randomUUID()}`
+  const built = buildGradingRequest(task, targetEssay, requestId, transcriptPolicy)
+  if (!built.ok) {
+    recordGradingPreflightFailure(essayId, requestId, built.error)
+    return
+  }
+
+  const startedAt = new Date().toISOString()
+  const started = beginGradingAttempt(essaysRef.current, essayId, requestId, startedAt)
+  if (!commitEssayTransition(started, startedAt)) return
+  gradingInFlightRef.current.set(essayId, requestId)
 
   try {
-    const targetEssay = essays.find((essay) => essay.id === essayId)
-    if (!targetEssay || targetEssay.status === 'grading') return
-    const task = tasks.find((item) => item.id === targetEssay.taskId)
-    if (!task) return
-
-    // Trace one attempt only; this is not an idempotency key.
-    const requestId = `grading-${essayId}-${crypto.randomUUID()}`
-    const built = buildGradingRequest(task, targetEssay, requestId, transcriptPolicy)
-    if (!built.ok) {
-      setEssayGradingFailure(essayId, built.error.code, built.error.message, false)
-      return
-    }
-
-    const startedAt = new Date().toISOString()
-    setEssays((current) => current.map((essay) => essay.id === essayId
-      ? { ...essay, status: 'grading', teacherReviewed: false, gradingRun: { status: 'running', startedAt } }
-      : essay))
-
     const response = await client.grade(built.request)
     if (response.status === 'failed') {
-      setEssayGradingFailure(essayId, response.error.code, response.error.message, response.error.retryable)
+      const completedAt = new Date().toISOString()
+      commitEssayTransition(
+        settleGradingFailure(essaysRef.current, essayId, requestId, response, completedAt),
+        completedAt,
+      )
       return
     }
 
     const adapted = adaptAiGradingResult(response, built.request)
-    setGradingResults((current) => [adapted, ...current.filter((result) => result.essayId !== essayId)])
-    setEssays((current) => current.map((essay) => essay.id === essayId
-      ? {
-          ...essay,
-          status: 'grading_ready',
-          aiResultId: adapted.id,
-          teacherReviewed: false,
-          gradingRun: {
-            status: response.status,
-            source: response.provider,
-            reviewReasons: response.reviewReasons,
-            startedAt,
-            completedAt: response.createdAt,
-          },
-        }
-      : essay))
+    const settled = settleGradingSuccess(
+      essaysRef.current,
+      essayId,
+      requestId,
+      adapted.id,
+      response,
+    )
+    if (!commitEssayTransition(settled, response.createdAt)) return
+    setGradingResults((current) => [adapted, ...current.filter((item) => item.essayId !== essayId)])
   } finally {
-    gradingInFlightRef.current.delete(essayId)
+    if (gradingInFlightRef.current.get(essayId) === requestId) {
+      gradingInFlightRef.current.delete(essayId)
+    }
   }
-}, [essays, tasks])
-
-const gradeEssay = (essayId: string) => runGrading(essayId, gradingClient, 'confirmed_only')
-const retryGradeEssay = (essayId: string) => runGrading(essayId, gradingClient, 'confirmed_only')
-const fallbackToMockGrading = (essayId: string) =>
-  runGrading(essayId, createMockGradingClient(), 'allow_legacy_mock')
+}, [commitEssayTransition, tasks])
 ```
 
-Use functional updates in helper functions and recalculate task counts after each state transition. Do not include `grading_ready` in terminal statuses. The local mock fallback must never call `remoteGradingClient`. Remove `completeEssayWithMockResult` from `AppState`, the context value, and production handlers after its callers are migrated in Task 9.
+`recordGradingPreflightFailure()` is for local request-building failures only; Provider success/failure must always pass through the current-attempt guard. Use one `completedAt` variable per failure instead of calling the clock twice in production code.
 
-Do not add `localStorage`, IndexedDB, service-worker persistence, or database calls. Add a short source comment at the provider state boundary that the state is intentionally memory-only for MVP. `retryGradeEssay` must always run a fresh attempt and never reuse a prior `requestId`; this prevents the UI from implying strict idempotency but also means a retry may create a second billable request.
+The local mock fallback must never call `remoteGradingClient`. Do not include `grading_ready` in terminal counts. Do not add `localStorage`, IndexedDB, service-worker persistence, or database calls. `retryGradeEssay` always creates a fresh `requestId` and may produce a second billable request.
 
 - [ ] **Step 6: Implement explicit confirmation**
 
 ```ts
 const confirmGradingResult = useCallback((essayId: string) => {
   const timestamp = new Date().toISOString()
-  setEssays((current) => {
-    const target = current.find((essay) => essay.id === essayId)
-    if (!target || target.status !== 'grading_ready') return current
-    const next = current.map((essay) => essay.id === essayId
-      ? { ...essay, status: 'completed' as const, teacherReviewed: true, updatedAt: timestamp }
-      : essay)
-    setTasks((currentTasks) => updateTasksFromEssays(currentTasks, target.taskId, next, timestamp))
-    return next
-  })
-}, [])
+  commitEssayTransition(
+    confirmGradingTransition(essaysRef.current, essayId, timestamp),
+    timestamp,
+  )
+}, [commitEssayTransition])
 ```
 
 `updateGradingResult` continues to set `teacherAdjusted: true` but must never alter `teacherReviewed` or essay status.
@@ -1752,15 +2219,23 @@ const confirmGradingResult = useCallback((essayId: string) => {
 - [ ] **Step 7: Run context and grading service tests**
 
 ```powershell
-npm.cmd test -- src/context/AppStateContext.test.tsx src/services/grading
+npm.cmd test -- src/context/gradingStateTransitions.test.ts src/context/AppStateContext.test.tsx src/services/grading
 npm.cmd run build
 ```
+
+Also run a source-level guard after the tests:
+
+```powershell
+rg -n -U -P "setEssays\(\s*\([^)]*\)\s*=>\s*\{[\s\S]{0,1600}setTasks\(" app/src/context/AppStateContext.tsx
+```
+
+Expected: no match. If it matches, inspect and remove the nested setter before committing.
 
 - [ ] **Step 8: Commit Task 8**
 
 ```powershell
 cd D:\wenjie-writewise-ai
-git add -- app/src/types/index.ts app/src/context/appStateContextValue.ts app/src/context/AppStateContext.tsx app/src/context/AppStateContext.test.tsx
+git add -- app/src/types/index.ts app/src/context/appStateContextValue.ts app/src/context/gradingStateTransitions.ts app/src/context/gradingStateTransitions.test.ts app/src/context/AppStateContext.tsx app/src/context/AppStateContext.test.tsx
 git diff --cached --name-only
 git diff --cached
 git commit -m "feat: add teacher-reviewed grading lifecycle"
@@ -2063,30 +2538,67 @@ Expected: all existing OCR tests and typecheck PASS.
 
 - [ ] **Step 6: Run Provider and secret-boundary scans**
 
-From the repository root:
+From the repository root, scan frontend production paths through Git's tracked-file index so an ignored local `.env` can never be traversed:
 
 ```powershell
-rg -n "DEEPSEEK|deepseek|GRADING_PROVIDER|GRADING_MODEL|DEEPSEEK_API_KEY|Authorization" app/src --glob "!**/*.test.*"
+$frontendLeakFiles = @(git grep -l -I -E "DEEPSEEK|deepseek|GRADING_PROVIDER|GRADING_MODEL|DEEPSEEK_API_KEY|Authorization" -- "app/src/**" ":(exclude)app/src/**/*.test.*")
+$frontendExit = $LASTEXITCODE
+if ($frontendExit -gt 1) { throw 'git grep frontend scan failed' }
+if ($frontendLeakFiles.Count -gt 0) {
+  $frontendLeakFiles | ForEach-Object { Write-Output $_ }
+  throw 'Provider-specific production frontend files found'
+}
 ```
 
-Expected: no production frontend match. Test-only synthetic assertions may match only when the test exclusion is removed intentionally.
+Expected: exit 0 and no output. Only matching file paths—not matching lines or values—may be printed on failure.
 
-Scan tracked and untracked repository files while excluding dependency/build/cache/private directories:
+Scan likely secrets in tracked files with `git grep -l`; do not replace this with recursive `rg .`:
 
 ```powershell
-rg -n --hidden "BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{20,}|sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{20,}" . --glob "!.git/**" --glob "!**/node_modules/**" --glob "!**/.venv/**" --glob "!**/dist/**" --glob "!**/local-private-*/**"
+$secretPattern = "BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{20,}|sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{20,}"
+$trackedSecretFiles = @(git grep -l -I -E -e $secretPattern --)
+$trackedExit = $LASTEXITCODE
+if ($trackedExit -gt 1) { throw 'git grep tracked secret scan failed' }
+if ($trackedSecretFiles.Count -gt 0) {
+  $trackedSecretFiles | ForEach-Object { Write-Output $_ }
+  throw 'Likely secret found in tracked files; stop before staging'
+}
 ```
 
-Expected: no likely secret. Do not print a discovered value in commentary or final output; if a likely secret is found, report only its file path and variable name, stop staging, and ask the user to remove/rotate it.
-
-Verify ignored environment files without reading them:
+Build the untracked candidate list only from files Git considers committable. `--exclude-standard` excludes ignored files, and the explicit pathspec/filter excludes root and nested `.env`/`.env.*` again. Then scan each candidate by filename only:
 
 ```powershell
-git check-ignore -v grading-gateway/.env
-git status --short
+$untrackedCandidates = @(
+  git ls-files --others --exclude-standard -- . ":(exclude).env" ":(exclude).env.*" ":(exclude)**/.env" ":(exclude)**/.env.*"
+) | Where-Object { $_ -notmatch '(^|/)\.env($|\.)' }
+
+$untrackedSecretFiles = @()
+foreach ($path in $untrackedCandidates) {
+  $matched = @(& rg -l -e $secretPattern -- $path)
+  $rgExit = $LASTEXITCODE
+  if ($rgExit -gt 1) { throw "secret scan failed for candidate path: $path" }
+  if ($rgExit -eq 0) { $untrackedSecretFiles += $path }
+}
+if ($untrackedSecretFiles.Count -gt 0) {
+  $untrackedSecretFiles | Sort-Object -Unique | ForEach-Object { Write-Output $_ }
+  throw 'Likely secret found in committable untracked files; stop before staging'
+}
 ```
 
-Do not use `Get-Content` on a real `.env`.
+Expected: no output. These commands never enumerate or open ignored files, including a real `grading-gateway/.env`. Do not print a discovered value; report only the file path and, after a separate user-controlled inspection, the variable name.
+
+Verify ignore direction without reading any environment file:
+
+```powershell
+$privateEnvIgnored = (git check-ignore -q --no-index -- grading-gateway/.env; $LASTEXITCODE -eq 0)
+$gatewayExampleIgnored = (git check-ignore -q --no-index -- grading-gateway/.env.example; $LASTEXITCODE -eq 0)
+$appExampleIgnored = (git check-ignore -q --no-index -- app/.env.example; $LASTEXITCODE -eq 0)
+if (-not $privateEnvIgnored) { throw 'grading-gateway/.env must be ignored' }
+if ($gatewayExampleIgnored) { throw 'grading-gateway/.env.example must not be ignored' }
+if ($appExampleIgnored) { throw 'app/.env.example must not be ignored' }
+```
+
+Expected: exit 0 and no output. Do not use `Get-Content`, `rg .`, `Get-ChildItem -Recurse`, or any other recursive content scan that can touch a real `.env`.
 
 - [ ] **Step 7: Verify no accidental private or generated files are staged**
 
@@ -2127,6 +2639,8 @@ If regression fixes were needed, commit each focused fix separately before the d
 
 ### Task 12: Explicitly Authorized Live DeepSeek UI Smoke and Final Evidence
 
+> **Authorization boundary:** Approval to execute Tasks 1–11 does not authorize any part of this task that can issue a real DeepSeek request. Stop here until the user explicitly authorizes the live smoke in a later message.
+
 **Files:**
 - Modify: `docs/current_development_status.md`
 - Modify: `docs/real_ai_grading_gateway_deepseek_v01.md` only if actual startup/smoke instructions needed correction.
@@ -2152,7 +2666,12 @@ Never ask the user to paste the key into chat. Never read the `.env` file.
 After authorization, use checks that do not reveal values:
 
 ```powershell
-git check-ignore -v grading-gateway/.env
+$privateEnvIgnored = (git check-ignore -q --no-index -- grading-gateway/.env; $LASTEXITCODE -eq 0)
+$gatewayExampleIgnored = (git check-ignore -q --no-index -- grading-gateway/.env.example; $LASTEXITCODE -eq 0)
+$appExampleIgnored = (git check-ignore -q --no-index -- app/.env.example; $LASTEXITCODE -eq 0)
+if (-not $privateEnvIgnored) { throw 'grading-gateway/.env must be ignored' }
+if ($gatewayExampleIgnored) { throw 'grading-gateway/.env.example must not be ignored' }
+if ($appExampleIgnored) { throw 'app/.env.example must not be ignored' }
 git status --short
 ```
 
@@ -2241,7 +2760,7 @@ Update status docs with:
 
 - [ ] **Step 8: Final secret and Git audit before the smoke evidence commit**
 
-Repeat Task 11 scans, then:
+Repeat the exact Task 11 `git grep` tracked scan and `git ls-files --others --exclude-standard` untracked-candidate scan. Preserve the explicit `:(exclude)**/.env` and `:(exclude)**/.env.*` exclusions. Do not substitute recursive `rg .`, do not enumerate ignored files, and do not read or output the real `.env`. Then:
 
 ```powershell
 git status --short
@@ -2275,8 +2794,11 @@ Expected: clean worktree; local feature branch contains focused commits; no push
 - [ ] Frontend production code contains no DeepSeek/model/key/Authorization names.
 - [ ] Real requests use only teacher-confirmed transcript and confirmed rubric.
 - [ ] Provider payload is never stored directly in AppState.
+- [ ] Remote Client fully projects every nested success/failure field, enforces request/essay ID binding, and rejects success on non-2xx or failure on 2xx.
+- [ ] Malformed JSON returns redacted 400 JSON and payloads over 256 KB return redacted 413 JSON; neither can fall through to Express HTML errors.
 - [ ] Scores, maximums, total, issue quotes, and revisions are validated before adaptation.
 - [ ] Gateway and browser code import the same pure integer-weight/two-decimal-score/integer-total functions.
+- [ ] The real `tsx` cross-directory shared-scoring runtime check passes.
 - [ ] No fixed model-provided `scoreBand` exists.
 - [ ] `modelSelfConfidence` is optional, has no fallback, does not cause partial, and is absent from teacher UI and decisions.
 - [ ] Neither trusted contracts nor teacher UI claim that rewrite intent preservation was verified.
@@ -2287,12 +2809,17 @@ Expected: clean worktree; local feature branch contains focused commits; no push
 - [ ] No batch or automatic retry path exists.
 - [ ] Duplicate clicks are disabled; explicit retry uses a new trace `requestId` and warns about a possible second charge.
 - [ ] `requestId` is documented as tracing only, not strict idempotency.
+- [ ] `GradingRunState` stores the active `requestId`; old success, old failure, and post-manual late responses cannot write state or results.
+- [ ] `AppStateContext.tsx` contains no `setTasks()` call inside a `setEssays()` updater.
 - [ ] Empty choices/content, content filtering, insufficient resources, unexpected tool calls, and upstream 400/422 have safe tested mappings.
+- [ ] Missing, null, unknown, and length `finish_reason` values fail as `provider_invalid_response`.
 - [ ] Thinking mode, temperature, and max tokens are explicit and tested; MVP live smoke uses thinking disabled.
 - [ ] Gateway mock and browser-local mock have distinct responsibilities but converge on the same `AiGradingResultV1` and adapter.
 - [ ] UI and docs state that React-memory results are not recoverable after refresh/restart.
 - [ ] Real continuation writing is not silently called.
 - [ ] Live smoke was not run without explicit authorization.
+- [ ] Secret scans use `git grep` for tracked files and `git ls-files --others --exclude-standard` for committable untracked files; no ignored `.env` is enumerated or read.
+- [ ] `grading-gateway/.env` is ignored while both `grading-gateway/.env.example` and `app/.env.example` are not ignored.
 - [ ] Live smoke used teacher-created synthetic or thoroughly de-identified test work; real minor data remains outside this acceptance gate.
 - [ ] No secret, real essay, image, raw prompt, raw response, or identity entered Git.
 - [ ] All commits used explicit paths and the branch was not automatically pushed.
