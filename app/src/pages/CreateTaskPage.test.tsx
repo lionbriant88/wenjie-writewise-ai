@@ -1,10 +1,33 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AppStateProvider } from '../context/AppStateContext'
-import { UploadPage } from './UploadPage'
+import type { RubricClientResponse } from '../services/taskRubric/rubricClient'
 import { CreateTaskPage } from './CreateTaskPage'
+
+const generate = vi.fn<(request: unknown) => Promise<RubricClientResponse>>()
+
+vi.mock('../services/taskRubric/rubricClient', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/taskRubric/rubricClient')>()
+  return { ...actual, createConfiguredRubricClient: () => ({ generate }) }
+})
+
+const generatedRubric = {
+  taskName: '环保主题写作',
+  materialSummary: '材料要求学生说明日常环保行动。',
+  writingRequirements: ['围绕材料完成写作'],
+  constraints: ['使用英语表达'],
+  dimensions: [
+    { id: 'content', name: '内容', weight: 60, description: '回应材料要求。', deductionFocus: [], sourceEvidence: [] },
+    { id: 'language', name: '语言', weight: 40, description: '语言准确连贯。', deductionFocus: [], sourceEvidence: [] },
+  ],
+  reviewWarnings: [],
+}
+
+function LocationProbe() {
+  return <output aria-label="current location">{useLocation().pathname}</output>
+}
 
 function renderCreateTaskPage() {
   render(
@@ -12,122 +35,93 @@ function renderCreateTaskPage() {
       <MemoryRouter initialEntries={['/tasks/new']}>
         <Routes>
           <Route path="/tasks/new" element={<CreateTaskPage />} />
-          <Route path="/tasks/:taskId/upload" element={<UploadPage />} />
+          <Route path="/tasks/:taskId/upload" element={<LocationProbe />} />
         </Routes>
       </MemoryRouter>
     </AppStateProvider>,
   )
 }
 
+function material(name = 'material.png', type = 'image/png') {
+  return new File(['source material'], name, { type })
+}
+
+async function uploadMaterial(user: ReturnType<typeof userEvent.setup>) {
+  await user.upload(screen.getByLabelText('材料图片'), material())
+}
+
+async function generateDraft(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: '生成评分标准' }))
+  await screen.findByText('环保主题写作')
+}
+
+afterEach(() => {
+  generate.mockReset()
+})
+
 describe('CreateTaskPage', () => {
-  it('shows the three-step creation flow with practical writing as the default genre', () => {
+  it('only presents material images, full score, and rubric generation without the removed creation fields', () => {
     renderCreateTaskPage()
 
-    expect(screen.getByRole('button', { name: '基础信息' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '题目信息' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '评分标准确认' })).toBeInTheDocument()
-
-    expect(screen.getByRole('radio', { name: '应用文' })).toBeChecked()
-    expect(screen.getByLabelText('具体题型')).toHaveValue('建议信')
-    expect(screen.getByText('本任务评分标准预览')).toBeInTheDocument()
-    expect(screen.getByText('内容完成度')).toBeInTheDocument()
-    expect(screen.getByText('意图表达清晰度')).toBeInTheDocument()
+    expect(screen.getByLabelText('材料图片')).toBeInTheDocument()
+    expect(screen.getByLabelText('满分')).toHaveValue(15)
+    expect(screen.getByRole('button', { name: '生成评分标准' })).toBeInTheDocument()
+    expect(screen.queryByText('应用文')).not.toBeInTheDocument()
+    expect(screen.queryByText('读后续写')).not.toBeInTheDocument()
+    expect(screen.queryByText('具体题型')).not.toBeInTheDocument()
+    expect(screen.queryByText('评分模板')).not.toBeInTheDocument()
+    expect(screen.queryByText('班级')).not.toBeInTheDocument()
+    expect(screen.queryByText('班级讲评')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('创建任务步骤')).not.toBeInTheDocument()
   })
 
-  it('requires the practical writing prompt before generating a rubric, while teacher requirements stay optional', async () => {
+  it('keeps material and full-score input after a safe rubric Gateway failure so the teacher can retry', async () => {
     const user = userEvent.setup()
+    generate.mockResolvedValueOnce({
+      requestId: 'rubric-failure', status: 'failed',
+      error: { code: 'provider_timeout', message: '安全提示', retryable: true },
+    } as RubricClientResponse)
     renderCreateTaskPage()
 
-    await user.click(screen.getByRole('button', { name: '下一步：题目信息' }))
-    expect(screen.getAllByText('题目信息').length).toBeGreaterThan(0)
-    expect(screen.getByText('必填')).toBeInTheDocument()
-    expect(screen.getAllByText('教师补充要求').length).toBeGreaterThan(0)
-    expect(screen.getByText('选填')).toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: '评分标准确认' }))
+    await uploadMaterial(user)
+    await user.clear(screen.getByLabelText('满分'))
+    await user.type(screen.getByLabelText('满分'), '20')
     await user.click(screen.getByRole('button', { name: '生成评分标准' }))
 
-    expect(screen.getByText('请填写题目要求 / 写作任务。')).toBeInTheDocument()
-    expect(screen.queryByText('待教师确认')).not.toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: '返回题目信息' }))
-    await user.type(screen.getByLabelText('题目要求 / 写作任务'), 'Write an email to give advice on joining an English club.')
-    await user.click(screen.getByRole('button', { name: '下一步：评分标准确认' }))
-    await user.click(screen.getByRole('button', { name: '生成评分标准' }))
-
-    expect(screen.getByText('待教师确认')).toBeInTheDocument()
-    const rubricPanel = screen.getByRole('region', { name: 'AI mock 评分标准' })
-    expect(within(rubricPanel).getByText('本题写作目标')).toBeInTheDocument()
-    expect(within(rubricPanel).getByText('内容完成度')).toBeInTheDocument()
-    expect(within(rubricPanel).getByText('语言准确性')).toBeInTheDocument()
-    expect(screen.queryByText('已参考教师补充要求')).not.toBeInTheDocument()
+    expect(await screen.findByText('评分标准暂时无法生成，请保留材料后重试。')).toBeInTheDocument()
+    expect(screen.getByLabelText('满分')).toHaveValue(20)
+    expect(screen.getByText('material.png')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重新生成评分标准' })).toBeInTheDocument()
   })
 
-  it('requires continuation source text and both paragraph openings before generating a continuation rubric', async () => {
+  it('renders an editable generated rubric, resets confirmation on edits, and blocks non-100 weights', async () => {
     const user = userEvent.setup()
+    generate.mockResolvedValue({ requestId: 'rubric-1', status: 'success', rubric: generatedRubric })
     renderCreateTaskPage()
 
-    await user.click(screen.getByRole('radio', { name: '读后续写' }))
-    expect(screen.getByLabelText('具体题型')).toHaveValue('故事续写')
-
-    await user.click(screen.getByRole('button', { name: '下一步：题目信息' }))
-    expect(screen.getByLabelText('读后续写原文')).toBeInTheDocument()
-    expect(screen.getByLabelText('Paragraph 1 开头句')).toBeInTheDocument()
-    expect(screen.getByLabelText('Paragraph 2 开头句')).toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: '评分标准确认' }))
-    await user.click(screen.getByRole('button', { name: '生成评分标准' }))
-    expect(screen.getByText('请填写原文材料和两段开头句。')).toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: '返回题目信息' }))
-    await user.type(screen.getByLabelText('读后续写原文'), 'Tom lost his way on a rainy evening.')
-    await user.type(screen.getByLabelText('Paragraph 1 开头句'), 'Suddenly, he saw a warm light ahead.')
-    await user.type(screen.getByLabelText('Paragraph 2 开头句'), 'When he opened the door, he could not believe his eyes.')
-    await user.click(screen.getByRole('button', { name: '下一步：评分标准确认' }))
-    await user.click(screen.getByRole('button', { name: '生成评分标准' }))
-
-    expect(screen.getByText('待教师确认')).toBeInTheDocument()
-    expect(screen.getByText('本题续写目标')).toBeInTheDocument()
-    expect(screen.getAllByText('情节衔接与合理性').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('人物情感与主题升华').length).toBeGreaterThan(0)
-  })
-
-  it('requires rubric confirmation before entering upload and keeps the existing practical writing path working', async () => {
-    const user = userEvent.setup()
-    renderCreateTaskPage()
-
-    await user.click(screen.getByRole('button', { name: '下一步：题目信息' }))
-    await user.type(screen.getByLabelText('题目要求 / 写作任务'), 'Write a suggestion letter about English reading.')
-    await user.type(screen.getByLabelText('教师补充要求'), 'Focus on clear advice.')
-    await user.click(screen.getByRole('button', { name: '评分标准确认' }))
-
-    expect(screen.getByRole('button', { name: '确认标准并进入上传' })).toBeDisabled()
-
-    await user.click(screen.getByRole('button', { name: '生成评分标准' }))
-    expect(screen.getByText('已参考教师补充要求')).toBeInTheDocument()
+    await uploadMaterial(user)
+    await generateDraft(user)
     await user.click(screen.getByRole('button', { name: '确认采用该标准' }))
-    expect(screen.getByText('已确认')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '确认并创建任务' })).toBeEnabled()
 
-    await user.click(screen.getByRole('button', { name: '确认标准并进入上传' }))
-    expect(screen.getByRole('heading', { name: '上传作文与图片整理' })).toBeInTheDocument()
+    await user.clear(screen.getByLabelText('内容权重'))
+    await user.type(screen.getByLabelText('内容权重'), '50')
+    expect(screen.getByText('评分维度权重合计必须为 100%。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '确认并创建任务' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '确认采用该标准' })).toBeDisabled()
   })
 
-  it('resets the generated rubric when switching writing genre', async () => {
+  it('creates a genre-free task and navigates only after the teacher explicitly confirms the rubric', async () => {
     const user = userEvent.setup()
+    generate.mockResolvedValue({ requestId: 'rubric-1', status: 'success', rubric: generatedRubric })
     renderCreateTaskPage()
 
-    await user.click(screen.getByRole('button', { name: '下一步：题目信息' }))
-    await user.type(screen.getByLabelText('题目要求 / 写作任务'), 'Write a notice about a school activity.')
-    await user.click(screen.getByRole('button', { name: '下一步：评分标准确认' }))
-    await user.click(screen.getByRole('button', { name: '生成评分标准' }))
-    expect(screen.getByText('待教师确认')).toBeInTheDocument()
+    await uploadMaterial(user)
+    await generateDraft(user)
+    expect(screen.getByRole('button', { name: '确认并创建任务' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: '确认采用该标准' }))
+    await user.click(screen.getByRole('button', { name: '确认并创建任务' }))
 
-    await user.click(screen.getByRole('button', { name: '返回基础信息' }))
-    await user.click(screen.getByRole('radio', { name: '读后续写' }))
-
-    expect(screen.getByText('写作大类已切换，请重新生成本任务评分标准。')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '评分标准确认' }))
-    const rubricPanel = screen.getByRole('region', { name: 'AI mock 评分标准' })
-    expect(within(rubricPanel).getByText('待生成')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByLabelText('current location').textContent).toMatch(/^\/tasks\/task-\d+\/upload$/))
   })
 })
