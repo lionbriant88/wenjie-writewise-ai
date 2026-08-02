@@ -65,12 +65,25 @@ describe('grading state transitions', () => {
       [{ ...essayRunning('request-1'), ocrText: '', ocrAudit: undefined }],
       'essay-1', 'request-1', 'essay-1-result',
       { ...successResult, transcript: 'Kimi faithfully read this.', transcriptionWarnings: [], printedTextExcluded: true },
+      { acceptMultimodalTranscript: true },
     )
 
     expect(transition.essays[0]).toMatchObject({
       ocrText: 'Kimi faithfully read this.', transcriptSource: 'kimi_vision',
     })
     expect(transition.essays[0].ocrAudit).toBeUndefined()
+  })
+
+  it('does not let a legacy grading response overwrite text or claim Kimi vision provenance', () => {
+    const current = { ...essayRunning('request-1'), ocrText: 'Teacher-confirmed legacy text.' }
+    const transition = settleGradingSuccess(
+      [current], 'essay-1', 'request-1', 'essay-1-result',
+      { ...successResult, transcript: 'Unexpected legacy transcript.', transcriptionWarnings: [], printedTextExcluded: true },
+      { acceptMultimodalTranscript: false },
+    )
+
+    expect(transition.essays[0].ocrText).toBe('Teacher-confirmed legacy text.')
+    expect(transition.essays[0].transcriptSource).toBeUndefined()
   })
 
   it('settles a matching failure into an actionable pending state', () => {

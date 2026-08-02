@@ -202,7 +202,7 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
   const updateEssayOcrText = useCallback((essayId: string, text: string, confirmedAt?: string) => {
     const timestamp = confirmedAt ?? new Date().toISOString()
     const target = essaysRef.current.find((essay) => essay.id === essayId)
-    if (!target || target.ocrText === text) return
+    if (!target || target.ocrText === text || target.status === 'grading' || target.gradingRun?.status === 'running') return
 
     const invalidated = invalidateGradingAfterTranscriptEdit(essaysRef.current, essayId, timestamp)
     const source = invalidated.applied ? invalidated.essays : essaysRef.current
@@ -277,6 +277,7 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
       const adapted = adaptAiGradingResult(response, built.request)
       const settled = settleGradingSuccess(
         essaysRef.current, essayId, requestId, adapted.id, response,
+        { acceptMultimodalTranscript: 'requestVersion' in built.request && built.request.requestVersion === 'multimodal-grading-request-v2' },
       )
       if (!commitEssayTransition(settled, response.createdAt)) return
       setGradingResults((current) => [adapted, ...current.filter((item) => item.essayId !== essayId)])

@@ -84,6 +84,45 @@ describe('AppStateContext OCR audit lifecycle', () => {
 })
 
 describe('AppStateContext material-based task creation', () => {
+  it('rejects a transcript edit while an image grading request is running, then settles only the Kimi transcript', async () => {
+    let resolve!: (value: Awaited<ReturnType<NonNullable<GradingClient['gradeImages']>>>) => void
+    const deferred = new Promise<Awaited<ReturnType<NonNullable<GradingClient['gradeImages']>>>>((done) => { resolve = done })
+    const gradeImages = vi.fn<NonNullable<GradingClient['gradeImages']>>((_request) => deferred)
+    render(<AppStateProvider gradingClient={{ grade: async (request) => resultFor(request), gradeImages }}><StateProbe /></AppStateProvider>)
+    let taskId = ''
+    act(() => {
+      taskId = latestState.createTask({
+        taskName: 'Deferred image task', fullScore: 15,
+        materialContext: { materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], reviewWarnings: [] },
+        rubricDraft: { source: 'ai', status: 'confirmed', writingGoal: 'Write.', offTopicCriteria: [], excellentFeatures: [], reviewTriggers: [], dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant.', deductionFocus: [], sourceEvidence: ['Material.'] }] },
+      })
+      latestState.enqueueImageEssays({
+        submissionId: 'deferred-image-1', taskId, className: 'Class',
+        essayGroups: [{ pages: [{ id: 'page-1', label: 'essay.png', pageNumber: 1, quality: 'clear', accent: '#000', sourceFile: new File(['image'], 'essay.png', { type: 'image/png' }) }] }],
+      })
+    })
+    const essay = latestState.essays.find((item) => item.taskId === taskId)
+    if (!essay) throw new Error('Queued essay missing')
+    let grading!: Promise<void>
+    act(() => { grading = latestState.gradeEssay(essay.id) })
+    const runningEssays = latestState.essays
+    act(() => latestState.updateEssayOcrText(essay.id, 'Teacher edit during grading.'))
+    expect(latestState.essays).toBe(runningEssays)
+    expect(latestState.essays.find((item) => item.id === essay.id)).toMatchObject({ ocrText: '', status: 'grading' })
+    expect(gradeImages).toHaveBeenCalledTimes(1)
+
+    const request = gradeImages.mock.calls[0][0]
+    resolve({
+      resultVersion: 'grading-result-v1', requestId: request.requestId, essayId: request.essayId, provider: 'mock', status: 'success', totalScore: 12, maxScore: 15,
+      dimensionScores: [], issues: [], sentenceRevisions: [], expressionUpgrades: [], overallComment: 'Done.', reviewReasons: [], createdAt: '2026-08-02T00:00:00.000Z',
+      transcript: 'Kimi settled transcript.', transcriptionWarnings: [], printedTextExcluded: true,
+    })
+    await act(async () => { await grading })
+    expect(latestState.essays.find((item) => item.id === essay.id)).toMatchObject({
+      ocrText: 'Kimi settled transcript.', transcriptSource: 'kimi_vision', status: 'grading_ready',
+    })
+  })
+
   it('queues a material task with original files and grades it through the image client once', async () => {
     const gradingClient: GradingClient = {
       grade: async (request) => resultFor(request, 'mock'),
@@ -149,14 +188,24 @@ describe('AppStateContext material-based task creation', () => {
       })
       latestState.enqueueImageEssays({
         submissionId: 'invalidate-1', taskId, className: 'Class',
-        essayGroups: [{ pages: [{ id: 'page-1', label: 'essay.png', pageNumber: 1, quality: 'clear', accent: '#000', sourceFile: new File(['image'], 'essay.png', { type: 'image/png' }) }] }],
+        essayGroups: [
+          { pages: [{ id: 'page-1', label: 'essay.png', pageNumber: 1, quality: 'clear', accent: '#000', sourceFile: new File(['image'], 'essay.png', { type: 'image/png' }) }] },
+          { pages: [{ id: 'page-2', label: 'other.png', pageNumber: 1, quality: 'clear', accent: '#000', sourceFile: new File(['image'], 'other.png', { type: 'image/png' }) }] },
+        ],
       })
     })
     const essay = latestState.essays.find((item) => item.taskId === taskId)
     if (!essay) throw new Error('Queued essay missing')
+    const otherEssay = latestState.essays.find((item) => item.taskId === taskId && item.id !== essay.id)
+    if (!otherEssay) throw new Error('Second queued essay missing')
     await act(async () => { await latestState.gradeEssay(essay.id) })
     expect(gradeImages).toHaveBeenCalledTimes(1)
     expect(latestState.gradingResults.some((item) => item.essayId === essay.id)).toBe(true)
+    await act(async () => { await latestState.gradeEssay(otherEssay.id) })
+    expect(gradeImages).toHaveBeenCalledTimes(2)
+    expect(latestState.gradingResults.some((item) => item.essayId === otherEssay.id)).toBe(true)
+    act(() => latestState.confirmGradingResult(essay.id))
+    expect(latestState.tasks.find((item) => item.id === taskId)?.completedEssayCount).toBe(1)
 
     act(() => latestState.updateEssayOcrText(essay.id, 'Teacher corrected transcript.', '2026-08-02T00:01:00.000Z'))
 
@@ -165,11 +214,17 @@ describe('AppStateContext material-based task creation', () => {
     })
     expect(latestState.essays.find((item) => item.id === essay.id)?.aiResultId).toBeUndefined()
     expect(latestState.gradingResults.some((item) => item.essayId === essay.id)).toBe(false)
+    expect(latestState.gradingResults.some((item) => item.essayId === otherEssay.id)).toBe(true)
     expect(latestState.tasks.find((item) => item.id === taskId)?.completedEssayCount).toBe(0)
-    expect(gradeImages).toHaveBeenCalledTimes(1)
+    expect(gradeImages).toHaveBeenCalledTimes(2)
 
     act(() => latestState.updateEssayOcrText(essay.id, 'Teacher corrected transcript.', '2026-08-02T00:02:00.000Z'))
-    expect(gradeImages).toHaveBeenCalledTimes(1)
+    expect(gradeImages).toHaveBeenCalledTimes(2)
+
+    await act(async () => { await latestState.gradeEssay(essay.id) })
+    expect(gradeImages).toHaveBeenCalledTimes(3)
+    act(() => latestState.confirmGradingResult(essay.id))
+    expect(latestState.tasks.find((item) => item.id === taskId)?.completedEssayCount).toBe(1)
   })
 
   it('creates a genre-free Kimi task with compatibility defaults and assigns its class later', () => {
@@ -356,6 +411,21 @@ function renderGradingState(gradingClient: GradingClient) {
 }
 
 describe('AppStateContext grading lifecycle', () => {
+  it('does not treat an unexpected legacy transcript as Kimi recognition data', async () => {
+    const client: GradingClient = {
+      async grade(request) {
+        return { ...resultFor(request), transcript: 'Unexpected legacy transcript.', transcriptionWarnings: [], printedTextExcluded: true }
+      },
+    }
+    renderGradingState(client)
+    const { essayId } = createConfirmedEssay()
+    await act(async () => { await latestState.gradeEssay(essayId) })
+    expect(latestState.essays.find((essay) => essay.id === essayId)).toMatchObject({
+      ocrText: 'Teacher-confirmed synthetic transcript.',
+    })
+    expect(latestState.essays.find((essay) => essay.id === essayId)?.transcriptSource).toBeUndefined()
+  })
+
   it('keeps a real AI result unreviewed until explicit confirmation', async () => {
     const client: GradingClient = { async grade(request) { return resultFor(request) } }
     renderGradingState(client)

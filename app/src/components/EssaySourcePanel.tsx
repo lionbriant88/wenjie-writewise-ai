@@ -38,6 +38,7 @@ export function EssaySourcePanel({
 }: EssaySourcePanelProps) {
   const [mode, setMode] = useState<SourcePanelMode>('read')
   const [draftText, setDraftText] = useState(essay.ocrText)
+  const currentEssayIdRef = useRef(essay.id)
   const highlightedRef = useRef<HTMLElement | null>(null)
   const match = useMemo(
     () => findTextMatch(essay.ocrText, activeHighlightText ?? ''),
@@ -48,20 +49,24 @@ export function EssaySourcePanel({
   const hasIssueMarkers = issueMarkers.length > 0
   const shouldShowFallback = Boolean(activeHighlightText) && !match
   const hasChangedDraft = draftText !== essay.ocrText
+  const isGrading = essay.status === 'grading' || essay.gradingRun?.status === 'running'
   const setHighlightedElement = (element: HTMLElement | null) => {
     highlightedRef.current = element
   }
 
   useEffect(() => {
+    const hasChangedEssay = currentEssayIdRef.current !== essay.id
+    currentEssayIdRef.current = essay.id
     setDraftText(essay.ocrText)
-  }, [essay.ocrText])
+    if (hasChangedEssay) setMode('read')
+  }, [essay.id, essay.ocrText])
 
   useEffect(() => {
     highlightedRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
   }, [activeIssueId, match])
 
   const saveTranscript = () => {
-    if (!hasChangedDraft) return
+    if (!hasChangedDraft || isGrading) return
     onOcrTextChange(essay.id, draftText)
   }
 
@@ -76,6 +81,7 @@ export function EssaySourcePanel({
           {essay.transcriptSource === 'kimi_vision' ? (
             <p className="mt-1 text-xs text-slate-500">Kimi 图像识别结果，建议结合原图复核。</p>
           ) : null}
+          {isGrading ? <p className="mt-1 text-xs font-semibold text-amber-700">批改完成后再编辑</p> : null}
         </div>
         <button
           type="button"
@@ -104,9 +110,10 @@ export function EssaySourcePanel({
           <button
             key={modeOption.mode}
             type="button"
+            disabled={isGrading && modeOption.mode === 'edit'}
             onClick={() => setMode(modeOption.mode)}
             className={`tech-focus rounded-md px-3 py-1.5 text-xs font-semibold transition ${
-              mode === modeOption.mode ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+              mode === modeOption.mode ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50'
             }`}
           >
             {modeOption.label}
@@ -125,11 +132,11 @@ export function EssaySourcePanel({
             <p className="text-xs leading-5 text-slate-500">保存后当前批改结果将失效，需在进度页显式重新批改。</p>
             <button
               type="button"
-              disabled={!hasChangedDraft}
+              disabled={!hasChangedDraft || isGrading}
               onClick={saveTranscript}
               className="tech-focus rounded-lg bg-amber-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-amber-800 disabled:cursor-not-allowed disabled:bg-amber-300"
             >
-              保存识别文本并重新批改
+              保存识别文本并使旧结果失效
             </button>
           </div>
         </div>

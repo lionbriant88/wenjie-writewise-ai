@@ -141,7 +141,7 @@ export function OriginalPaperWorkspace({
             >
               <h3 className="text-lg font-semibold text-slate-800">当前作文暂无原卷图片预览</h3>
               <p className="mt-3 max-w-md text-sm leading-6 text-slate-500">
-                后续接入 OCR 坐标后，将在此处展示原卷批阅能力。
+                后续接入图像定位信息后，将在此处展示原卷批阅能力。
               </p>
             </div>
           )}

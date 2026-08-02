@@ -91,8 +91,8 @@ describe('EssayResultPage teacher decision workflow', () => {
     await user.type(transcript, 'Teacher-corrected recognition text.')
 
     expect(screen.getAllByText(/总分|\u603b\u5206/).length).toBeGreaterThan(0)
-    expect(screen.getByRole('button', { name: '保存识别文本并重新批改' })).toBeEnabled()
-    await user.click(screen.getByRole('button', { name: '保存识别文本并重新批改' }))
+    expect(screen.getByRole('button', { name: '保存识别文本并使旧结果失效' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: '保存识别文本并使旧结果失效' }))
 
     expect(screen.getByText('结果已失效')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '确认本篇批改' })).not.toBeInTheDocument()
@@ -423,6 +423,7 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(getWorkspaceModeButton('paper')).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByTestId('paper-workspace')).toBeInTheDocument()
     expect(screen.getByTestId('paper-image-stage')).toBeInTheDocument()
+    expect(screen.getByText('后续接入图像定位信息后，将在此处展示原卷批阅能力。')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '返回批改工作台' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '返回批改进度' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '上一篇' })).toBeInTheDocument()

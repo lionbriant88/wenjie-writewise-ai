@@ -58,11 +58,12 @@ export function settleGradingSuccess(
   requestId: string,
   resultId: string,
   response: AiGradingResultV1,
+  options: { acceptMultimodalTranscript: boolean } = { acceptMultimodalTranscript: false },
 ): EssayTransition {
   if (response.requestId !== requestId || response.essayId !== essayId) return { applied: false, essays }
   return replaceCurrentAttempt(essays, essayId, requestId, (essay) => ({
     ...essay,
-    ...(response.transcript
+    ...(options.acceptMultimodalTranscript && response.transcript
       ? { ocrText: response.transcript, transcriptSource: 'kimi_vision' as const }
       : {}),
     status: 'grading_ready',
