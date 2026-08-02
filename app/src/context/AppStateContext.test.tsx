@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from 'vitest'
 import { confirmOcrAudit, createPendingOcrAudit } from '../services/ocr/audit/transcriptAudit'
 import type { Essay } from '../types'
 import type { GradingClient, GradingRequestV1 } from '../services/grading/types'
-import { createMockGradingClient } from '../services/grading/mockGradingClient'
 import { AppStateProvider } from './AppStateContext'
 import type { AppState } from './appStateContextValue'
 import { useAppState } from './useAppState'
@@ -86,7 +85,21 @@ describe('AppStateContext OCR audit lifecycle', () => {
 
 describe('AppStateContext material-based task creation', () => {
   it('queues a material task with original files and grades it through the image client once', async () => {
-    render(<AppStateProvider gradingClient={createMockGradingClient()}><StateProbe /></AppStateProvider>)
+    const gradingClient: GradingClient = {
+      grade: async (request) => resultFor(request, 'mock'),
+      gradeImages: async (request) => ({
+        resultVersion: 'grading-result-v1', requestId: request.requestId, essayId: request.essayId, provider: 'mock', status: 'success',
+        totalScore: 12, maxScore: 15,
+        dimensionScores: [{ dimensionId: 'content', name: 'Content', score: 12, maxScore: 15, weight: 100, reason: 'Dimension reason.', evidence: 'Dimension evidence.', requiresTeacherReview: false }],
+        issues: [{ id: 'issue-1', type: 'grammar', severity: 'medium', originalText: 'bad', suggestion: 'better', explanation: 'Issue explanation.', requiresTeacherReview: true }],
+        sentenceRevisions: [{ id: 'revision-1', relatedIssueId: 'issue-1', originalText: 'bad', revisedText: 'better', note: 'Revision note.', requiresTeacherReview: false }],
+        expressionUpgrades: [{ id: 'upgrade-1', originalText: 'plain', upgradedText: 'polished', note: 'Upgrade note.', requiresTeacherReview: true }],
+        fullTextRevision: { originalText: 'bad', correctedText: 'better', improvedText: 'polished', sentencePairs: [{ id: 'pair-1', originalText: 'bad', correctedText: 'better', improvedText: 'polished', changeTypes: ['grammar'], explanation: 'Pair explanation.', requiresTeacherReview: false }], logicNotes: [] },
+        overallComment: 'Detailed image result.', reviewReasons: [], createdAt: '2026-08-02T00:00:00.000Z',
+        transcript: 'Faithful image transcript.', transcriptionWarnings: ['Low contrast on final line.'], printedTextExcluded: true,
+      }),
+    }
+    render(<AppStateProvider gradingClient={gradingClient}><StateProbe /></AppStateProvider>)
     let taskId = ''
     act(() => { taskId = latestState.createTask({ taskName: 'Image task', fullScore: 15, materialContext: { materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], reviewWarnings: [] }, rubricDraft: { source: 'ai', status: 'confirmed', writingGoal: 'Write.', offTopicCriteria: [], excellentFeatures: [], reviewTriggers: [], dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant.', deductionFocus: [], sourceEvidence: ['Material.'] }] } }) })
     const file = new File(['image'], 'handwriting.png', { type: 'image/png' })
@@ -103,7 +116,15 @@ describe('AppStateContext material-based task creation', () => {
     expect(essay).toMatchObject({ status: 'pending_grading', pages: [{ sourceFile: file }] })
     await act(async () => { await latestState.gradeEssay(essay!.id) })
     expect(latestState.essays.find((item) => item.id === essay!.id)).toMatchObject({ status: 'grading_ready' })
-    expect(latestState.gradingResults.find((result) => result.essayId === essay!.id)?.source).toBe('mock')
+    const gradingResult = latestState.gradingResults.find((result) => result.essayId === essay!.id)
+    expect(gradingResult).toMatchObject({
+      source: 'mock', transcript: 'Faithful image transcript.', transcriptionWarnings: ['Low contrast on final line.'], printedTextExcluded: true,
+      dimensionScores: [{ needsTeacherReview: false }],
+      errorAnnotations: [{ needsTeacherReview: true }],
+      sentenceRevisions: [{ needsTeacherReview: false }],
+      upgradedExpressions: [{ needsTeacherReview: true }],
+      fullTextRevision: { sentencePairs: [{ needsTeacherReview: false }] },
+    })
   })
 
   it('creates a genre-free Kimi task with compatibility defaults and assigns its class later', () => {
