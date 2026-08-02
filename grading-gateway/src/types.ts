@@ -72,7 +72,15 @@ export interface GradingRequestV1 {
 
 export type ValidationResult<T> =
   | { ok: true; value: T }
-  | { ok: false; error: { code: 'invalid_request'; message: string } }
+  | { ok: false; error: { code: GradingErrorCode; message: string } }
+
+export type {
+  ConfirmedTaskPackageV2,
+  GeneratedRubricDimensionV1,
+  GeneratedRubricV1,
+  MultimodalGradeInputV2,
+  ProviderMultimodalPayloadV1,
+} from './multimodal/types.js'
 
 export type GradingChangeType =
   | 'grammar'
