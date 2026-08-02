@@ -44,6 +44,28 @@ describe('validateGeneratedRubric', () => {
     })
   })
 
+  it('accepts percentage weights at the 0.001 tolerance boundary', () => {
+    const rubric = rubricWithSingleWeight(40)
+    ;(rubric.dimensions as Array<Record<string, unknown>>).push({
+      ...(rubric.dimensions as Array<Record<string, unknown>>)[0],
+      id: 'language',
+      weight: 60.001,
+    })
+
+    expect(validateGeneratedRubric(rubric).ok).toBe(true)
+  })
+
+  it('rejects percentage weights clearly outside the 0.001 tolerance', () => {
+    const rubric = rubricWithSingleWeight(40)
+    ;(rubric.dimensions as Array<Record<string, unknown>>).push({
+      ...(rubric.dimensions as Array<Record<string, unknown>>)[0],
+      id: 'language',
+      weight: 60.002,
+    })
+
+    expect(validateGeneratedRubric(rubric).ok).toBe(false)
+  })
+
   it('trims accepted strings without retaining unknown fields', () => {
     const rubric = rubricWithSingleWeight(100)
     rubric.taskName = '  A school writing task  '

@@ -61,7 +61,9 @@ export function validateGeneratedRubric(value: unknown): ValidationResult<Genera
   const dimensions = value.dimensions.map(readDimension)
   if (!dimensions.every((dimension): dimension is GeneratedRubricDimensionV1 => dimension !== null)) return invalid()
   if (new Set(dimensions.map((dimension) => dimension.id)).size !== dimensions.length) return invalid()
-  if (Math.abs(dimensions.reduce((sum, dimension) => sum + dimension.weight, 0) - 100) > TOTAL_WEIGHT_TOLERANCE) {
+  const totalWeight = dimensions.reduce((sum, dimension) => sum + dimension.weight, 0)
+  const roundingAllowance = Number.EPSILON * Math.max(1, Math.abs(totalWeight), 100)
+  if (Math.abs(totalWeight - 100) > TOTAL_WEIGHT_TOLERANCE + roundingAllowance) {
     return invalid(INVALID_WEIGHT_TOTAL_MESSAGE)
   }
 
