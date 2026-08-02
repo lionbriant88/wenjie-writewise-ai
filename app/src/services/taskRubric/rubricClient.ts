@@ -39,6 +39,24 @@ function gatewayFailure(
   }
 }
 
+function safeFailureMessage(code: RubricFailureCode): string {
+  switch (code) {
+    case 'invalid_request': return '评分标准请求无效，请检查材料后重试。'
+    case 'request_too_large': return '上传的材料超过限制，请减少页数或图片大小后重试。'
+    case 'provider_not_configured': return '评分服务尚未配置，请联系管理员。'
+    case 'provider_request_rejected': return '评分服务拒绝了本次请求，请检查材料后重试。'
+    case 'provider_auth_failed': return '评分服务认证失败，请联系管理员。'
+    case 'provider_balance_unavailable': return '评分服务暂时不可用，请联系管理员。'
+    case 'provider_rate_limited': return '请求过于频繁，请稍后重试。'
+    case 'provider_timeout': return '评分服务响应超时，请稍后重试。'
+    case 'provider_unavailable': return '评分服务暂时不可用，请稍后重试。'
+    case 'provider_content_filtered': return '材料无法由评分服务处理，请检查后重试。'
+    case 'provider_invalid_response': return '评分服务返回结果无效，请稍后重试。'
+    case 'gateway_invalid_response': return '评分标准服务返回了无法安全使用的响应，请重试。'
+    case 'gateway_unavailable': return '评分标准服务暂时不可用，请稍后重试。'
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -91,9 +109,13 @@ function projectResponse(value: unknown, requestId: string, httpOk: boolean): Ru
   }
   if (!httpOk && value.status === 'failed' && isRecord(value.error)) {
     const code = readString(value.error.code)
-    const message = readString(value.error.message)
-    if (code && safeFailureCodes.has(code as RubricFailureCode) && message && typeof value.error.retryable === 'boolean') {
-      return { requestId, status: 'failed', error: { code: code as RubricFailureCode, message, retryable: value.error.retryable } }
+    if (code && safeFailureCodes.has(code as RubricFailureCode) && typeof value.error.retryable === 'boolean') {
+      const safeCode = code as RubricFailureCode
+      return {
+        requestId,
+        status: 'failed',
+        error: { code: safeCode, message: safeFailureMessage(safeCode), retryable: value.error.retryable },
+      }
     }
   }
   return gatewayFailure(requestId, 'gateway_invalid_response', true)

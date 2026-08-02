@@ -85,6 +85,8 @@ describe('AppStateContext OCR audit lifecycle', () => {
 
 describe('AppStateContext material-based task creation', () => {
   it('creates a genre-free Kimi task with compatibility defaults and assigns its class later', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-02T00:00:00.000Z'))
     render(<AppStateProvider><StateProbe /></AppStateProvider>)
     const rubricDraft = {
       source: 'ai' as const,
@@ -117,8 +119,20 @@ describe('AppStateContext material-based task creation', () => {
     })
     expect(latestState.tasks.find((task) => task.id === taskId)?.writingGenre).toBeUndefined()
 
+    const createdTask = latestState.tasks.find((task) => task.id === taskId)
+    const unchangedTask = latestState.tasks.find((task) => task.id === 'task-1')
+    vi.setSystemTime(new Date('2026-08-02T00:01:00.000Z'))
     act(() => latestState.assignTaskClass(taskId, '九年级 3 班'))
-    expect(latestState.tasks.find((task) => task.id === taskId)?.className).toBe('九年级 3 班')
+    expect(latestState.tasks.find((task) => task.id === taskId)).toMatchObject({
+      className: '九年级 3 班', updatedAt: '2026-08-02T00:01:00.000Z',
+    })
+    expect(latestState.tasks.find((task) => task.id === 'task-1')).toEqual(unchangedTask)
+
+    const stateBeforeUnknownClass = structuredClone(latestState.tasks)
+    act(() => latestState.assignTaskClass('unknown-task', '不应写入'))
+    expect(latestState.tasks).toEqual(stateBeforeUnknownClass)
+    expect(latestState.tasks.find((task) => task.id === taskId)?.updatedAt).not.toBe(createdTask?.updatedAt)
+    vi.useRealTimers()
   })
 })
 

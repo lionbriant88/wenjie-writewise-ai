@@ -35,12 +35,16 @@ describe('rubric client', () => {
     const client = createRemoteRubricClient({ apiBase: 'http://127.0.0.1:8790/', fetchImpl })
 
     await expect(client.generate(request)).resolves.toMatchObject({ status: 'success', rubric: { taskName: rubric.taskName } })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
     expect(fetchImpl).toHaveBeenCalledWith('http://127.0.0.1:8790/tasks/rubric', expect.objectContaining({ method: 'POST' }))
     const form = fetchImpl.mock.calls[0]?.[1]?.body as FormData
     expect(form.get('requestId')).toBe(request.requestId)
     expect(form.get('fullScore')).toBe('15')
     expect(form.get('pageIds')).toBe(JSON.stringify(['material-2', 'material-1']))
-    expect(form.getAll('pages')).toEqual([pages[0]?.file, pages[1]?.file])
+    const uploadedPages = form.getAll('pages')
+    expect(uploadedPages).toHaveLength(2)
+    expect(uploadedPages[0]).toBe(pages[0]?.file)
+    expect(uploadedPages[1]).toBe(pages[1]?.file)
   })
 
   it.each([
@@ -55,17 +59,41 @@ describe('rubric client', () => {
     })
   })
 
-  it('preserves a safe Gateway failure and rejects malformed failures', async () => {
+  it('maps a valid Gateway failure code and rejects malformed failures', async () => {
     const safeFailure = {
       requestId: request.requestId, status: 'failed',
       error: { code: 'provider_timeout', message: 'AI grading timed out.', retryable: true },
     }
     await expect(createRemoteRubricClient({
       apiBase: 'http://gateway', fetchImpl: vi.fn().mockResolvedValue(new Response(JSON.stringify(safeFailure), { status: 503 })),
-    }).generate(request)).resolves.toEqual(safeFailure)
+    }).generate(request)).resolves.toEqual({
+      requestId: request.requestId,
+      status: 'failed',
+      error: { code: 'provider_timeout', message: '评分服务响应超时，请稍后重试。', retryable: true },
+    })
     await expect(createRemoteRubricClient({
       apiBase: 'http://gateway', fetchImpl: vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'failed' }), { status: 503 })),
     }).generate(request)).resolves.toMatchObject({ status: 'failed', error: { code: 'gateway_invalid_response' } })
+  })
+
+  it('maps a safe Gateway failure code to local text without returning raw Gateway content', async () => {
+    const rawGatewayMessage = 'provider response included sk-test-not-a-real-key and <html>upstream details</html>'
+    const response = await createRemoteRubricClient({
+      apiBase: 'http://gateway',
+      fetchImpl: vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        requestId: request.requestId,
+        status: 'failed',
+        error: { code: 'provider_timeout', message: rawGatewayMessage, retryable: true },
+      }), { status: 503 })),
+    }).generate(request)
+
+    expect(response).toEqual({
+      requestId: request.requestId,
+      status: 'failed',
+      error: { code: 'provider_timeout', message: '评分服务响应超时，请稍后重试。', retryable: true },
+    })
+    expect(JSON.stringify(response)).not.toContain(rawGatewayMessage)
+    expect(JSON.stringify(response)).not.toContain('sk-test-not-a-real-key')
   })
 
   it('uses a legal local rubric in mock mode without calling fetch', async () => {
