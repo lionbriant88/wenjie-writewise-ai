@@ -113,6 +113,7 @@ export function ProgressPage() {
   const {
     tasks,
     essays,
+    isGradingInFlight,
     gradeEssay,
     retryGradeEssay,
     fallbackToMockGrading,
@@ -123,7 +124,7 @@ export function ProgressPage() {
   const taskEssays = findEssaysByTask(essays, taskId)
   const queueStats = getProgressQueueStats(taskEssays)
   const filteredEssays = filterEssaysByProgressTab(taskEssays, activeTab)
-  const gradingBlocked = taskEssays.some((essay) => essay.status === 'grading' || essay.gradingRun?.status === 'running')
+  const gradingBlocked = isGradingInFlight
   const nextProcessableEssay = gradingBlocked ? undefined : taskEssays.find((essay) => (
     isProcessableEssayStatus(essay.status) && essay.gradingRun?.status !== 'failed'
   ))

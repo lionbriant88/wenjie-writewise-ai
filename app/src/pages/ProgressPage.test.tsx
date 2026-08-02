@@ -1,8 +1,9 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import { AppStateProvider } from '../context/AppStateContext'
+import { useAppState } from '../context/useAppState'
 import type { GradingClient, GradingRequestV1 } from '../services/grading/types'
 import { EssayResultPage } from './EssayResultPage'
 import { ExceptionsPage } from './ExceptionsPage'
@@ -32,6 +33,31 @@ function renderUploadFlow() {
           <Route path="/tasks/:taskId/progress" element={<ProgressPage />} />
           <Route path="/tasks/:taskId/essays/:essayId" element={<EssayResultPage />} />
         </Routes>
+      </MemoryRouter>
+    </AppStateProvider>,
+  )
+}
+
+function CrossTaskControls() {
+  const { essays, enqueueImageEssays, gradeEssay } = useAppState()
+  const otherTaskEssay = essays.find((essay) => essay.taskId === 'task-2' && essay.status === 'pending_grading')
+  return (
+    <div>
+      <button type="button" onClick={() => enqueueImageEssays({
+        submissionId: 'cross-task-current', taskId: 'task-3', className: 'Synthetic class',
+        essayGroups: [{ pages: [{ id: 'current-page', label: 'Current page', pageNumber: 1, quality: 'clear', accent: '#000' }] }],
+      })}>添加当前任务待批改作文</button>
+      <button type="button" onClick={() => { if (otherTaskEssay) void gradeEssay(otherTaskEssay.id) }}>启动另一任务批改</button>
+    </div>
+  )
+}
+
+function renderCrossTaskProgress(gradingClient: GradingClient) {
+  render(
+    <AppStateProvider gradingClient={gradingClient}>
+      <CrossTaskControls />
+      <MemoryRouter initialEntries={['/tasks/task-3/progress']}>
+        <Routes><Route path="/tasks/:taskId/progress" element={<ProgressPage />} /></Routes>
       </MemoryRouter>
     </AppStateProvider>,
   )
@@ -81,6 +107,39 @@ describe('ProgressPage', () => {
       status: 'failed',
       error: { code: 'provider_timeout', message: '安全超时提示。', retryable: true },
     })
+  })
+
+  it('disables failed-row retry actions while another essay in the task is running', async () => {
+    const user = userEvent.setup()
+    let resolveSecond!: (value: Awaited<ReturnType<GradingClient['grade']>>) => void
+    const secondResponse = new Promise<Awaited<ReturnType<GradingClient['grade']>>>((done) => { resolveSecond = done })
+    const grade = vi.fn((request: GradingRequestV1) => grade.mock.calls.length === 1
+      ? Promise.resolve({ requestId: request.requestId, status: 'failed' as const, error: { code: 'provider_timeout' as const, message: '安全超时提示。', retryable: true } })
+      : secondResponse)
+    renderProgressFlow('task-2', { grade })
+    await user.click(screen.getByRole('button', { name: '开始批改' }))
+    expect(await screen.findByRole('button', { name: '重试批改' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: '开始批改' }))
+    expect(screen.getByRole('button', { name: '重试批改' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '使用 mock 回退' })).toBeDisabled()
+    const request = grade.mock.calls[1][0]
+    resolveSecond({ requestId: request.requestId, status: 'failed', error: { code: 'provider_timeout', message: '安全超时提示。', retryable: true } })
+  })
+
+  it('hides current-task start actions while a different task request is in flight', async () => {
+    const user = userEvent.setup()
+    let resolveOther!: (value: Awaited<ReturnType<GradingClient['grade']>>) => void
+    const deferred = new Promise<Awaited<ReturnType<GradingClient['grade']>>>((done) => { resolveOther = done })
+    const grade = vi.fn((_request: GradingRequestV1) => deferred)
+    renderCrossTaskProgress({ grade })
+    await user.click(screen.getByRole('button', { name: '添加当前任务待批改作文' }))
+    expect(screen.getByRole('button', { name: '开始批改' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: '启动另一任务批改' }))
+    expect(grade).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('button', { name: '开始批改' })).not.toBeInTheDocument()
+    const request = grade.mock.calls[0][0]
+    resolveOther({ requestId: request.requestId, status: 'failed', error: { code: 'provider_timeout', message: '安全超时提示。', retryable: true } })
+    await waitFor(() => expect(screen.getByRole('button', { name: '开始批改' })).toBeEnabled())
   })
 
   it('renders safe failure recovery and explicit retry creates one additional call', async () => {

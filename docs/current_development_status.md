@@ -504,7 +504,7 @@ http://localhost:5173/tasks/task-1/class-review
 - 类人工合成端到端验证已覆盖：材料图片识别、两轮评分标准生成、任务创建、两页作文分组、OCR 服务关闭情况下的作文图片转写和首次批改、试卷印刷提示排除、教师修改转写后旧结果失效。
 - 首次图片批改成功得到结构化结果；教师确认文本后的显式重批即使已优化为纯文本请求，仍连续触发 180 秒 Gateway 超时。这是当前可用 fallback 模型的剩余性能风险，不能写成全流程完全通过。
 - 为诊断模型目录、评分标准超时和重批超时，本轮真实合成调用次数超过最初预计；所有调用均使用自建合成材料，没有使用真实学生数据，也没有在文档或日志中保存密钥和完整作文内容。
-- 最新自动化验证：前端 44 个测试文件、262 个用例通过；Grading Gateway 16 个测试文件、141 个用例通过；OCR Gateway 7 个测试文件、45 个用例通过；三端类型检查、前端生产构建、前端 lint、共享评分运行时和 `git diff --check` 通过。
+- 最新自动化验证：前端 44 个测试文件、264 个用例通过；Grading Gateway 16 个测试文件、141 个用例通过；OCR Gateway 7 个测试文件、45 个用例通过；三端类型检查、前端生产构建、前端 lint、共享评分运行时和 `git diff --check` 通过。
 - 三个本地预览服务保持运行：前端 `127.0.0.1:5173`、Grading Gateway `127.0.0.1:8790`、OCR Gateway `127.0.0.1:8787`。OCR Gateway 本轮只做健康检查，没有参与材料或作文识别。
 - 下一步：取得可访问 K3 的 API key 后复测“教师确认文本后重批”，再使用用户后续提供的真实手写作文和写作材料做人工验收；在此之前不扩展其他页面或功能。
 
@@ -512,7 +512,7 @@ http://localhost:5173/tasks/task-1/class-review
 
 | 范围 | 命令 | 预期结果 |
 | --- | --- | --- |
-| 前端 | 设置 `VITE_OCR_MODE=mock`、`VITE_GRADING_MODE=mock` 后执行 `npm.cmd test` | 44 文件、262 用例通过 |
+| 前端 | 设置 `VITE_OCR_MODE=mock`、`VITE_GRADING_MODE=mock` 后执行 `npm.cmd test` | 44 文件、264 用例通过 |
 | 前端 | `npm.cmd run typecheck`、`npm.cmd run build`、`npm.cmd run lint` | 全部通过 |
 | Grading Gateway | `npm.cmd test`、`npm.cmd run typecheck`、`npm.cmd run verify:shared-scoring-runtime` | 16 文件、141 用例通过；类型和共享评分运行时通过 |
 | OCR Gateway | `npm.cmd test`、`npm.cmd run typecheck` | 7 文件、45 用例通过；类型检查通过 |

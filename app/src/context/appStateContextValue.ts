@@ -32,6 +32,7 @@ export interface EnqueueImageEssaysInput {
 export interface AppState {
   tasks: Task[]
   essays: Essay[]
+  isGradingInFlight: boolean
   gradingResults: GradingResult[]
   classInsights: ClassInsight[]
   classReviewMaterials: ClassReviewMaterial[]

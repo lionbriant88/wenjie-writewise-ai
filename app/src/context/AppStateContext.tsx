@@ -70,6 +70,7 @@ interface AppStateProviderProps {
 export function AppStateProvider({ children, gradingClient }: AppStateProviderProps) {
   const [tasks, setTasks] = useState<Task[]>(mockTasks)
   const [essays, setEssays] = useState<Essay[]>(mockEssays)
+  const [isGradingInFlight, setIsGradingInFlight] = useState(false)
   const [gradingResults, setGradingResults] = useState<GradingResult[]>(mockGradingResults)
   const [classInsights] = useState<ClassInsight[]>(mockClassInsights)
   const [classReviewMaterials, setClassReviewMaterials] = useState<ClassReviewMaterial[]>([])
@@ -261,6 +262,7 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
     const started = beginGradingAttempt(essaysRef.current, essayId, requestId, startedAt)
     if (!commitEssayTransition(started, startedAt)) return
     gradingInFlightRef.current.set(essayId, requestId)
+    setIsGradingInFlight(true)
     try {
       const response = 'requestVersion' in built.request && built.request.requestVersion === 'multimodal-grading-request-v2'
         ? client.gradeImages
@@ -304,6 +306,7 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
     } finally {
       if (gradingInFlightRef.current.get(essayId) === requestId) {
         gradingInFlightRef.current.delete(essayId)
+        setIsGradingInFlight(false)
       }
     }
   }, [commitEssayTransition])
@@ -356,6 +359,7 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
   const value = useMemo(() => ({
     tasks,
     essays,
+    isGradingInFlight,
     gradingResults,
     classInsights,
     classReviewMaterials,
@@ -376,6 +380,7 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
   }), [
     tasks,
     essays,
+    isGradingInFlight,
     gradingResults,
     classInsights,
     classReviewMaterials,
