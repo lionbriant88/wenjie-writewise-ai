@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { GradingProviderError } from './providerTypes.js'
-import { getProvider, parseDeepSeekGenerationConfig, parseGradingTimeoutMs } from './index.js'
+import type { MultimodalProvider } from './multimodalProviderTypes.js'
+import { getMultimodalProvider, getProvider, parseGradingTimeoutMs, parseKimiConfig } from './index.js'
 
 describe('getProvider', () => {
   it('selects only the explicit mock and failure providers', () => {
@@ -17,35 +18,22 @@ describe('getProvider', () => {
     }
   })
 
-  it('constructs the DeepSeek Provider from server-only environment values', () => {
-    expect(getProvider('deepseek', {
-      env: {
-        DEEPSEEK_API_KEY: 'test-only-not-a-real-key',
-        DEEPSEEK_MODEL: 'deepseek-v4-flash',
-        DEEPSEEK_THINKING_MODE: 'disabled',
-        DEEPSEEK_TEMPERATURE: '0',
-        DEEPSEEK_MAX_TOKENS: '8192',
-      },
-    }).publicName).toBe('remote')
+  it('registers kimi and no longer registers deepseek', () => {
+    const fakeProvider = {} as MultimodalProvider
+    expect(getMultimodalProvider('kimi', { kimiFactory: () => fakeProvider })).toBe(fakeProvider)
+    expect(() => getMultimodalProvider('deepseek')).toThrowError(/涓嶅彈鏀寔/)
   })
 
-  it('parses explicit generation settings and safe defaults', () => {
-    expect(parseDeepSeekGenerationConfig({})).toEqual({
-      thinkingMode: 'disabled', temperature: 0, maxTokens: 8192,
+  it('parses supported Kimi settings and rejects invalid reasoning effort', () => {
+    expect(parseKimiConfig({
+      KIMI_API_BASE: 'https://api.moonshot.ai/v1',
+      KIMI_MODEL: 'kimi-k3',
+      KIMI_REASONING_EFFORT: 'high',
+      KIMI_MAX_COMPLETION_TOKENS: '8192',
+    })).toEqual({
+      apiBase: 'https://api.moonshot.ai/v1', model: 'kimi-k3', reasoningEffort: 'high', maxCompletionTokens: 8192,
     })
-    expect(parseDeepSeekGenerationConfig({
-      DEEPSEEK_THINKING_MODE: 'enabled', DEEPSEEK_TEMPERATURE: '0.7', DEEPSEEK_MAX_TOKENS: '4096',
-    })).toEqual({ thinkingMode: 'enabled', temperature: 0.7, maxTokens: 4096 })
-  })
-
-  it.each([
-    [{ DEEPSEEK_THINKING_MODE: 'auto' }],
-    [{ DEEPSEEK_TEMPERATURE: '-1' }],
-    [{ DEEPSEEK_TEMPERATURE: '3' }],
-    [{ DEEPSEEK_MAX_TOKENS: '1.5' }],
-    [{ DEEPSEEK_MAX_TOKENS: '0' }],
-  ])('rejects invalid DeepSeek generation configuration %#', (env) => {
-    expect(() => parseDeepSeekGenerationConfig(env)).toThrow(GradingProviderError)
+    expect(() => parseKimiConfig({ KIMI_REASONING_EFFORT: 'auto' })).toThrowError(/閰嶇疆鏃犳晥/)
   })
 
   it('validates the Gateway timeout with a 60-second fallback', () => {

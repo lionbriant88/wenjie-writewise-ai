@@ -1,44 +1,38 @@
 import { FailureGradingProvider } from './failureGradingProvider.js'
 import { MockGradingProvider } from './mockGradingProvider.js'
+import type { MultimodalProvider } from './multimodalProviderTypes.js'
 import { GradingProviderError, type GradingProvider } from './providerTypes.js'
-import { DeepSeekGradingProvider, type DeepSeekGenerationConfig } from './deepseekGradingProvider.js'
-import { createDeepSeekTransport } from './deepseekTransport.js'
 
-type ProviderEnvironment = Partial<Record<
-  | 'DEEPSEEK_API_KEY'
-  | 'DEEPSEEK_MODEL'
-  | 'DEEPSEEK_THINKING_MODE'
-  | 'DEEPSEEK_TEMPERATURE'
-  | 'DEEPSEEK_MAX_TOKENS',
+type KimiEnvironment = Partial<Record<
+  | 'KIMI_API_BASE'
+  | 'KIMI_MODEL'
+  | 'KIMI_REASONING_EFFORT'
+  | 'KIMI_MAX_COMPLETION_TOKENS',
   string | undefined
 >>
 
-export interface ProviderDependencies {
-  deepseekFactory?: () => GradingProvider
-  env?: ProviderEnvironment
-  fetchImpl?: typeof fetch
+export interface MultimodalProviderDependencies {
+  kimiFactory?: () => MultimodalProvider
 }
 
-function configurationError() {
-  return new GradingProviderError('provider_not_configured', 'DeepSeek 生成参数配置无效。', false)
+function kimiConfigurationError() {
+  return new GradingProviderError('provider_not_configured', 'Kimi 閰嶇疆鏃犳晥。', false)
 }
 
-export function parseDeepSeekGenerationConfig(env: ProviderEnvironment): DeepSeekGenerationConfig {
-  const thinkingMode = env.DEEPSEEK_THINKING_MODE === undefined
-    ? 'disabled'
-    : env.DEEPSEEK_THINKING_MODE
-  if (thinkingMode !== 'disabled' && thinkingMode !== 'enabled') throw configurationError()
+export function parseKimiConfig(env: KimiEnvironment) {
+  const reasoningEffort = env.KIMI_REASONING_EFFORT?.trim() || 'high'
+  if (reasoningEffort !== 'low' && reasoningEffort !== 'medium' && reasoningEffort !== 'high') throw kimiConfigurationError()
 
-  const temperature = env.DEEPSEEK_TEMPERATURE === undefined || env.DEEPSEEK_TEMPERATURE.trim() === ''
-    ? 0
-    : Number(env.DEEPSEEK_TEMPERATURE)
-  if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) throw configurationError()
-
-  const maxTokens = env.DEEPSEEK_MAX_TOKENS === undefined || env.DEEPSEEK_MAX_TOKENS.trim() === ''
+  const maxCompletionTokens = env.KIMI_MAX_COMPLETION_TOKENS === undefined || env.KIMI_MAX_COMPLETION_TOKENS.trim() === ''
     ? 8192
-    : Number(env.DEEPSEEK_MAX_TOKENS)
-  if (!Number.isInteger(maxTokens) || maxTokens <= 0) throw configurationError()
-  return { thinkingMode, temperature, maxTokens }
+    : Number(env.KIMI_MAX_COMPLETION_TOKENS)
+  if (!Number.isInteger(maxCompletionTokens) || maxCompletionTokens <= 0) throw kimiConfigurationError()
+  return {
+    apiBase: env.KIMI_API_BASE?.trim() || 'https://api.moonshot.ai/v1',
+    model: env.KIMI_MODEL?.trim() || 'kimi-k3',
+    reasoningEffort,
+    maxCompletionTokens,
+  }
 }
 
 export function parseGradingTimeoutMs(value: string | undefined) {
@@ -47,17 +41,19 @@ export function parseGradingTimeoutMs(value: string | undefined) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : 60_000
 }
 
-export function getProvider(name: string | undefined, dependencies: ProviderDependencies = {}): GradingProvider {
+export function getProvider(name: string | undefined): GradingProvider {
   if (name === 'mock') return new MockGradingProvider()
   if (name === 'mock_failure') return new FailureGradingProvider()
-  if (name === 'deepseek') {
-    if (dependencies.deepseekFactory) return dependencies.deepseekFactory()
-    const env = dependencies.env ?? process.env
-    return new DeepSeekGradingProvider(
-      createDeepSeekTransport({ apiKey: env.DEEPSEEK_API_KEY, fetchImpl: dependencies.fetchImpl }),
-      env.DEEPSEEK_MODEL?.trim() || 'deepseek-v4-flash',
-      parseDeepSeekGenerationConfig(env),
-    )
-  }
   throw new GradingProviderError('provider_not_configured', '批改 Provider 未配置或不受支持。', false)
+}
+
+export function getMultimodalProvider(
+  name: string | undefined,
+  dependencies: MultimodalProviderDependencies = {},
+): MultimodalProvider {
+  if (name === 'kimi' && dependencies.kimiFactory) return dependencies.kimiFactory()
+  if (name === 'kimi') {
+    throw new GradingProviderError('provider_not_configured', 'Kimi Provider 未配置。', false)
+  }
+  throw new GradingProviderError('provider_not_configured', 'Kimi Provider 涓嶅彈鏀寔。', false)
 }
