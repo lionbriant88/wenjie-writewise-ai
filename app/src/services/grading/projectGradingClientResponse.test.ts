@@ -75,6 +75,11 @@ describe('projectGradingClientResponse', () => {
     expect(result.expressionUpgrades[0]).not.toHaveProperty('unknownNested')
     expect(result.fullTextRevision).not.toHaveProperty('unknownNested')
     expect(result.fullTextRevision?.sentencePairs[0]).not.toHaveProperty('unknownNested')
+    expect(result.dimensionScores[0].requiresTeacherReview).toBe(true)
+    expect(result.issues[0].requiresTeacherReview).toBe(true)
+    expect(result.sentenceRevisions[0].requiresTeacherReview).toBe(true)
+    expect(result.expressionUpgrades[0].requiresTeacherReview).toBe(false)
+    expect(result.fullTextRevision?.sentencePairs[0].requiresTeacherReview).toBe(true)
   })
 
   it.each([
@@ -158,6 +163,14 @@ describe('projectGradingClientResponse', () => {
   it('never exposes an upstream failure body', () => {
     const result = projectGradingClientResponse({ requestId: 'request-1', status: 'failed', error: { code: 'provider_timeout', message: 'sk-test-secret-marker raw upstream', retryable: true } }, { ...expected, httpOk: false })
     expect(JSON.stringify(result)).not.toContain('sk-test-secret-marker')
+  })
+
+  it('preserves every multimodal review field after strict projection', () => {
+    const raw = validSuccess()
+    raw.transcript = 'Student text.'
+    raw.transcriptionWarnings = ['One word unclear.']
+    raw.printedTextExcluded = true
+    expect(projectGradingClientResponse(raw, { ...expected, requireMultimodal: true })).toMatchObject({ status: 'success', transcript: 'Student text.', transcriptionWarnings: ['One word unclear.'], printedTextExcluded: true })
   })
 
   it.each([

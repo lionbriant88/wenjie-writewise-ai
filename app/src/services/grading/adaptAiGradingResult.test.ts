@@ -38,7 +38,7 @@ const aiResult: AiGradingResultV1 = {
   maxScore: 15,
   dimensionScores: [{
     dimensionId: 'language', name: 'Language', score: 12, maxScore: 15, weight: 100,
-    reason: 'Mostly accurate.', evidence: 'Synthetic evidence.',
+    reason: 'Mostly accurate.', evidence: 'Synthetic evidence.', requiresTeacherReview: true,
   }],
   issues: [{
     id: 'issue-1', type: 'grammar', severity: 'medium',
@@ -47,10 +47,10 @@ const aiResult: AiGradingResultV1 = {
     explanation: 'Use the base verb.', requiresTeacherReview: true,
   }],
   sentenceRevisions: [{
-    id: 'revision-1', relatedIssueId: 'issue-1', originalText: 'joins', revisedText: 'join', note: 'Base verb.',
+    id: 'revision-1', relatedIssueId: 'issue-1', originalText: 'joins', revisedText: 'join', note: 'Base verb.', requiresTeacherReview: false,
   }],
   expressionUpgrades: [{
-    id: 'upgrade-1', originalText: 'very useful', upgradedText: 'highly beneficial', note: 'More precise.',
+    id: 'upgrade-1', originalText: 'very useful', upgradedText: 'highly beneficial', note: 'More precise.', requiresTeacherReview: true,
   }],
   fullTextRevision: {
     originalText: 'provider raw original',
@@ -64,6 +64,9 @@ const aiResult: AiGradingResultV1 = {
   },
   overallComment: 'A synthetic result.',
   reviewReasons: ['Review the suggested rewrite.'],
+  transcript: 'Student text.',
+  transcriptionWarnings: ['One word unclear.'],
+  printedTextExcluded: true,
   createdAt: '2026-07-20T00:00:00.000Z',
 }
 
@@ -82,8 +85,13 @@ describe('adaptAiGradingResult', () => {
       original: 'I suggest you joins the club.',
       suggestion: 'I suggest you join the club.',
     })
-    expect(adapted.fullTextRevision?.originalText).toBe(request.essay.confirmedTranscript)
+    expect(adapted.fullTextRevision?.originalText).toBe('Student text.')
     expect(adapted.fullTextRevision?.sentencePairs[0].needsTeacherReview).toBe(true)
+    expect(adapted.dimensionScores[0].needsTeacherReview).toBe(true)
+    expect(adapted.errorAnnotations[0].needsTeacherReview).toBe(true)
+    expect(adapted.sentenceRevisions[0].needsTeacherReview).toBe(false)
+    expect(adapted.upgradedExpressions[0].needsTeacherReview).toBe(true)
+    expect(adapted).toMatchObject({ transcript: 'Student text.', transcriptionWarnings: ['One word unclear.'], printedTextExcluded: true })
   })
 
   it('never uses a Provider-supplied original full text', () => {
