@@ -36,6 +36,14 @@ describe('getProvider', () => {
     expect(() => parseKimiConfig({ KIMI_REASONING_EFFORT: 'auto' })).toThrowError(/閰嶇疆鏃犳晥/)
   })
 
+  it('accepts max reasoning effort', () => {
+    expect(parseKimiConfig({ KIMI_REASONING_EFFORT: 'max' }).reasoningEffort).toBe('max')
+  })
+
+  it('rejects medium reasoning effort', () => {
+    expect(() => parseKimiConfig({ KIMI_REASONING_EFFORT: 'medium' })).toThrow(GradingProviderError)
+  })
+
   it('validates the Gateway timeout with a 60-second fallback', () => {
     expect(parseGradingTimeoutMs(undefined)).toBe(60_000)
     expect(parseGradingTimeoutMs('1500')).toBe(1500)

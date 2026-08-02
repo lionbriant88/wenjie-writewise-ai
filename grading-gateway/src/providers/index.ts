@@ -11,6 +11,8 @@ type KimiEnvironment = Partial<Record<
   string | undefined
 >>
 
+type KimiReasoningEffort = 'low' | 'high' | 'max'
+
 export interface MultimodalProviderDependencies {
   kimiFactory?: () => MultimodalProvider
 }
@@ -19,9 +21,14 @@ function kimiConfigurationError() {
   return new GradingProviderError('provider_not_configured', 'Kimi 閰嶇疆鏃犳晥。', false)
 }
 
-export function parseKimiConfig(env: KimiEnvironment) {
+export function parseKimiConfig(env: KimiEnvironment): {
+  apiBase: string
+  model: string
+  reasoningEffort: KimiReasoningEffort
+  maxCompletionTokens: number
+} {
   const reasoningEffort = env.KIMI_REASONING_EFFORT?.trim() || 'high'
-  if (reasoningEffort !== 'low' && reasoningEffort !== 'medium' && reasoningEffort !== 'high') throw kimiConfigurationError()
+  if (reasoningEffort !== 'low' && reasoningEffort !== 'high' && reasoningEffort !== 'max') throw kimiConfigurationError()
 
   const maxCompletionTokens = env.KIMI_MAX_COMPLETION_TOKENS === undefined || env.KIMI_MAX_COMPLETION_TOKENS.trim() === ''
     ? 8192

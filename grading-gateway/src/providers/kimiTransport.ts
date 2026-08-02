@@ -24,7 +24,7 @@ export interface KimiTransportOptions {
   apiKey?: string
   apiBase: string
   model: string
-  reasoningEffort: 'low' | 'medium' | 'high'
+  reasoningEffort: 'low' | 'high' | 'max'
   maxCompletionTokens: number
   fetchImpl?: typeof fetch
 }

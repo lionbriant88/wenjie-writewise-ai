@@ -1,5 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createKimiTransport, type KimiCompletionInput } from './kimiTransport.js'
+import { createKimiTransport, type KimiCompletionInput, type KimiTransportOptions } from './kimiTransport.js'
+
+const maxReasoningOptions: KimiTransportOptions = {
+  apiKey: 'test-only-not-a-real-key',
+  apiBase: 'https://example.invalid/v1',
+  model: 'kimi-k3',
+  reasoningEffort: 'max',
+  maxCompletionTokens: 8192,
+}
+
+// @ts-expect-error Kimi does not support medium reasoning effort.
+const mediumReasoningOptions: KimiTransportOptions = { ...maxReasoningOptions, reasoningEffort: 'medium' }
 
 const imageUrl = 'data:image/jpeg;base64,SGVsbG8='
 const input: KimiCompletionInput = {
