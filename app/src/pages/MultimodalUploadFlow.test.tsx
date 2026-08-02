@@ -105,6 +105,10 @@ describe('material task direct image upload flow', () => {
     await user.type(className, 'Class A')
     await user.dblClick(confirmButton(className))
 
+    await screen.findByRole('heading', { name: /批改进度/ })
+    expect(container.querySelector('#upload-class-name')).toBeNull()
+    expect(screen.queryByRole('button', { name: /确认分组并进入批改/ })).not.toBeInTheDocument()
+
     const materialTask = capturedState?.tasks.find((task) => task.taskName === 'Material task')
     await waitFor(() => expect(capturedState?.essays.filter((essay) => essay.taskId === materialTask?.id)).toHaveLength(1))
     const queued = capturedState?.essays.find((essay) => essay.taskId === materialTask?.id)
