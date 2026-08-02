@@ -4,11 +4,14 @@ import type { ErrorRequestHandler, Request } from 'express'
 import multer from 'multer'
 import { MAX_RUBRIC_IMAGE_BYTES, MAX_RUBRIC_PAGES, requestIdFromMultipartBody, validateRubricMultipart } from './multipartImages.js'
 import { normalizeGradingResult } from './normalizeGradingResult.js'
+import { normalizeMultimodalResult } from './multimodal/normalizeMultimodalResult.js'
+import { validateGeneratedRubric } from './multimodal/validateRubric.js'
 import { buildGradingPrompt } from './promptBuilder.js'
 import { getMultimodalProvider, getProvider } from './providers/index.js'
 import type { MultimodalProvider } from './providers/multimodalProviderTypes.js'
 import { GradingProviderError, type GradingProvider } from './providers/providerTypes.js'
 import { validateGradingRequest } from './validateGradingRequest.js'
+import type { ConfirmedTaskPackageV2 } from './multimodal/types.js'
 
 export interface CreateServerOptions {
   allowedOrigin?: string
@@ -63,6 +66,50 @@ function rubricUploadFailure(requestId: string, error: unknown) {
     return { status: 413, body: failure(requestId, { code: 'request_too_large', message: 'Rubric upload exceeds the allowed limit.' }, false) }
   }
   return { status: 400, body: failure(requestId, { code: 'invalid_request', message: 'Rubric request is invalid.' }, false) }
+}
+
+interface ImageGradeMetadata {
+  requestId: string
+  essayId: string
+  pageIds: string[]
+  task: ConfirmedTaskPackageV2
+}
+
+function readMetadataString(value: unknown, maxLength: number): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed && trimmed.length <= maxLength ? trimmed : null
+}
+
+function parseImageGradeMetadata(value: unknown): ImageGradeMetadata | null {
+  if (typeof value !== 'string') return null
+  let parsed: unknown
+  try { parsed = JSON.parse(value) } catch { return null }
+  const parsedRecord = errorRecord(parsed)
+  if (!parsedRecord) return null
+  const requestId = readMetadataString(parsedRecord.requestId, 128)
+  const essayId = readMetadataString(parsedRecord.essayId, 128)
+  if (!requestId || !essayId || !Array.isArray(parsedRecord.pageIds) || parsedRecord.pageIds.length < 1 || parsedRecord.pageIds.length > MAX_RUBRIC_PAGES) return null
+  const pageIds = parsedRecord.pageIds.map((pageId: unknown) => readMetadataString(pageId, 128))
+  const taskRecord = errorRecord(parsedRecord.task)
+  if (!pageIds.every((pageId): pageId is string => pageId !== null) || new Set(pageIds).size !== pageIds.length || !taskRecord) return null
+  const taskId = readMetadataString(taskRecord.taskId, 128)
+  const fullScore = taskRecord.fullScore
+  const rubric = validateGeneratedRubric(taskRecord.rubric)
+  if (!taskId || typeof fullScore !== 'number' || !Number.isInteger(fullScore) || fullScore < 1 || fullScore > 100 || !rubric.ok) return null
+  return {
+    requestId, essayId, pageIds,
+    task: {
+      taskId, fullScore, materialSummary: rubric.value.materialSummary, writingRequirements: rubric.value.writingRequirements,
+      constraints: rubric.value.constraints, rubric: rubric.value,
+    },
+  }
+}
+
+function imageGradeRequestId(value: unknown) {
+  const record = errorRecord(value)
+  if (!record) return 'unavailable'
+  return typeof record.metadata === 'string' ? parseImageGradeMetadata(record.metadata)?.requestId ?? 'unavailable' : 'unavailable'
 }
 
 export const jsonParserErrorHandler: ErrorRequestHandler = (error, request, response, next) => {
@@ -135,6 +182,39 @@ export function createServer(options: CreateServerOptions = {}) {
     } finally {
       clearTimeout(timeout)
     }
+  })
+  app.post('/grading/grade-images', (request, response, next) => {
+    rubricUpload.array('pages', MAX_RUBRIC_PAGES)(request, response, (error) => {
+      if (!error) { next(); return }
+      const safe = rubricUploadFailure(imageGradeRequestId(request.body), error)
+      response.status(safe.status).json(safe.body)
+    })
+  }, async (request, response) => {
+    const metadata = parseImageGradeMetadata(request.body?.metadata)
+    const files = Array.isArray(request.files) ? request.files : undefined
+    if (!metadata) {
+      response.status(400).json(failure(imageGradeRequestId(request.body), { code: 'invalid_request', message: 'Image grading request is invalid.' }, false))
+      return
+    }
+    const images = validateRubricMultipart({ requestId: metadata.requestId, fullScore: String(metadata.task.fullScore), pageIds: JSON.stringify(metadata.pageIds) }, files)
+    if (!images.ok) {
+      response.status(images.error.code === 'request_too_large' ? 413 : 400).json(failure(metadata.requestId, images.error, false))
+      return
+    }
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 60_000)
+    try {
+      const provider = options.multimodalProvider ?? getMultimodalProvider(options.providerName ?? 'mock')
+      const payload = await provider.gradeEssay({ requestId: metadata.requestId, task: metadata.task, essayId: metadata.essayId, pages: images.value.pages, signal: controller.signal })
+      const normalized = normalizeMultimodalResult(payload, { requestId: metadata.requestId, essayId: metadata.essayId, task: metadata.task, provider: 'remote', createdAt: (options.now ?? (() => new Date().toISOString()))() })
+      if (!normalized.ok) { response.status(503).json(failure(metadata.requestId, normalized.error, true)); return }
+      response.json(normalized.result)
+    } catch (error) {
+      const safe = controller.signal.aborted
+        ? failure(metadata.requestId, { code: 'provider_timeout', message: 'AI grading timed out.' }, true)
+        : toSafeFailure(metadata.requestId, error)
+      response.status(503).json(safe)
+    } finally { clearTimeout(timeout) }
   })
   app.post('/grading/grade', async (request, response) => {
     const validated = validateGradingRequest(request.body)

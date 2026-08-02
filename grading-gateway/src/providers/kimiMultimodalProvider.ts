@@ -1,6 +1,7 @@
 import { validateGeneratedRubric } from '../multimodal/validateRubric.js'
 import { generatedRubricSchema, reviewedRubricSchema, buildRubricGenerationMessages, buildRubricReviewMessages } from '../multimodal/rubricPrompts.js'
 import type { GeneratedRubricV1 } from '../multimodal/types.js'
+import { buildEssayGradingMessages, essayGradingSchema } from '../multimodal/gradingPrompt.js'
 import type { GradeEssayProviderInput, GenerateRubricProviderInput, MultimodalProvider } from './multimodalProviderTypes.js'
 import type { KimiTransport } from './kimiTransport.js'
 import { GradingProviderError } from './providerTypes.js'
@@ -30,7 +31,10 @@ export class KimiMultimodalProvider implements MultimodalProvider {
     return validation.value
   }
 
-  async gradeEssay(_input: GradeEssayProviderInput): Promise<unknown> {
-    throw new GradingProviderError('provider_not_configured', 'Kimi 作文评分尚未配置。', false)
+  async gradeEssay(input: GradeEssayProviderInput): Promise<unknown> {
+    return this.transport.complete({
+      messages: buildEssayGradingMessages({ task: input.task, essayId: input.essayId, pages: input.pages }),
+      schemaName: 'essay-grading', schema: essayGradingSchema, signal: input.signal,
+    })
   }
 }

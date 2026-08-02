@@ -65,4 +65,19 @@ describe('KimiMultimodalProvider', () => {
     await expect(new KimiMultimodalProvider(transport).generateRubric(input)).rejects.toBe(failure)
     expect(transport.complete).toHaveBeenCalledTimes(1)
   })
+
+  it('grades each essay with exactly one strict-schema transport call in original page order', async () => {
+    const result = { transcript: 'Student text.', transcriptionWarnings: [], printedTextExcluded: true }
+    const transport = transportReturning(result)
+    const provider = new KimiMultimodalProvider(transport)
+    const task = {
+      taskId: 'task-grade', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: reviewed,
+    }
+
+    await expect(provider.gradeEssay({ requestId: 'request-grade', task, essayId: 'essay-grade', pages, signal: new AbortController().signal })).resolves.toEqual(result)
+    expect(transport.complete).toHaveBeenCalledTimes(1)
+    expect(transport.complete.mock.calls[0]?.[0]).toMatchObject({ schemaName: 'essay-grading' })
+    const messageJson = JSON.stringify(transport.complete.mock.calls[0]?.[0].messages)
+    expect(messageJson.indexOf('data:image/png;base64,Zmlyc3QgcGFnZQ==')).toBeLessThan(messageJson.indexOf('data:image/jpeg;base64,c2Vjb25kIHBhZ2U='))
+  })
 })

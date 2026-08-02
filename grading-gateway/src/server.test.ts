@@ -25,6 +25,53 @@ function validRequest(): GradingRequestV1 {
 }
 
 describe('grading gateway server boundary', () => {
+  it('grades uploaded essay images once with stable metadata IDs and returns the normalized transcript', async () => {
+    const calls: Parameters<MultimodalProvider['gradeEssay']>[] = []
+    const provider: MultimodalProvider = {
+      async generateRubric() { throw new Error('not used') },
+      async gradeEssay(input) {
+        calls.push([input])
+        return {
+          transcript: 'I has a pen.', transcriptionWarnings: [], printedTextExcluded: true,
+          reportedTotalScore: 15,
+          dimensionScores: [{ dimensionId: 'content', score: 15, reason: 'Relevant.', evidence: 'I has a pen.' }],
+          issues: [], sentenceRevisions: [], expressionUpgrades: [],
+          fullTextRevision: { correctedText: 'I have a pen.', improvedText: 'I have a pen.', sentencePairs: [], logicNotes: [] },
+          overallComment: 'Synthetic.', reviewReasons: [],
+        }
+      },
+    }
+    const metadata = {
+      requestId: 'image-request', essayId: 'image-essay', pageIds: ['essay-2', 'essay-1'],
+      task: {
+        taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'],
+        rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant.', deductionFocus: [], sourceEvidence: [] }], reviewWarnings: [] },
+      },
+    }
+    const response = await request(createServer({ multimodalProvider: provider, now: () => '2026-08-02T00:00:00.000Z' }))
+      .post('/grading/grade-images')
+      .field('metadata', JSON.stringify(metadata))
+      .attach('pages', Buffer.from('second-page'), { filename: 'second.png', contentType: 'image/png' })
+      .attach('pages', Buffer.from('first-page'), { filename: 'first.jpg', contentType: 'image/jpeg' })
+      .expect(200)
+
+    expect(response.body).toMatchObject({ requestId: 'image-request', essayId: 'image-essay', transcript: 'I has a pen.', printedTextExcluded: true, totalScore: 15 })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.[0]).toMatchObject({ requestId: 'image-request', essayId: 'image-essay', pages: [{ pageId: 'essay-2' }, { pageId: 'essay-1' }] })
+  })
+
+  it('isolates image grading failures without retrying or exposing the raw essay', async () => {
+    const provider: MultimodalProvider = {
+      async generateRubric() { throw new Error('not used') },
+      async gradeEssay() { throw new GradingProviderError('provider_unavailable', 'safe failure', true) },
+    }
+    const metadata = { requestId: 'image-failure', essayId: 'essay-failure', pageIds: ['essay-1'], task: { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant.', deductionFocus: [], sourceEvidence: [] }], reviewWarnings: [] } } }
+    const response = await request(createServer({ multimodalProvider: provider }))
+      .post('/grading/grade-images').field('metadata', JSON.stringify(metadata))
+      .attach('pages', Buffer.from('PRIVATE-ESSAY'), { filename: 'essay.png', contentType: 'image/png' }).expect(503)
+    expect(response.body).toMatchObject({ requestId: 'image-failure', status: 'failed', error: { code: 'provider_unavailable' } })
+    expect(JSON.stringify(response.body)).not.toContain('PRIVATE-ESSAY')
+  })
   it('sends ordered rubric page data to the injected multimodal provider', async () => {
     const generatedRubric = {
       taskName: 'Synthetic task', materialSummary: 'A synthetic task material summary.',
