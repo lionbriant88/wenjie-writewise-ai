@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { GradingProviderError } from './providerTypes.js'
 import type { MultimodalProvider } from './multimodalProviderTypes.js'
+import { KimiMultimodalProvider } from './kimiMultimodalProvider.js'
 import { getMultimodalProvider, getProvider, parseGradingTimeoutMs, parseKimiConfig } from './index.js'
 
 describe('getProvider', () => {
@@ -22,6 +23,17 @@ describe('getProvider', () => {
     const fakeProvider = {} as MultimodalProvider
     expect(getMultimodalProvider('kimi', { kimiFactory: () => fakeProvider })).toBe(fakeProvider)
     expect(() => getMultimodalProvider('deepseek')).toThrowError(/涓嶅彈鏀寔/)
+  })
+
+  it('constructs the Kimi multimodal provider from an explicit test API key', () => {
+    const previousKey = process.env.KIMI_API_KEY
+    process.env.KIMI_API_KEY = 'test-kimi-api-key-not-real'
+    try {
+      expect(getMultimodalProvider('kimi')).toBeInstanceOf(KimiMultimodalProvider)
+    } finally {
+      if (previousKey === undefined) delete process.env.KIMI_API_KEY
+      else process.env.KIMI_API_KEY = previousKey
+    }
   })
 
   it('parses supported Kimi settings and rejects invalid reasoning effort', () => {

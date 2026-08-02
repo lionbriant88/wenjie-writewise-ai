@@ -1,9 +1,12 @@
 import { FailureGradingProvider } from './failureGradingProvider.js'
+import { KimiMultimodalProvider } from './kimiMultimodalProvider.js'
+import { createKimiTransport } from './kimiTransport.js'
 import { MockGradingProvider } from './mockGradingProvider.js'
 import type { MultimodalProvider } from './multimodalProviderTypes.js'
 import { GradingProviderError, type GradingProvider } from './providerTypes.js'
 
 type KimiEnvironment = Partial<Record<
+  | 'KIMI_API_KEY'
   | 'KIMI_API_BASE'
   | 'KIMI_MODEL'
   | 'KIMI_REASONING_EFFORT'
@@ -60,7 +63,8 @@ export function getMultimodalProvider(
 ): MultimodalProvider {
   if (name === 'kimi' && dependencies.kimiFactory) return dependencies.kimiFactory()
   if (name === 'kimi') {
-    throw new GradingProviderError('provider_not_configured', 'Kimi Provider 未配置。', false)
+    const config = parseKimiConfig(process.env)
+    return new KimiMultimodalProvider(createKimiTransport({ ...config, apiKey: process.env.KIMI_API_KEY }))
   }
   throw new GradingProviderError('provider_not_configured', 'Kimi Provider 涓嶅彈鏀寔。', false)
 }

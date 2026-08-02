@@ -1,19 +1,28 @@
 import cors from 'cors'
 import express from 'express'
 import type { ErrorRequestHandler, Request } from 'express'
+import multer from 'multer'
+import { MAX_RUBRIC_IMAGE_BYTES, MAX_RUBRIC_PAGES, requestIdFromMultipartBody, validateRubricMultipart } from './multipartImages.js'
 import { normalizeGradingResult } from './normalizeGradingResult.js'
 import { buildGradingPrompt } from './promptBuilder.js'
-import { getProvider } from './providers/index.js'
+import { getMultimodalProvider, getProvider } from './providers/index.js'
+import type { MultimodalProvider } from './providers/multimodalProviderTypes.js'
 import { GradingProviderError, type GradingProvider } from './providers/providerTypes.js'
 import { validateGradingRequest } from './validateGradingRequest.js'
 
 export interface CreateServerOptions {
   allowedOrigin?: string
   provider?: GradingProvider
+  multimodalProvider?: MultimodalProvider
   providerName?: string
   timeoutMs?: number
   now?: () => string
 }
+
+const rubricUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_RUBRIC_IMAGE_BYTES + 1, files: MAX_RUBRIC_PAGES, fields: 3, fieldSize: 16 * 1024, parts: 20 },
+})
 
 function errorRecord(error: unknown): Record<string, unknown> | null {
   return typeof error === 'object' && error !== null
@@ -45,6 +54,15 @@ function failure(
 function toSafeFailure(requestId: string, error: unknown) {
   if (error instanceof GradingProviderError) return failure(requestId, error, error.retryable)
   return failure(requestId, { code: 'provider_unavailable', message: 'AI 批改服务暂时不可用。' }, true)
+}
+
+function rubricUploadFailure(requestId: string, error: unknown) {
+  if (error instanceof multer.MulterError && (
+    error.code === 'LIMIT_FILE_SIZE' || error.code === 'LIMIT_FILE_COUNT' || error.code === 'LIMIT_PART_COUNT' || error.code === 'LIMIT_FIELD_VALUE'
+  )) {
+    return { status: 413, body: failure(requestId, { code: 'request_too_large', message: 'Rubric upload exceeds the allowed limit.' }, false) }
+  }
+  return { status: 400, body: failure(requestId, { code: 'invalid_request', message: 'Rubric request is invalid.' }, false) }
 }
 
 export const jsonParserErrorHandler: ErrorRequestHandler = (error, request, response, next) => {
@@ -84,6 +102,39 @@ export function createServer(options: CreateServerOptions = {}) {
   app.use(jsonParserErrorHandler)
   app.get('/health', (_request, response) => {
     response.json({ ok: true, service: 'grading-gateway' })
+  })
+  app.post('/tasks/rubric', (request, response, next) => {
+    rubricUpload.array('pages', MAX_RUBRIC_PAGES)(request, response, (error) => {
+      if (!error) {
+        next()
+        return
+      }
+      const safe = rubricUploadFailure(requestIdFromMultipartBody(request.body), error)
+      response.status(safe.status).json(safe.body)
+    })
+  }, async (request, response) => {
+    const files = Array.isArray(request.files) ? request.files : undefined
+    const validated = validateRubricMultipart(request.body, files)
+    if (!validated.ok) {
+      response.status(validated.error.code === 'request_too_large' ? 413 : 400)
+        .json(failure(requestIdFromMultipartBody(request.body), validated.error, false))
+      return
+    }
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 60_000)
+    try {
+      const provider = options.multimodalProvider ?? getMultimodalProvider(options.providerName ?? 'mock')
+      const rubric = await provider.generateRubric({ ...validated.value, signal: controller.signal })
+      response.json({ requestId: validated.value.requestId, status: 'success', rubric })
+    } catch (error) {
+      const safe = controller.signal.aborted
+        ? failure(validated.value.requestId, { code: 'provider_timeout', message: 'AI grading timed out.' }, true)
+        : toSafeFailure(validated.value.requestId, error)
+      response.status(503).json(safe)
+    } finally {
+      clearTimeout(timeout)
+    }
   })
   app.post('/grading/grade', async (request, response) => {
     const validated = validateGradingRequest(request.body)

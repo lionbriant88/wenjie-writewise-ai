@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { createServer } from './server.js'
 import type { GradingRequestV1 } from './types.js'
 import { GradingProviderError, type GradingProvider } from './providers/providerTypes.js'
+import type { MultimodalProvider } from './providers/multimodalProviderTypes.js'
 
 function validRequest(): GradingRequestV1 {
   return {
@@ -24,6 +25,64 @@ function validRequest(): GradingRequestV1 {
 }
 
 describe('grading gateway server boundary', () => {
+  it('sends ordered rubric page data to the injected multimodal provider', async () => {
+    const generatedRubric = {
+      taskName: 'Synthetic task', materialSummary: 'A synthetic task material summary.',
+      writingRequirements: ['Write clearly.'], constraints: ['Use English.'],
+      dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Cover the task.', deductionFocus: ['Missing task coverage.'], sourceEvidence: ['Prompt heading.'] }],
+      reviewWarnings: ['Verify source material.'],
+    }
+    const calls: Parameters<MultimodalProvider['generateRubric']>[] = []
+    const provider: MultimodalProvider = {
+      async generateRubric(input) { calls.push([input]); return generatedRubric },
+      async gradeEssay() { throw new Error('not used') },
+    }
+
+    const response = await request(createServer({ multimodalProvider: provider }))
+      .post('/tasks/rubric')
+      .field('requestId', 'rubric-route-1')
+      .field('fullScore', '15')
+      .field('pageIds', JSON.stringify(['material-2', 'material-1']))
+      .attach('pages', Buffer.from('second-page'), { filename: 'second.png', contentType: 'image/png' })
+      .attach('pages', Buffer.from('first-page'), { filename: 'first.jpg', contentType: 'image/jpeg' })
+      .expect(200)
+
+    expect(response.body).toEqual({ requestId: 'rubric-route-1', status: 'success', rubric: generatedRubric })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.[0]).toMatchObject({
+      requestId: 'rubric-route-1', fullScore: 15,
+      pages: [
+        { pageId: 'material-2', mimeType: 'image/png', buffer: Buffer.from('second-page') },
+        { pageId: 'material-1', mimeType: 'image/jpeg', buffer: Buffer.from('first-page') },
+      ],
+    })
+  })
+
+  it('maps a rubric provider timeout without returning partial task state', async () => {
+    const provider: MultimodalProvider = {
+      async generateRubric(input) {
+        await new Promise<void>((_resolve, reject) => {
+          input.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+        })
+        throw new Error('unreachable')
+      },
+      async gradeEssay() { throw new Error('not used') },
+    }
+    const response = await request(createServer({ multimodalProvider: provider, timeoutMs: 1 }))
+      .post('/tasks/rubric')
+      .field('requestId', 'rubric-timeout')
+      .field('fullScore', '15')
+      .field('pageIds', JSON.stringify(['material-1']))
+      .attach('pages', Buffer.from('synthetic-image'), { filename: 'material.png', contentType: 'image/png' })
+      .expect(503)
+
+    expect(response.body).toMatchObject({
+      requestId: 'rubric-timeout', status: 'failed',
+      error: { code: 'provider_timeout', retryable: true },
+    })
+    expect(response.body).not.toHaveProperty('rubric')
+  })
+
   it('returns a minimal health response', async () => {
     const response = await request(createServer()).get('/health').expect(200)
     expect(response.body).toEqual({ ok: true, service: 'grading-gateway' })
