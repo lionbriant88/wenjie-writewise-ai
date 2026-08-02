@@ -25,6 +25,26 @@ function validRequest(): GradingRequestV1 {
 }
 
 describe('grading gateway server boundary', () => {
+  it('accepts a confirmed task metadata payload above the rubric upload field limit', async () => {
+    const provider: MultimodalProvider = {
+      async generateRubric() { throw new Error('not used') },
+      async gradeEssay() { return { transcript: 'Student text.', transcriptionWarnings: [], printedTextExcluded: true, reportedTotalScore: 15, dimensionScores: [{ dimensionId: 'content', score: 15, reason: 'Relevant.', evidence: 'Student text.' }], issues: [], sentenceRevisions: [], expressionUpgrades: [], fullTextRevision: { correctedText: 'Student text.', improvedText: 'Student text.', sentencePairs: [], logicNotes: [] }, overallComment: 'Synthetic.', reviewReasons: [] } },
+    }
+    const materialSummary = `Synthetic ${'x'.repeat(17 * 1024)}`
+    const metadata = { requestId: 'large-metadata', essayId: 'large-essay', pageIds: ['essay-1'], task: { taskId: 'large-task', fullScore: 15, rubric: { taskName: 'Synthetic task', materialSummary, writingRequirements: ['Write.'], constraints: ['English.'], dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant.', deductionFocus: [], sourceEvidence: [] }], reviewWarnings: [] } } }
+    await request(createServer({ multimodalProvider: provider }))
+      .post('/grading/grade-images').field('metadata', JSON.stringify(metadata))
+      .attach('pages', Buffer.from('essay-page'), { filename: 'essay.png', contentType: 'image/png' }).expect(200)
+  })
+
+  it('rejects metadata above the image grading limit without echoing its contents', async () => {
+    const privateMarker = 'PRIVATE-METADATA-MARKER'
+    const response = await request(createServer())
+      .post('/grading/grade-images').field('metadata', `${privateMarker}${'x'.repeat(32 * 1024 * 1024)}`)
+      .attach('pages', Buffer.from('essay-page'), { filename: 'essay.png', contentType: 'image/png' }).expect(413)
+    expect(response.body).toMatchObject({ requestId: 'unavailable', status: 'failed', error: { code: 'request_too_large' } })
+    expect(JSON.stringify(response.body)).not.toContain(privateMarker)
+  })
   it('grades uploaded essay images once with stable metadata IDs and returns the normalized transcript', async () => {
     const calls: Parameters<MultimodalProvider['gradeEssay']>[] = []
     const provider: MultimodalProvider = {
@@ -61,9 +81,10 @@ describe('grading gateway server boundary', () => {
   })
 
   it('isolates image grading failures without retrying or exposing the raw essay', async () => {
+    let calls = 0
     const provider: MultimodalProvider = {
       async generateRubric() { throw new Error('not used') },
-      async gradeEssay() { throw new GradingProviderError('provider_unavailable', 'safe failure', true) },
+      async gradeEssay() { calls += 1; throw new GradingProviderError('provider_unavailable', 'safe failure', true) },
     }
     const metadata = { requestId: 'image-failure', essayId: 'essay-failure', pageIds: ['essay-1'], task: { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant.', deductionFocus: [], sourceEvidence: [] }], reviewWarnings: [] } } }
     const response = await request(createServer({ multimodalProvider: provider }))
@@ -71,6 +92,7 @@ describe('grading gateway server boundary', () => {
       .attach('pages', Buffer.from('PRIVATE-ESSAY'), { filename: 'essay.png', contentType: 'image/png' }).expect(503)
     expect(response.body).toMatchObject({ requestId: 'image-failure', status: 'failed', error: { code: 'provider_unavailable' } })
     expect(JSON.stringify(response.body)).not.toContain('PRIVATE-ESSAY')
+    expect(calls).toBe(1)
   })
   it('sends ordered rubric page data to the injected multimodal provider', async () => {
     const generatedRubric = {

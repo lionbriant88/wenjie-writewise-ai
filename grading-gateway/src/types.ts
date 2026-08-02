@@ -140,6 +140,7 @@ export interface AiGradingResultV1 {
     weight: number
     reason: string
     evidence: string
+    requiresTeacherReview?: boolean
   }>
   issues: Array<{
     id: string
@@ -156,12 +157,14 @@ export interface AiGradingResultV1 {
     originalText: string
     revisedText: string
     note: string
+    requiresTeacherReview?: boolean
   }>
   expressionUpgrades: Array<{
     id: string
     originalText: string
     upgradedText: string
     note: string
+    requiresTeacherReview?: boolean
   }>
   fullTextRevision?: {
     originalText: string

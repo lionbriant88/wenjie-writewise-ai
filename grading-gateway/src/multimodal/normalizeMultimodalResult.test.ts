@@ -61,6 +61,28 @@ describe('normalizeMultimodalResult', () => {
     expect(normalized.result.status).toBe('partial')
   })
 
+  it('keeps every structurally valid ungrounded citation for explicit teacher review', () => {
+    const payload = validPayload()
+    ;(payload.dimensionScores as Array<Record<string, unknown>>)[0].evidence = 'Invented dimension evidence.'
+    ;(payload.issues as Array<Record<string, unknown>>)[0].originalText = 'Invented issue quote.'
+    payload.sentenceRevisions = [{ originalText: 'Invented revision quote.', revisedText: 'Revised.', note: 'Check.' }]
+    payload.expressionUpgrades = [{ originalText: 'Invented upgrade quote.', upgradedText: 'Upgraded.', note: 'Check.' }]
+    ;((payload.fullTextRevision as Record<string, unknown>).sentencePairs as Array<Record<string, unknown>>).push({
+      originalText: 'Invented pair quote.', correctedText: 'Corrected.', improvedText: 'Improved.', changeTypes: ['grammar'], explanation: 'Check.', requiresTeacherReview: false,
+    })
+    const normalized = normalizeMultimodalResult(payload, context)
+    expect(normalized.ok).toBe(true)
+    if (!normalized.ok) throw new Error(normalized.error.message)
+    expect(normalized.result.dimensionScores[0]).toMatchObject({ evidence: 'Invented dimension evidence.', requiresTeacherReview: true })
+    expect(normalized.result.issues).toMatchObject([{ originalText: 'Invented issue quote.', requiresTeacherReview: true }])
+    expect(normalized.result.sentenceRevisions).toMatchObject([{ originalText: 'Invented revision quote.', requiresTeacherReview: true }])
+    expect(normalized.result.expressionUpgrades).toMatchObject([{ originalText: 'Invented upgrade quote.', requiresTeacherReview: true }])
+    expect(normalized.result.fullTextRevision?.sentencePairs).toMatchObject([{ originalText: 'Invented pair quote.', requiresTeacherReview: true }])
+    expect(normalized.result.reviewReasons).toEqual(expect.arrayContaining([
+      'dimension_evidence_unmatched', 'issue_quote_unmatched', 'sentence_revision_quote_unmatched', 'expression_upgrade_quote_unmatched', 'sentence_pair_quote_unmatched',
+    ]))
+  })
+
   it('keeps an unmatched issue for teacher review without inventing a transcript match', () => {
     const payload = validPayload()
     ;(payload.issues as Array<Record<string, unknown>>)[0].originalText = 'Invented quote.'
@@ -74,12 +96,20 @@ describe('normalizeMultimodalResult', () => {
   it.each([
     ['duplicate issue', (payload: Record<string, unknown>) => (payload.issues as Array<Record<string, unknown>>).push({ ...(payload.issues as Array<Record<string, unknown>>)[0] })],
     ['missing dimension', (payload: Record<string, unknown>) => (payload.dimensionScores as Array<Record<string, unknown>>).pop()],
-    ['out-of-bounds score', (payload: Record<string, unknown>) => { (payload.dimensionScores as Array<Record<string, unknown>>)[0].score = 6.01 }],
+    ['out-of-bounds score', (payload: Record<string, unknown>) => { (payload.dimensionScores as Array<Record<string, unknown>>)[0].score = 6.004 }],
   ] as const)('rejects %s', (_label, mutate) => {
     const payload = validPayload()
     mutate(payload)
     const normalized = normalizeMultimodalResult(payload, context)
     expect(normalized).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
+  })
+
+  it('accepts a raw dimension score exactly at its weighted maximum before rounding', () => {
+    const payload = validPayload()
+    ;(payload.dimensionScores as Array<Record<string, unknown>>)[0].score = 6
+    const normalized = normalizeMultimodalResult(payload, context)
+    expect(normalized.ok).toBe(true)
+    if (normalized.ok) expect(normalized.result.dimensionScores[0].score).toBe(6)
   })
 
   it('rejects an invalid transcript and never exposes raw model data in failures', () => {

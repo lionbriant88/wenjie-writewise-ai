@@ -80,4 +80,12 @@ describe('KimiMultimodalProvider', () => {
     const messageJson = JSON.stringify(transport.complete.mock.calls[0]?.[0].messages)
     expect(messageJson.indexOf('data:image/png;base64,Zmlyc3QgcGFnZQ==')).toBeLessThan(messageJson.indexOf('data:image/jpeg;base64,c2Vjb25kIHBhZ2U='))
   })
+
+  it('does not retry a failed essay grading transport call', async () => {
+    const transport: KimiTransport = { complete: vi.fn().mockRejectedValue(new Error('unavailable')) }
+    const provider = new KimiMultimodalProvider(transport)
+    const task = { taskId: 'task-grade', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: reviewed }
+    await expect(provider.gradeEssay({ requestId: 'request-grade', task, essayId: 'essay-grade', pages, signal: new AbortController().signal })).rejects.toThrow('unavailable')
+    expect(transport.complete).toHaveBeenCalledTimes(1)
+  })
 })

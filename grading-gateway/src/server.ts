@@ -27,6 +27,12 @@ const rubricUpload = multer({
   limits: { fileSize: MAX_RUBRIC_IMAGE_BYTES + 1, files: MAX_RUBRIC_PAGES, fields: 3, fieldSize: 16 * 1024, parts: 20 },
 })
 
+export const MAX_IMAGE_GRADING_METADATA_BYTES = 32 * 1024 * 1024
+const imageGradeUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_RUBRIC_IMAGE_BYTES + 1, files: MAX_RUBRIC_PAGES, fields: 1, fieldSize: MAX_IMAGE_GRADING_METADATA_BYTES, parts: MAX_RUBRIC_PAGES + 2 },
+})
+
 function errorRecord(error: unknown): Record<string, unknown> | null {
   return typeof error === 'object' && error !== null
     ? error as Record<string, unknown>
@@ -184,7 +190,7 @@ export function createServer(options: CreateServerOptions = {}) {
     }
   })
   app.post('/grading/grade-images', (request, response, next) => {
-    rubricUpload.array('pages', MAX_RUBRIC_PAGES)(request, response, (error) => {
+    imageGradeUpload.array('pages', MAX_RUBRIC_PAGES)(request, response, (error) => {
       if (!error) { next(); return }
       const safe = rubricUploadFailure(imageGradeRequestId(request.body), error)
       response.status(safe.status).json(safe.body)
