@@ -26,6 +26,12 @@ function responseFetch(status: number, body: string) {
 }
 
 describe('createKimiTransport', () => {
+  it('can observe a secret stored only in Error.message', () => {
+    const leakyError = new Error('SECRET message-only value')
+    expect(JSON.stringify(leakyError)).not.toContain('SECRET message-only value')
+    expect(leakyError.message).toContain('SECRET message-only value')
+  })
+
   it('posts Kimi K3 JSON-schema messages with Base64 image parts only', async () => {
     const fetchImpl = responseFetch(200, JSON.stringify({
       choices: [{ message: { content: '{"taskName":"Synthetic"}', reasoning_content: 'do not parse this' } }],
@@ -82,7 +88,11 @@ describe('createKimiTransport', () => {
     try {
       await transport.complete(input)
     } catch (error) {
-      expect(JSON.stringify(error)).not.toMatch(/SECRET upstream body|test-only-not-a-real-key|SGVsbG8=/i)
+      expect(error).toMatchObject({ code, retryable })
+      const message = (error as Error).message
+      expect(message).not.toContain('SECRET upstream body')
+      expect(message).not.toContain('test-only-not-a-real-key')
+      expect(message).not.toContain(imageUrl)
     }
   })
 
