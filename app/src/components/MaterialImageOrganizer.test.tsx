@@ -9,6 +9,7 @@ function file(name: string, type = 'image/png') {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 describe('MaterialImageOrganizer', () => {
@@ -31,6 +32,7 @@ describe('MaterialImageOrganizer', () => {
       { id: 'one', file: file('one.png'), previewUrl: 'blob:one.png' },
       { id: 'two', file: file('two.webp', 'image/webp'), previewUrl: 'blob:two.webp' },
     ]} onChange={onChange} disabled={false} />)
+    expect(screen.getByRole('button', { name: '上移 one.png' })).toBeDisabled()
     await user.click(screen.getByRole('button', { name: '删除 one.png' }))
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:one.png')
     view.unmount()
@@ -53,5 +55,30 @@ describe('MaterialImageOrganizer', () => {
     expect(screen.getByLabelText('材料图片')).toBeDisabled()
     expect(screen.getByRole('button', { name: '删除 one.png' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '下移 one.png' })).toBeDisabled()
+  })
+
+  it('caps the accepted pages at ten without creating URLs for overflow and keeps repeated Files independently manageable', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    const createObjectURL = vi.fn((input: File) => `blob:${input.name}-${createObjectURL.mock.calls.length}`)
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL: vi.fn() })
+    const tenView = render(<MaterialImageOrganizer pages={[]} onChange={onChange} disabled={false} />)
+    const repeated = file('repeat.jpg', 'image/jpeg')
+    const ten = Array.from({ length: 10 }, (_, index) => file(`page-${index}.png`))
+
+    await user.upload(screen.getByLabelText('材料图片'), [...ten, file('overflow.png')])
+    expect(createObjectURL).toHaveBeenCalledTimes(10)
+    const accepted = onChange.mock.calls[0]?.[0]
+    expect(accepted).toHaveLength(10)
+    tenView.rerender(<MaterialImageOrganizer pages={accepted} onChange={onChange} disabled={false} />)
+    expect(screen.getByLabelText('材料图片')).toBeDisabled()
+    expect(screen.getByText('最多上传 10 张材料图片。')).toBeInTheDocument()
+
+    render(<MaterialImageOrganizer pages={[]} onChange={onChange} disabled={false} />)
+    await user.upload(screen.getAllByLabelText('材料图片')[1], [repeated, repeated])
+    const repeatedPages = onChange.mock.calls[1]?.[0]
+    expect(repeatedPages).toHaveLength(2)
+    expect(repeatedPages[0].id).not.toBe(repeatedPages[1].id)
+    expect(repeatedPages[0].previewUrl).not.toBe(repeatedPages[1].previewUrl)
   })
 })

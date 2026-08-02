@@ -10,12 +10,17 @@ import type { RubricDimension, TaskMaterialContext, TaskRubricDraft } from '../t
 type RubricState = 'idle' | 'generating' | 'draft' | 'confirmed'
 
 function hasCompleteWeights(dimensions: RubricDimension[]) {
-  return Math.abs(dimensions.reduce((total, dimension) => total + dimension.weight, 0) - 100) < 0.001
+  if (dimensions.length === 0 || dimensions.some((dimension) => !Number.isFinite(dimension.weight) || dimension.weight <= 0)) {
+    return false
+  }
+  const total = dimensions.reduce((sum, dimension) => sum + dimension.weight, 0)
+  const tolerance = 0.001 + Number.EPSILON * Math.max(Math.abs(total), 100)
+  return Math.abs(total - 100) <= tolerance
 }
 
 function toDimensions(rubric: GeneratedTaskRubric): RubricDimension[] {
-  return rubric.dimensions.map(({ id, name, weight, description, deductionFocus }) => ({
-    id, name, weight, description, deductionFocus,
+  return rubric.dimensions.map(({ id, name, weight, description, deductionFocus, sourceEvidence }) => ({
+    id, name, weight, description, deductionFocus, sourceEvidence: [...sourceEvidence],
   }))
 }
 
@@ -44,6 +49,14 @@ function newRequestId() {
   return `rubric-${crypto.randomUUID?.() ?? Date.now()}`
 }
 
+function isValidFullScore(value: number) {
+  return Number.isInteger(value) && value >= 1 && value <= 100
+}
+
+function generationSignature(pages: MaterialImagePage[], fullScore: number) {
+  return JSON.stringify({ fullScore, pageIds: pages.map((page) => page.id) })
+}
+
 export function CreateTaskPage() {
   const navigate = useNavigate()
   const { createTask } = useAppState()
@@ -52,12 +65,14 @@ export function CreateTaskPage() {
   const [fullScore, setFullScore] = useState(15)
   const [rubric, setRubric] = useState<GeneratedTaskRubric | null>(null)
   const [dimensions, setDimensions] = useState<RubricDimension[]>([])
+  const [generatedFor, setGeneratedFor] = useState<string | null>(null)
   const [rubricState, setRubricState] = useState<RubricState>('idle')
   const [error, setError] = useState('')
 
   const weightsValid = hasCompleteWeights(dimensions)
-  const canConfirm = rubricState === 'draft' && weightsValid
-  const canCreate = rubricState === 'confirmed' && Boolean(rubric) && weightsValid
+  const inputIsCurrent = generatedFor === generationSignature(pages, fullScore)
+  const canConfirm = rubricState === 'draft' && Boolean(rubric) && pages.length > 0 && isValidFullScore(fullScore) && weightsValid && inputIsCurrent
+  const canCreate = rubricState === 'confirmed' && Boolean(rubric) && pages.length > 0 && isValidFullScore(fullScore) && weightsValid && inputIsCurrent
 
   const resetConfirmation = () => {
     if (rubricState === 'confirmed') setRubricState('draft')
@@ -65,11 +80,13 @@ export function CreateTaskPage() {
 
   const changePages = (nextPages: MaterialImagePage[]) => {
     setPages(nextPages)
+    setGeneratedFor(null)
     resetConfirmation()
   }
 
   const changeFullScore = (value: string) => {
-    setFullScore(Number(value))
+    setFullScore(value === '' ? Number.NaN : Number(value))
+    setGeneratedFor(null)
     resetConfirmation()
   }
 
@@ -83,20 +100,31 @@ export function CreateTaskPage() {
       setError('请先上传至少一张材料图片。')
       return
     }
-    if (!Number.isInteger(fullScore) || fullScore < 1 || fullScore > 100) {
+    if (!isValidFullScore(fullScore)) {
       setError('满分必须是 1 到 100 之间的整数。')
       return
     }
     setError('')
     setRubricState('generating')
-    const response = await rubricClient.generate({ requestId: newRequestId(), fullScore, pages })
+    const currentSignature = generationSignature(pages, fullScore)
+    let response
+    try {
+      response = await rubricClient.generate({ requestId: newRequestId(), fullScore, pages })
+    } catch {
+      setGeneratedFor(null)
+      setRubricState(rubric ? 'draft' : 'idle')
+      setError('评分标准暂时无法生成，请保留材料后重试。')
+      return
+    }
     if (response.status === 'failed') {
+      setGeneratedFor(null)
       setRubricState(rubric ? 'draft' : 'idle')
       setError('评分标准暂时无法生成，请保留材料后重试。')
       return
     }
     setRubric(response.rubric)
     setDimensions(toDimensions(response.rubric))
+    setGeneratedFor(currentSignature)
     setRubricState('draft')
   }
 
@@ -205,7 +233,7 @@ export function CreateTaskPage() {
                           <input
                             aria-label={`${dimension.name}权重`}
                             type="number"
-                            min={0}
+                            min={1}
                             max={100}
                             value={Number.isFinite(dimension.weight) ? dimension.weight : ''}
                             disabled={rubricState === 'generating'}

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 const acceptedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp'])
 
@@ -20,6 +20,7 @@ function pageId() {
 
 export function MaterialImageOrganizer({ pages, onChange, disabled }: MaterialImageOrganizerProps) {
   const activeUrls = useRef(new Set<string>())
+  const [limitNotice, setLimitNotice] = useState('')
 
   useEffect(() => () => {
     activeUrls.current.forEach((url) => URL.revokeObjectURL(url))
@@ -33,13 +34,16 @@ export function MaterialImageOrganizer({ pages, onChange, disabled }: MaterialIm
 
   const addFiles = (files: FileList | null) => {
     if (disabled || !files) return
-    const additions = Array.from(files)
-      .filter((file) => acceptedImageTypes.has(file.type))
+    const acceptedFiles = Array.from(files).filter((file) => acceptedImageTypes.has(file.type))
+    const remaining = Math.max(0, 10 - pages.length)
+    const additions = acceptedFiles
+      .slice(0, remaining)
       .map((file) => {
         const previewUrl = URL.createObjectURL(file)
         activeUrls.current.add(previewUrl)
         return { id: pageId(), file, previewUrl }
       })
+    setLimitNotice(acceptedFiles.length > remaining ? '最多上传 10 张材料图片。' : '')
     if (additions.length > 0) onChange([...pages, ...additions])
   }
 
@@ -71,7 +75,7 @@ export function MaterialImageOrganizer({ pages, onChange, disabled }: MaterialIm
           type="file"
           accept="image/jpeg,image/png,image/webp"
           multiple
-          disabled={disabled}
+          disabled={disabled || pages.length >= 10}
           onChange={(event) => {
             addFiles(event.target.files)
             event.currentTarget.value = ''
@@ -80,6 +84,7 @@ export function MaterialImageOrganizer({ pages, onChange, disabled }: MaterialIm
         />
       </label>
       <p className="text-xs leading-5 text-slate-500">支持 JPEG、PNG、WebP；可调整顺序或删除。</p>
+      {limitNotice || pages.length >= 10 ? <p className="text-xs font-semibold text-amber-700">{limitNotice || '最多上传 10 张材料图片。'}</p> : null}
       {pages.length > 0 ? (
         <ol className="grid gap-3 sm:grid-cols-2">
           {pages.map((page, index) => (
@@ -88,7 +93,7 @@ export function MaterialImageOrganizer({ pages, onChange, disabled }: MaterialIm
               <div className="space-y-2 p-3">
                 <p className="truncate text-sm font-medium text-slate-800">{page.file.name}</p>
                 <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={() => move(index, -1)} disabled={disabled || index === 0} className="rounded border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:text-slate-300">上移</button>
+                  <button type="button" onClick={() => move(index, -1)} disabled={disabled || index === 0} aria-label={`上移 ${page.file.name}`} className="rounded border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:text-slate-300">上移</button>
                   <button type="button" onClick={() => move(index, 1)} disabled={disabled || index === pages.length - 1} aria-label={`下移 ${page.file.name}`} className="rounded border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:text-slate-300">下移</button>
                   <button type="button" onClick={() => remove(page)} disabled={disabled} aria-label={`删除 ${page.file.name}`} className="rounded border border-rose-100 bg-white px-2 py-1 text-xs font-semibold text-rose-700 disabled:text-slate-300">删除</button>
                 </div>

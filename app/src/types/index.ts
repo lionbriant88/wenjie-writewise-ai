@@ -61,6 +61,7 @@ export interface RubricDimension {
   weight: number
   description: string
   deductionFocus: string[]
+  sourceEvidence?: string[]
 }
 
 export interface TaskRubricDraft {
