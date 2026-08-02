@@ -61,7 +61,7 @@ export function UploadSourceSelector({ onSelectImages, onAddMockImage, disabled 
                 className="sr-only"
                 onChange={(event) => {
                   if (disabled) return
-                  onSelectImages(Array.from(event.target.files ?? []).filter((file) => ['image/png', 'image/jpeg', 'image/webp'].includes(file.type)))
+                  onSelectImages(Array.from(event.target.files ?? []))
                   event.target.value = ''
                 }}
               />

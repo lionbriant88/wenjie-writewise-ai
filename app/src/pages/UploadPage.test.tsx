@@ -20,7 +20,7 @@ describe('UploadPage direct image queue', () => {
   afterEach(() => { vi.restoreAllMocks(); localStorage.clear() })
 
   it('keeps upload, preview and grouping controls without rendering OCR controls', async () => {
-    const user = userEvent.setup()
+    const user = userEvent.setup({ applyAccept: false })
     vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn(() => 'blob:essay-preview'), revokeObjectURL: vi.fn() })
     renderPage()
     await user.upload(screen.getByLabelText('选择图片'), new File(['image'], 'essay-photo.png', { type: 'image/png' }))
@@ -58,5 +58,19 @@ describe('UploadPage direct image queue', () => {
     await user.type(screen.getByLabelText('班级'), '九年级 3 班')
     await user.click(screen.getByRole('button', { name: '确认分组并进入批改' }))
     expect(screen.getByTestId('page-order').textContent?.split(',')).toHaveLength(2)
+  })
+
+  it.each([
+    [new File(['gif'], 'essay.gif', { type: 'image/gif' })],
+    [new File(['heic'], 'essay.heic', { type: 'image/heic' })],
+    [new File([new Uint8Array(8 * 1024 * 1024 + 1)], 'large.png', { type: 'image/png' })],
+  ])('rejects unsupported or oversized local images before queueing', async (file) => {
+    const user = userEvent.setup({ applyAccept: false })
+    const fetchSpy = vi.fn(); vi.stubGlobal('fetch', fetchSpy)
+    renderPage()
+    await user.upload(screen.getByLabelText('选择图片'), file)
+    expect(screen.getByRole('alert')).toHaveTextContent('仅支持 PNG、JPEG、WebP 图片，且单张不超过 8 MiB。')
+    expect(screen.queryByText(file.name)).not.toBeInTheDocument()
+    expect(fetchSpy).not.toHaveBeenCalled()
   })
 })

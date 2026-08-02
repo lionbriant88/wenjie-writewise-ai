@@ -11,7 +11,7 @@ function invalid(message: string): BuildMultimodalGradingRequestResult {
 
 const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp'])
 const maxImageBytes = 8 * 1024 * 1024
-const validText = (value: unknown, max = 10_000) => typeof value === 'string' && value.trim().length > 0 && value.length <= max
+const validText = (value: unknown, max = 10_000) => typeof value === 'string' && value === value.trim() && value.length > 0 && value.length <= max
 const validTextArray = (value: unknown) => Array.isArray(value) && value.every((item) => validText(item))
 const validIds = (value: string[]) => value.every((id) => validText(id, 128)) && new Set(value).size === value.length
 const validWeights = (weights: number[]) => weights.length > 0 && weights.every((weight) => Number.isFinite(weight) && weight > 0 && weight <= 100) && Math.abs(weights.reduce((sum, weight) => sum + weight, 0) - 100) <= 0.001
@@ -26,7 +26,7 @@ export function buildMultimodalGradingRequest(
   if (!validText(requestId, 128) || !validText(task.id, 128) || !validText(essay.id, 128) || essay.taskId !== task.id || !material || rubric?.status !== 'confirmed' || !Number.isInteger(task.fullScore) || task.fullScore < 1 || task.fullScore > 100) {
     return invalid('题目材料或评分标准尚未确认。')
   }
-  if (!validText(task.taskName) || !validText(material.materialSummary) || !validTextArray(material.writingRequirements) || !validTextArray(material.constraints) || !validTextArray(material.reviewWarnings) || !rubric.dimensions.length || !validWeights(rubric.dimensions.map(({ weight }) => weight))) {
+  if (!validText(task.taskName) || !validText(material.materialSummary) || !material.writingRequirements.length || !validTextArray(material.writingRequirements) || !validTextArray(material.constraints) || !validTextArray(material.reviewWarnings) || !rubric.dimensions.length || rubric.dimensions.length > 10 || !validWeights(rubric.dimensions.map(({ weight }) => weight))) {
     return invalid('题目材料或评分标准尚未确认。')
   }
   if (new Set(rubric.dimensions.map((dimension) => dimension.id)).size !== rubric.dimensions.length || rubric.dimensions.some((dimension) => !validText(dimension.id, 128) || !validText(dimension.name) || !validText(dimension.description) || !validTextArray(dimension.deductionFocus) || !validTextArray(dimension.sourceEvidence) || !dimension.sourceEvidence!.length)) {

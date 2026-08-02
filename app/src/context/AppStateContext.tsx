@@ -180,7 +180,7 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
     const current = essaysRef.current
     const taskEssayCount = current.filter((essay) => essay.taskId === taskId).length
     const createdEssays = essayGroups.map((group, groupIndex): Essay => {
-      const id = `${taskId}-uploaded-${Date.now()}-${groupIndex + 1}`
+      const id = `${taskId}-uploaded-${submissionId}-${groupIndex + 1}`
       const pages = group.pages.map((page, pageIndex) => ({ ...page, id: `${id}-page-${pageIndex + 1}`, pageNumber: pageIndex + 1 }))
       return {
         id, taskId, essayNumber: `作文 ${taskEssayCount + groupIndex + 1}`, pages, pageCount: pages.length,

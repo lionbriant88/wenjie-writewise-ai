@@ -34,6 +34,19 @@ describe('buildMultimodalGradingRequest', () => {
   })
 
   it.each([
+    ['trim-colliding pages', { essay: { ...essay(new File(['x'], 'essay.png', { type: 'image/png' })), pages: [{ ...essay(new File(['x'], 'essay.png', { type: 'image/png' })).pages[0], id: 'page-1' }, { ...essay(new File(['x'], 'essay.png', { type: 'image/png' })).pages[0], id: ' page-1' }], pageOrder: ['page-1', ' page-1'] } }],
+    ['trim-colliding dimensions', { task: { ...task, rubricDraft: { ...task.rubricDraft!, dimensions: [{ ...task.rubricDraft!.dimensions[0], id: 'content', weight: 50 }, { ...task.rubricDraft!.dimensions[0], id: ' content', weight: 50 }] } } }],
+    ['eleven dimensions', { task: { ...task, rubricDraft: { ...task.rubricDraft!, dimensions: Array.from({ length: 11 }, (_, index) => ({ ...task.rubricDraft!.dimensions[0], id: `d${index}`, weight: 100 / 11 })) } } }],
+    ['empty requirements', { task: { ...task, materialContext: { ...task.materialContext!, writingRequirements: [] } } }],
+    ['HEIC file', { essay: essay(new File(['x'], 'essay.heic', { type: 'image/heic' })) }],
+    ['over 8 MiB', { essay: essay(new File([new Uint8Array(8 * 1024 * 1024 + 1)], 'essay.png', { type: 'image/png' })) }],
+  ] as const)('rejects isolated strict boundary: %s', (_label, mutation) => {
+    const targetTask = 'task' in mutation ? mutation.task : task
+    const targetEssay = 'essay' in mutation ? mutation.essay : essay(new File(['x'], 'essay.png', { type: 'image/png' }))
+    expect(buildMultimodalGradingRequest(targetTask as Task, targetEssay as Essay, 'request-1')).toMatchObject({ ok: false })
+  })
+
+  it.each([
     ['wrong task relation', (target: Essay) => ({ ...target, taskId: 'other' })],
     ['duplicate page id', (target: Essay) => ({ ...target, pageOrder: ['page-1', 'page-1'] })],
     ['unsupported image', (target: Essay) => ({ ...target, pages: [{ ...target.pages[0], sourceFile: new File(['x'], 'essay.gif', { type: 'image/gif' }) }] })],
