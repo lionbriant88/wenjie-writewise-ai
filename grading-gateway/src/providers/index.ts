@@ -30,7 +30,7 @@ export function parseKimiConfig(env: KimiEnvironment): {
   reasoningEffort: KimiReasoningEffort
   maxCompletionTokens: number
 } {
-  const reasoningEffort = env.KIMI_REASONING_EFFORT?.trim() || 'high'
+  const reasoningEffort = env.KIMI_REASONING_EFFORT?.trim() || 'max'
   if (reasoningEffort !== 'low' && reasoningEffort !== 'high' && reasoningEffort !== 'max') throw kimiConfigurationError()
 
   const maxCompletionTokens = env.KIMI_MAX_COMPLETION_TOKENS === undefined || env.KIMI_MAX_COMPLETION_TOKENS.trim() === ''
@@ -38,8 +38,8 @@ export function parseKimiConfig(env: KimiEnvironment): {
     : Number(env.KIMI_MAX_COMPLETION_TOKENS)
   if (!Number.isInteger(maxCompletionTokens) || maxCompletionTokens <= 0) throw kimiConfigurationError()
   return {
-    apiBase: env.KIMI_API_BASE?.trim() || 'https://api.moonshot.ai/v1',
-    model: env.KIMI_MODEL?.trim() || 'kimi-k3',
+    apiBase: env.KIMI_API_BASE?.trim() || 'https://api.kimi.com/coding/v1',
+    model: env.KIMI_MODEL?.trim() || 'k3',
     reasoningEffort,
     maxCompletionTokens,
   }

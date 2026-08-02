@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1240" height="1754" viewBox="0 0 1240 1754">
   <rect width="1240" height="1754" fill="#fffefb"/>
   <rect x="64" y="58" width="1112" height="1638" fill="none" stroke="#cdc5b5" stroke-width="3"/>
-  <text x="100" y="126" font-family="Arial, sans-serif" font-size="26" font-weight="700" fill="#9b3d2b">PRINTED — DO NOT TRANSCRIBE</text>
-  <text x="100" y="166" font-family="Arial, sans-serif" font-size="19" fill="#6a6258">Writing paper · Quiet Corner task · Answer in English</text>
+  <text x="100" y="126" font-family="Arial, sans-serif" font-size="26" font-weight="700" fill="#9b3d2b">PRINTED - DO NOT TRANSCRIBE</text>
+  <text x="100" y="166" font-family="Arial, sans-serif" font-size="19" fill="#6a6258">Writing paper | Quiet Corner task | Answer in English</text>
   <line x1="100" y1="208" x2="1140" y2="208" stroke="#d5cdbc" stroke-width="2"/>
   <g stroke="#dbe8f0" stroke-width="2">
     <line x1="104" y1="298" x2="1136" y2="298"/><line x1="104" y1="392" x2="1136" y2="392"/>
@@ -12,16 +12,19 @@
     <line x1="104" y1="1050" x2="1136" y2="1050"/><line x1="104" y1="1144" x2="1136" y2="1144"/>
     <line x1="104" y1="1238" x2="1136" y2="1238"/><line x1="104" y1="1332" x2="1136" y2="1332"/>
   </g>
-  <g font-family="Segoe Print, Comic Sans MS, cursive" font-size="35" font-style="italic" fill="#173d72">
+  <g font-family="Segoe Print, Comic Sans MS, cursive" font-size="31" font-style="italic" fill="#173d72">
     <text x="128" y="286" transform="rotate(-1 128 286)">I think our library needs a Quiet Corner near the window.</text>
-    <text x="126" y="380" transform="rotate(0.4 126 380)">It can have two small lamps, green plants and a shelf of books.</text>
-    <text x="132" y="474" transform="rotate(-0.6 132 474)">This place will help students who feel tired between busy classes.</text>
-    <text x="126" y="568" transform="rotate(0.5 126 568)">They can read for ten minutes or just sit quietly before learning again.</text>
-    <text x="134" y="662" transform="rotate(-0.7 134 662)">A calm space is useful because everyone sometimes need a short pause.</text>
-    <text x="126" y="756" transform="rotate(0.3 126 756)">It also makes the library more welcoming than a room full of rules.</text>
-    <text x="132" y="850" transform="rotate(-0.4 132 850)">Students could bring one healthy plant from home and take turns watering it.</text>
-    <text x="126" y="944" transform="rotate(0.5 126 944)">We could put a notebook on the shelf for book recommendations.</text>
-    <text x="132" y="1038" transform="rotate(-0.5 132 1038)">Then a shy reader may find a story that another student really enjoyed.</text>
+    <text x="126" y="380" transform="rotate(0.4 126 380)">It can have two small lamps, green plants,</text>
+    <text x="132" y="474" transform="rotate(-0.6 132 474)">and a shelf of books.</text>
+    <text x="126" y="568" transform="rotate(0.5 126 568)">This place will help students who feel tired</text>
+    <text x="134" y="662" transform="rotate(-0.7 134 662)">between busy classes.</text>
+    <text x="126" y="756" transform="rotate(0.3 126 756)">They can read for ten minutes or just sit quietly</text>
+    <text x="132" y="850" transform="rotate(-0.4 132 850)">before learning again.</text>
+    <text x="126" y="944" transform="rotate(0.5 126 944)">A calm space is useful because everyone sometimes</text>
+    <text x="132" y="1038" transform="rotate(-0.5 132 1038)">need a short pause.</text>
+    <text x="126" y="1132" transform="rotate(0.4 126 1132)">It also makes the library more welcoming</text>
+    <text x="134" y="1226" transform="rotate(-0.4 134 1226)">than a room full of rules.</text>
+    <text x="126" y="1320" transform="rotate(0.3 126 1320)">Students could bring one healthy plant from home.</text>
   </g>
-  <text x="100" y="1604" font-family="Arial, sans-serif" font-size="19" fill="#6a6258">PRINTED FOOTER — DO NOT TRANSCRIBE · page 1 of 2</text>
+  <text x="100" y="1604" font-family="Arial, sans-serif" font-size="19" fill="#6a6258">PRINTED FOOTER - DO NOT TRANSCRIBE | page 1 of 2</text>
 </svg>

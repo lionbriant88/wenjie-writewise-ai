@@ -52,6 +52,15 @@ describe('getProvider', () => {
     expect(parseKimiConfig({ KIMI_REASONING_EFFORT: 'max' }).reasoningEffort).toBe('max')
   })
 
+  it('defaults to the official K3 managed endpoint and model identifier', () => {
+    expect(parseKimiConfig({})).toEqual({
+      apiBase: 'https://api.kimi.com/coding/v1',
+      model: 'k3',
+      reasoningEffort: 'max',
+      maxCompletionTokens: 8192,
+    })
+  })
+
   it('rejects medium reasoning effort', () => {
     expect(() => parseKimiConfig({ KIMI_REASONING_EFFORT: 'medium' })).toThrow(GradingProviderError)
   })
