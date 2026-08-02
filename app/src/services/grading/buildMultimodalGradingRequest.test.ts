@@ -19,7 +19,20 @@ describe('buildMultimodalGradingRequest', () => {
   it('builds an ordered confirmed task package without OCR transcript', () => {
     const result = buildMultimodalGradingRequest(task, essay(new File(['image'], 'essay.png', { type: 'image/png' })), 'request-1')
     expect(result).toMatchObject({ ok: true, request: { requestVersion: 'multimodal-grading-request-v2', requestId: 'request-1', essayId: 'essay-1', pageIds: ['page-1'], task: { taskId: task.id, fullScore: 15, materialSummary: 'A short material.', rubric: { taskName: 'Material writing', dimensions: [{ sourceEvidence: ['material'] }] } } } })
-    if (result.ok) expect(result.request.pages[0].file.name).toBe('essay.png')
+    if (result.ok) {
+      expect(result.request.pages[0].file.name).toBe('essay.png')
+      expect(result.request.confirmedTranscript).toBeUndefined()
+    }
+  })
+
+  it('passes the exact nonempty teacher-confirmed transcript without normalizing it', () => {
+    const teacherText = ' Teacher corrected transcript. '
+    const result = buildMultimodalGradingRequest(task, {
+      ...essay(new File(['image'], 'essay.png', { type: 'image/png' })),
+      ocrText: teacherText,
+      transcriptSource: 'teacher_confirmed',
+    }, 'request-1')
+    expect(result).toMatchObject({ ok: true, request: { confirmedTranscript: teacherText } })
   })
 
   it.each([

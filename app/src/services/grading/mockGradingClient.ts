@@ -87,7 +87,7 @@ export function createMockGradingClient(): GradingClient {
         resultVersion: 'grading-result-v1', requestId: request.requestId, essayId: request.essayId, provider: 'mock', status: 'success',
         totalScore: calculateTotalScore(dimensionScores.map(({ score }) => score), request.task.fullScore), maxScore: request.task.fullScore,
         dimensionScores, issues: [], sentenceRevisions: [], expressionUpgrades: [], overallComment: '本地 mock 图片批改结果，请教师复核。', reviewReasons: ['local_mock'], createdAt,
-        transcript, transcriptionWarnings: [], printedTextExcluded: true,
+        transcript: request.confirmedTranscript ?? transcript, transcriptionWarnings: [], printedTextExcluded: true,
       }
     },
   }

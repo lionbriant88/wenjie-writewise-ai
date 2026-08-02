@@ -81,6 +81,16 @@ describe('KimiMultimodalProvider', () => {
     expect(messageJson.indexOf('data:image/png;base64,Zmlyc3QgcGFnZQ==')).toBeLessThan(messageJson.indexOf('data:image/jpeg;base64,c2Vjb25kIHBhZ2U='))
   })
 
+  it('passes teacher-confirmed text to the single essay grading call', async () => {
+    const result = { transcript: 'Teacher corrected transcript.' }
+    const transport = transportReturning(result)
+    const provider = new KimiMultimodalProvider(transport)
+    const task = { taskId: 'task-grade', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: reviewed }
+    await expect(provider.gradeEssay({ requestId: 'request-grade', task, essayId: 'essay-grade', pages, confirmedTranscript: 'Teacher corrected transcript.', signal: new AbortController().signal })).resolves.toEqual(result)
+    expect(transport.complete).toHaveBeenCalledTimes(1)
+    expect(JSON.stringify(transport.complete.mock.calls[0]?.[0].messages)).toContain('Teacher corrected transcript.')
+  })
+
   it('does not retry a failed essay grading transport call', async () => {
     const transport: KimiTransport = { complete: vi.fn().mockRejectedValue(new Error('unavailable')) }
     const provider = new KimiMultimodalProvider(transport)

@@ -56,6 +56,21 @@ describe('createRemoteGradingClient', () => {
     expect(result).toMatchObject({ status: 'success', transcript: 'Student text.', transcriptionWarnings: ['One word unclear.'], printedTextExcluded: true })
   })
 
+  it('sends a teacher-confirmed transcript only in metadata and preserves page file identity and order', async () => {
+    const request = imageRequest()
+    const firstFile = request.pages[0].file
+    const secondFile = request.pages[1].file
+    request.confirmedTranscript = 'Teacher corrected transcript.'
+    const body = { ...successBody(), requestId: request.requestId, essayId: request.essayId, transcript: request.confirmedTranscript, transcriptionWarnings: [], printedTextExcluded: true }
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }))
+    await createRemoteGradingClient({ apiBase: 'http://gateway', fetchImpl }).gradeImages!(request)
+    const form = (fetchImpl.mock.calls[0][1] as RequestInit).body as FormData
+    const metadata = JSON.parse(String(form.get('metadata')))
+    expect(metadata.confirmedTranscript).toBe('Teacher corrected transcript.')
+    expect(JSON.stringify(metadata)).not.toContain('first.png')
+    expect(form.getAll('pages')).toEqual([firstFile, secondFile])
+  })
+
   it('maps multimodal network and malformed responses to safe local failures', async () => {
     const request = imageRequest()
     const unavailable = await createRemoteGradingClient({ apiBase: 'http://gateway', fetchImpl: vi.fn().mockRejectedValue(new Error('SECRET')) }).gradeImages!(request)

@@ -210,6 +210,7 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
       ? {
           ...essay,
           ocrText: text,
+          transcriptSource: 'teacher_confirmed' as const,
           ocrAudit: target.ocrAudit ? confirmOcrAudit(target.ocrAudit, text, timestamp) : undefined,
           updatedAt: timestamp,
         }
@@ -277,7 +278,11 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
       const adapted = adaptAiGradingResult(response, built.request)
       const settled = settleGradingSuccess(
         essaysRef.current, essayId, requestId, adapted.id, response,
-        { acceptMultimodalTranscript: 'requestVersion' in built.request && built.request.requestVersion === 'multimodal-grading-request-v2' },
+        'requestVersion' in built.request && built.request.requestVersion === 'multimodal-grading-request-v2'
+          ? built.request.confirmedTranscript !== undefined
+            ? { transcriptSource: 'teacher_confirmed', confirmedTranscript: built.request.confirmedTranscript }
+            : { transcriptSource: 'kimi_vision' }
+          : {},
       )
       if (!commitEssayTransition(settled, response.createdAt)) return
       setGradingResults((current) => [adapted, ...current.filter((item) => item.essayId !== essayId)])

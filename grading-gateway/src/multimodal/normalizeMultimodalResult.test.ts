@@ -120,4 +120,19 @@ describe('normalizeMultimodalResult', () => {
     expect(normalized).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
     expect(JSON.stringify(normalized)).not.toMatch(/SECRET-RAW|I has a pen/)
   })
+
+  it('requires the model transcript to exactly equal the teacher-confirmed text', () => {
+    const teacherText = ' Teacher corrected transcript. '
+    const payload = validPayload()
+    payload.transcript = teacherText
+    const accepted = normalizeMultimodalResult(payload, { ...context, confirmedTranscript: teacherText })
+    expect(accepted).toMatchObject({ ok: true, result: { transcript: teacherText } })
+
+    const rejectedPayload = validPayload()
+    rejectedPayload.transcript = 'MODEL-DIFFERENT'
+    const rejected = normalizeMultimodalResult(rejectedPayload, { ...context, confirmedTranscript: teacherText })
+    expect(rejected).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
+    expect(JSON.stringify(rejected)).not.toContain('MODEL-DIFFERENT')
+    expect(JSON.stringify(rejected)).not.toContain(teacherText)
+  })
 })

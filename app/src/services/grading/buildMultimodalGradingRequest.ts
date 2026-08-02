@@ -40,6 +40,11 @@ export function buildMultimodalGradingRequest(
   })
   if (pages.some((page) => page === null) || pages.length !== essay.pages.length) return invalid('作文图片不可用。')
 
+  const confirmedTranscript = essay.transcriptSource === 'teacher_confirmed' ? essay.ocrText : undefined
+  if (confirmedTranscript !== undefined && (!confirmedTranscript.trim() || confirmedTranscript.length > 50_000)) {
+    return invalid('Teacher-confirmed transcript is unavailable.')
+  }
+
   const confirmedTask: ConfirmedTaskPackageV2 = {
     taskId: task.id,
     fullScore: task.fullScore,
@@ -58,5 +63,9 @@ export function buildMultimodalGradingRequest(
       reviewWarnings: [...material.reviewWarnings],
     },
   }
-  return { ok: true, request: { requestVersion: 'multimodal-grading-request-v2', requestId, essayId: essay.id, pageIds: [...essay.pageOrder], task: confirmedTask, pages: pages as Array<{ pageId: string; file: File }> } }
+  return { ok: true, request: {
+    requestVersion: 'multimodal-grading-request-v2', requestId, essayId: essay.id, pageIds: [...essay.pageOrder], task: confirmedTask,
+    pages: pages as Array<{ pageId: string; file: File }>,
+    ...(confirmedTranscript !== undefined ? { confirmedTranscript } : {}),
+  } }
 }

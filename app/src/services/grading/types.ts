@@ -102,6 +102,8 @@ export interface MultimodalGradingRequestV2 {
   pageIds: string[]
   task: ConfirmedTaskPackageV2
   pages: Array<{ pageId: string; file: File }>
+  /** Exact teacher-confirmed transcript to grade instead of re-transcribing the images. */
+  confirmedTranscript?: string
 }
 
 export interface AiGradingResultV1 {

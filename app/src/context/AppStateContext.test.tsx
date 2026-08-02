@@ -176,7 +176,7 @@ describe('AppStateContext material-based task creation', () => {
       totalScore: 12, maxScore: 15,
       dimensionScores: [{ dimensionId: 'content', name: 'Content', score: 12, maxScore: 15, weight: 100, reason: 'Reason.', evidence: 'Evidence.', requiresTeacherReview: false }],
       issues: [], sentenceRevisions: [], expressionUpgrades: [], overallComment: 'Comment.', reviewReasons: [], createdAt: '2026-08-02T00:00:00.000Z',
-      transcript: 'Kimi transcript.', transcriptionWarnings: [], printedTextExcluded: true,
+      transcript: request.confirmedTranscript ?? 'Kimi transcript.', transcriptionWarnings: [], printedTextExcluded: true,
     }))
     render(<AppStateProvider gradingClient={{ grade: async (request) => resultFor(request), gradeImages }}><StateProbe /></AppStateProvider>)
     let taskId = ''
@@ -200,6 +200,7 @@ describe('AppStateContext material-based task creation', () => {
     if (!otherEssay) throw new Error('Second queued essay missing')
     await act(async () => { await latestState.gradeEssay(essay.id) })
     expect(gradeImages).toHaveBeenCalledTimes(1)
+    expect(gradeImages.mock.calls[0][0].confirmedTranscript).toBeUndefined()
     expect(latestState.gradingResults.some((item) => item.essayId === essay.id)).toBe(true)
     await act(async () => { await latestState.gradeEssay(otherEssay.id) })
     expect(gradeImages).toHaveBeenCalledTimes(2)
@@ -223,6 +224,11 @@ describe('AppStateContext material-based task creation', () => {
 
     await act(async () => { await latestState.gradeEssay(essay.id) })
     expect(gradeImages).toHaveBeenCalledTimes(3)
+    expect(gradeImages.mock.calls[2][0].confirmedTranscript).toBe('Teacher corrected transcript.')
+    expect(latestState.essays.find((item) => item.id === essay.id)).toMatchObject({
+      ocrText: 'Teacher corrected transcript.', transcriptSource: 'teacher_confirmed',
+    })
+    expect(latestState.essays.find((item) => item.id === essay.id)?.ocrText).not.toBe('Kimi transcript.')
     act(() => latestState.confirmGradingResult(essay.id))
     expect(latestState.tasks.find((item) => item.id === taskId)?.completedEssayCount).toBe(1)
   })

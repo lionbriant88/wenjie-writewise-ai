@@ -18,6 +18,8 @@ export interface GradeEssayProviderInput {
   task: ConfirmedTaskPackageV2
   essayId: string
   pages: GatewayImageInput[]
+  /** Exact text supplied by a teacher after reviewing an earlier transcription. */
+  confirmedTranscript?: string
   signal: AbortSignal
 }
 

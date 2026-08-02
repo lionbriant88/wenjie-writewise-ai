@@ -80,6 +80,34 @@ describe('grading gateway server boundary', () => {
     expect(calls[0]?.[0]).toMatchObject({ requestId: 'image-request', essayId: 'image-essay', pages: [{ pageId: 'essay-2' }, { pageId: 'essay-1' }] })
   })
 
+  it('forwards teacher-confirmed text once and rejects a different model transcript without exposing either text', async () => {
+    const teacherText = 'Teacher corrected transcript.'
+    const metadata = {
+      requestId: 'confirmed-image-request', essayId: 'confirmed-image-essay', pageIds: ['essay-1'], confirmedTranscript: teacherText,
+      task: { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant.', deductionFocus: [], sourceEvidence: [] }], reviewWarnings: [] } },
+    }
+    const calls: Parameters<MultimodalProvider['gradeEssay']>[] = []
+    const matchingProvider: MultimodalProvider = {
+      async generateRubric() { throw new Error('not used') },
+      async gradeEssay(input) { calls.push([input]); return { transcript: teacherText, transcriptionWarnings: [], printedTextExcluded: true, reportedTotalScore: 15, dimensionScores: [{ dimensionId: 'content', score: 15, reason: 'Relevant.', evidence: teacherText }], issues: [], sentenceRevisions: [], expressionUpgrades: [], fullTextRevision: { correctedText: teacherText, improvedText: teacherText, sentencePairs: [], logicNotes: [] }, overallComment: 'Synthetic.', reviewReasons: [] } },
+    }
+    await request(createServer({ multimodalProvider: matchingProvider }))
+      .post('/grading/grade-images').field('metadata', JSON.stringify(metadata))
+      .attach('pages', Buffer.from('essay-page'), { filename: 'essay.png', contentType: 'image/png' }).expect(200)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.[0].confirmedTranscript).toBe(teacherText)
+
+    const differentProvider: MultimodalProvider = {
+      async generateRubric() { throw new Error('not used') },
+      async gradeEssay() { return { transcript: 'MODEL-DIFFERENT', transcriptionWarnings: [], printedTextExcluded: true, reportedTotalScore: 15, dimensionScores: [], issues: [], sentenceRevisions: [], expressionUpgrades: [], fullTextRevision: { correctedText: '', improvedText: '', sentencePairs: [], logicNotes: [] }, overallComment: 'Synthetic.', reviewReasons: [] } },
+    }
+    const response = await request(createServer({ multimodalProvider: differentProvider }))
+      .post('/grading/grade-images').field('metadata', JSON.stringify(metadata))
+      .attach('pages', Buffer.from('essay-page'), { filename: 'essay.png', contentType: 'image/png' }).expect(503)
+    expect(response.body).toMatchObject({ status: 'failed', error: { code: 'provider_invalid_response' } })
+    expect(JSON.stringify(response.body)).not.toMatch(/Teacher corrected transcript|MODEL-DIFFERENT/)
+  })
+
   it('isolates image grading failures without retrying or exposing the raw essay', async () => {
     let calls = 0
     const provider: MultimodalProvider = {

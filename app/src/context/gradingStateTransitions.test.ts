@@ -65,7 +65,7 @@ describe('grading state transitions', () => {
       [{ ...essayRunning('request-1'), ocrText: '', ocrAudit: undefined }],
       'essay-1', 'request-1', 'essay-1-result',
       { ...successResult, transcript: 'Kimi faithfully read this.', transcriptionWarnings: [], printedTextExcluded: true },
-      { acceptMultimodalTranscript: true },
+      { transcriptSource: 'kimi_vision' },
     )
 
     expect(transition.essays[0]).toMatchObject({
@@ -79,11 +79,23 @@ describe('grading state transitions', () => {
     const transition = settleGradingSuccess(
       [current], 'essay-1', 'request-1', 'essay-1-result',
       { ...successResult, transcript: 'Unexpected legacy transcript.', transcriptionWarnings: [], printedTextExcluded: true },
-      { acceptMultimodalTranscript: false },
+      {},
     )
 
     expect(transition.essays[0].ocrText).toBe('Teacher-confirmed legacy text.')
     expect(transition.essays[0].transcriptSource).toBeUndefined()
+  })
+
+  it('keeps the exact teacher-confirmed transcript even when a response differs', () => {
+    const teacherText = 'Teacher corrected transcript.'
+    const transition = settleGradingSuccess(
+      [{ ...essayRunning('request-1'), ocrText: teacherText, transcriptSource: 'teacher_confirmed' }],
+      'essay-1', 'request-1', 'essay-1-result',
+      { ...successResult, transcript: 'Kimi transcript.', transcriptionWarnings: [], printedTextExcluded: true },
+      { transcriptSource: 'teacher_confirmed', confirmedTranscript: teacherText },
+    )
+    expect(transition.essays[0]).toMatchObject({ ocrText: teacherText, transcriptSource: 'teacher_confirmed' })
+    expect(transition.essays[0].ocrText).not.toBe('Kimi transcript.')
   })
 
   it('settles a matching failure into an actionable pending state', () => {

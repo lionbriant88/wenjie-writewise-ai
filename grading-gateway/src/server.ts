@@ -79,12 +79,17 @@ interface ImageGradeMetadata {
   essayId: string
   pageIds: string[]
   task: ConfirmedTaskPackageV2
+  confirmedTranscript?: string
 }
 
 function readMetadataString(value: unknown, maxLength: number): string | null {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
   return trimmed && trimmed.length <= maxLength ? trimmed : null
+}
+
+function readConfirmedTranscript(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() && value.length <= 50_000 ? value : null
 }
 
 function parseImageGradeMetadata(value: unknown): ImageGradeMetadata | null {
@@ -103,12 +108,16 @@ function parseImageGradeMetadata(value: unknown): ImageGradeMetadata | null {
   const fullScore = taskRecord.fullScore
   const rubric = validateGeneratedRubric(taskRecord.rubric)
   if (!taskId || typeof fullScore !== 'number' || !Number.isInteger(fullScore) || fullScore < 1 || fullScore > 100 || !rubric.ok) return null
+  const hasConfirmedTranscript = Object.prototype.hasOwnProperty.call(parsedRecord, 'confirmedTranscript')
+  const confirmedTranscript = hasConfirmedTranscript ? readConfirmedTranscript(parsedRecord.confirmedTranscript) : undefined
+  if (hasConfirmedTranscript && confirmedTranscript === null) return null
   return {
     requestId, essayId, pageIds,
     task: {
       taskId, fullScore, materialSummary: rubric.value.materialSummary, writingRequirements: rubric.value.writingRequirements,
       constraints: rubric.value.constraints, rubric: rubric.value,
     },
+    ...(typeof confirmedTranscript === 'string' ? { confirmedTranscript } : {}),
   }
 }
 
@@ -211,8 +220,8 @@ export function createServer(options: CreateServerOptions = {}) {
     const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 60_000)
     try {
       const provider = options.multimodalProvider ?? getMultimodalProvider(options.providerName ?? 'mock')
-      const payload = await provider.gradeEssay({ requestId: metadata.requestId, task: metadata.task, essayId: metadata.essayId, pages: images.value.pages, signal: controller.signal })
-      const normalized = normalizeMultimodalResult(payload, { requestId: metadata.requestId, essayId: metadata.essayId, task: metadata.task, provider: 'remote', createdAt: (options.now ?? (() => new Date().toISOString()))() })
+      const payload = await provider.gradeEssay({ requestId: metadata.requestId, task: metadata.task, essayId: metadata.essayId, pages: images.value.pages, confirmedTranscript: metadata.confirmedTranscript, signal: controller.signal })
+      const normalized = normalizeMultimodalResult(payload, { requestId: metadata.requestId, essayId: metadata.essayId, task: metadata.task, provider: 'remote', confirmedTranscript: metadata.confirmedTranscript, createdAt: (options.now ?? (() => new Date().toISOString()))() })
       if (!normalized.ok) { response.status(503).json(failure(metadata.requestId, normalized.error, true)); return }
       response.json(normalized.result)
     } catch (error) {

@@ -33,7 +33,7 @@ export class KimiMultimodalProvider implements MultimodalProvider {
 
   async gradeEssay(input: GradeEssayProviderInput): Promise<unknown> {
     return this.transport.complete({
-      messages: buildEssayGradingMessages({ task: input.task, essayId: input.essayId, pages: input.pages }),
+      messages: buildEssayGradingMessages({ task: input.task, essayId: input.essayId, pages: input.pages, confirmedTranscript: input.confirmedTranscript }),
       schemaName: 'essay-grading', schema: essayGradingSchema, signal: input.signal,
     })
   }

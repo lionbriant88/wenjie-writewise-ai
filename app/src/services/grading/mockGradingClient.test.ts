@@ -47,6 +47,15 @@ describe('createMockGradingClient', () => {
     }
     await expect(createMockGradingClient().gradeImages!(request)).resolves.toMatchObject({ status: 'success', provider: 'mock', transcript: expect.any(String), printedTextExcluded: true })
   })
+
+  it('returns the exact teacher-confirmed transcript for a regrade', async () => {
+    const request: MultimodalGradingRequestV2 = {
+      requestVersion: 'multimodal-grading-request-v2', requestId: 'image-request-confirmed', essayId: 'image-essay', pageIds: ['page-1'], confirmedTranscript: 'Teacher corrected transcript.',
+      task: { taskId: 'task-image', fullScore: 15, materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], rubric: { taskName: 'Task', materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], reviewWarnings: [], dimensions: [{ id: 'all', name: 'All', weight: 100, description: 'All', deductionFocus: [], sourceEvidence: ['Material.'] }] } },
+      pages: [{ pageId: 'page-1', file: new File(['image'], 'page.png', { type: 'image/png' }) }],
+    }
+    await expect(createMockGradingClient().gradeImages!(request)).resolves.toMatchObject({ transcript: 'Teacher corrected transcript.' })
+  })
   it.each(['practical_writing', 'continuation_writing'] as const)(
     'returns a contract-valid local mock for %s',
     async (writingGenre) => {

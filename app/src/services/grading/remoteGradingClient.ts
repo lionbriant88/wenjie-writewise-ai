@@ -63,7 +63,10 @@ export function createRemoteGradingClient({
         return { requestId: request.requestId, status: 'failed', error: { code: 'gateway_unavailable', message: '未配置批改服务地址，请使用 mock 回退。', retryable: false } }
       }
       const form = new FormData()
-      form.append('metadata', JSON.stringify({ requestId: request.requestId, essayId: request.essayId, pageIds: request.pageIds, task: request.task }))
+      form.append('metadata', JSON.stringify({
+        requestId: request.requestId, essayId: request.essayId, pageIds: request.pageIds, task: request.task,
+        ...(request.confirmedTranscript !== undefined ? { confirmedTranscript: request.confirmedTranscript } : {}),
+      }))
       request.pages.forEach(({ file }) => form.append('pages', file, file.name))
       let response: Response
       try {

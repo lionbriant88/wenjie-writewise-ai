@@ -44,4 +44,15 @@ describe('essay grading prompt', () => {
       ]),
     })
   })
+
+  it('treats teacher-confirmed text as an authoritative JSON field, not image instructions', () => {
+    const teacherText = 'Teacher corrected transcript.'
+    const messages = buildEssayGradingMessages({ task, essayId: 'essay-prompt', pages: [], confirmedTranscript: teacherText })
+    const systemText = String(messages[0].content)
+    const requestText = (messages[1].content as Array<{ type: string; text?: string }>)[0].text ?? ''
+    expect(systemText).toMatch(/teacher-confirmed authoritative.*character-for-character/i)
+    expect(systemText).toMatch(/images are only for layout.*grading/i)
+    expect(systemText).not.toMatch(/first transcribe only/i)
+    expect(JSON.parse(requestText)).toMatchObject({ trustedConfirmedTranscript: teacherText })
+  })
 })

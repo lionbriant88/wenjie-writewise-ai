@@ -7,7 +7,7 @@ import type { ConfirmedTaskPackageV2 } from './types.js'
 
 export interface MultimodalGradingResult extends AiGradingResultV1 { transcript: string; transcriptionWarnings: string[]; printedTextExcluded: boolean }
 export type MultimodalNormalizationResult = { ok: true; result: MultimodalGradingResult } | { ok: false; error: { code: 'provider_invalid_response'; message: string; retryable: true } }
-export interface MultimodalNormalizationContext { requestId: string; essayId: string; task: ConfirmedTaskPackageV2; provider: GradingProviderName; createdAt: string }
+export interface MultimodalNormalizationContext { requestId: string; essayId: string; task: ConfirmedTaskPackageV2; provider: GradingProviderName; createdAt: string; confirmedTranscript?: string }
 
 const INVALID_MESSAGE = 'AI grading result cannot be used safely.'
 const CHANGE_TYPES = new Set(['grammar', 'spelling', 'word_choice', 'sentence_upgrade', 'coherence', 'logic_bridge', 'delete_suggestion', 'replace_sentence', 'reference_clarification'])
@@ -92,7 +92,12 @@ function rawScoresAreBounded(value: unknown, context: MultimodalNormalizationCon
 
 export function normalizeMultimodalResult(payload: unknown, context: MultimodalNormalizationContext): MultimodalNormalizationResult {
   if (!isRecord(payload)) return invalid()
-  const transcript = text(payload.transcript, 50_000), transcriptionWarnings = textArray(payload.transcriptionWarnings, 50, 1_000)
+  const transcript = context.confirmedTranscript !== undefined
+    ? typeof payload.transcript === 'string' && payload.transcript === context.confirmedTranscript
+      ? context.confirmedTranscript
+      : null
+    : text(payload.transcript, 50_000)
+  const transcriptionWarnings = textArray(payload.transcriptionWarnings, 50, 1_000)
   if (!transcript || !transcriptionWarnings || typeof payload.printedTextExcluded !== 'boolean') return invalid()
   const request = requestFor(context, transcript)
   const issues = splitIssues(payload.issues, transcript, context.essayId)

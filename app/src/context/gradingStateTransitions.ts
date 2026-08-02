@@ -58,12 +58,14 @@ export function settleGradingSuccess(
   requestId: string,
   resultId: string,
   response: AiGradingResultV1,
-  options: { acceptMultimodalTranscript: boolean } = { acceptMultimodalTranscript: false },
+  options: { transcriptSource?: 'kimi_vision' | 'teacher_confirmed'; confirmedTranscript?: string } = {},
 ): EssayTransition {
   if (response.requestId !== requestId || response.essayId !== essayId) return { applied: false, essays }
   return replaceCurrentAttempt(essays, essayId, requestId, (essay) => ({
     ...essay,
-    ...(options.acceptMultimodalTranscript && response.transcript
+    ...(options.transcriptSource === 'teacher_confirmed' && options.confirmedTranscript !== undefined
+      ? { ocrText: options.confirmedTranscript, transcriptSource: 'teacher_confirmed' as const }
+      : options.transcriptSource === 'kimi_vision' && response.transcript
       ? { ocrText: response.transcript, transcriptSource: 'kimi_vision' as const }
       : {}),
     status: 'grading_ready',
