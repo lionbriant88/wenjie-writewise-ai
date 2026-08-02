@@ -95,7 +95,7 @@ describe('CreateTaskPage', () => {
     expect(screen.getByRole('button', { name: '重新生成评分标准' })).toBeInTheDocument()
   })
 
-  it('renders an editable generated rubric, resets confirmation on edits, and blocks non-100 weights', async () => {
+  it('renders an editable generated rubric and requires a new confirmation after a legal rubric edit', async () => {
     const user = userEvent.setup()
     generate.mockResolvedValue({ requestId: 'rubric-1', status: 'success', rubric: generatedRubric })
     renderCreateTaskPage()
@@ -106,10 +106,14 @@ describe('CreateTaskPage', () => {
     expect(screen.getByRole('button', { name: '确认并创建任务' })).toBeEnabled()
 
     await user.clear(screen.getByLabelText('内容权重'))
-    await user.type(screen.getByLabelText('内容权重'), '50')
-    expect(screen.getByText('评分维度权重合计必须为 100%。')).toBeInTheDocument()
+    await user.type(screen.getByLabelText('内容权重'), '55')
+    await user.clear(screen.getByLabelText('语言权重'))
+    await user.type(screen.getByLabelText('语言权重'), '45')
+    expect(screen.queryByText('评分维度权重合计必须为 100%。')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '确认并创建任务' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '确认采用该标准' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '确认采用该标准' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: '确认采用该标准' }))
+    expect(screen.getByRole('button', { name: '确认并创建任务' })).toBeEnabled()
   })
 
   it('preserves source evidence in the genre-free task input and sends ordered original files to the rubric client', async () => {
@@ -187,8 +191,10 @@ describe('CreateTaskPage', () => {
     await generateDraft(user)
     expect(screen.getByRole('button', { name: '确认采用该标准' })).toBeEnabled()
     fireEvent.change(screen.getByLabelText('内容权重'), { target: { value: '0' } })
+    fireEvent.change(screen.getByLabelText('语言权重'), { target: { value: '100' } })
     expect(screen.getByRole('button', { name: '确认采用该标准' })).toBeDisabled()
     fireEvent.change(screen.getByLabelText('内容权重'), { target: { value: '-1' } })
+    fireEvent.change(screen.getByLabelText('语言权重'), { target: { value: '101' } })
     expect(screen.getByRole('button', { name: '确认采用该标准' })).toBeDisabled()
     fireEvent.change(screen.getByLabelText('内容权重'), { target: { value: '' } })
     expect(screen.getByRole('button', { name: '确认采用该标准' })).toBeDisabled()
