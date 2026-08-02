@@ -35,6 +35,20 @@ describe('buildMultimodalGradingRequest', () => {
     expect(result).toMatchObject({ ok: true, request: { confirmedTranscript: teacherText } })
   })
 
+  it('accepts exactly 50,000 UTF-16 code units and rejects 50,001 without trimming teacher text', () => {
+    const exactly50k = `\n${'x'.repeat(49_997)} \n`
+    expect(exactly50k).toHaveLength(50_000)
+    const accepted = buildMultimodalGradingRequest(task, {
+      ...essay(new File(['image'], 'essay.png', { type: 'image/png' })), ocrText: exactly50k, transcriptSource: 'teacher_confirmed',
+    }, 'request-1')
+    expect(accepted).toMatchObject({ ok: true, request: { confirmedTranscript: exactly50k } })
+
+    const rejected = buildMultimodalGradingRequest(task, {
+      ...essay(new File(['image'], 'essay.png', { type: 'image/png' })), ocrText: `${exactly50k}x`, transcriptSource: 'teacher_confirmed',
+    }, 'request-1')
+    expect(rejected).toMatchObject({ ok: false, error: { code: 'invalid_request' } })
+  })
+
   it.each([
     ['missing image', essay(), task, 'request-1'],
     ['unconfirmed rubric', essay(new File([], 'a.png')), { ...task, rubricDraft: { ...task.rubricDraft!, status: 'draft' as const } }, 'request-1'],

@@ -97,15 +97,45 @@ describe('grading gateway server boundary', () => {
     expect(calls).toHaveLength(1)
     expect(calls[0]?.[0].confirmedTranscript).toBe(teacherText)
 
+    let mismatchCalls = 0
     const differentProvider: MultimodalProvider = {
       async generateRubric() { throw new Error('not used') },
-      async gradeEssay() { return { transcript: 'MODEL-DIFFERENT', transcriptionWarnings: [], printedTextExcluded: true, reportedTotalScore: 15, dimensionScores: [], issues: [], sentenceRevisions: [], expressionUpgrades: [], fullTextRevision: { correctedText: '', improvedText: '', sentencePairs: [], logicNotes: [] }, overallComment: 'Synthetic.', reviewReasons: [] } },
+      async gradeEssay() { mismatchCalls += 1; return { transcript: 'MODEL-DIFFERENT', transcriptionWarnings: [], printedTextExcluded: true, reportedTotalScore: 15, dimensionScores: [], issues: [], sentenceRevisions: [], expressionUpgrades: [], fullTextRevision: { correctedText: '', improvedText: '', sentencePairs: [], logicNotes: [] }, overallComment: 'Synthetic.', reviewReasons: [] } },
     }
     const response = await request(createServer({ multimodalProvider: differentProvider }))
       .post('/grading/grade-images').field('metadata', JSON.stringify(metadata))
       .attach('pages', Buffer.from('essay-page'), { filename: 'essay.png', contentType: 'image/png' }).expect(503)
     expect(response.body).toMatchObject({ status: 'failed', error: { code: 'provider_invalid_response' } })
     expect(JSON.stringify(response.body)).not.toMatch(/Teacher corrected transcript|MODEL-DIFFERENT/)
+    expect(mismatchCalls).toBe(1)
+  })
+
+  it('accepts exactly 50,000 confirmed transcript code units and safely rejects 50,001', async () => {
+    const exactly50k = `\n${'x'.repeat(49_997)} \n`
+    expect(exactly50k).toHaveLength(50_000)
+    let calls = 0
+    const provider: MultimodalProvider = {
+      async generateRubric() { throw new Error('not used') },
+      async gradeEssay(input) {
+        calls += 1
+        const transcript = input.confirmedTranscript ?? ''
+        return { transcript, transcriptionWarnings: [], printedTextExcluded: true, reportedTotalScore: 15, dimensionScores: [{ dimensionId: 'content', score: 15, reason: 'Relevant.', evidence: transcript }], issues: [], sentenceRevisions: [], expressionUpgrades: [], fullTextRevision: { correctedText: transcript, improvedText: transcript, sentencePairs: [], logicNotes: [] }, overallComment: 'Synthetic.', reviewReasons: [] }
+      },
+    }
+    const task = { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant.', deductionFocus: [], sourceEvidence: [] }], reviewWarnings: [] } }
+    const app = createServer({ multimodalProvider: provider })
+    await request(app).post('/grading/grade-images')
+      .field('metadata', JSON.stringify({ requestId: 'boundary-50k', essayId: 'boundary-essay', pageIds: ['essay-1'], task, confirmedTranscript: exactly50k }))
+      .attach('pages', Buffer.from('essay-page'), { filename: 'essay.png', contentType: 'image/png' }).expect(200)
+    expect(calls).toBe(1)
+
+    const marker = 'PRIVATE-TOO-LONG-'
+    const response = await request(app).post('/grading/grade-images')
+      .field('metadata', JSON.stringify({ requestId: 'boundary-50k-plus', essayId: 'boundary-essay', pageIds: ['essay-1'], task, confirmedTranscript: `${marker}${'x'.repeat(50_001 - marker.length)}` }))
+      .attach('pages', Buffer.from('essay-page'), { filename: 'essay.png', contentType: 'image/png' }).expect(400)
+    expect(response.body).toMatchObject({ requestId: 'unavailable', status: 'failed', error: { code: 'invalid_request', retryable: false } })
+    expect(JSON.stringify(response.body)).not.toContain(marker)
+    expect(calls).toBe(1)
   })
 
   it('isolates image grading failures without retrying or exposing the raw essay', async () => {
