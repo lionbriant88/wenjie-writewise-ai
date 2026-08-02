@@ -83,7 +83,7 @@ describe('grading gateway server boundary', () => {
   it('forwards teacher-confirmed text once and rejects a different model transcript without exposing either text', async () => {
     const teacherText = 'Teacher corrected transcript.'
     const metadata = {
-      requestId: 'confirmed-image-request', essayId: 'confirmed-image-essay', pageIds: ['essay-1'], confirmedTranscript: teacherText,
+      requestId: 'confirmed-image-request', essayId: 'confirmed-image-essay', pageIds: [], confirmedTranscript: teacherText,
       task: { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant.', deductionFocus: [], sourceEvidence: [] }], reviewWarnings: [] } },
     }
     const calls: Parameters<MultimodalProvider['gradeEssay']>[] = []
@@ -92,10 +92,9 @@ describe('grading gateway server boundary', () => {
       async gradeEssay(input) { calls.push([input]); return { transcript: teacherText, transcriptionWarnings: [], printedTextExcluded: true, reportedTotalScore: 15, dimensionScores: [{ dimensionId: 'content', score: 15, reason: 'Relevant.', evidence: teacherText }], issues: [], sentenceRevisions: [], expressionUpgrades: [], fullTextRevision: { correctedText: teacherText, improvedText: teacherText, sentencePairs: [], logicNotes: [] }, overallComment: 'Synthetic.', reviewReasons: [] } },
     }
     await request(createServer({ multimodalProvider: matchingProvider }))
-      .post('/grading/grade-images').field('metadata', JSON.stringify(metadata))
-      .attach('pages', Buffer.from('essay-page'), { filename: 'essay.png', contentType: 'image/png' }).expect(200)
+      .post('/grading/grade-images').field('metadata', JSON.stringify(metadata)).expect(200)
     expect(calls).toHaveLength(1)
-    expect(calls[0]?.[0].confirmedTranscript).toBe(teacherText)
+    expect(calls[0]?.[0]).toMatchObject({ confirmedTranscript: teacherText, pages: [] })
 
     let mismatchCalls = 0
     const differentProvider: MultimodalProvider = {
@@ -103,11 +102,26 @@ describe('grading gateway server boundary', () => {
       async gradeEssay() { mismatchCalls += 1; return { transcript: 'MODEL-DIFFERENT', transcriptionWarnings: [], printedTextExcluded: true, reportedTotalScore: 15, dimensionScores: [], issues: [], sentenceRevisions: [], expressionUpgrades: [], fullTextRevision: { correctedText: '', improvedText: '', sentencePairs: [], logicNotes: [] }, overallComment: 'Synthetic.', reviewReasons: [] } },
     }
     const response = await request(createServer({ multimodalProvider: differentProvider }))
-      .post('/grading/grade-images').field('metadata', JSON.stringify(metadata))
-      .attach('pages', Buffer.from('essay-page'), { filename: 'essay.png', contentType: 'image/png' }).expect(503)
+      .post('/grading/grade-images').field('metadata', JSON.stringify(metadata)).expect(503)
     expect(response.body).toMatchObject({ status: 'failed', error: { code: 'provider_invalid_response' } })
     expect(JSON.stringify(response.body)).not.toMatch(/Teacher corrected transcript|MODEL-DIFFERENT/)
     expect(mismatchCalls).toBe(1)
+  })
+
+  it('rejects image files attached to a teacher-confirmed text regrade', async () => {
+    let calls = 0
+    const provider: MultimodalProvider = {
+      async generateRubric() { throw new Error('not used') },
+      async gradeEssay() { calls += 1; throw new Error('must not run') },
+    }
+    const metadata = {
+      requestId: 'confirmed-with-image', essayId: 'confirmed-essay', pageIds: [], confirmedTranscript: 'Teacher-confirmed text.',
+      task: { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant.', deductionFocus: [], sourceEvidence: [] }], reviewWarnings: [] } },
+    }
+    await request(createServer({ multimodalProvider: provider }))
+      .post('/grading/grade-images').field('metadata', JSON.stringify(metadata))
+      .attach('pages', Buffer.from('unexpected-image'), { filename: 'essay.png', contentType: 'image/png' }).expect(400)
+    expect(calls).toBe(0)
   })
 
   it('accepts exactly 50,000 confirmed transcript code units and safely rejects 50,001', async () => {
@@ -125,14 +139,12 @@ describe('grading gateway server boundary', () => {
     const task = { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant.', deductionFocus: [], sourceEvidence: [] }], reviewWarnings: [] } }
     const app = createServer({ multimodalProvider: provider })
     await request(app).post('/grading/grade-images')
-      .field('metadata', JSON.stringify({ requestId: 'boundary-50k', essayId: 'boundary-essay', pageIds: ['essay-1'], task, confirmedTranscript: exactly50k }))
-      .attach('pages', Buffer.from('essay-page'), { filename: 'essay.png', contentType: 'image/png' }).expect(200)
+      .field('metadata', JSON.stringify({ requestId: 'boundary-50k', essayId: 'boundary-essay', pageIds: [], task, confirmedTranscript: exactly50k })).expect(200)
     expect(calls).toBe(1)
 
     const marker = 'PRIVATE-TOO-LONG-'
     const response = await request(app).post('/grading/grade-images')
-      .field('metadata', JSON.stringify({ requestId: 'boundary-50k-plus', essayId: 'boundary-essay', pageIds: ['essay-1'], task, confirmedTranscript: `${marker}${'x'.repeat(50_001 - marker.length)}` }))
-      .attach('pages', Buffer.from('essay-page'), { filename: 'essay.png', contentType: 'image/png' }).expect(400)
+      .field('metadata', JSON.stringify({ requestId: 'boundary-50k-plus', essayId: 'boundary-essay', pageIds: [], task, confirmedTranscript: `${marker}${'x'.repeat(50_001 - marker.length)}` })).expect(400)
     expect(response.body).toMatchObject({ requestId: 'unavailable', status: 'failed', error: { code: 'invalid_request', retryable: false } })
     expect(JSON.stringify(response.body)).not.toContain(marker)
     expect(calls).toBe(1)

@@ -507,6 +507,31 @@ describe('AppStateContext grading lifecycle', () => {
     secondView.unmount()
   })
 
+  it('prevents a second essay from starting while any grading request is in flight', async () => {
+    let resolveFirst!: (value: ReturnType<typeof resultFor>) => void
+    const firstResponse = new Promise<ReturnType<typeof resultFor>>((resolve) => { resolveFirst = resolve })
+    const grade = vi.fn((request: GradingRequestV1) => firstResponse.then(() => resultFor(request)))
+    renderGradingState({ grade })
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-02T01:00:00.000Z'))
+    const first = createConfirmedEssay()
+    vi.setSystemTime(new Date('2026-08-02T01:00:01.000Z'))
+    const second = createConfirmedEssay()
+    vi.useRealTimers()
+    let firstRun!: Promise<void>
+    let blockedRun!: Promise<void>
+
+    act(() => {
+      firstRun = latestState.gradeEssay(first.essayId)
+      blockedRun = latestState.gradeEssay(second.essayId)
+    })
+
+    expect(grade).toHaveBeenCalledTimes(1)
+    resolveFirst(resultFor(grade.mock.calls[0][0]))
+    await act(async () => { await Promise.all([firstRun, blockedRun]) })
+    expect(latestState.essays.find((essay) => essay.id === second.essayId)?.status).toBe('pending_grading')
+  })
+
   it('does not call the client for an invalid request and uses local mock only on fallback', async () => {
     const grade = vi.fn()
     renderGradingState({ grade })

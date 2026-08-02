@@ -39,7 +39,8 @@ function invalidResponseError() {
 
 function mapKimiHttpStatus(status: number) {
   if (status === 401) return new GradingProviderError('provider_auth_failed', '真实 AI Provider 认证失败。', false)
-  if (status === 402 || status === 403) return new GradingProviderError('provider_balance_unavailable', '真实 AI Provider 额度不可用。', false)
+  if (status === 402) return new GradingProviderError('provider_balance_unavailable', '真实 AI Provider 额度不可用。', false)
+  if (status === 403) return new GradingProviderError('provider_request_rejected', '真实 AI Provider 拒绝了当前模型或接口访问。', false)
   if (status === 429) return new GradingProviderError('provider_rate_limited', '真实 AI Provider 请求过于频繁。', true)
   if (status === 400 || status === 422) return new GradingProviderError('provider_request_rejected', '真实 AI Provider 拒绝了请求。', false)
   return unavailableError()

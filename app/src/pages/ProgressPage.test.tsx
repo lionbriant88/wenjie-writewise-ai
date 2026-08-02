@@ -73,6 +73,7 @@ describe('ProgressPage', () => {
     renderProgressFlow('task-2', { grade })
     await user.click(screen.getByRole('button', { name: '开始批改' }))
     expect(await screen.findByRole('button', { name: '批改中' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: '开始批改' })).not.toBeInTheDocument()
     expect(grade).toHaveBeenCalledTimes(1)
     const request = grade.mock.calls[0][0]
     resolve({

@@ -85,7 +85,7 @@ describe('createKimiTransport', () => {
   it.each([
     [401, 'provider_auth_failed', false],
     [402, 'provider_balance_unavailable', false],
-    [403, 'provider_balance_unavailable', false],
+    [403, 'provider_request_rejected', false],
     [429, 'provider_rate_limited', true],
   ] as const)('maps HTTP %s without exposing upstream data', async (status, code, retryable) => {
     const transport = createKimiTransport({

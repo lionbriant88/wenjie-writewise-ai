@@ -8,7 +8,7 @@ import { normalizeMultimodalResult } from './multimodal/normalizeMultimodalResul
 import { validateGeneratedRubric } from './multimodal/validateRubric.js'
 import { buildGradingPrompt } from './promptBuilder.js'
 import { getMultimodalProvider, getProvider } from './providers/index.js'
-import type { MultimodalProvider } from './providers/multimodalProviderTypes.js'
+import type { GatewayImageInput, MultimodalProvider } from './providers/multimodalProviderTypes.js'
 import { GradingProviderError, type GradingProvider } from './providers/providerTypes.js'
 import { validateGradingRequest } from './validateGradingRequest.js'
 import type { ConfirmedTaskPackageV2 } from './multimodal/types.js'
@@ -100,7 +100,11 @@ function parseImageGradeMetadata(value: unknown): ImageGradeMetadata | null {
   if (!parsedRecord) return null
   const requestId = readMetadataString(parsedRecord.requestId, 128)
   const essayId = readMetadataString(parsedRecord.essayId, 128)
-  if (!requestId || !essayId || !Array.isArray(parsedRecord.pageIds) || parsedRecord.pageIds.length < 1 || parsedRecord.pageIds.length > MAX_RUBRIC_PAGES) return null
+  const hasConfirmedTranscript = Object.prototype.hasOwnProperty.call(parsedRecord, 'confirmedTranscript')
+  const confirmedTranscript = hasConfirmedTranscript ? readConfirmedTranscript(parsedRecord.confirmedTranscript) : undefined
+  if (hasConfirmedTranscript && confirmedTranscript === null) return null
+  if (!requestId || !essayId || !Array.isArray(parsedRecord.pageIds) || parsedRecord.pageIds.length > MAX_RUBRIC_PAGES) return null
+  if (hasConfirmedTranscript ? parsedRecord.pageIds.length !== 0 : parsedRecord.pageIds.length < 1) return null
   const pageIds = parsedRecord.pageIds.map((pageId: unknown) => readMetadataString(pageId, 128))
   const taskRecord = errorRecord(parsedRecord.task)
   if (!pageIds.every((pageId): pageId is string => pageId !== null) || new Set(pageIds).size !== pageIds.length || !taskRecord) return null
@@ -108,9 +112,6 @@ function parseImageGradeMetadata(value: unknown): ImageGradeMetadata | null {
   const fullScore = taskRecord.fullScore
   const rubric = validateGeneratedRubric(taskRecord.rubric)
   if (!taskId || typeof fullScore !== 'number' || !Number.isInteger(fullScore) || fullScore < 1 || fullScore > 100 || !rubric.ok) return null
-  const hasConfirmedTranscript = Object.prototype.hasOwnProperty.call(parsedRecord, 'confirmedTranscript')
-  const confirmedTranscript = hasConfirmedTranscript ? readConfirmedTranscript(parsedRecord.confirmedTranscript) : undefined
-  if (hasConfirmedTranscript && confirmedTranscript === null) return null
   return {
     requestId, essayId, pageIds,
     task: {
@@ -211,16 +212,25 @@ export function createServer(options: CreateServerOptions = {}) {
       response.status(400).json(failure(imageGradeRequestId(request.body), { code: 'invalid_request', message: 'Image grading request is invalid.' }, false))
       return
     }
-    const images = validateRubricMultipart({ requestId: metadata.requestId, fullScore: String(metadata.task.fullScore), pageIds: JSON.stringify(metadata.pageIds) }, files)
-    if (!images.ok) {
-      response.status(images.error.code === 'request_too_large' ? 413 : 400).json(failure(metadata.requestId, images.error, false))
-      return
+    let pages: GatewayImageInput[] = []
+    if (metadata.confirmedTranscript !== undefined) {
+      if (files?.length) {
+        response.status(400).json(failure(metadata.requestId, { code: 'invalid_request', message: 'Confirmed-text regrade must not include images.' }, false))
+        return
+      }
+    } else {
+      const images = validateRubricMultipart({ requestId: metadata.requestId, fullScore: String(metadata.task.fullScore), pageIds: JSON.stringify(metadata.pageIds) }, files)
+      if (!images.ok) {
+        response.status(images.error.code === 'request_too_large' ? 413 : 400).json(failure(metadata.requestId, images.error, false))
+        return
+      }
+      pages = images.value.pages
     }
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 60_000)
     try {
       const provider = options.multimodalProvider ?? getMultimodalProvider(options.providerName ?? 'mock')
-      const payload = await provider.gradeEssay({ requestId: metadata.requestId, task: metadata.task, essayId: metadata.essayId, pages: images.value.pages, confirmedTranscript: metadata.confirmedTranscript, signal: controller.signal })
+      const payload = await provider.gradeEssay({ requestId: metadata.requestId, task: metadata.task, essayId: metadata.essayId, pages, confirmedTranscript: metadata.confirmedTranscript, signal: controller.signal })
       const normalized = normalizeMultimodalResult(payload, { requestId: metadata.requestId, essayId: metadata.essayId, task: metadata.task, provider: 'remote', confirmedTranscript: metadata.confirmedTranscript, createdAt: (options.now ?? (() => new Date().toISOString()))() })
       if (!normalized.ok) { response.status(503).json(failure(metadata.requestId, normalized.error, true)); return }
       response.json(normalized.result)

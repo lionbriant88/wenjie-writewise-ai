@@ -56,10 +56,8 @@ describe('createRemoteGradingClient', () => {
     expect(result).toMatchObject({ status: 'success', transcript: 'Student text.', transcriptionWarnings: ['One word unclear.'], printedTextExcluded: true })
   })
 
-  it('sends a teacher-confirmed transcript only in metadata and preserves page file identity and order', async () => {
+  it('sends a teacher-confirmed transcript without page IDs or image files', async () => {
     const request = imageRequest()
-    const firstFile = request.pages[0].file
-    const secondFile = request.pages[1].file
     request.confirmedTranscript = 'Teacher corrected transcript.'
     const body = { ...successBody(), requestId: request.requestId, essayId: request.essayId, transcript: request.confirmedTranscript, transcriptionWarnings: [], printedTextExcluded: true }
     const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }))
@@ -67,8 +65,8 @@ describe('createRemoteGradingClient', () => {
     const form = (fetchImpl.mock.calls[0][1] as RequestInit).body as FormData
     const metadata = JSON.parse(String(form.get('metadata')))
     expect(metadata.confirmedTranscript).toBe('Teacher corrected transcript.')
-    expect(JSON.stringify(metadata)).not.toContain('first.png')
-    expect(form.getAll('pages')).toEqual([firstFile, secondFile])
+    expect(metadata.pageIds).toEqual([])
+    expect(form.getAll('pages')).toEqual([])
   })
 
   it('maps multimodal network and malformed responses to safe local failures', async () => {

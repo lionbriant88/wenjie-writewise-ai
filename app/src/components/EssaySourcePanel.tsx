@@ -75,9 +75,11 @@ export function EssaySourcePanel({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h3 className="font-semibold text-slate-950">学生作文识别文本</h3>
-          <p className="mt-1 text-xs font-semibold text-amber-700">
-            识别置信度 {formatConfidence(essay.ocrConfidence)}
-          </p>
+          {essay.ocrConfidence > 0 ? (
+            <p className="mt-1 text-xs font-semibold text-amber-700">
+              识别置信度 {formatConfidence(essay.ocrConfidence)}
+            </p>
+          ) : null}
           {essay.transcriptSource === 'kimi_vision' ? (
             <p className="mt-1 text-xs text-slate-500">Kimi 图像识别结果，建议结合原图复核。</p>
           ) : null}

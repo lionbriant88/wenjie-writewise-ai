@@ -44,12 +44,14 @@ function EssayAction({
   retryGradeEssay,
   fallbackToMockGrading,
   markEssayManual,
+  gradingBlocked,
 }: {
   essay: Essay
   taskId: string
   retryGradeEssay: (essayId: string) => Promise<void>
   fallbackToMockGrading: (essayId: string) => Promise<void>
   markEssayManual: (essayId: string) => void
+  gradingBlocked: boolean
 }) {
   if (essay.status === 'grading_ready') {
     return (
@@ -77,15 +79,17 @@ function EssayAction({
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
+            disabled={gradingBlocked}
             onClick={() => void retryGradeEssay(essay.id)}
-            className="rounded-lg bg-blue-700 px-3 py-2 text-xs font-semibold text-white"
+            className="rounded-lg bg-blue-700 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
             重试批改
           </button>
           <button
             type="button"
+            disabled={gradingBlocked}
             onClick={() => void fallbackToMockGrading(essay.id)}
-            className="rounded-lg border border-blue-200 px-3 py-2 text-xs font-semibold text-blue-800"
+            className="rounded-lg border border-blue-200 px-3 py-2 text-xs font-semibold text-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
             使用 mock 回退
           </button>
@@ -119,7 +123,8 @@ export function ProgressPage() {
   const taskEssays = findEssaysByTask(essays, taskId)
   const queueStats = getProgressQueueStats(taskEssays)
   const filteredEssays = filterEssaysByProgressTab(taskEssays, activeTab)
-  const nextProcessableEssay = taskEssays.find((essay) => (
+  const gradingBlocked = taskEssays.some((essay) => essay.status === 'grading' || essay.gradingRun?.status === 'running')
+  const nextProcessableEssay = gradingBlocked ? undefined : taskEssays.find((essay) => (
     isProcessableEssayStatus(essay.status) && essay.gradingRun?.status !== 'failed'
   ))
   const hasExceptions = taskEssays.some((essay) => essay.status === 'needs_review')
@@ -229,6 +234,7 @@ export function ProgressPage() {
                       retryGradeEssay={retryGradeEssay}
                       fallbackToMockGrading={fallbackToMockGrading}
                       markEssayManual={markEssayManual}
+                      gradingBlocked={gradingBlocked}
                     />
                   </div>
                 </article>

@@ -25,59 +25,59 @@ This plan implements the v0.1 contract only:
 
 ### Frontend
 
-- Create `app/src/services/ocr/types.ts`  
+- Create `app/src/services/ocr/types.ts`
   Defines `OcrMode`, `OcrRunStatus`, request/response types, and the `OcrClient` interface.
 
-- Create `app/src/services/ocr/mockOcrClient.ts`  
+- Create `app/src/services/ocr/mockOcrClient.ts`
   Generates unified OCR results from current essay groups and page order.
 
-- Create `app/src/services/ocr/normalizeOcrResult.ts`  
+- Create `app/src/services/ocr/normalizeOcrResult.ts`
   Normalizes OCR page results, preserves request order, detects empty text, and produces draft strings.
 
-- Create `app/src/services/ocr/remoteOcrClient.ts`  
+- Create `app/src/services/ocr/remoteOcrClient.ts`
   Calls `VITE_OCR_API_BASE` with `FormData`, translates network/config errors into unified failed results.
 
-- Create `app/src/services/ocr/ocrClient.ts`  
+- Create `app/src/services/ocr/ocrClient.ts`
   Picks mock or remote client using non-secret `VITE_OCR_MODE` and explicit page UI mode.
 
 - Create tests under `app/src/services/ocr/*.test.ts`.
 
-- Modify `app/src/pages/UploadPage.tsx`  
+- Modify `app/src/pages/UploadPage.tsx`
   Replaces local mock-only OCR state with OCR mode/status/error/draft state, adds real/mock controls, failure fallback, empty-text warning, and keeps confirm flow unchanged.
 
-- Modify `app/src/pages/UploadPage.test.tsx`  
+- Modify `app/src/pages/UploadPage.test.tsx`
   Adds real OCR link-test success/failure/empty text tests while preserving current mock OCR tests.
 
 ### Gateway
 
-- Create `ocr-gateway/package.json`  
+- Create `ocr-gateway/package.json`
   Separate minimal package for the local Gateway.
 
-- Create `ocr-gateway/tsconfig.json`  
+- Create `ocr-gateway/tsconfig.json`
   TypeScript config for Node service and tests.
 
-- Create `ocr-gateway/src/types.ts`  
+- Create `ocr-gateway/src/types.ts`
   Shared Gateway request/result types and constants.
 
-- Create `ocr-gateway/src/normalizeOcrResult.ts`  
+- Create `ocr-gateway/src/normalizeOcrResult.ts`
   Gateway-side normalization for provider results.
 
-- Create `ocr-gateway/src/providers/providerTypes.ts`  
+- Create `ocr-gateway/src/providers/providerTypes.ts`
   Defines the provider adapter interface.
 
-- Create `ocr-gateway/src/providers/mockOcrProvider.ts`  
+- Create `ocr-gateway/src/providers/mockOcrProvider.ts`
   Returns deterministic OCR text for uploaded pages.
 
-- Create `ocr-gateway/src/providers/failureOcrProvider.ts`  
+- Create `ocr-gateway/src/providers/failureOcrProvider.ts`
   Returns controlled failed results.
 
-- Create `ocr-gateway/src/providers/index.ts`  
+- Create `ocr-gateway/src/providers/index.ts`
   Selects `mock` or `mock_failure` provider from `OCR_PROVIDER`.
 
-- Create `ocr-gateway/src/server.ts`  
+- Create `ocr-gateway/src/server.ts`
   Express app with `GET /health` and `POST /ocr/recognize`, multer memory storage, MIME/size/page limits, and unified error responses.
 
-- Create `ocr-gateway/src/index.ts`  
+- Create `ocr-gateway/src/index.ts`
   Starts the server.
 
 - Create Gateway tests under `ocr-gateway/src/**/*.test.ts`.

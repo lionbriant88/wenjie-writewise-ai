@@ -237,7 +237,7 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
     client: GradingClient,
     transcriptPolicy: 'confirmed_only' | 'allow_legacy_mock',
   ) => {
-    if (gradingInFlightRef.current.has(essayId)) return
+    if (gradingInFlightRef.current.size > 0) return
     const targetEssay = essaysRef.current.find((essay) => essay.id === essayId)
     if (!targetEssay) return
     const task = tasksRef.current.find((item) => item.id === targetEssay.taskId)

@@ -29,20 +29,25 @@ export function buildMultimodalGradingRequest(
   if (!validText(task.taskName) || !validText(material.materialSummary) || !material.writingRequirements.length || !validTextArray(material.writingRequirements) || !validTextArray(material.constraints) || !validTextArray(material.reviewWarnings) || !rubric.dimensions.length || rubric.dimensions.length > 10 || !validWeights(rubric.dimensions.map(({ weight }) => weight))) {
     return invalid('题目材料或评分标准尚未确认。')
   }
-  if (new Set(rubric.dimensions.map((dimension) => dimension.id)).size !== rubric.dimensions.length || rubric.dimensions.some((dimension) => !validText(dimension.id, 128) || !validText(dimension.name) || !validText(dimension.description) || !validTextArray(dimension.deductionFocus) || !validTextArray(dimension.sourceEvidence) || !dimension.sourceEvidence!.length)) {
+  if (new Set(rubric.dimensions.map((dimension) => dimension.id)).size !== rubric.dimensions.length || rubric.dimensions.some((dimension) => !validText(dimension.id, 128) || !validText(dimension.name) || !validText(dimension.description) || !validTextArray(dimension.deductionFocus) || !validTextArray(dimension.sourceEvidence))) {
     return invalid('题目材料或评分标准尚未确认。')
   }
-  if (essay.pageOrder.length < 1 || essay.pageOrder.length > 10 || essay.pages.length !== essay.pageOrder.length || !validIds(essay.pageOrder)) return invalid('作文图片不可用。')
-  const pagesById = new Map(essay.pages.map((page) => [page.id, page]))
-  const pages = essay.pageOrder.map((pageId) => {
-    const page = pagesById.get(pageId)
-    return page?.sourceFile instanceof File && imageTypes.has(page.sourceFile.type) && page.sourceFile.size <= maxImageBytes ? { pageId, file: page.sourceFile } : null
-  })
-  if (pages.some((page) => page === null) || pages.length !== essay.pages.length) return invalid('作文图片不可用。')
-
   const confirmedTranscript = essay.transcriptSource === 'teacher_confirmed' ? essay.ocrText : undefined
   if (confirmedTranscript !== undefined && (!confirmedTranscript.trim() || confirmedTranscript.length > 50_000)) {
     return invalid('Teacher-confirmed transcript is unavailable.')
+  }
+  let pageIds: string[] = []
+  let pages: Array<{ pageId: string; file: File }> = []
+  if (confirmedTranscript === undefined) {
+    if (essay.pageOrder.length < 1 || essay.pageOrder.length > 10 || essay.pages.length !== essay.pageOrder.length || !validIds(essay.pageOrder)) return invalid('作文图片不可用。')
+    const pagesById = new Map(essay.pages.map((page) => [page.id, page]))
+    const orderedPages = essay.pageOrder.map((pageId) => {
+      const page = pagesById.get(pageId)
+      return page?.sourceFile instanceof File && imageTypes.has(page.sourceFile.type) && page.sourceFile.size <= maxImageBytes ? { pageId, file: page.sourceFile } : null
+    })
+    if (orderedPages.some((page) => page === null) || orderedPages.length !== essay.pages.length) return invalid('作文图片不可用。')
+    pageIds = [...essay.pageOrder]
+    pages = orderedPages as Array<{ pageId: string; file: File }>
   }
 
   const confirmedTask: ConfirmedTaskPackageV2 = {
@@ -64,8 +69,7 @@ export function buildMultimodalGradingRequest(
     },
   }
   return { ok: true, request: {
-    requestVersion: 'multimodal-grading-request-v2', requestId, essayId: essay.id, pageIds: [...essay.pageOrder], task: confirmedTask,
-    pages: pages as Array<{ pageId: string; file: File }>,
+    requestVersion: 'multimodal-grading-request-v2', requestId, essayId: essay.id, pageIds, task: confirmedTask, pages,
     ...(confirmedTranscript !== undefined ? { confirmedTranscript } : {}),
   } }
 }
