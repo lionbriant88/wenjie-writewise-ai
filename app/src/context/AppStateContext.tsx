@@ -101,25 +101,35 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
     const nextTask: Task = {
       id,
       taskName: input.taskName,
-      className: input.className,
-      essayType: input.essayType,
+      className: input.className ?? (input.materialContext ? '待选择班级' : ''),
+      essayType: input.essayType ?? (input.materialContext ? '材料写作' : ''),
       fullScore: input.fullScore,
-      scoringTemplateId: input.scoringTemplateId,
-      writingGenre: input.writingGenre,
-      promptInfo: input.promptInfo,
-      rubricDraft: input.rubricDraft,
+      scoringTemplateId: input.scoringTemplateId ?? (input.materialContext ? 'kimi-generated-v1' : ''),
+      ...(input.writingGenre ? { writingGenre: input.writingGenre } : {}),
+      ...(input.promptInfo ? { promptInfo: input.promptInfo } : {}),
+      ...(input.rubricDraft ? { rubricDraft: input.rubricDraft } : {}),
+      ...(input.materialContext ? { materialContext: input.materialContext } : {}),
       status: 'draft',
       totalEssayCount: 0,
       completedEssayCount: 0,
       exceptionEssayCount: 0,
       createdAt: timestamp,
       updatedAt: timestamp,
-      generateClassReview: input.generateClassReview,
+      generateClassReview: input.generateClassReview ?? Boolean(input.materialContext),
     }
     const nextTasks = [nextTask, ...tasksRef.current]
     tasksRef.current = nextTasks
     setTasks(nextTasks)
     return id
+  }, [])
+
+  const assignTaskClass = useCallback((taskId: string, className: string) => {
+    const updatedAt = new Date().toISOString()
+    const nextTasks = tasksRef.current.map((task) => task.id === taskId
+      ? { ...task, className, updatedAt }
+      : task)
+    tasksRef.current = nextTasks
+    setTasks(nextTasks)
   }, [])
 
   const confirmMockOcrEssay = useCallback(({ taskId, essayGroups }: ConfirmMockOcrEssayInput) => {
@@ -297,6 +307,7 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
     classInsights,
     classReviewMaterials,
     createTask,
+    assignTaskClass,
     confirmMockOcrEssay,
     updateEssayOcrText,
     markEssayManual,
@@ -315,6 +326,7 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
     classInsights,
     classReviewMaterials,
     createTask,
+    assignTaskClass,
     confirmMockOcrEssay,
     updateEssayOcrText,
     markEssayManual,

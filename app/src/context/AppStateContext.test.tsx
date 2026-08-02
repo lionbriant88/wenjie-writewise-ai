@@ -83,6 +83,45 @@ describe('AppStateContext OCR audit lifecycle', () => {
   })
 })
 
+describe('AppStateContext material-based task creation', () => {
+  it('creates a genre-free Kimi task with compatibility defaults and assigns its class later', () => {
+    render(<AppStateProvider><StateProbe /></AppStateProvider>)
+    const rubricDraft = {
+      source: 'ai' as const,
+      writingGoal: 'Respond to the source material.',
+      offTopicCriteria: [],
+      dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Address the material.', deductionFocus: [] }],
+      excellentFeatures: [],
+      reviewTriggers: [],
+      status: 'confirmed' as const,
+    }
+    let taskId = ''
+    act(() => {
+      taskId = latestState.createTask({
+        taskName: 'AI generated task',
+        fullScore: 15,
+        materialContext: {
+          materialSummary: 'A source material summary.',
+          writingRequirements: ['Respond clearly.'],
+          constraints: [],
+          reviewWarnings: [],
+        },
+        rubricDraft,
+      })
+    })
+
+    expect(latestState.tasks.find((task) => task.id === taskId)).toMatchObject({
+      taskName: 'AI generated task', className: '待选择班级', essayType: '材料写作',
+      scoringTemplateId: 'kimi-generated-v1', fullScore: 15, generateClassReview: true,
+      materialContext: { materialSummary: 'A source material summary.' },
+    })
+    expect(latestState.tasks.find((task) => task.id === taskId)?.writingGenre).toBeUndefined()
+
+    act(() => latestState.assignTaskClass(taskId, '九年级 3 班'))
+    expect(latestState.tasks.find((task) => task.id === taskId)?.className).toBe('九年级 3 班')
+  })
+})
+
 let latestState: AppState
 
 function StateProbe() {

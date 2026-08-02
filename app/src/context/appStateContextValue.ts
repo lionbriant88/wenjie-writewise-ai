@@ -29,6 +29,7 @@ export interface AppState {
   classInsights: ClassInsight[]
   classReviewMaterials: ClassReviewMaterial[]
   createTask: (input: CreateTaskInput) => string
+  assignTaskClass: (taskId: string, className: string) => void
   confirmMockOcrEssay: (input: ConfirmMockOcrEssayInput) => void
   updateEssayOcrText: (essayId: string, text: string, confirmedAt?: string) => void
   markEssayManual: (essayId: string) => void

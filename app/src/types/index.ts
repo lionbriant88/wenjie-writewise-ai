@@ -27,6 +27,7 @@ export interface Task {
   writingGenre?: WritingGenre
   promptInfo?: TaskPromptInfo
   rubricDraft?: TaskRubricDraft
+  materialContext?: TaskMaterialContext
   status: TaskStatus
   totalEssayCount: number
   completedEssayCount: number
@@ -99,6 +100,13 @@ export interface Essay {
   teacherReviewed: boolean
   createdAt: string
   updatedAt: string
+}
+
+export interface TaskMaterialContext {
+  materialSummary: string
+  writingRequirements: string[]
+  constraints: string[]
+  reviewWarnings: string[]
 }
 
 export type GradingRunState =
@@ -286,12 +294,13 @@ export type ClassReviewMaterialInput = Omit<ClassReviewMaterial, 'id' | 'created
 
 export interface CreateTaskInput {
   taskName: string
-  className: string
-  essayType: string
   fullScore: number
-  scoringTemplateId: string
+  className?: string
+  essayType?: string
+  scoringTemplateId?: string
   writingGenre?: WritingGenre
   promptInfo?: TaskPromptInfo
   rubricDraft?: TaskRubricDraft
-  generateClassReview: boolean
+  materialContext?: TaskMaterialContext
+  generateClassReview?: boolean
 }
