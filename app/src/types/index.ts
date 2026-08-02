@@ -82,6 +82,8 @@ export interface EssayPage {
   quality: 'clear' | 'blurred' | 'dark' | 'tilted' | 'messy'
   accent: string
   previewUrl?: string
+  /** The original image stays in memory until the multimodal grading request is sent. */
+  sourceFile?: File
 }
 
 export interface Essay {

@@ -1,9 +1,9 @@
 import type { GradingResult } from '../../types'
-import type { AiGradingResultV1, GradingRequestV1 } from './types'
+import type { AiGradingResultV1, GradingRequestV1, MultimodalGradingRequestV2 } from './types'
 
 export function adaptAiGradingResult(
   result: AiGradingResultV1,
-  request: GradingRequestV1,
+  request: GradingRequestV1 | MultimodalGradingRequestV2,
 ): GradingResult {
   return {
     id: `${result.essayId}-result`,
@@ -44,7 +44,7 @@ export function adaptAiGradingResult(
     })),
     fullTextRevision: result.fullTextRevision
       ? {
-          originalText: request.essay.confirmedTranscript,
+          originalText: result.transcript ?? ('essay' in request ? request.essay.confirmedTranscript : ''),
           correctedText: result.fullTextRevision.correctedText,
           polishedText: result.fullTextRevision.improvedText,
           sentencePairs: result.fullTextRevision.sentencePairs.map((pair) => ({

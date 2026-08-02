@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createRemoteGradingClient } from './remoteGradingClient'
-import type { GradingRequestV1 } from './types'
+import type { GradingRequestV1, MultimodalGradingRequestV2 } from './types'
 
 const request: GradingRequestV1 = {
   requestVersion: 'grading-request-v1', requestId: 'request-1',
@@ -32,7 +32,37 @@ function successBody() {
   }
 }
 
+function imageRequest(): MultimodalGradingRequestV2 {
+  return {
+    requestVersion: 'multimodal-grading-request-v2', requestId: 'image-request', essayId: 'image-essay', pageIds: ['page-1', 'page-2'],
+    task: { taskId: 'task-image', fullScore: 15, materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], rubric: { taskName: 'Image task', materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], reviewWarnings: [], dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant.', deductionFocus: [], sourceEvidence: ['Material.'] }] } },
+    pages: [{ pageId: 'page-1', file: new File(['first'], 'first.png', { type: 'image/png' }) }, { pageId: 'page-2', file: new File(['second'], 'second.png', { type: 'image/png' }) }],
+  }
+}
+
 describe('createRemoteGradingClient', () => {
+  it('posts ordered image files to the multimodal endpoint without binary metadata and projects transcript fields', async () => {
+    const request = imageRequest()
+    const body = { ...successBody(), requestId: request.requestId, essayId: request.essayId, transcript: 'Student text.', transcriptionWarnings: ['One word unclear.'], printedTextExcluded: true }
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }))
+    const result = await createRemoteGradingClient({ apiBase: 'http://gateway', fetchImpl }).gradeImages!(request)
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    const form = init.body as FormData
+    const metadata = JSON.parse(String(form.get('metadata')))
+    expect(fetchImpl).toHaveBeenCalledWith('http://gateway/grading/grade-images', expect.objectContaining({ method: 'POST' }))
+    expect(metadata).toEqual({ requestId: request.requestId, essayId: request.essayId, pageIds: ['page-1', 'page-2'], task: request.task })
+    expect(JSON.stringify(metadata)).not.toContain('first')
+    expect(form.getAll('pages').map((file) => (file as File).name)).toEqual(['first.png', 'second.png'])
+    expect(result).toMatchObject({ status: 'success', transcript: 'Student text.', transcriptionWarnings: ['One word unclear.'], printedTextExcluded: true })
+  })
+
+  it('maps multimodal network and malformed responses to safe local failures', async () => {
+    const request = imageRequest()
+    const unavailable = await createRemoteGradingClient({ apiBase: 'http://gateway', fetchImpl: vi.fn().mockRejectedValue(new Error('SECRET')) }).gradeImages!(request)
+    expect(unavailable).toMatchObject({ status: 'failed', error: { code: 'gateway_unavailable' } })
+    const malformed = await createRemoteGradingClient({ apiBase: 'http://gateway', fetchImpl: vi.fn().mockResolvedValue(new Response('{}', { status: 200 })) }).gradeImages!(request)
+    expect(malformed).toMatchObject({ status: 'failed', error: { code: 'gateway_invalid_response' } })
+  })
   it('posts once with a trace header and projects a valid 2xx success', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify(successBody()), { status: 200 }))
     const client = createRemoteGradingClient({ apiBase: 'http://127.0.0.1:8790/', fetchImpl })

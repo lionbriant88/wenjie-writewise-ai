@@ -1,0 +1,35 @@
+import { describe, expect, it } from 'vitest'
+import type { Essay, Task } from '../../types'
+import { buildMultimodalGradingRequest } from './buildMultimodalGradingRequest'
+
+const task: Task = {
+  id: 'task-material', taskName: 'Material writing', className: 'Class 1', essayType: 'material', fullScore: 15,
+  scoringTemplateId: 'kimi-generated-v1', status: 'processing', totalEssayCount: 1, completedEssayCount: 0,
+  exceptionEssayCount: 0, createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z', generateClassReview: true,
+  materialContext: { materialSummary: 'A short material.', writingRequirements: ['Respond clearly.'], constraints: [], reviewWarnings: [] },
+  rubricDraft: { source: 'ai', status: 'confirmed', writingGoal: 'Respond.', offTopicCriteria: [], excellentFeatures: [], reviewTriggers: [],
+    dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant response.', deductionFocus: [], sourceEvidence: ['material'] }] },
+}
+
+function essay(file?: File): Essay {
+  return { id: 'essay-1', taskId: task.id, essayNumber: 'Essay 1', pages: [{ id: 'page-1', label: 'essay.png', pageNumber: 1, quality: 'clear', accent: '#000', sourceFile: file }], pageCount: 1, pageOrder: ['page-1'], ocrText: '', ocrConfidence: 0, status: 'pending_grading', exceptionReasons: [], teacherReviewed: false, createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z' }
+}
+
+describe('buildMultimodalGradingRequest', () => {
+  it('builds an ordered confirmed task package without OCR transcript', () => {
+    const result = buildMultimodalGradingRequest(task, essay(new File(['image'], 'essay.png', { type: 'image/png' })), 'request-1')
+    expect(result).toMatchObject({ ok: true, request: { requestVersion: 'multimodal-grading-request-v2', requestId: 'request-1', essayId: 'essay-1', pageIds: ['page-1'], task: { taskId: task.id, fullScore: 15, materialSummary: 'A short material.', rubric: { taskName: 'Material writing', dimensions: [{ sourceEvidence: ['material'] }] } } } })
+    if (result.ok) expect(result.request.pages[0].file.name).toBe('essay.png')
+  })
+
+  it.each([
+    ['missing image', essay(), task, 'request-1'],
+    ['unconfirmed rubric', essay(new File([], 'a.png')), { ...task, rubricDraft: { ...task.rubricDraft!, status: 'draft' as const } }, 'request-1'],
+    ['invalid weights', essay(new File([], 'a.png')), { ...task, rubricDraft: { ...task.rubricDraft!, dimensions: [{ ...task.rubricDraft!.dimensions[0], weight: 99 }] } }, 'request-1'],
+    ['missing material context', essay(new File([], 'a.png')), { ...task, materialContext: undefined }, 'request-1'],
+    ['empty request id', essay(new File([], 'a.png')), task, ''],
+  ] as const)('rejects %s safely', (_label, targetEssay, targetTask, requestId) => {
+    const result = buildMultimodalGradingRequest(targetTask as Task, targetEssay, requestId)
+    expect(result).toMatchObject({ ok: false, error: { code: 'invalid_request' } })
+  })
+})

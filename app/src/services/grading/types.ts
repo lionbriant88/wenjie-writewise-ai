@@ -72,6 +72,38 @@ export interface GradingRequestV1 {
   }
 }
 
+export interface ConfirmedTaskPackageV2 {
+  taskId: string
+  fullScore: number
+  materialSummary: string
+  writingRequirements: string[]
+  constraints: string[]
+  rubric: {
+    taskName: string
+    materialSummary: string
+    writingRequirements: string[]
+    constraints: string[]
+    dimensions: Array<{
+      id: string
+      name: string
+      weight: number
+      description: string
+      deductionFocus: string[]
+      sourceEvidence: string[]
+    }>
+    reviewWarnings: string[]
+  }
+}
+
+export interface MultimodalGradingRequestV2 {
+  requestVersion: 'multimodal-grading-request-v2'
+  requestId: string
+  essayId: string
+  pageIds: string[]
+  task: ConfirmedTaskPackageV2
+  pages: Array<{ pageId: string; file: File }>
+}
+
 export interface AiGradingResultV1 {
   resultVersion: 'grading-result-v1'
   requestId: string
@@ -130,6 +162,9 @@ export interface AiGradingResultV1 {
   modelSelfConfidence?: number
   reviewReasons: string[]
   createdAt: string
+  transcript?: string
+  transcriptionWarnings?: string[]
+  printedTextExcluded?: boolean
 }
 
 export interface GradingFailureV1 {
@@ -142,4 +177,5 @@ export type GradingClientResponse = AiGradingResultV1 | GradingFailureV1
 
 export interface GradingClient {
   grade(request: GradingRequestV1): Promise<GradingClientResponse>
+  gradeImages?(request: MultimodalGradingRequestV2): Promise<GradingClientResponse>
 }

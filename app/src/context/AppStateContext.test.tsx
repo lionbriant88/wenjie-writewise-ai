@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { confirmOcrAudit, createPendingOcrAudit } from '../services/ocr/audit/transcriptAudit'
 import type { Essay } from '../types'
 import type { GradingClient, GradingRequestV1 } from '../services/grading/types'
+import { createMockGradingClient } from '../services/grading/mockGradingClient'
 import { AppStateProvider } from './AppStateContext'
 import type { AppState } from './appStateContextValue'
 import { useAppState } from './useAppState'
@@ -84,6 +85,19 @@ describe('AppStateContext OCR audit lifecycle', () => {
 })
 
 describe('AppStateContext material-based task creation', () => {
+  it('queues a material task with original files and grades it through the image client once', async () => {
+    render(<AppStateProvider gradingClient={createMockGradingClient()}><StateProbe /></AppStateProvider>)
+    let taskId = ''
+    act(() => { taskId = latestState.createTask({ taskName: 'Image task', fullScore: 15, materialContext: { materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], reviewWarnings: [] }, rubricDraft: { source: 'ai', status: 'confirmed', writingGoal: 'Write.', offTopicCriteria: [], excellentFeatures: [], reviewTriggers: [], dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant.', deductionFocus: [], sourceEvidence: ['Material.'] }] } }) })
+    const file = new File(['image'], 'handwriting.png', { type: 'image/png' })
+    act(() => latestState.enqueueImageEssays({ taskId, className: '九年级 3 班', essayGroups: [{ pages: [{ id: 'page-1', label: file.name, pageNumber: 1, quality: 'clear', accent: '#000', sourceFile: file }] }] }))
+    const essay = latestState.essays.find((item) => item.taskId === taskId)
+    expect(essay).toMatchObject({ status: 'pending_grading', pages: [{ sourceFile: file }] })
+    await act(async () => { await latestState.gradeEssay(essay!.id) })
+    expect(latestState.essays.find((item) => item.id === essay!.id)).toMatchObject({ status: 'grading_ready' })
+    expect(latestState.gradingResults.find((result) => result.essayId === essay!.id)?.source).toBe('mock')
+  })
+
   it('creates a genre-free Kimi task with compatibility defaults and assigns its class later', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-08-02T00:00:00.000Z'))

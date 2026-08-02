@@ -22,6 +22,12 @@ export interface ConfirmMockOcrEssayInput {
   essayGroups: ConfirmMockOcrEssayGroup[]
 }
 
+export interface EnqueueImageEssaysInput {
+  taskId: string
+  className: string
+  essayGroups: Array<{ pages: EssayPage[] }>
+}
+
 export interface AppState {
   tasks: Task[]
   essays: Essay[]
@@ -31,6 +37,7 @@ export interface AppState {
   createTask: (input: CreateTaskInput) => string
   assignTaskClass: (taskId: string, className: string) => void
   confirmMockOcrEssay: (input: ConfirmMockOcrEssayInput) => void
+  enqueueImageEssays: (input: EnqueueImageEssaysInput) => void
   updateEssayOcrText: (essayId: string, text: string, confirmedAt?: string) => void
   markEssayManual: (essayId: string) => void
   gradeEssay: (essayId: string) => Promise<void>

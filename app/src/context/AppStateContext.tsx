@@ -3,6 +3,7 @@ import { mockClassInsights, mockEssays, mockGradingResults, mockTasks } from '..
 import { confirmOcrAudit } from '../services/ocr/audit/transcriptAudit'
 import { adaptAiGradingResult } from '../services/grading/adaptAiGradingResult'
 import { buildGradingRequest } from '../services/grading/buildGradingRequest'
+import { buildMultimodalGradingRequest } from '../services/grading/buildMultimodalGradingRequest'
 import { createConfiguredGradingClient } from '../services/grading/gradingClient'
 import { createMockGradingClient } from '../services/grading/mockGradingClient'
 import type { GradingClient, GradingFailureV1 } from '../services/grading/types'
@@ -17,7 +18,7 @@ import type {
   TaskStatus,
 } from '../types'
 import { getClassReviewMaterialKey } from '../utils/classReviewMaterials'
-import { AppStateContext, type ConfirmMockOcrEssayInput } from './appStateContextValue'
+import { AppStateContext, type ConfirmMockOcrEssayInput, type EnqueueImageEssaysInput } from './appStateContextValue'
 import {
   beginGradingAttempt,
   confirmGradingTransition,
@@ -171,6 +172,30 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
     })
   }, [])
 
+  const enqueueImageEssays = useCallback(({ taskId, className, essayGroups }: EnqueueImageEssaysInput) => {
+    const timestamp = new Date().toISOString()
+    if (!className.trim() || !tasksRef.current.some((task) => task.id === taskId)) return
+    const current = essaysRef.current
+    const taskEssayCount = current.filter((essay) => essay.taskId === taskId).length
+    const createdEssays = essayGroups.map((group, groupIndex): Essay => {
+      const id = `${taskId}-uploaded-${Date.now()}-${groupIndex + 1}`
+      const pages = group.pages.map((page, pageIndex) => ({ ...page, id: `${id}-page-${pageIndex + 1}`, pageNumber: pageIndex + 1 }))
+      return {
+        id, taskId, essayNumber: `作文 ${taskEssayCount + groupIndex + 1}`, pages, pageCount: pages.length,
+        pageOrder: pages.map((page) => page.id), ocrText: '', ocrConfidence: 0, status: 'pending_grading',
+        exceptionReasons: [], teacherReviewed: false, gradingRun: { status: 'idle' }, createdAt: timestamp, updatedAt: timestamp,
+      }
+    })
+    const nextEssays = [...current, ...createdEssays]
+    essaysRef.current = nextEssays
+    setEssays(nextEssays)
+    setTasks((currentTasks) => {
+      const updated = updateTasksFromEssays(currentTasks.map((task) => task.id === taskId ? { ...task, className: className.trim(), updatedAt: timestamp } : task), taskId, nextEssays, timestamp)
+      tasksRef.current = updated
+      return updated
+    })
+  }, [])
+
   const updateEssayOcrText = useCallback((essayId: string, text: string, confirmedAt?: string) => {
     const timestamp = confirmedAt ?? new Date().toISOString()
     const nextEssays = essaysRef.current.map((essay) => essay.id === essayId
@@ -203,7 +228,9 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
 
     gradingSequenceRef.current += 1
     const requestId = `grading-${essayId}-${gradingSequenceRef.current}-${crypto.randomUUID?.() ?? Date.now()}`
-    const built = buildGradingRequest(task, targetEssay, requestId, transcriptPolicy)
+    const built = task.materialContext
+      ? buildMultimodalGradingRequest(task, targetEssay, requestId)
+      : buildGradingRequest(task, targetEssay, requestId, transcriptPolicy)
     if (!built.ok) {
       const completedAt = new Date().toISOString()
       commitEssayTransition(
@@ -218,7 +245,11 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
     if (!commitEssayTransition(started, startedAt)) return
     gradingInFlightRef.current.set(essayId, requestId)
     try {
-      const response = await client.grade(built.request)
+      const response = 'requestVersion' in built.request && built.request.requestVersion === 'multimodal-grading-request-v2'
+        ? client.gradeImages
+          ? await client.gradeImages(built.request)
+          : { requestId, status: 'failed' as const, error: { code: 'gateway_unavailable' as const, message: '批改服务暂时不可用，请重试。', retryable: true } }
+        : await client.grade(built.request)
       if (response.status === 'failed') {
         const completedAt = new Date().toISOString()
         commitEssayTransition(
@@ -309,6 +340,7 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
     createTask,
     assignTaskClass,
     confirmMockOcrEssay,
+    enqueueImageEssays,
     updateEssayOcrText,
     markEssayManual,
     gradeEssay,
@@ -328,6 +360,7 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
     createTask,
     assignTaskClass,
     confirmMockOcrEssay,
+    enqueueImageEssays,
     updateEssayOcrText,
     markEssayManual,
     gradeEssay,

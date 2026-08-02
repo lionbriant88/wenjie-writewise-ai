@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createMockGradingClient } from './mockGradingClient'
-import type { GradingRequestV1 } from './types'
+import type { GradingRequestV1, MultimodalGradingRequestV2 } from './types'
 
 function requestFor(writingGenre: 'practical_writing' | 'continuation_writing'): GradingRequestV1 {
   return {
@@ -39,6 +39,14 @@ function requestFor(writingGenre: 'practical_writing' | 'continuation_writing'):
 }
 
 describe('createMockGradingClient', () => {
+  it('grades an image request locally without network access and returns a transcript', async () => {
+    const request: MultimodalGradingRequestV2 = {
+      requestVersion: 'multimodal-grading-request-v2', requestId: 'image-request', essayId: 'image-essay', pageIds: ['page-1'],
+      task: { taskId: 'task-image', fullScore: 15, materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], rubric: { taskName: 'Task', materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], reviewWarnings: [], dimensions: [{ id: 'all', name: 'All', weight: 100, description: 'All', deductionFocus: [], sourceEvidence: ['Material.'] }] } },
+      pages: [{ pageId: 'page-1', file: new File(['image'], 'page.png', { type: 'image/png' }) }],
+    }
+    await expect(createMockGradingClient().gradeImages!(request)).resolves.toMatchObject({ status: 'success', provider: 'mock', transcript: expect.any(String), printedTextExcluded: true })
+  })
   it.each(['practical_writing', 'continuation_writing'] as const)(
     'returns a contract-valid local mock for %s',
     async (writingGenre) => {

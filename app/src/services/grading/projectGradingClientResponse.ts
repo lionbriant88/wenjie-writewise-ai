@@ -213,6 +213,17 @@ function projectSuccess(value: unknown, expected: ExpectedGradingResponse): AiGr
     modelSelfConfidence = projected
   }
 
+  let transcript: string | undefined
+  let transcriptionWarnings: string[] | undefined
+  let printedTextExcluded: boolean | undefined
+  const hasMultimodalFields = 'transcript' in value || 'transcriptionWarnings' in value || 'printedTextExcluded' in value
+  if (hasMultimodalFields) {
+    transcript = readString(value.transcript) ?? undefined
+    transcriptionWarnings = readStringArray(value.transcriptionWarnings) ?? undefined
+    printedTextExcluded = readBoolean(value.printedTextExcluded) ?? undefined
+    if (!transcript || !transcriptionWarnings || printedTextExcluded === undefined) return null
+  }
+
   return {
     resultVersion: 'grading-result-v1',
     requestId,
@@ -228,6 +239,7 @@ function projectSuccess(value: unknown, expected: ExpectedGradingResponse): AiGr
     ...(fullTextRevision ? { fullTextRevision } : {}),
     overallComment,
     ...(modelSelfConfidence === undefined ? {} : { modelSelfConfidence }),
+    ...(transcript === undefined ? {} : { transcript, transcriptionWarnings, printedTextExcluded }),
     reviewReasons,
     createdAt,
   }
