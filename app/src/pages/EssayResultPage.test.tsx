@@ -49,8 +49,8 @@ function getIssueCardButton(name: RegExp) {
 
 function getSourceModeButton(mode: 'read' | 'edit') {
   const keywordsByMode = {
-    read: ['阅读定位', '阅读', '闃呰'],
-    edit: ['编辑 OCR', '缂栬緫 OCR', 'OCR'],
+    read: ['阅读定位'],
+    edit: ['复核识别结果'],
   } satisfies Record<typeof mode, string[]>
   const modeButton = screen
     .getAllByRole('button')
@@ -80,6 +80,25 @@ function getWorkspaceModeButton(mode: 'grading' | 'paper') {
 }
 
 describe('EssayResultPage teacher decision workflow', () => {
+  it('keeps the grade visible while a transcript draft is edited and invalidates it only after explicit save', async () => {
+    const user = userEvent.setup()
+    renderEssayDetail()
+
+    expect(screen.getAllByText(/总分|\u603b\u5206/).length).toBeGreaterThan(0)
+    await user.click(getSourceModeButton('edit'))
+    const transcript = screen.getByLabelText('学生作文识别文本')
+    await user.clear(transcript)
+    await user.type(transcript, 'Teacher-corrected recognition text.')
+
+    expect(screen.getAllByText(/总分|\u603b\u5206/).length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: '保存识别文本并重新批改' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: '保存识别文本并重新批改' }))
+
+    expect(screen.getByText('结果已失效')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '确认本篇批改' })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '返回批改进度重新批改' })).toBeInTheDocument()
+  })
+
   it('renders a provider-neutral remote review and confirms only through the explicit action', async () => {
     const user = userEvent.setup()
     const localClient = createMockGradingClient()
@@ -178,7 +197,7 @@ describe('EssayResultPage teacher decision workflow', () => {
 
     expect(screen.getByRole('tab', { name: '评分诊断' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tab', { name: '问题批改' })).toHaveAttribute('aria-selected', 'false')
-    expect(screen.getByText('学生作文原文')).toBeInTheDocument()
+    expect(screen.getByText('学生作文识别文本')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '诊断摘要' })).toBeInTheDocument()
     expect(screen.queryByText('AI 置信度')).not.toBeInTheDocument()
     expect(screen.getByText('主要扣分项')).toBeInTheDocument()
@@ -322,7 +341,7 @@ describe('EssayResultPage teacher decision workflow', () => {
         .getAllByRole('button')
         .filter((button) => button.textContent?.includes('原卷视图') || button.textContent?.includes('鍘熷嵎瑙嗗浘')),
     ).toHaveLength(1)
-    expect(screen.queryByLabelText('学生作文原文')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('学生作文识别文本')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('tab', { name: '问题批改' }))
     await user.click(getIssueCardButton(/I suggest you joins the club\./))
@@ -330,9 +349,9 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.queryByText('定位预览')).not.toBeInTheDocument()
     expect(screen.getAllByText('I suggest you joins the club.').length).toBeGreaterThanOrEqual(2)
 
-    await user.click(screen.getByRole('button', { name: '编辑 OCR' }))
+    await user.click(screen.getByRole('button', { name: '复核识别结果' }))
 
-    expect(screen.getByLabelText('学生作文原文')).toBeInTheDocument()
+    expect(screen.getByLabelText('学生作文识别文本')).toBeInTheDocument()
   })
 
   it('opens the issue correction tab and selects a card when a marked source sentence is clicked', async () => {
@@ -353,7 +372,7 @@ describe('EssayResultPage teacher decision workflow', () => {
     ).toBe(true)
   })
 
-  it('hides source issue markers while editing OCR and recalculates them in read mode', async () => {
+  it('hides source issue markers while reviewing recognition text and restores them before save', async () => {
     const user = userEvent.setup()
     const view = renderEssayDetail()
 
@@ -368,23 +387,22 @@ describe('EssayResultPage teacher decision workflow', () => {
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'My mother was angry.' } })
     await user.click(getSourceModeButton('read'))
 
-    expect(view.container.querySelector('[data-issue-source="language"]')).toBeNull()
+    expect(view.container.querySelector('[data-issue-source="language"]')).not.toBeNull()
     expect(view.container.querySelector('[data-issue-source="logic"]')).not.toBeNull()
   })
 
-  it('shows fallback feedback when selected issue text is not found in the source', async () => {
+  it('keeps issue location tied to the saved recognition text until the teacher saves', async () => {
     const user = userEvent.setup()
     renderEssayDetail()
 
-    await user.click(screen.getByRole('button', { name: '编辑 OCR' }))
-    await user.clear(screen.getByLabelText('学生作文原文'))
-    await user.type(screen.getByLabelText('学生作文原文'), 'This edited OCR text no longer contains the issue sentence.')
+    await user.click(screen.getByRole('button', { name: '复核识别结果' }))
+    await user.clear(screen.getByLabelText('学生作文识别文本'))
+    await user.type(screen.getByLabelText('学生作文识别文本'), 'This edited recognition text no longer contains the issue sentence.')
     await user.click(screen.getByRole('button', { name: '阅读定位' }))
     await user.click(screen.getByRole('tab', { name: '问题批改' }))
-    await user.click(screen.getByText('I suggest you joins the club.'))
+    await user.click(getIssueCardButton(/I suggest you joins the club\./))
 
-    expect(screen.getByText('未精确定位')).toBeInTheDocument()
-    expect(screen.getByText('未在原文中精确定位，请手动核对')).toBeInTheDocument()
+    expect(screen.getAllByText('I suggest you joins the club.').length).toBeGreaterThan(0)
   })
 
   it('switches to a page-level original paper workspace without grading content', async () => {
@@ -417,7 +435,7 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.queryByRole('heading', { name: '诊断摘要' })).not.toBeInTheDocument()
     expect(screen.queryByText('AI 置信度')).not.toBeInTheDocument()
     expect(screen.queryByRole('spinbutton', { name: /语言准确性/ })).not.toBeInTheDocument()
-    expect(screen.queryByLabelText('学生作文原文')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('学生作文识别文本')).not.toBeInTheDocument()
     expect(view.container.querySelector('[data-issue-source="language"]')).toBeNull()
     expect(view.container.querySelector('[data-issue-source="logic"]')).toBeNull()
   })
@@ -442,7 +460,7 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.getByText('已定位')).toBeInTheDocument()
 
     await user.click(getSourceModeButton('edit'))
-    expect(screen.getByLabelText('学生作文原文')).toBeInTheDocument()
+    expect(screen.getByLabelText('学生作文识别文本')).toBeInTheDocument()
 
     await user.click(getSourceModeButton('read'))
     await user.click(screen.getAllByRole('button', { name: '加入班级总览' })[0])

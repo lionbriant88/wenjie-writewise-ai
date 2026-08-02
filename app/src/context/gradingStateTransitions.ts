@@ -62,6 +62,9 @@ export function settleGradingSuccess(
   if (response.requestId !== requestId || response.essayId !== essayId) return { applied: false, essays }
   return replaceCurrentAttempt(essays, essayId, requestId, (essay) => ({
     ...essay,
+    ...(response.transcript
+      ? { ocrText: response.transcript, transcriptSource: 'kimi_vision' as const }
+      : {}),
     status: 'grading_ready',
     aiResultId: resultId,
     teacherReviewed: false,
@@ -75,6 +78,32 @@ export function settleGradingSuccess(
     },
     updatedAt: response.createdAt,
   }))
+}
+
+export function invalidateGradingAfterTranscriptEdit(
+  essays: Essay[],
+  essayId: string,
+  timestamp: string,
+): EssayTransition {
+  const target = essays.find((essay) => essay.id === essayId)
+  if (!target || (target.status !== 'grading_ready' && target.status !== 'completed')) {
+    return { applied: false, essays }
+  }
+
+  return {
+    applied: true,
+    taskId: target.taskId,
+    essays: essays.map((essay) => essay.id === essayId
+      ? {
+          ...essay,
+          status: 'pending_grading',
+          teacherReviewed: false,
+          gradingRun: { status: 'idle' },
+          aiResultId: undefined,
+          updatedAt: timestamp,
+        }
+      : essay),
+  }
 }
 
 export function settleGradingFailure(

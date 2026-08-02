@@ -4,6 +4,7 @@ import type { AiGradingResultV1, GradingFailureV1 } from '../services/grading/ty
 import {
   beginGradingAttempt,
   confirmGradingTransition,
+  invalidateGradingAfterTranscriptEdit,
   markEssayManualTransition,
   settleGradingFailure,
   settleGradingSuccess,
@@ -59,6 +60,19 @@ describe('grading state transitions', () => {
     })
   })
 
+  it('copies a Kimi transcript to the compatible essay text without inventing an OCR audit', () => {
+    const transition = settleGradingSuccess(
+      [{ ...essayRunning('request-1'), ocrText: '', ocrAudit: undefined }],
+      'essay-1', 'request-1', 'essay-1-result',
+      { ...successResult, transcript: 'Kimi faithfully read this.', transcriptionWarnings: [], printedTextExcluded: true },
+    )
+
+    expect(transition.essays[0]).toMatchObject({
+      ocrText: 'Kimi faithfully read this.', transcriptSource: 'kimi_vision',
+    })
+    expect(transition.essays[0].ocrAudit).toBeUndefined()
+  })
+
   it('settles a matching failure into an actionable pending state', () => {
     const transition = settleGradingFailure(
       [essayRunning('request-1')], 'essay-1', 'request-1', failureResult, '2026-07-20T00:01:00.000Z',
@@ -106,5 +120,33 @@ describe('grading state transitions', () => {
     const confirmed = confirmGradingTransition([ready], 'essay-1', 'confirmed-at')
     expect(confirmed.essays[0]).toMatchObject({ status: 'completed', teacherReviewed: true })
     expect(confirmGradingTransition([essay()], 'essay-1', 'confirmed-at').applied).toBe(false)
+  })
+
+  it('invalidates an AI grade when the teacher changes the Kimi transcript', () => {
+    const gradedEssay: Essay = {
+      ...essay('grading_ready'),
+      aiResultId: 'essay-1-result',
+      transcriptSource: 'kimi_vision',
+      gradingRun: { status: 'success', requestId: 'request-1', source: 'remote', reviewReasons: [], startedAt: 'started', completedAt: 'finished' },
+    }
+
+    const result = invalidateGradingAfterTranscriptEdit([gradedEssay], gradedEssay.id, '2026-08-02T00:00:00.000Z')
+
+    expect(result.essays[0]).toMatchObject({
+      status: 'pending_grading', teacherReviewed: false, gradingRun: { status: 'idle' }, updatedAt: '2026-08-02T00:00:00.000Z',
+    })
+    expect(result.essays[0].aiResultId).toBeUndefined()
+  })
+
+  it('leaves unrelated and already-pending essays by reference when transcript invalidation cannot apply', () => {
+    const current = essay('pending_grading')
+    const essays = [current]
+    const unknown = invalidateGradingAfterTranscriptEdit(essays, 'missing', 'now')
+    const pending = invalidateGradingAfterTranscriptEdit(essays, current.id, 'now')
+
+    expect(unknown).toEqual({ applied: false, essays })
+    expect(unknown.essays).toBe(essays)
+    expect(pending).toEqual({ applied: false, essays })
+    expect(pending.essays).toBe(essays)
   })
 })

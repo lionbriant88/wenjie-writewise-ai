@@ -94,6 +94,8 @@ export interface Essay {
   pageCount: number
   pageOrder: string[]
   ocrText: string
+  /** Present only when Kimi vision supplied the compatible transcript field. */
+  transcriptSource?: 'kimi_vision'
   ocrAudit?: OcrTranscriptAudit
   ocrConfidence: number
   status: EssayStatus

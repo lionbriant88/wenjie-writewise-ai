@@ -88,8 +88,8 @@ describe('detail flow back navigation', () => {
     const user = userEvent.setup()
     renderWithRoute('/tasks/task-1/essays/task-1-essay-1', <EssayResultPage />)
 
-    expect(screen.getByRole('heading', { name: '学生作文原文' })).toBeInTheDocument()
-    expect(screen.getByText('OCR 置信度 89%')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '学生作文识别文本' })).toBeInTheDocument()
+    expect(screen.getByText('识别置信度 89%')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '查看原图' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '原图预览' })).not.toBeInTheDocument()
 

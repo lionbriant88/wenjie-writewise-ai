@@ -10,7 +10,7 @@ type SourcePanelMode = 'read' | 'edit'
 
 const SOURCE_PANEL_MODE_OPTIONS: Array<{ mode: SourcePanelMode; label: string }> = [
   { mode: 'read', label: '阅读定位' },
-  { mode: 'edit', label: '编辑 OCR' },
+  { mode: 'edit', label: '复核识别结果' },
 ]
 
 interface EssaySourcePanelProps {
@@ -18,6 +18,8 @@ interface EssaySourcePanelProps {
   activeHighlightText?: string
   issueMarkers?: SourceIssueMarker[]
   activeIssueId?: string | null
+  transcriptionWarnings?: string[]
+  printedTextExcluded?: boolean
   onIssueMarkerSelect?: (issueId: string) => void
   onOcrTextChange: (essayId: string, nextText: string) => void
   onViewOriginalImage: () => void
@@ -28,11 +30,14 @@ export function EssaySourcePanel({
   activeHighlightText,
   issueMarkers = [],
   activeIssueId,
+  transcriptionWarnings = [],
+  printedTextExcluded,
   onIssueMarkerSelect,
   onOcrTextChange,
   onViewOriginalImage,
 }: EssaySourcePanelProps) {
   const [mode, setMode] = useState<SourcePanelMode>('read')
+  const [draftText, setDraftText] = useState(essay.ocrText)
   const highlightedRef = useRef<HTMLElement | null>(null)
   const match = useMemo(
     () => findTextMatch(essay.ocrText, activeHighlightText ?? ''),
@@ -42,22 +47,35 @@ export function EssaySourcePanel({
   const markerParts = useMemo(() => splitTextByIssueMarkers(essay.ocrText, issueMarkers), [essay.ocrText, issueMarkers])
   const hasIssueMarkers = issueMarkers.length > 0
   const shouldShowFallback = Boolean(activeHighlightText) && !match
+  const hasChangedDraft = draftText !== essay.ocrText
   const setHighlightedElement = (element: HTMLElement | null) => {
     highlightedRef.current = element
   }
 
   useEffect(() => {
+    setDraftText(essay.ocrText)
+  }, [essay.ocrText])
+
+  useEffect(() => {
     highlightedRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
   }, [activeIssueId, match])
+
+  const saveTranscript = () => {
+    if (!hasChangedDraft) return
+    onOcrTextChange(essay.id, draftText)
+  }
 
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="font-semibold text-slate-950">学生作文原文</h3>
+          <h3 className="font-semibold text-slate-950">学生作文识别文本</h3>
           <p className="mt-1 text-xs font-semibold text-amber-700">
-            OCR 置信度 {formatConfidence(essay.ocrConfidence)}
+            识别置信度 {formatConfidence(essay.ocrConfidence)}
           </p>
+          {essay.transcriptSource === 'kimi_vision' ? (
+            <p className="mt-1 text-xs text-slate-500">Kimi 图像识别结果，建议结合原图复核。</p>
+          ) : null}
         </div>
         <button
           type="button"
@@ -68,6 +86,19 @@ export function EssaySourcePanel({
           查看原图
         </button>
       </div>
+
+      {(essay.transcriptSource === 'kimi_vision' || transcriptionWarnings.length > 0 || printedTextExcluded !== undefined) ? (
+        <section aria-label="图像识别说明" className="mt-3 rounded-md border border-amber-100 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
+          {printedTextExcluded === true ? <p>已排除试卷印刷提示，仅保留学生作答内容。</p> : null}
+          {printedTextExcluded === false ? <p>无法确认印刷提示是否已排除，请结合原图复核。</p> : null}
+          {transcriptionWarnings.length > 0 ? (
+            <ul className="mt-1 list-disc pl-4">
+              {transcriptionWarnings.map((warning, index) => <li key={`${warning}-${index}`}>{warning}</li>)}
+            </ul>
+          ) : null}
+        </section>
+      ) : null}
+
       <div className="mt-4 inline-flex rounded-lg border border-slate-200 bg-slate-100 p-1">
         {SOURCE_PANEL_MODE_OPTIONS.map((modeOption) => (
           <button
@@ -83,36 +114,46 @@ export function EssaySourcePanel({
         ))}
       </div>
       {mode === 'edit' ? (
-        <textarea
-          aria-label="学生作文原文"
-          value={essay.ocrText}
-          onChange={(event) => onOcrTextChange(essay.id, event.target.value)}
-          className="mt-4 min-h-[320px] w-full resize-y rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-800 outline-none focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100"
-        />
+        <div className="mt-4 space-y-3">
+          <textarea
+            aria-label="学生作文识别文本"
+            value={draftText}
+            onChange={(event) => setDraftText(event.target.value)}
+            className="min-h-[320px] w-full resize-y rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-800 outline-none focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100"
+          />
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs leading-5 text-slate-500">保存后当前批改结果将失效，需在进度页显式重新批改。</p>
+            <button
+              type="button"
+              disabled={!hasChangedDraft}
+              onClick={saveTranscript}
+              className="tech-focus rounded-lg bg-amber-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-amber-800 disabled:cursor-not-allowed disabled:bg-amber-300"
+            >
+              保存识别文本并重新批改
+            </button>
+          </div>
+        </div>
       ) : (
         <div className="mt-4 max-h-[520px] overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-4">
           {shouldShowFallback ? (
             <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
-              未在原文中精确定位，请手动核对
+              未在原文中精确定位，请手动核对。
             </p>
           ) : null}
           <p className="whitespace-pre-wrap text-sm leading-7 text-slate-800">
             {hasIssueMarkers
               ? markerParts.map((part, index) => {
-                  if (!part.marker) {
-                    return <span key={`${part.text}-${index}`}>{part.text}</span>
-                  }
+                  if (!part.marker) return <span key={`${part.text}-${index}`}>{part.text}</span>
 
                   const marker = part.marker
                   const isActive = marker.issueId === activeIssueId
-                  const markerTone =
-                    marker.source === 'logic'
-                      ? isActive
-                        ? 'bg-amber-100 text-amber-950 ring-1 ring-amber-200'
-                        : 'bg-amber-50 text-slate-800 hover:bg-amber-100'
-                      : isActive
-                        ? 'bg-cyan-100 text-cyan-950 ring-1 ring-cyan-200'
-                        : 'bg-cyan-50 text-slate-800 hover:bg-cyan-100'
+                  const markerTone = marker.source === 'logic'
+                    ? isActive
+                      ? 'bg-amber-100 text-amber-950 ring-1 ring-amber-200'
+                      : 'bg-amber-50 text-slate-800 hover:bg-amber-100'
+                    : isActive
+                      ? 'bg-cyan-100 text-cyan-950 ring-1 ring-cyan-200'
+                      : 'bg-cyan-50 text-slate-800 hover:bg-cyan-100'
 
                   return (
                     <button
@@ -129,19 +170,11 @@ export function EssaySourcePanel({
                     </button>
                   )
                 })
-              : highlightParts.map((part, index) =>
-                  part.highlighted ? (
-                    <mark
-                      key={`${part.text}-${index}`}
-                      ref={setHighlightedElement}
-                      className="rounded bg-amber-100 px-1 font-semibold text-amber-800"
-                    >
-                      {part.text}
-                    </mark>
-                  ) : (
-                    <span key={`${part.text}-${index}`}>{part.text}</span>
-                  ),
-                )}
+              : highlightParts.map((part, index) => part.highlighted ? (
+                <mark key={`${part.text}-${index}`} ref={setHighlightedElement} className="rounded bg-amber-100 px-1 font-semibold text-amber-800">
+                  {part.text}
+                </mark>
+              ) : <span key={`${part.text}-${index}`}>{part.text}</span>)}
           </p>
         </div>
       )}

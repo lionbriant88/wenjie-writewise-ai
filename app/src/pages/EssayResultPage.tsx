@@ -204,7 +204,17 @@ export function EssayResultPage() {
             reviewReasons={[]}
             onConfirm={() => confirmGradingResult(essay.id)}
           />
-          <EmptyState title="暂无批改结果" description="这篇作文还未完成 AI 批改。" />
+          <EmptyState
+            title={essay.status === 'pending_grading' ? '结果已失效' : '暂无批改结果'}
+            description={essay.status === 'pending_grading'
+              ? '识别文本已修改，原批改结果已失效。请返回进度页后显式重新批改。'
+              : '这篇作文还未完成 AI 批改。'}
+            action={essay.status === 'pending_grading' ? (
+              <Link to={`/tasks/${task.id}/progress`} className="tech-focus inline-flex rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800">
+                返回批改进度重新批改
+              </Link>
+            ) : undefined}
+          />
         </div>
       </AppLayout>
     )
@@ -316,6 +326,8 @@ export function EssayResultPage() {
               activeHighlightText={activeIssue?.original}
               issueMarkers={sourceIssueMarkers}
               activeIssueId={activeIssueId}
+              transcriptionWarnings={result.transcriptionWarnings}
+              printedTextExcluded={result.printedTextExcluded}
               onIssueMarkerSelect={(issueId) => {
                 setActiveIssueId(issueId)
                 setActiveDetailTab('issues')

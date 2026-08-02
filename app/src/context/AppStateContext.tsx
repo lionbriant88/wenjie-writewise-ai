@@ -22,6 +22,7 @@ import { AppStateContext, type ConfirmMockOcrEssayInput, type EnqueueImageEssays
 import {
   beginGradingAttempt,
   confirmGradingTransition,
+  invalidateGradingAfterTranscriptEdit,
   markEssayManualTransition,
   recordGradingPreflightFailure,
   settleGradingFailure,
@@ -200,16 +201,29 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
 
   const updateEssayOcrText = useCallback((essayId: string, text: string, confirmedAt?: string) => {
     const timestamp = confirmedAt ?? new Date().toISOString()
-    const nextEssays = essaysRef.current.map((essay) => essay.id === essayId
+    const target = essaysRef.current.find((essay) => essay.id === essayId)
+    if (!target || target.ocrText === text) return
+
+    const invalidated = invalidateGradingAfterTranscriptEdit(essaysRef.current, essayId, timestamp)
+    const source = invalidated.applied ? invalidated.essays : essaysRef.current
+    const nextEssays = source.map((essay) => essay.id === essayId
       ? {
           ...essay,
           ocrText: text,
-          ocrAudit: essay.ocrAudit ? confirmOcrAudit(essay.ocrAudit, text, timestamp) : undefined,
+          ocrAudit: target.ocrAudit ? confirmOcrAudit(target.ocrAudit, text, timestamp) : undefined,
           updatedAt: timestamp,
         }
       : essay)
     essaysRef.current = nextEssays
     setEssays(nextEssays)
+    if (invalidated.applied && invalidated.taskId) {
+      setGradingResults((current) => current.filter((result) => result.essayId !== essayId))
+      setTasks((currentTasks) => {
+        const updated = updateTasksFromEssays(currentTasks, invalidated.taskId!, nextEssays, timestamp)
+        tasksRef.current = updated
+        return updated
+      })
+    }
   }, [])
 
   const markEssayManual = useCallback((essayId: string) => {

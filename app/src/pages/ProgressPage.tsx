@@ -33,7 +33,7 @@ function ProcessingState({ essay }: { essay: Essay }) {
   if (essay.status === 'grading') {
     return <button type="button" disabled className="rounded-lg bg-blue-50 px-3 py-2 font-semibold text-blue-700">批改中</button>
   }
-  if (essay.status === 'pending_ocr') return <span className="text-slate-500">等待 OCR 识别</span>
+  if (essay.status === 'pending_ocr') return <span className="text-slate-500">等待图像识别</span>
   if (essay.status === 'ocr_running') return <span className="text-cyan-700">正在识别作文文本</span>
   return <span className="text-slate-500">等待开始批改</span>
 }
@@ -67,7 +67,7 @@ function EssayAction({
     return <Link to={`/tasks/${taskId}/essays/${essay.id}`} className="font-semibold text-blue-700">查看结果</Link>
   }
   if (essay.status === 'needs_review') {
-    return <Link to={`/tasks/${taskId}/exceptions`} className="font-semibold text-rose-700">去复核 OCR</Link>
+    return <Link to={`/tasks/${taskId}/exceptions`} className="font-semibold text-rose-700">去复核识别结果</Link>
   }
   if (essay.status === 'manual') return <span className="font-semibold text-amber-700">已转人工处理</span>
   if (essay.gradingRun?.status === 'failed') {
@@ -138,7 +138,7 @@ export function ProgressPage() {
       task={task}
       title="批改进度"
       currentStep="progress"
-      description={task.materialContext ? '图片已入队，可逐篇启动 Kimi 批改；不会自动并发或重试。' : '教师确认 OCR 后可逐篇启动批改；MVP 不进行批量并发或自动重试。'}
+      description={task.materialContext ? '图片已入队，可逐篇启动 Kimi 批改；不会自动并发或重试。' : '教师确认识别文本后可逐篇启动批改；MVP 不进行批量并发或自动重试。'}
     >
       <div className="space-y-5">
         <ProgressSummary essays={taskEssays} />
@@ -219,7 +219,7 @@ export function ProgressPage() {
                 >
                   <div>
                     <p className="font-semibold text-slate-950">{essay.essayNumber}</p>
-                    <p className="mt-1 text-xs text-slate-500">{essay.pageCount} 页{task.materialContext ? ' · 图片已入队' : ` · OCR ${Math.round(essay.ocrConfidence * 100)}%`}</p>
+                    <p className="mt-1 text-xs text-slate-500">{essay.pageCount} 页{task.materialContext ? ' · 图片已入队' : ` · 识别置信度 ${Math.round(essay.ocrConfidence * 100)}%`}</p>
                   </div>
                   <EssayStatusChip status={essay.status} />
                   <div className="text-sm">

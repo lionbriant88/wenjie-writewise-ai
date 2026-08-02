@@ -248,7 +248,7 @@ function projectSuccess(value: unknown, expected: ExpectedGradingResponse): AiGr
     ...(fullTextRevision ? { fullTextRevision } : {}),
     overallComment,
     ...(modelSelfConfidence === undefined ? {} : { modelSelfConfidence }),
-    ...(transcript === undefined ? {} : { transcript, transcriptionWarnings, printedTextExcluded }),
+    ...(transcript === undefined ? {} : { transcript, transcriptionWarnings: [...transcriptionWarnings!], printedTextExcluded }),
     reviewReasons,
     createdAt,
   }

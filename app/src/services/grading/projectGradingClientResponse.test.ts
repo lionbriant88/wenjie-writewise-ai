@@ -170,7 +170,25 @@ describe('projectGradingClientResponse', () => {
     raw.transcript = 'Student text.'
     raw.transcriptionWarnings = ['One word unclear.']
     raw.printedTextExcluded = true
-    expect(projectGradingClientResponse(raw, { ...expected, requireMultimodal: true })).toMatchObject({ status: 'success', transcript: 'Student text.', transcriptionWarnings: ['One word unclear.'], printedTextExcluded: true })
+    const result = projectGradingClientResponse(raw, { ...expected, requireMultimodal: true })
+    expect(result).toMatchObject({ status: 'success', transcript: 'Student text.', transcriptionWarnings: ['One word unclear.'], printedTextExcluded: true })
+    if (result.status === 'failed') throw new Error('Expected a projected multimodal success')
+    expect(result.transcriptionWarnings).not.toBe(raw.transcriptionWarnings)
+    ;(raw.transcriptionWarnings as string[]).push('Raw mutation must not leak.')
+    expect(result.transcriptionWarnings).toEqual(['One word unclear.'])
+  })
+
+  it('drops unknown Kimi response fields while keeping failures free of raw upstream content', () => {
+    const raw = validSuccess()
+    raw.transcript = 'Student text.'
+    raw.transcriptionWarnings = []
+    raw.printedTextExcluded = true
+    raw.rawKimiReasoning = 'sk-kimi-secret-marker'
+    const result = projectGradingClientResponse(raw, { ...expected, requireMultimodal: true })
+    expect(JSON.stringify(result)).not.toContain('sk-kimi-secret-marker')
+
+    const failure = projectGradingClientResponse({ requestId: 'request-1', status: 'failed', error: { code: 'provider_invalid_response', message: 'Kimi raw secret marker', retryable: false } }, { ...expected, httpOk: false })
+    expect(JSON.stringify(failure)).not.toContain('Kimi raw secret marker')
   })
 
   it.each([

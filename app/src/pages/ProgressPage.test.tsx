@@ -116,12 +116,13 @@ describe('ProgressPage', () => {
     expect(screen.getAllByText('已转人工处理').length).toBeGreaterThan(0)
   })
 
-  it('includes grading_ready in review filtering and preserves OCR exception navigation', async () => {
+  it('includes grading_ready in review filtering and preserves neutral recognition review navigation', async () => {
     const user = userEvent.setup()
     renderProgressFlow('task-1')
     await user.click(screen.getByRole('tab', { name: /需复核/ }))
     expect(screen.getAllByTestId('progress-review-row').length).toBeGreaterThan(0)
-    expect(screen.getAllByRole('link', { name: '去复核 OCR' }).length).toBeGreaterThan(0)
+    expect(screen.getAllByRole('link', { name: '去复核识别结果' }).length).toBeGreaterThan(0)
+    expect(document.body.textContent).not.toMatch(/OCR/i)
   })
 
   it('takes a directly queued image upload into the progress page', async () => {
