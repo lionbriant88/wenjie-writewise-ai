@@ -127,6 +127,7 @@ describe('ProgressPage', () => {
   it('takes a directly queued image upload into the progress page', async () => {
     const user = userEvent.setup()
     renderUploadFlow()
+    await user.click(screen.getByRole('button', { name: '添加模拟图片' }))
     await user.clear(screen.getByLabelText('班级'))
     await user.type(screen.getByLabelText('班级'), '九年级 3 班')
     await user.click(screen.getByRole('button', { name: '确认分组并进入批改' }))

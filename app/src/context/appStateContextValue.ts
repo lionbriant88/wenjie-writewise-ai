@@ -23,6 +23,7 @@ export interface ConfirmMockOcrEssayInput {
 }
 
 export interface EnqueueImageEssaysInput {
+  submissionId: string
   taskId: string
   className: string
   essayGroups: Array<{ pages: EssayPage[] }>

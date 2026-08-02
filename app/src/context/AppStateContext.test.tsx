@@ -90,7 +90,12 @@ describe('AppStateContext material-based task creation', () => {
     let taskId = ''
     act(() => { taskId = latestState.createTask({ taskName: 'Image task', fullScore: 15, materialContext: { materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], reviewWarnings: [] }, rubricDraft: { source: 'ai', status: 'confirmed', writingGoal: 'Write.', offTopicCriteria: [], excellentFeatures: [], reviewTriggers: [], dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant.', deductionFocus: [], sourceEvidence: ['Material.'] }] } }) })
     const file = new File(['image'], 'handwriting.png', { type: 'image/png' })
-    act(() => latestState.enqueueImageEssays({ taskId, className: '九年级 3 班', essayGroups: [{ pages: [{ id: 'page-1', label: file.name, pageNumber: 1, quality: 'clear', accent: '#000', sourceFile: file }] }] }))
+    const submission = { submissionId: 'image-submission-1', taskId, className: '九年级 3 班', essayGroups: [{ pages: [{ id: 'page-1', label: file.name, pageNumber: 1, quality: 'clear' as const, accent: '#000', sourceFile: file }] }] }
+    act(() => latestState.enqueueImageEssays(submission))
+    act(() => latestState.enqueueImageEssays(submission))
+    expect(latestState.essays.filter((item) => item.taskId === taskId)).toHaveLength(1)
+    act(() => latestState.enqueueImageEssays({ ...submission, submissionId: 'image-submission-2' }))
+    expect(latestState.essays.filter((item) => item.taskId === taskId)).toHaveLength(2)
     const essay = latestState.essays.find((item) => item.taskId === taskId)
     expect(essay).toMatchObject({ status: 'pending_grading', pages: [{ sourceFile: file }] })
     await act(async () => { await latestState.gradeEssay(essay!.id) })

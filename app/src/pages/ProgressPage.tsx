@@ -138,7 +138,7 @@ export function ProgressPage() {
       task={task}
       title="批改进度"
       currentStep="progress"
-      description="教师确认 OCR 后可逐篇启动批改；MVP 不进行批量并发或自动重试。"
+      description={task.materialContext ? '图片已入队，可逐篇启动 Kimi 批改；不会自动并发或重试。' : '教师确认 OCR 后可逐篇启动批改；MVP 不进行批量并发或自动重试。'}
     >
       <div className="space-y-5">
         <ProgressSummary essays={taskEssays} />
@@ -219,7 +219,7 @@ export function ProgressPage() {
                 >
                   <div>
                     <p className="font-semibold text-slate-950">{essay.essayNumber}</p>
-                    <p className="mt-1 text-xs text-slate-500">{essay.pageCount} 页 · OCR {Math.round(essay.ocrConfidence * 100)}%</p>
+                    <p className="mt-1 text-xs text-slate-500">{essay.pageCount} 页{task.materialContext ? ' · 图片已入队' : ` · OCR ${Math.round(essay.ocrConfidence * 100)}%`}</p>
                   </div>
                   <EssayStatusChip status={essay.status} />
                   <div className="text-sm">

@@ -32,4 +32,16 @@ describe('buildMultimodalGradingRequest', () => {
     const result = buildMultimodalGradingRequest(targetTask as Task, targetEssay, requestId)
     expect(result).toMatchObject({ ok: false, error: { code: 'invalid_request' } })
   })
+
+  it.each([
+    ['wrong task relation', (target: Essay) => ({ ...target, taskId: 'other' })],
+    ['duplicate page id', (target: Essay) => ({ ...target, pageOrder: ['page-1', 'page-1'] })],
+    ['unsupported image', (target: Essay) => ({ ...target, pages: [{ ...target.pages[0], sourceFile: new File(['x'], 'essay.gif', { type: 'image/gif' }) }] })],
+    ['too many pages', (target: Essay) => ({ ...target, pages: Array.from({ length: 11 }, (_, index) => ({ ...target.pages[0], id: `page-${index}`, sourceFile: new File(['x'], `${index}.png`, { type: 'image/png' }) })), pageOrder: Array.from({ length: 11 }, (_, index) => `page-${index}`) })],
+    ['empty evidence item', (target: Essay) => target],
+  ] as const)('rejects strict image or identity violation: %s', (_label, makeEssay) => {
+    const targetTask = _label === 'empty evidence item' ? { ...task, rubricDraft: { ...task.rubricDraft!, dimensions: [{ ...task.rubricDraft!.dimensions[0], sourceEvidence: [''] }] } } : task
+    const result = buildMultimodalGradingRequest(targetTask as Task, makeEssay(essay(new File(['x'], 'essay.png', { type: 'image/png' }))), 'request-1')
+    expect(result).toMatchObject({ ok: false, error: { code: 'invalid_request' } })
+  })
 })

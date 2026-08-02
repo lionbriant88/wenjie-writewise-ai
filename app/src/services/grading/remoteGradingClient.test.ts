@@ -85,7 +85,7 @@ describe('createRemoteGradingClient', () => {
     }
     const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status: 504 }))
     await expect(createRemoteGradingClient({ apiBase: 'http://gateway', fetchImpl }).grade(request))
-      .resolves.toEqual(body)
+      .resolves.toMatchObject({ requestId: request.requestId, status: 'failed', error: { code: 'provider_timeout', retryable: true } })
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 

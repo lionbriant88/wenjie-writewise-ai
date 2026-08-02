@@ -75,7 +75,7 @@ export function createRemoteGradingClient({
       }
       let body: unknown
       try { body = await response.json() } catch { return gatewayInvalidResponse(request.requestId) }
-      return projectGradingClientResponse(body, { httpOk: response.ok, requestId: request.requestId, essayId: request.essayId })
+      return projectGradingClientResponse(body, { httpOk: response.ok, requestId: request.requestId, essayId: request.essayId, requireMultimodal: true })
     },
   }
 }

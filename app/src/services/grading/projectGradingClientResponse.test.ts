@@ -14,7 +14,7 @@ function validSuccess(): Record<string, unknown> {
     maxScore: 15,
     dimensionScores: [{
       dimensionId: 'language', name: 'Language', score: 12, maxScore: 15, weight: 100,
-      reason: 'Accurate.', evidence: 'Synthetic evidence.', unknownNested: 'discard',
+      reason: 'Accurate.', evidence: 'Synthetic evidence.', requiresTeacherReview: true, unknownNested: 'discard',
     }],
     issues: [{
       id: 'issue-1', type: 'grammar', severity: 'medium', originalText: 'Synthetic error.',
@@ -23,11 +23,11 @@ function validSuccess(): Record<string, unknown> {
     }],
     sentenceRevisions: [{
       id: 'revision-1', relatedIssueId: 'issue-1', originalText: 'Synthetic error.',
-      revisedText: 'Synthetic correction.', note: 'Synthetic note.', unknownNested: 'discard',
+      revisedText: 'Synthetic correction.', note: 'Synthetic note.', requiresTeacherReview: true, unknownNested: 'discard',
     }],
     expressionUpgrades: [{
       id: 'upgrade-1', originalText: 'useful', upgradedText: 'beneficial',
-      note: 'Synthetic note.', unknownNested: 'discard',
+      note: 'Synthetic note.', requiresTeacherReview: false, unknownNested: 'discard',
     }],
     fullTextRevision: {
       originalText: 'Untrusted provider original.',
@@ -128,7 +128,7 @@ describe('projectGradingClientResponse', () => {
     expectInvalid(validSuccess(), { ...expected, httpOk: false })
   })
 
-  it('accepts a fully projected failure only on non-2xx with a matching request id', () => {
+  it('maps a non-2xx failure to a fixed safe local message', () => {
     const raw = {
       requestId: 'request-1',
       status: 'failed',
@@ -138,20 +138,31 @@ describe('projectGradingClientResponse', () => {
       unknownTopLevel: 'discard',
     }
     const result = projectGradingClientResponse(raw, { ...expected, httpOk: false })
-    expect(result).toEqual({
-      requestId: 'request-1',
-      status: 'failed',
-      error: { code: 'provider_timeout', message: 'Provider timed out.', retryable: true },
-    })
+    expect(result).toMatchObject({ requestId: 'request-1', status: 'failed', error: { code: 'provider_timeout', retryable: true } })
+    expect(JSON.stringify(result)).not.toContain('Provider timed out.')
     expectInvalid(raw, expected)
+  })
+
+  it('requires the full multimodal transcript contract when requested', () => {
+    for (const missing of ['transcript', 'transcriptionWarnings', 'printedTextExcluded'] as const) {
+      const raw = validSuccess()
+      raw.transcript = 'Student text.'
+      raw.transcriptionWarnings = []
+      raw.printedTextExcluded = true
+      delete raw[missing]
+      expect(projectGradingClientResponse(raw, { ...expected, requireMultimodal: true })).toMatchObject({ status: 'failed', error: { code: 'gateway_invalid_response' } })
+    }
+    expect(projectGradingClientResponse(validSuccess(), { ...expected, requireMultimodal: true })).toMatchObject({ status: 'failed', error: { code: 'gateway_invalid_response' } })
+  })
+
+  it('never exposes an upstream failure body', () => {
+    const result = projectGradingClientResponse({ requestId: 'request-1', status: 'failed', error: { code: 'provider_timeout', message: 'sk-test-secret-marker raw upstream', retryable: true } }, { ...expected, httpOk: false })
+    expect(JSON.stringify(result)).not.toContain('sk-test-secret-marker')
   })
 
   it.each([
     ['error code', (raw: Record<string, unknown>) => {
       (raw.error as Record<string, unknown>).code = 'unknown_code'
-    }],
-    ['error message', (raw: Record<string, unknown>) => {
-      (raw.error as Record<string, unknown>).message = ''
     }],
     ['error retryable', (raw: Record<string, unknown>) => {
       (raw.error as Record<string, unknown>).retryable = 'true'

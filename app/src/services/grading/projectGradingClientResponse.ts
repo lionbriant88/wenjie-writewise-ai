@@ -10,6 +10,11 @@ interface ExpectedGradingResponse {
   httpOk: boolean
   requestId: string
   essayId: string
+  requireMultimodal?: boolean
+}
+
+const safeMessages: Record<GradingErrorCode, string> = {
+  invalid_request: '批改请求无效。', confirmed_transcript_required: '请先确认作文文本。', unsupported_genre: '当前任务类型暂不支持。', provider_not_configured: '批改服务尚未配置。', provider_request_rejected: '批改请求未被服务接受。', provider_auth_failed: '批改服务认证失败。', provider_balance_unavailable: '批改服务额度暂不可用。', provider_rate_limited: '批改服务繁忙，请稍后重试。', provider_timeout: '批改服务响应超时，请重试。', provider_unavailable: '批改服务暂时不可用，请重试。', provider_content_filtered: '内容暂时无法处理。', provider_unexpected_tool_call: '批改服务返回了无法使用的结果。', provider_invalid_response: '批改服务返回了无法使用的结果。', request_too_large: '上传内容超过允许限制。', gateway_invalid_response: '批改服务返回了无法安全使用的响应，请重试或使用 mock 回退。', gateway_unavailable: '批改服务暂时不可用，请重试或使用 mock 回退。',
 }
 
 const providers = new Set(['mock', 'remote'])
@@ -84,7 +89,8 @@ function projectDimensionScore(value: unknown): AiGradingResultV1['dimensionScor
   const reason = readString(value.reason)
   const evidence = readString(value.evidence)
   if (!dimensionId || !name || score === null || maxScore === null || weight === null || !reason || !evidence) return null
-  return { dimensionId, name, score, maxScore, weight, reason, evidence }
+  if ('requiresTeacherReview' in value && typeof value.requiresTeacherReview !== 'boolean') return null
+  return { dimensionId, name, score, maxScore, weight, reason, evidence, ...('requiresTeacherReview' in value ? { requiresTeacherReview: value.requiresTeacherReview as boolean } : {}) }
 }
 
 function projectIssue(value: unknown): AiGradingResultV1['issues'][number] | null {
@@ -118,11 +124,13 @@ function projectSentenceRevision(value: unknown): AiGradingResultV1['sentenceRev
   const revisedText = readString(value.revisedText)
   const note = readString(value.note)
   if (!id || !originalText || !revisedText || !note) return null
+  if ('requiresTeacherReview' in value && typeof value.requiresTeacherReview !== 'boolean') return null
+  const review = 'requiresTeacherReview' in value ? { requiresTeacherReview: value.requiresTeacherReview as boolean } : {}
   if ('relatedIssueId' in value) {
     const relatedIssueId = readString(value.relatedIssueId)
-    return relatedIssueId ? { id, relatedIssueId, originalText, revisedText, note } : null
+    return relatedIssueId ? { id, relatedIssueId, originalText, revisedText, note, ...review } : null
   }
-  return { id, originalText, revisedText, note }
+  return { id, originalText, revisedText, note, ...review }
 }
 
 function projectExpressionUpgrade(value: unknown): AiGradingResultV1['expressionUpgrades'][number] | null {
@@ -131,7 +139,8 @@ function projectExpressionUpgrade(value: unknown): AiGradingResultV1['expression
   const originalText = readString(value.originalText)
   const upgradedText = readString(value.upgradedText)
   const note = readString(value.note)
-  return id && originalText && upgradedText && note ? { id, originalText, upgradedText, note } : null
+  if ('requiresTeacherReview' in value && typeof value.requiresTeacherReview !== 'boolean') return null
+  return id && originalText && upgradedText && note ? { id, originalText, upgradedText, note, ...('requiresTeacherReview' in value ? { requiresTeacherReview: value.requiresTeacherReview as boolean } : {}) } : null
 }
 
 function projectSentencePair(
@@ -216,7 +225,7 @@ function projectSuccess(value: unknown, expected: ExpectedGradingResponse): AiGr
   let transcript: string | undefined
   let transcriptionWarnings: string[] | undefined
   let printedTextExcluded: boolean | undefined
-  const hasMultimodalFields = 'transcript' in value || 'transcriptionWarnings' in value || 'printedTextExcluded' in value
+  const hasMultimodalFields = expected.requireMultimodal || 'transcript' in value || 'transcriptionWarnings' in value || 'printedTextExcluded' in value
   if (hasMultimodalFields) {
     transcript = readString(value.transcript) ?? undefined
     transcriptionWarnings = readStringArray(value.transcriptionWarnings) ?? undefined
@@ -249,15 +258,14 @@ function projectFailure(value: unknown, expected: ExpectedGradingResponse): Grad
   if (!isRecord(value) || !isRecord(value.error)) return null
   const requestId = readString(value.requestId)
   const code = readString(value.error.code)
-  const message = readString(value.error.message)
   const retryable = readBoolean(value.error.retryable)
   if (
     requestId !== expected.requestId
     || value.status !== 'failed'
     || !code || !errorCodes.has(code as GradingErrorCode)
-    || !message || retryable === null
+    || retryable === null
   ) return null
-  return { requestId, status: 'failed', error: { code: code as GradingErrorCode, message, retryable } }
+  return { requestId, status: 'failed', error: { code: code as GradingErrorCode, message: safeMessages[code as GradingErrorCode], retryable } }
 }
 
 export function gatewayInvalidResponse(requestId: string): GradingFailureV1 {

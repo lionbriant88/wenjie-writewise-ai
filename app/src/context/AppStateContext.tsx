@@ -76,6 +76,7 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
   const essaysRef = useRef(essays)
   const gradingInFlightRef = useRef(new Map<string, string>())
   const gradingSequenceRef = useRef(0)
+  const imageSubmissionIdsRef = useRef(new Set<string>())
   const gradingClientRef = useRef<GradingClient | null>(null)
   if (!gradingClientRef.current) {
     gradingClientRef.current = gradingClient ?? createConfiguredGradingClient()
@@ -172,9 +173,10 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
     })
   }, [])
 
-  const enqueueImageEssays = useCallback(({ taskId, className, essayGroups }: EnqueueImageEssaysInput) => {
+  const enqueueImageEssays = useCallback(({ submissionId, taskId, className, essayGroups }: EnqueueImageEssaysInput) => {
     const timestamp = new Date().toISOString()
-    if (!className.trim() || !tasksRef.current.some((task) => task.id === taskId)) return
+    if (!submissionId.trim() || imageSubmissionIdsRef.current.has(submissionId) || !className.trim() || !tasksRef.current.some((task) => task.id === taskId)) return
+    imageSubmissionIdsRef.current.add(submissionId)
     const current = essaysRef.current
     const taskEssayCount = current.filter((essay) => essay.taskId === taskId).length
     const createdEssays = essayGroups.map((group, groupIndex): Essay => {

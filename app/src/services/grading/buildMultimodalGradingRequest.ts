@@ -1,5 +1,4 @@
 import type { Essay, Task } from '../../types'
-import { hasValidRubricWeights } from './scoringRules'
 import type { ConfirmedTaskPackageV2, MultimodalGradingRequestV2 } from './types'
 
 export type BuildMultimodalGradingRequestResult =
@@ -10,6 +9,13 @@ function invalid(message: string): BuildMultimodalGradingRequestResult {
   return { ok: false, error: { code: 'invalid_request', message } }
 }
 
+const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp'])
+const maxImageBytes = 8 * 1024 * 1024
+const validText = (value: unknown, max = 10_000) => typeof value === 'string' && value.trim().length > 0 && value.length <= max
+const validTextArray = (value: unknown) => Array.isArray(value) && value.every((item) => validText(item))
+const validIds = (value: string[]) => value.every((id) => validText(id, 128)) && new Set(value).size === value.length
+const validWeights = (weights: number[]) => weights.length > 0 && weights.every((weight) => Number.isFinite(weight) && weight > 0 && weight <= 100) && Math.abs(weights.reduce((sum, weight) => sum + weight, 0) - 100) <= 0.001
+
 export function buildMultimodalGradingRequest(
   task: Task,
   essay: Essay,
@@ -17,20 +23,20 @@ export function buildMultimodalGradingRequest(
 ): BuildMultimodalGradingRequestResult {
   const material = task.materialContext
   const rubric = task.rubricDraft
-  if (!requestId.trim() || !material || rubric?.status !== 'confirmed' || !Number.isInteger(task.fullScore) || task.fullScore < 1 || task.fullScore > 100) {
+  if (!validText(requestId, 128) || !validText(task.id, 128) || !validText(essay.id, 128) || essay.taskId !== task.id || !material || rubric?.status !== 'confirmed' || !Number.isInteger(task.fullScore) || task.fullScore < 1 || task.fullScore > 100) {
     return invalid('题目材料或评分标准尚未确认。')
   }
-  if (!material.materialSummary.trim() || !material.writingRequirements.length || !rubric.dimensions.length || !hasValidRubricWeights(rubric.dimensions.map(({ weight }) => weight))) {
+  if (!validText(task.taskName) || !validText(material.materialSummary) || !validTextArray(material.writingRequirements) || !validTextArray(material.constraints) || !validTextArray(material.reviewWarnings) || !rubric.dimensions.length || !validWeights(rubric.dimensions.map(({ weight }) => weight))) {
     return invalid('题目材料或评分标准尚未确认。')
   }
-  if (rubric.dimensions.some((dimension) => !dimension.id.trim() || !dimension.name.trim() || !dimension.description.trim() || !dimension.sourceEvidence?.some((item) => item.trim()))) {
+  if (new Set(rubric.dimensions.map((dimension) => dimension.id)).size !== rubric.dimensions.length || rubric.dimensions.some((dimension) => !validText(dimension.id, 128) || !validText(dimension.name) || !validText(dimension.description) || !validTextArray(dimension.deductionFocus) || !validTextArray(dimension.sourceEvidence) || !dimension.sourceEvidence!.length)) {
     return invalid('题目材料或评分标准尚未确认。')
   }
-  if (!essay.pageOrder.length || new Set(essay.pageOrder).size !== essay.pageOrder.length) return invalid('作文图片不可用。')
+  if (essay.pageOrder.length < 1 || essay.pageOrder.length > 10 || essay.pages.length !== essay.pageOrder.length || !validIds(essay.pageOrder)) return invalid('作文图片不可用。')
   const pagesById = new Map(essay.pages.map((page) => [page.id, page]))
   const pages = essay.pageOrder.map((pageId) => {
     const page = pagesById.get(pageId)
-    return page?.sourceFile ? { pageId, file: page.sourceFile } : null
+    return page?.sourceFile instanceof File && imageTypes.has(page.sourceFile.type) && page.sourceFile.size <= maxImageBytes ? { pageId, file: page.sourceFile } : null
   })
   if (pages.some((page) => page === null) || pages.length !== essay.pages.length) return invalid('作文图片不可用。')
 

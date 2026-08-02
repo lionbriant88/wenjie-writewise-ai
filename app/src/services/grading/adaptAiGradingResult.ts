@@ -11,6 +11,9 @@ export function adaptAiGradingResult(
     resultVersion: result.resultVersion,
     source: result.provider,
     reviewReasons: [...result.reviewReasons],
+    transcript: result.transcript,
+    transcriptionWarnings: result.transcriptionWarnings ? [...result.transcriptionWarnings] : undefined,
+    printedTextExcluded: result.printedTextExcluded,
     totalScore: result.totalScore,
     dimensionScores: result.dimensionScores.map((dimension) => ({
       id: dimension.dimensionId,
@@ -20,6 +23,7 @@ export function adaptAiGradingResult(
       weight: dimension.weight,
       reason: dimension.reason,
       evidence: dimension.evidence,
+      needsTeacherReview: dimension.requiresTeacherReview,
     })),
     errorAnnotations: result.issues.map((issue) => ({
       id: issue.id,
@@ -28,6 +32,7 @@ export function adaptAiGradingResult(
       suggestion: issue.suggestion,
       explanation: issue.explanation,
       severity: issue.severity,
+      needsTeacherReview: issue.requiresTeacherReview,
     })),
     sentenceRevisions: result.sentenceRevisions.map((revision) => ({
       id: revision.id,
@@ -35,12 +40,14 @@ export function adaptAiGradingResult(
       original: revision.originalText,
       revised: revision.revisedText,
       note: revision.note,
+      needsTeacherReview: revision.requiresTeacherReview,
     })),
     upgradedExpressions: result.expressionUpgrades.map((upgrade) => ({
       id: upgrade.id,
       original: upgrade.originalText,
       upgraded: upgrade.upgradedText,
       note: upgrade.note,
+      needsTeacherReview: upgrade.requiresTeacherReview,
     })),
     fullTextRevision: result.fullTextRevision
       ? {

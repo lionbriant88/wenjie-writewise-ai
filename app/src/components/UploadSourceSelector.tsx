@@ -4,6 +4,7 @@ interface UploadSourceSelectorProps {
   onSelectImages: (files: File[]) => void
   onAddMockImage: () => void
   disabled?: boolean
+  multimodal?: boolean
 }
 
 function statusClass(available: boolean) {
@@ -12,7 +13,7 @@ function statusClass(available: boolean) {
     : 'bg-slate-100 text-slate-500 ring-1 ring-slate-200'
 }
 
-export function UploadSourceSelector({ onSelectImages, onAddMockImage, disabled = false }: UploadSourceSelectorProps) {
+export function UploadSourceSelector({ onSelectImages, onAddMockImage, disabled = false, multimodal = false }: UploadSourceSelectorProps) {
   return (
     <section
       role="region"
@@ -53,14 +54,14 @@ export function UploadSourceSelector({ onSelectImages, onAddMockImage, disabled 
               选择图片
               <input
                 type="file"
-                accept="image/*"
+                accept="image/png,image/jpeg,image/webp"
                 multiple
                 disabled={disabled}
                 aria-label="选择图片"
                 className="sr-only"
                 onChange={(event) => {
                   if (disabled) return
-                  onSelectImages(Array.from(event.target.files ?? []))
+                  onSelectImages(Array.from(event.target.files ?? []).filter((file) => ['image/png', 'image/jpeg', 'image/webp'].includes(file.type)))
                   event.target.value = ''
                 }}
               />
@@ -124,7 +125,7 @@ export function UploadSourceSelector({ onSelectImages, onAddMockImage, disabled 
                 </span>
               </div>
               <p className="mt-1 text-xs leading-5 text-slate-500">
-                采集单篇作文后直接进入 OCR、AI 批改和单篇详情页。
+                {multimodal ? '采集单篇作文后直接进入 Kimi 图片识别与批改。' : '采集单篇作文后进入 OCR、AI 批改和单篇详情页。'}
               </p>
             </div>
             <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
@@ -135,7 +136,7 @@ export function UploadSourceSelector({ onSelectImages, onAddMockImage, disabled 
                 </span>
               </div>
               <p className="mt-1 text-xs leading-5 text-slate-500">
-                连续采集多张作文图片后进入上传整理、OCR 和批改队列。
+                {multimodal ? '连续采集多张作文图片后进入上传整理和批改队列。' : '连续采集多张作文图片后进入上传整理、OCR 和批改队列。'}
               </p>
             </div>
           </div>

@@ -141,6 +141,7 @@ export interface ScoreDimension {
   weight: number
   reason: string
   evidence: string
+  needsTeacherReview?: boolean
 }
 
 export interface ErrorAnnotation {
@@ -150,6 +151,7 @@ export interface ErrorAnnotation {
   suggestion: string
   explanation: string
   severity: 'low' | 'medium' | 'high'
+  needsTeacherReview?: boolean
 }
 
 export interface SentenceRevision {
@@ -158,6 +160,7 @@ export interface SentenceRevision {
   original: string
   revised: string
   note: string
+  needsTeacherReview?: boolean
 }
 
 export interface UpgradedExpression {
@@ -165,6 +168,7 @@ export interface UpgradedExpression {
   original: string
   upgraded: string
   note: string
+  needsTeacherReview?: boolean
 }
 
 export type FullTextChangeType =
@@ -246,6 +250,9 @@ export interface GradingResult {
   resultVersion?: 'grading-result-v1'
   source?: 'mock' | 'remote'
   reviewReasons?: string[]
+  transcript?: string
+  transcriptionWarnings?: string[]
+  printedTextExcluded?: boolean
   teacherAdjusted: boolean
   createdAt: string
   updatedAt: string
