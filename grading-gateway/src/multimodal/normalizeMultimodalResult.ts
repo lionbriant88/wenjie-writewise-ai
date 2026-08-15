@@ -4,13 +4,16 @@ import { calculateDimensionMaxScore } from '../../../app/src/services/grading/sc
 import type { AiGradingResultV1, GradingRequestV1, GradingProviderName } from '../types.js'
 import { validateGeneratedRubric } from './validateRubric.js'
 import { applyResultPolicy } from './resultPolicy.js'
+import { rebuildCorrectedText } from './resultPolicy.js'
 import type { ResultPolicyInput } from './resultPolicy.js'
 import type { ConfirmedTaskPackageV2 } from './types.js'
 import type { RawLegibilityIssueV1, RawLogicIssueV1, RawMultimodalIssueV1, RawSentencePairV1, RawSentenceRevisionV1 } from './types.js'
+import type { LegibilityIssueV1, LogicIssueV1 } from '../types.js'
+import { LEGIBILITY_DIMENSION_ID } from './gradingPolicy.js'
 
 export interface MultimodalGradingResult extends AiGradingResultV1 { transcript: string; recognitionWarnings: string[]; printedTextExcluded: boolean }
 export type MultimodalNormalizationResult = { ok: true; result: MultimodalGradingResult } | { ok: false; error: { code: 'provider_invalid_response'; message: string; retryable: true } }
-export interface MultimodalNormalizationContext { requestId: string; essayId: string; task: ConfirmedTaskPackageV2; provider: GradingProviderName; createdAt: string; confirmedTranscript?: string }
+export interface MultimodalNormalizationContext { requestId: string; essayId: string; task: ConfirmedTaskPackageV2; provider: GradingProviderName; createdAt: string; pageCount: number; confirmedTranscript?: string }
 
 const INVALID_MESSAGE = 'AI grading result cannot be used safely.'
 const CHANGE_TYPES = new Set(['grammar', 'spelling', 'word_choice', 'sentence_upgrade', 'coherence', 'logic_bridge', 'delete_suggestion', 'replace_sentence', 'reference_clarification'])
@@ -219,12 +222,25 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
   const legibilityIssues = parseRawLegibilityIssues(payload.legibilityIssues)
   const scoreReasons = dimensionReasons(payload.dimensionScores)
   const overallComment = text(payload.overallComment) ?? ''
-  if (!request || !issues || !revisions || !upgrades || !pairs || !logicNotes || !logicIssues || !legibilityIssues || !scoreReasons || !rawScoresAreBounded(payload.dimensionScores, context) || !isRecord(payload.fullTextRevision) || logicNotes.some(({ quote }) => !hasUniqueQuote(transcript, quote))) return invalid()
+  if (!request || !issues || !revisions || !upgrades || !pairs || !logicNotes || !logicIssues || !legibilityIssues || !scoreReasons || !rawScoresAreBounded(payload.dimensionScores, context) || !isRecord(payload.fullTextRevision) || logicNotes.some(({ quote }) => !hasUniqueQuote(transcript, quote)) || logicIssues.some(({ originalText, contextBefore, contextAfter }) => !hasUniqueQuote(transcript, originalText) || !hasUniqueQuote(transcript, contextBefore) || !hasUniqueQuote(transcript, contextAfter))) return invalid()
+  if ((context.confirmedTranscript !== undefined && legibilityIssues.length > 0) || (context.confirmedTranscript === undefined && legibilityIssues.some(({ pageNumber }) => pageNumber > context.pageCount))) return invalid()
+  if ((payload.dimensionScores as Array<Record<string, unknown>>).some((score) => {
+    const dimensionId = score.dimensionId
+    const evidence = score.evidence
+    return typeof dimensionId === 'string' && dimensionId !== LEGIBILITY_DIMENSION_ID && typeof evidence === 'string' && legibilityIssues.some(({ transcriptText }) => evidence.includes(transcriptText))
+  })) return invalid()
   const policyInput: ResultPolicyInput = { issues, sentenceRevisions: revisions, sentencePairs: pairs, logicIssues, legibilityIssues, dimensionReasons: scoreReasons, overallComment, logicNotes: logicNotes.map(({ note }) => note), logicNoteRecords: logicNotes }
   const policy = applyResultPolicy(policyInput, transcript)
   if (!policy) return invalid()
+  const legibilityQuotes = new Set(legibilityIssues.map(({ transcriptText }) => transcriptText))
+  const safeIssues = policy.issues.filter(({ originalText }) => !legibilityQuotes.has(originalText))
+  const safeIssueKeys = new Set(safeIssues.map(({ issueKey }) => issueKey))
+  const safeRevisions = policy.sentenceRevisions.filter(({ originalText, relatedIssueKeys }) => !legibilityQuotes.has(originalText) && relatedIssueKeys.every((key) => safeIssueKeys.has(key)))
+  const safePairs = policy.sentencePairs.filter(({ originalText, relatedIssueKeys }) => !legibilityQuotes.has(originalText) && relatedIssueKeys.every((key) => safeIssueKeys.has(key)))
+  const correctedText = rebuildCorrectedText(transcript, safePairs)
+  if (correctedText === null) return invalid()
   const keptLogicNotes = logicNotes.filter(({ quote }) => !legibilityIssues.some(({ transcriptText }) => transcriptText === quote))
-  const basePayload = { ...payload, issues: policy.issues, sentenceRevisions: policy.sentenceRevisions, expressionUpgrades: upgrades.grounded, fullTextRevision: { ...payload.fullTextRevision, correctedText: policy.correctedText, sentencePairs: policy.sentencePairs, logicNotes: keptLogicNotes }, reviewReasons: policy.reviewReasons }
+  const basePayload = { ...payload, issues: safeIssues, sentenceRevisions: safeRevisions, expressionUpgrades: upgrades.grounded, fullTextRevision: { ...payload.fullTextRevision, correctedText, sentencePairs: safePairs, logicNotes: keptLogicNotes }, reviewReasons: policy.reviewReasons }
   const normalized = normalizeGradingResult(basePayload, request, { provider: context.provider, createdAt: context.createdAt })
   if (!normalized.ok) return invalid()
   const reviewReasons = new Set(normalized.result.reviewReasons)
@@ -233,6 +249,8 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
   if (upgrades.ungrounded.length) reviewReasons.add('expression_upgrade_quote_unmatched')
   const dimensionScores = normalized.result.dimensionScores.map((item) => matchTranscriptQuote(transcript, item.evidence) ? item : { ...item, requiresTeacherReview: true })
   if (dimensionScores.some(({ requiresTeacherReview }) => requiresTeacherReview)) reviewReasons.add('dimension_evidence_unmatched')
+  const normalizedLogicIssues: LogicIssueV1[] = policy.logicIssues.map(({ issueKey: _issueKey, ...issue }, index) => ({ id: `${context.essayId}-logic-${index + 1}`, ...issue }))
+  const normalizedLegibilityIssues: LegibilityIssueV1[] = legibilityIssues.map(({ issueKey: _issueKey, ...issue }, index) => ({ id: `${context.essayId}-legibility-${index + 1}`, ...issue }))
   const fullTextRevision = normalized.result.fullTextRevision
-  return { ok: true, result: { ...normalized.result, status: reviewReasons.size ? 'partial' : 'success', dimensionScores, expressionUpgrades: [...normalized.result.expressionUpgrades, ...upgrades.ungrounded], ...(fullTextRevision ? { fullTextRevision } : {}), reviewReasons: [...reviewReasons], transcript, recognitionWarnings, printedTextExcluded: payload.printedTextExcluded } }
+  return { ok: true, result: { ...normalized.result, status: reviewReasons.size ? 'partial' : 'success', dimensionScores, expressionUpgrades: [...normalized.result.expressionUpgrades, ...upgrades.ungrounded], ...(fullTextRevision ? { fullTextRevision: { ...fullTextRevision, logicIssues: normalizedLogicIssues } } : {}), legibilityIssues: normalizedLegibilityIssues, reviewReasons: [...reviewReasons], transcript, recognitionWarnings, printedTextExcluded: payload.printedTextExcluded } }
 }

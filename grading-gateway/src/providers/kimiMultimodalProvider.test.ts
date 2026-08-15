@@ -10,16 +10,22 @@ const pages = [
 
 const draft: GeneratedRubricV1 = {
   taskName: 'Draft task', materialSummary: 'Draft summary', writingRequirements: ['Draft requirement'],
-  constraints: ['Draft constraint'], dimensions: [{
-    id: 'content', name: 'Content', weight: 100, description: 'Draft dimension',
-    deductionFocus: ['Draft deduction'], sourceEvidence: ['Draft evidence'],
-  }], reviewWarnings: [],
+  constraints: ['Draft constraint'], dimensions: [
+    {
+      id: 'content', name: 'Content', weight: 95, description: 'Draft dimension',
+      deductionFocus: ['Draft deduction'], sourceEvidence: ['Draft evidence'],
+    },
+    {
+      id: 'legibility', name: 'Legibility', weight: 5, description: 'Handwriting is legible.',
+      deductionFocus: [], sourceEvidence: [],
+    },
+  ], reviewWarnings: [],
 }
 
 const reviewed: GeneratedRubricV1 = {
   ...draft,
   taskName: 'Reviewed task',
-  dimensions: [{ ...draft.dimensions[0], description: 'Reviewed dimension' }],
+  dimensions: [{ ...draft.dimensions[0], description: 'Reviewed dimension' }, draft.dimensions[1]],
 }
 
 function transportReturning(...results: unknown[]) {

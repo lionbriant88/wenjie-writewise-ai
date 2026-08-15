@@ -210,7 +210,9 @@ export interface AiGradingResultV1 {
       requiresTeacherReview: boolean
     }>
     logicNotes: string[]
+    logicIssues: LogicIssueV1[]
   }
+  legibilityIssues: LegibilityIssueV1[]
   overallComment: string
   modelSelfConfidence?: number
   reviewReasons: string[]

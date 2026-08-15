@@ -42,7 +42,7 @@ const task = {
   },
 }
 
-const context = { requestId: 'request-normalize', essayId: 'essay-normalize', task, provider: 'remote' as const, createdAt: '2026-08-02T00:00:00.000Z' }
+const context = { requestId: 'request-normalize', essayId: 'essay-normalize', task, provider: 'remote' as const, pageCount: 1, createdAt: '2026-08-02T00:00:00.000Z' }
 
 function validPayload(): Record<string, unknown> {
   return {
@@ -61,7 +61,95 @@ function validPayload(): Record<string, unknown> {
   }
 }
 
+function payloadWithLogicIssue(): Record<string, unknown> {
+  const payload = validPayload()
+  payload.transcript = 'Before the party. My cat is blue. After the party.'
+  payload.issues = []
+  payload.dimensionScores = (payload.dimensionScores as Array<Record<string, unknown>>).map((score) => ({
+    ...score,
+    evidence: 'My cat is blue.',
+  }))
+  payload.fullTextRevision = {
+    correctedText: 'Before the party. My cat is blue. After the party.',
+    improvedText: 'Before the party. My cat is blue. After the party.',
+    sentencePairs: [],
+    logicNotes: [],
+    logicIssues: [{
+      issueKey: 'logic-cat', originalText: 'My cat is blue.', contextBefore: 'Before the party.', contextAfter: 'After the party.',
+      subType: 'irrelevant_sentence', severity: 'medium', diagnosis: 'The sentence does not support the event.',
+      suggestedAction: 'delete_sentence', conservativeSuggestion: 'Remove the sentence.', polishedSuggestion: 'Delete the unrelated sentence.',
+      requiresTeacherReview: false,
+    }],
+  }
+  return payload
+}
+
+function payloadWithCantAmbiguity(): Record<string, unknown> {
+  const payload = validPayload()
+  ;(payload.issues as Array<Record<string, unknown>>).push({
+    issueKey: 'spelling-blue', type: 'spelling', severity: 'medium', originalText: 'It are blue.', suggestion: 'It is blue.',
+    explanation: 'The letters are unclear.', evidenceCertainty: 'certain', requiresTeacherReview: false,
+  })
+  ;(payload.dimensionScores as Array<Record<string, unknown>>)[1].evidence = 'I has a pen.'
+  ;(payload.dimensionScores as Array<Record<string, unknown>>)[2].evidence = 'It are blue.'
+  ;(payload.fullTextRevision as Record<string, unknown>).logicIssues = [{
+    issueKey: 'logic-blue', originalText: 'It are blue.', contextBefore: 'I has a pen.', contextAfter: 'I has a pen.',
+    subType: 'irrelevant_sentence', severity: 'medium', diagnosis: 'The sentence is irrelevant.',
+    suggestedAction: 'delete_sentence', conservativeSuggestion: 'Remove the sentence.', polishedSuggestion: 'Delete the unrelated sentence.',
+    requiresTeacherReview: false,
+  }]
+  payload.legibilityIssues = [{
+    issueKey: 'legibility-blue', transcriptText: 'It are blue.', possibleReadings: ['It are blue.', 'It is blue.'],
+    pageNumber: 1, regionDescription: 'line 2', explanation: 'The final verb form is unclear.', defaultOutcome: 'count_as_legibility_error',
+  }]
+  return payload
+}
+
 describe('normalizeMultimodalResult', () => {
+  it('projects a grounded structured logic issue into the full-text revision', () => {
+    const normalized = normalizeMultimodalResult(payloadWithLogicIssue(), context)
+
+    expect(normalized.ok && (normalized.result.fullTextRevision as unknown as { logicIssues?: unknown[] } | undefined)?.logicIssues?.[0]).toMatchObject({
+      id: 'essay-normalize-logic-1', subType: 'irrelevant_sentence', originalText: 'My cat is blue.', suggestedAction: 'delete_sentence',
+    })
+  })
+
+  it.each(['originalText', 'contextBefore', 'contextAfter'] as const)('rejects an ungrounded structured logic %s', (field) => {
+    const payload = payloadWithLogicIssue()
+    ;(((payload.fullTextRevision as Record<string, unknown>).logicIssues as Array<Record<string, unknown>>)[0])[field] = 'Invented logic source.'
+
+    expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
+  })
+
+  it('keeps a local legibility ambiguity successful and isolates it from other deductions', () => {
+    const normalized = normalizeMultimodalResult(payloadWithCantAmbiguity(), context)
+    expect(normalized.ok).toBe(true)
+    if (!normalized.ok) throw new Error(normalized.error.message)
+
+    expect(normalized.result.status).toBe('success')
+    expect(normalized.result.legibilityIssues).toMatchObject([{
+      id: 'essay-normalize-legibility-1', possibleReadings: ['It are blue.', 'It is blue.'], defaultOutcome: 'count_as_legibility_error',
+    }])
+    expect(normalized.result.reviewReasons).not.toContain('recognition_uncertain')
+    expect(normalized.result.issues).toEqual([])
+    expect((normalized.result.fullTextRevision as unknown as { logicIssues?: unknown[] } | undefined)?.logicIssues).toEqual([])
+    expect(normalized.result.dimensionScores.filter(({ evidence }) => evidence.includes('It are blue.')).map(({ dimensionId }) => dimensionId)).toEqual(['legibility'])
+  })
+
+  it('rejects a legibility location beyond the uploaded image pages', () => {
+    const payload = payloadWithCantAmbiguity()
+    ;(payload.legibilityIssues as Array<Record<string, unknown>>)[0].pageNumber = 2
+
+    expect(normalizeMultimodalResult(payload, { ...context, pageCount: 1 })).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
+  })
+
+  it('rejects legibility findings during a confirmed-text regrade', () => {
+    const payload = payloadWithCantAmbiguity()
+    const transcript = payload.transcript as string
+
+    expect(normalizeMultimodalResult(payload, { ...context, confirmedTranscript: transcript, pageCount: 0 })).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
+  })
+
   it('accepts recognition warnings and exposes recognition uncertainty without accepting the legacy field', () => {
     const payload = validPayload()
     payload.recognitionWarnings = ['A word is unclear.']
@@ -173,6 +261,8 @@ describe('normalizeMultimodalResult', () => {
 
   it('isolates a logic note whose quote overlaps a legibility issue', () => {
     const payload = validPayload()
+    ;(payload.dimensionScores as Array<Record<string, unknown>>)[0].evidence = 'It are blue.'
+    ;(payload.dimensionScores as Array<Record<string, unknown>>)[1].evidence = 'It are blue.'
     payload.legibilityIssues = [{
       issueKey: 'legibility-opening', transcriptText: 'I has a pen.', possibleReadings: ['I has a pen.', 'I have a pen.'],
       pageNumber: 1, regionDescription: 'line 1', explanation: 'The verb ending is unclear.', defaultOutcome: 'count_as_legibility_error',

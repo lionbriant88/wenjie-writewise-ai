@@ -24,14 +24,34 @@ function validRequest(): GradingRequestV1 {
   }
 }
 
+function imageRubricDimensions() {
+  return [
+    { id: 'content', name: 'Content', weight: 95, description: 'Relevant.', deductionFocus: [], sourceEvidence: [] },
+    { id: 'legibility', name: 'Legibility', weight: 5, description: 'Handwriting is legible.', deductionFocus: [], sourceEvidence: [] },
+  ]
+}
+
+function strictMultimodalPayload(transcript: string) {
+  return {
+    transcript, recognitionWarnings: [], printedTextExcluded: true, reportedTotalScore: 15,
+    dimensionScores: [
+      { dimensionId: 'content', score: 14.25, reason: 'Relevant.', evidence: transcript },
+      { dimensionId: 'legibility', score: 0.75, reason: 'Handwriting is legible.', evidence: transcript },
+    ],
+    issues: [], sentenceRevisions: [], expressionUpgrades: [],
+    fullTextRevision: { correctedText: transcript, improvedText: transcript, sentencePairs: [], logicNotes: [], logicIssues: [] },
+    legibilityIssues: [], overallComment: 'Synthetic.', reviewReasons: [],
+  }
+}
+
 describe('grading gateway server boundary', () => {
   it('accepts a confirmed task metadata payload above the rubric upload field limit', async () => {
     const provider: MultimodalProvider = {
       async generateRubric() { throw new Error('not used') },
-      async gradeEssay() { return { transcript: 'Student text.', transcriptionWarnings: [], printedTextExcluded: true, reportedTotalScore: 15, dimensionScores: [{ dimensionId: 'content', score: 15, reason: 'Relevant.', evidence: 'Student text.' }], issues: [], sentenceRevisions: [], expressionUpgrades: [], fullTextRevision: { correctedText: 'Student text.', improvedText: 'Student text.', sentencePairs: [], logicNotes: [] }, overallComment: 'Synthetic.', reviewReasons: [] } },
+      async gradeEssay() { return strictMultimodalPayload('Student text.') },
     }
     const materialSummary = `Synthetic ${'x'.repeat(17 * 1024)}`
-    const metadata = { requestId: 'large-metadata', essayId: 'large-essay', pageIds: ['essay-1'], task: { taskId: 'large-task', fullScore: 15, rubric: { taskName: 'Synthetic task', materialSummary, writingRequirements: ['Write.'], constraints: ['English.'], dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant.', deductionFocus: [], sourceEvidence: [] }], reviewWarnings: [] } } }
+    const metadata = { requestId: 'large-metadata', essayId: 'large-essay', pageIds: ['essay-1'], task: { taskId: 'large-task', fullScore: 15, rubric: { taskName: 'Synthetic task', materialSummary, writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } } }
     await request(createServer({ multimodalProvider: provider }))
       .post('/grading/grade-images').field('metadata', JSON.stringify(metadata))
       .attach('pages', Buffer.from('essay-page'), { filename: 'essay.png', contentType: 'image/png' }).expect(200)
@@ -52,12 +72,7 @@ describe('grading gateway server boundary', () => {
       async gradeEssay(input) {
         calls.push([input])
         return {
-          transcript: 'I has a pen.', transcriptionWarnings: [], printedTextExcluded: true,
-          reportedTotalScore: 15,
-          dimensionScores: [{ dimensionId: 'content', score: 15, reason: 'Relevant.', evidence: 'I has a pen.' }],
-          issues: [], sentenceRevisions: [], expressionUpgrades: [],
-          fullTextRevision: { correctedText: 'I have a pen.', improvedText: 'I have a pen.', sentencePairs: [], logicNotes: [] },
-          overallComment: 'Synthetic.', reviewReasons: [],
+          ...strictMultimodalPayload('I has a pen.'),
         }
       },
     }
@@ -65,7 +80,7 @@ describe('grading gateway server boundary', () => {
       requestId: 'image-request', essayId: 'image-essay', pageIds: ['essay-2', 'essay-1'],
       task: {
         taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'],
-        rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant.', deductionFocus: [], sourceEvidence: [] }], reviewWarnings: [] },
+        rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] },
       },
     }
     const response = await request(createServer({ multimodalProvider: provider, now: () => '2026-08-02T00:00:00.000Z' }))
@@ -84,12 +99,12 @@ describe('grading gateway server boundary', () => {
     const teacherText = 'Teacher corrected transcript.'
     const metadata = {
       requestId: 'confirmed-image-request', essayId: 'confirmed-image-essay', pageIds: [], confirmedTranscript: teacherText,
-      task: { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant.', deductionFocus: [], sourceEvidence: [] }], reviewWarnings: [] } },
+      task: { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } },
     }
     const calls: Parameters<MultimodalProvider['gradeEssay']>[] = []
     const matchingProvider: MultimodalProvider = {
       async generateRubric() { throw new Error('not used') },
-      async gradeEssay(input) { calls.push([input]); return { transcript: teacherText, transcriptionWarnings: [], printedTextExcluded: true, reportedTotalScore: 15, dimensionScores: [{ dimensionId: 'content', score: 15, reason: 'Relevant.', evidence: teacherText }], issues: [], sentenceRevisions: [], expressionUpgrades: [], fullTextRevision: { correctedText: teacherText, improvedText: teacherText, sentencePairs: [], logicNotes: [] }, overallComment: 'Synthetic.', reviewReasons: [] } },
+      async gradeEssay(input) { calls.push([input]); return strictMultimodalPayload(teacherText) },
     }
     await request(createServer({ multimodalProvider: matchingProvider }))
       .post('/grading/grade-images').field('metadata', JSON.stringify(metadata)).expect(200)
@@ -99,7 +114,7 @@ describe('grading gateway server boundary', () => {
     let mismatchCalls = 0
     const differentProvider: MultimodalProvider = {
       async generateRubric() { throw new Error('not used') },
-      async gradeEssay() { mismatchCalls += 1; return { transcript: 'MODEL-DIFFERENT', transcriptionWarnings: [], printedTextExcluded: true, reportedTotalScore: 15, dimensionScores: [], issues: [], sentenceRevisions: [], expressionUpgrades: [], fullTextRevision: { correctedText: '', improvedText: '', sentencePairs: [], logicNotes: [] }, overallComment: 'Synthetic.', reviewReasons: [] } },
+      async gradeEssay() { mismatchCalls += 1; return strictMultimodalPayload('MODEL-DIFFERENT') },
     }
     const response = await request(createServer({ multimodalProvider: differentProvider }))
       .post('/grading/grade-images').field('metadata', JSON.stringify(metadata)).expect(503)
@@ -116,7 +131,7 @@ describe('grading gateway server boundary', () => {
     }
     const metadata = {
       requestId: 'confirmed-with-image', essayId: 'confirmed-essay', pageIds: [], confirmedTranscript: 'Teacher-confirmed text.',
-      task: { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant.', deductionFocus: [], sourceEvidence: [] }], reviewWarnings: [] } },
+      task: { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } },
     }
     await request(createServer({ multimodalProvider: provider }))
       .post('/grading/grade-images').field('metadata', JSON.stringify(metadata))
@@ -133,10 +148,10 @@ describe('grading gateway server boundary', () => {
       async gradeEssay(input) {
         calls += 1
         const transcript = input.confirmedTranscript ?? ''
-        return { transcript, transcriptionWarnings: [], printedTextExcluded: true, reportedTotalScore: 15, dimensionScores: [{ dimensionId: 'content', score: 15, reason: 'Relevant.', evidence: transcript }], issues: [], sentenceRevisions: [], expressionUpgrades: [], fullTextRevision: { correctedText: transcript, improvedText: transcript, sentencePairs: [], logicNotes: [] }, overallComment: 'Synthetic.', reviewReasons: [] }
+        return strictMultimodalPayload(transcript)
       },
     }
-    const task = { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant.', deductionFocus: [], sourceEvidence: [] }], reviewWarnings: [] } }
+    const task = { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } }
     const app = createServer({ multimodalProvider: provider })
     await request(app).post('/grading/grade-images')
       .field('metadata', JSON.stringify({ requestId: 'boundary-50k', essayId: 'boundary-essay', pageIds: [], task, confirmedTranscript: exactly50k })).expect(200)
@@ -156,7 +171,7 @@ describe('grading gateway server boundary', () => {
       async generateRubric() { throw new Error('not used') },
       async gradeEssay() { calls += 1; throw new GradingProviderError('provider_unavailable', 'safe failure', true) },
     }
-    const metadata = { requestId: 'image-failure', essayId: 'essay-failure', pageIds: ['essay-1'], task: { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant.', deductionFocus: [], sourceEvidence: [] }], reviewWarnings: [] } } }
+    const metadata = { requestId: 'image-failure', essayId: 'essay-failure', pageIds: ['essay-1'], task: { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } } }
     const response = await request(createServer({ multimodalProvider: provider }))
       .post('/grading/grade-images').field('metadata', JSON.stringify(metadata))
       .attach('pages', Buffer.from('PRIVATE-ESSAY'), { filename: 'essay.png', contentType: 'image/png' }).expect(503)
@@ -168,7 +183,10 @@ describe('grading gateway server boundary', () => {
     const generatedRubric = {
       taskName: 'Synthetic task', materialSummary: 'A synthetic task material summary.',
       writingRequirements: ['Write clearly.'], constraints: ['Use English.'],
-      dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Cover the task.', deductionFocus: ['Missing task coverage.'], sourceEvidence: ['Prompt heading.'] }],
+      dimensions: [
+        { id: 'content', name: 'Content', weight: 95, description: 'Cover the task.', deductionFocus: ['Missing task coverage.'], sourceEvidence: ['Prompt heading.'] },
+        { id: 'legibility', name: 'Legibility', weight: 5, description: 'Handwriting is legible.', deductionFocus: [], sourceEvidence: [] },
+      ],
       reviewWarnings: ['Verify source material.'],
     }
     const calls: Parameters<MultimodalProvider['generateRubric']>[] = []

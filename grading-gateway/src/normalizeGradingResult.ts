@@ -259,6 +259,7 @@ export function normalizeGradingResult(
           reviewReasons.add('部分逻辑诊断原文引文无法定位，已移除。')
           return []
         }),
+        logicIssues: [],
       }
     }
   } else {
@@ -296,6 +297,7 @@ export function normalizeGradingResult(
       sentenceRevisions,
       expressionUpgrades,
       ...(fullTextRevision ? { fullTextRevision } : {}),
+      legibilityIssues: [],
       overallComment,
       ...(confidence === undefined ? {} : { modelSelfConfidence: confidence }),
       reviewReasons: normalizedReviewReasons,

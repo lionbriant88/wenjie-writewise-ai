@@ -231,7 +231,7 @@ export function createServer(options: CreateServerOptions = {}) {
     try {
       const provider = options.multimodalProvider ?? getMultimodalProvider(options.providerName ?? 'mock')
       const payload = await provider.gradeEssay({ requestId: metadata.requestId, task: metadata.task, essayId: metadata.essayId, pages, confirmedTranscript: metadata.confirmedTranscript, signal: controller.signal })
-      const normalized = normalizeMultimodalResult(payload, { requestId: metadata.requestId, essayId: metadata.essayId, task: metadata.task, provider: 'remote', confirmedTranscript: metadata.confirmedTranscript, createdAt: (options.now ?? (() => new Date().toISOString()))() })
+      const normalized = normalizeMultimodalResult(payload, { requestId: metadata.requestId, essayId: metadata.essayId, task: metadata.task, provider: 'remote', pageCount: pages.length, confirmedTranscript: metadata.confirmedTranscript, createdAt: (options.now ?? (() => new Date().toISOString()))() })
       if (!normalized.ok) { response.status(503).json(failure(metadata.requestId, normalized.error, true)); return }
       response.json(normalized.result)
     } catch (error) {
