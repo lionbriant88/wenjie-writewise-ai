@@ -250,13 +250,13 @@ describe('normalizeMultimodalResult', () => {
 
   it('accepts recognition warnings and exposes recognition uncertainty without accepting the legacy field', () => {
     const payload = validPayload()
-    payload.recognitionWarnings = ['A word is unclear.']
+    payload.recognitionWarnings = [{ scope: 'global_unreadable', message: 'A page is globally unclear.' }]
 
     const normalized = normalizeMultimodalResult(payload, context)
     expect(normalized).toMatchObject({
       ok: true,
       result: {
-        recognitionWarnings: ['A word is unclear.'],
+        recognitionWarnings: ['A page is globally unclear.'],
         reviewReasons: expect.arrayContaining(['recognition_uncertain']),
         status: 'partial',
       },
@@ -279,7 +279,7 @@ describe('normalizeMultimodalResult', () => {
 
   it('marks recognition uncertainty as partial with a stable reason', () => {
     const payload = validPayload()
-    payload.recognitionWarnings = ['A word is unclear.']
+    payload.recognitionWarnings = [{ scope: 'printed_boundary', message: 'The printed boundary is unclear.' }]
     const normalized = normalizeMultimodalResult(payload, context)
     expect(normalized.ok).toBe(true)
     if (!normalized.ok) throw new Error(normalized.error.message)
@@ -338,10 +338,7 @@ describe('normalizeMultimodalResult', () => {
     expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
   })
 
-  it.each([
-    ['original only', 'The form wark is uncertain.'],
-    ['suggestion only', 'Do not infer work from unclear handwriting.'],
-  ])('rejects filtered spelling leaked through a dimension reason: %s', (_label, reason) => {
+  it('rejects filtered spelling original leaked through a dimension reason', () => {
     const payload = validPayload()
     payload.transcript = 'I wark today.'
     payload.issues = [{
@@ -349,9 +346,9 @@ describe('normalizeMultimodalResult', () => {
       explanation: 'The handwriting is uncertain.', evidenceCertainty: 'uncertain', requiresTeacherReview: false,
     }]
     payload.dimensionScores = [
-      { dimensionId: 'content', score: 6, reason, evidence: 'I wark today.', relatedIssueKeys: [] },
-      { dimensionId: 'language', score: 8.25, reason: 'No deduction.', evidence: 'I wark today.', relatedIssueKeys: [] },
-      { dimensionId: 'legibility', score: 0.75, reason: 'Legible.', evidence: 'I wark today.', relatedIssueKeys: [] },
+      { dimensionId: 'content', score: 6, reason: 'The form wark is uncertain.', evidence: 'today.', relatedIssueKeys: [] },
+      { dimensionId: 'language', score: 8.25, reason: 'No deduction.', evidence: 'today.', relatedIssueKeys: [] },
+      { dimensionId: 'legibility', score: 0.75, reason: 'Legible.', evidence: 'today.', relatedIssueKeys: [] },
     ]
     payload.reportedTotalScore = 15
     payload.sentenceRevisions = []
@@ -359,6 +356,26 @@ describe('normalizeMultimodalResult', () => {
     payload.fullTextRevision = { correctedText: 'I wark today.', improvedText: 'I wark today.', sentencePairs: [], logicNotes: [], logicIssues: [] }
 
     expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
+  })
+
+  it('does not reject an ordinary use of a filtered spelling suggestion', () => {
+    const payload = validPayload()
+    payload.transcript = 'I wark today.'
+    payload.issues = [{
+      issueKey: 'spelling-wark', type: 'spelling', severity: 'low', originalText: 'wark', suggestion: 'work',
+      explanation: 'The handwriting is uncertain.', evidenceCertainty: 'uncertain', requiresTeacherReview: false,
+    }]
+    payload.dimensionScores = [
+      { dimensionId: 'content', score: 6, reason: 'Good work overall.', evidence: 'today.', relatedIssueKeys: [] },
+      { dimensionId: 'language', score: 8.25, reason: 'No deduction.', evidence: 'today.', relatedIssueKeys: [] },
+      { dimensionId: 'legibility', score: 0.75, reason: 'Legible.', evidence: 'today.', relatedIssueKeys: [] },
+    ]
+    payload.reportedTotalScore = 15
+    payload.sentenceRevisions = []
+    payload.expressionUpgrades = []
+    payload.fullTextRevision = { correctedText: 'I wark today.', improvedText: 'I wark today.', sentencePairs: [], logicNotes: [], logicIssues: [] }
+
+    expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: true, result: { overallComment: expect.any(String) } })
   })
 
   it('removes an expression upgrade overlapping filtered spelling and rebuilds both aggregates', () => {
@@ -432,23 +449,90 @@ describe('normalizeMultimodalResult', () => {
     expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
   })
 
-  it('rejects a local legibility quote repeated in a non-legibility narrative or recognition warning', () => {
+  it.each(['unsafe-first', 'unsafe-last'] as const)('rejects duplicate dimensions before Map projection: %s', (order) => {
+    const payload = validPayload()
+    payload.issues = [{ issueKey: 'spelling-has', type: 'spelling', severity: 'low', originalText: 'has', suggestion: 'have', explanation: 'Uncertain.', evidenceCertainty: 'uncertain', requiresTeacherReview: false }]
+    const safe = { dimensionId: 'content', score: 6, reason: 'Complete.', evidence: 'It are blue.', relatedIssueKeys: [] }
+    const unsafe = { dimensionId: 'content', score: 5, reason: 'Deducted.', evidence: 'has', relatedIssueKeys: ['spelling-has'] }
+    payload.dimensionScores = [
+      ...(order === 'unsafe-first' ? [unsafe, safe] : [safe, unsafe]),
+      { dimensionId: 'language', score: 8.25, reason: 'Accurate.', evidence: 'It are blue.', relatedIssueKeys: [] },
+      { dimensionId: 'legibility', score: 0.75, reason: 'Legible.', evidence: 'It are blue.', relatedIssueKeys: [] },
+    ]
+    payload.reportedTotalScore = 15
+    payload.fullTextRevision = { correctedText: payload.transcript, improvedText: payload.transcript, sentencePairs: [], logicNotes: [], logicIssues: [] }
+    expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
+  })
+
+  it.each(['safe-first', 'safe-last'] as const)('rejects a duplicate legibility dimension in either order: %s', (order) => {
+    const payload = payloadWithCantAmbiguity()
+    const scores = payload.dimensionScores as Array<Record<string, unknown>>
+    const safe = { dimensionId: 'legibility', score: 0.25, reason: 'Unclear.', evidence: 'It are blue.', relatedIssueKeys: ['legibility-blue'] }
+    const invalid = { dimensionId: 'legibility', score: 0.75, reason: 'Legible.', evidence: 'I has a pen.', relatedIssueKeys: [] }
+    payload.dimensionScores = [scores[0], scores[1], ...(order === 'safe-first' ? [safe, invalid] : [invalid, safe])]
+    expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
+  })
+
+  it('rejects a local legibility quote repeated in a non-legibility narrative', () => {
     const narrative = payloadWithCantAmbiguity()
     ;(narrative.dimensionScores as Array<Record<string, unknown>>)[0].reason = 'It are blue. is unclear.'
     expect(normalizeMultimodalResult(narrative, context)).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
-
-    const warning = payloadWithCantAmbiguity()
-    warning.recognitionWarnings = ['It are blue. is unclear.']
-    expect(normalizeMultimodalResult(warning, context)).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
   })
 
-  it('keeps a separate global recognition warning partial alongside a local legibility finding', () => {
+  it('projects a scoped global recognition warning containing a local English word without treating it as local', () => {
     const payload = payloadWithCantAmbiguity()
-    payload.recognitionWarnings = ['The printed/student boundary is globally uncertain.']
+    payload.transcript = 'I can come.'
+    payload.issues = []
+    payload.legibilityIssues = [{ issueKey: 'legibility-can', transcriptText: 'can', possibleReadings: ['can', "can't"], pageNumber: 1, regionDescription: 'line', explanation: 'Synthetic.', defaultOutcome: 'count_as_legibility_error' }]
+    payload.dimensionScores = [
+      { dimensionId: 'content', score: 6, reason: 'Complete.', evidence: 'come.', relatedIssueKeys: [] },
+      { dimensionId: 'language', score: 8.25, reason: 'Accurate.', evidence: 'come.', relatedIssueKeys: [] },
+      { dimensionId: 'legibility', score: 0.25, reason: 'Unclear.', evidence: 'can', relatedIssueKeys: ['legibility-can'] },
+    ]
+    payload.reportedTotalScore = 14.5
+    payload.fullTextRevision = { correctedText: 'I can come.', improvedText: 'I can come.', sentencePairs: [], logicNotes: [], logicIssues: [] }
+    payload.recognitionWarnings = [{ scope: 'global_unreadable', message: 'The model cannot determine whether all pages are readable.' }]
     expect(normalizeMultimodalResult(payload, context)).toMatchObject({
       ok: true,
-      result: { status: 'partial', reviewReasons: expect.arrayContaining(['recognition_uncertain']), legibilityIssues: [{ transcriptText: 'It are blue.' }] },
+      result: { status: 'partial', recognitionWarnings: ['The model cannot determine whether all pages are readable.'], reviewReasons: expect.arrayContaining(['recognition_uncertain']), legibilityIssues: [{ transcriptText: 'can' }] },
     })
+  })
+
+  it('rejects legacy string recognition warnings and unsupported local scope', () => {
+    const legacy = validPayload(); legacy.recognitionWarnings = ['A word is unclear.']
+    expect(normalizeMultimodalResult(legacy, context)).toMatchObject({ ok: false })
+    const local = validPayload(); local.recognitionWarnings = [{ scope: 'local', message: 'A local word is unclear.' }]
+    expect(normalizeMultimodalResult(local, context)).toMatchObject({ ok: false })
+    const linked = validPayload(); linked.recognitionWarnings = [{ scope: 'global_unreadable', message: 'Repeated local warning.', relatedIssueKey: 'legibility-blue' }]
+    expect(normalizeMultimodalResult(linked, context)).toMatchObject({ ok: false })
+  })
+
+  it.each(['\uD83D', '\uDE00'])('rejects ill-formed Unicode in multimodal transcript and quotes: %s', (surrogate) => {
+    const payload = validPayload()
+    payload.transcript = `A${surrogate}B`
+    payload.issues = []
+    payload.dimensionScores = [
+      { dimensionId: 'content', score: 6, reason: 'Complete.', evidence: surrogate, relatedIssueKeys: [] },
+      { dimensionId: 'language', score: 8.25, reason: 'Accurate.', evidence: surrogate, relatedIssueKeys: [] },
+      { dimensionId: 'legibility', score: 0.75, reason: 'Legible.', evidence: surrogate, relatedIssueKeys: [] },
+    ]
+    payload.fullTextRevision = { correctedText: payload.transcript, improvedText: payload.transcript, sentencePairs: [], logicNotes: [], logicIssues: [] }
+    expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: false })
+  })
+
+  it('filters a full-codepoint astral overlap with local legibility', () => {
+    const payload = validPayload()
+    payload.transcript = 'I 😀 agree.'
+    payload.issues = [{ issueKey: 'grammar-emoji', type: 'grammar', severity: 'low', originalText: 'I 😀 agree.', suggestion: 'I agree.', explanation: 'Synthetic.', evidenceCertainty: 'certain', requiresTeacherReview: false }]
+    payload.legibilityIssues = [{ issueKey: 'legibility-emoji', transcriptText: '😀', possibleReadings: ['😀', 'word'], pageNumber: 1, regionDescription: 'line', explanation: 'Synthetic.', defaultOutcome: 'count_as_legibility_error' }]
+    payload.dimensionScores = [
+      { dimensionId: 'content', score: 6, reason: 'Complete.', evidence: 'agree.', relatedIssueKeys: [] },
+      { dimensionId: 'language', score: 8.25, reason: 'Accurate.', evidence: 'agree.', relatedIssueKeys: [] },
+      { dimensionId: 'legibility', score: 0.25, reason: 'Unclear symbol.', evidence: '😀', relatedIssueKeys: ['legibility-emoji'] },
+    ]
+    payload.reportedTotalScore = 15
+    payload.fullTextRevision = { correctedText: 'I agree.', improvedText: 'I agree.', sentencePairs: [], logicNotes: [], logicIssues: [] }
+    expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: true, result: { issues: [], fullTextRevision: { correctedText: 'I 😀 agree.', improvedText: 'I 😀 agree.' } } })
   })
 
   it.each([

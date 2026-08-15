@@ -61,6 +61,9 @@ describe('essay grading prompt', () => {
 
     expect(imagePrompt).toContain('可合理读成正确单词的字迹歧义必须保持静默：recognitionWarnings 和 reviewReasons 均为空')
     expect(imagePrompt).toContain('只有全局、无法定位或学生正文/印刷文本边界的不确定性，才能写入 recognitionWarnings、recognition_uncertain review reason 或要求教师复核')
+    expect(imagePrompt).toContain('global_unreadable')
+    expect(imagePrompt).toContain('printed_boundary')
+    expect(imagePrompt).toMatch(/局部.*legibilityIssues/u)
     expect(imagePrompt).toContain('logicIssues.originalText')
     expect(imagePrompt).toContain('legibilityIssues.transcriptText 必须可在 transcript 中逐字定位')
   })
@@ -83,6 +86,15 @@ describe('essay grading prompt', () => {
     ])
     expect(essayGradingSchema.properties).not.toHaveProperty('transcriptionWarnings')
     expect(essayGradingSchema.additionalProperties).toBe(false)
+    expect(essayGradingSchema.properties.recognitionWarnings).toMatchObject({ type: 'array', maxItems: 50 })
+    expect(essayGradingSchema.properties.recognitionWarnings.items).toMatchObject({
+      type: 'object', additionalProperties: false,
+      required: ['scope', 'message'],
+      properties: {
+        scope: { type: 'string', enum: ['global_unreadable', 'printed_boundary'] },
+        message: { type: 'string', minLength: 1, maxLength: 1000 },
+      },
+    })
     expect(essayGradingSchema.properties.issues.items.properties.evidenceCertainty.enum)
       .toEqual(['certain', 'uncertain'])
     expect(essayGradingSchema.properties.issues.items.required).toEqual([

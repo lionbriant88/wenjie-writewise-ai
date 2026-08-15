@@ -19,12 +19,13 @@ export class MockGradingProvider implements GradingProvider {
     const quote = firstSentence(request.essay.confirmedTranscript)
     const dimensionScores = request.task.rubric.dimensions.map((dimension) => {
       const maxScore = calculateDimensionMaxScore(request.task.fullScore, dimension.weight)
+      const score = roundScore2(maxScore * 0.8)
       return {
         dimensionId: dimension.id,
-        score: roundScore2(maxScore * 0.8),
+        score,
         reason: 'Gateway mock：根据已确认评分维度生成稳定候选结果。',
         evidence: quote,
-        relatedIssueKeys: ['mock-structure'],
+        relatedIssueKeys: score === maxScore ? [] : ['mock-structure'],
       }
     })
     return {

@@ -6,7 +6,7 @@ import { applyResultPolicy } from './resultPolicy.js'
 import type { ResultPolicyInput } from './resultPolicy.js'
 import { exactUniqueTranscriptRange } from './transcriptRange.js'
 import type { ConfirmedTaskPackageV2 } from './types.js'
-import type { RawDimensionScoreV1, RawExpressionUpgradeV1, RawLegibilityIssueV1, RawLogicIssueV1, RawMultimodalIssueV1, RawSentencePairV1, RawSentenceRevisionV1 } from './types.js'
+import type { RawDimensionScoreV1, RawExpressionUpgradeV1, RawLegibilityIssueV1, RawLogicIssueV1, RawMultimodalIssueV1, RawRecognitionWarningV1, RawSentencePairV1, RawSentenceRevisionV1 } from './types.js'
 import type { LegibilityIssueV1 } from '../types.js'
 
 export interface MultimodalGradingResult extends AiGradingResultV1 { transcript: string; recognitionWarnings: string[]; printedTextExcluded: boolean }
@@ -21,6 +21,18 @@ function text(value: unknown, maxLength = 10_000): string | null { if (typeof va
 function quote(value: unknown, maxLength = 10_000): string | null { return typeof value === 'string' && value.length > 0 && value.length <= maxLength ? value : null }
 function rawContext(value: unknown, maxLength = 10_000): string | null { return typeof value === 'string' && value.length <= maxLength ? value : null }
 function textArray(value: unknown, maxItems: number, maxLength: number): string[] | null { if (!Array.isArray(value) || value.length > maxItems) return null; const result = value.map((item) => text(item, maxLength)); return result.every((item): item is string => item !== null) ? result : null }
+
+function parseRecognitionWarnings(value: unknown): RawRecognitionWarningV1[] | null {
+  if (!Array.isArray(value) || value.length > 50) return null
+  const warnings: RawRecognitionWarningV1[] = []
+  for (const item of value) {
+    if (!isRecord(item) || Object.keys(item).length !== 2 || !('scope' in item) || !('message' in item)) return null
+    const message = text(item.message, 1_000)
+    if ((item.scope !== 'global_unreadable' && item.scope !== 'printed_boundary') || !message) return null
+    warnings.push({ scope: item.scope, message })
+  }
+  return warnings
+}
 
 function hasOrderedLogicContext(transcript: string, { originalText, contextBefore, contextAfter }: RawLogicIssueV1): boolean {
   const originalRange = exactUniqueTranscriptRange(transcript, originalText)
@@ -133,12 +145,19 @@ function parseExpressionUpgrades(value: unknown, transcript: string): RawExpress
 
 
 function rawScoresAreBounded(value: unknown, context: MultimodalNormalizationContext) {
-  if (!Array.isArray(value)) return false
+  if (!Array.isArray(value) || value.length !== context.task.rubric.dimensions.length) return false
+  const rubricIds = new Set(context.task.rubric.dimensions.map(({ id }) => id))
+  const seen = new Set<string>()
+  for (const item of value) {
+    if (!isRecord(item) || typeof item.dimensionId !== 'string' || !rubricIds.has(item.dimensionId) || seen.has(item.dimensionId)) return false
+    seen.add(item.dimensionId)
+  }
+  if (seen.size !== rubricIds.size) return false
   const dimensions = new Map(context.task.rubric.dimensions.map((dimension) => [dimension.id, dimension]))
   return value.every((item) => {
     if (!isRecord(item) || typeof item.dimensionId !== 'string' || typeof item.score !== 'number' || !Number.isFinite(item.score)) return false
     const dimension = dimensions.get(item.dimensionId)
-    return !dimension || (item.score >= 0 && item.score <= calculateDimensionMaxScore(context.task.fullScore, dimension.weight))
+    return Boolean(dimension) && item.score >= 0 && item.score <= calculateDimensionMaxScore(context.task.fullScore, dimension!.weight)
   })
 }
 
@@ -149,7 +168,7 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
       ? context.confirmedTranscript
       : null
     : quote(payload.transcript, 50_000)
-  const recognitionWarnings = textArray(payload.recognitionWarnings, 50, 1_000)
+  const recognitionWarnings = parseRecognitionWarnings(payload.recognitionWarnings)
   if (!transcript || !recognitionWarnings || typeof payload.printedTextExcluded !== 'boolean') return invalid()
   const request = requestFor(context, transcript)
   const issues = parseRawIssues(payload.issues)
@@ -190,5 +209,5 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
   if (!payload.printedTextExcluded) reviewReasons.add('printed_text_exclusion_uncertain')
   const normalizedLegibilityIssues: LegibilityIssueV1[] = legibilityIssues.map(({ issueKey: _issueKey, ...issue }, index) => ({ id: `${context.essayId}-legibility-${index + 1}`, ...issue }))
   const fullTextRevision = normalized.fullTextRevision
-  return { ok: true, result: { ...normalized, status: reviewReasons.size ? 'partial' : 'success', ...(fullTextRevision ? { fullTextRevision } : {}), legibilityIssues: normalizedLegibilityIssues, reviewReasons: [...reviewReasons], transcript, recognitionWarnings, printedTextExcluded: payload.printedTextExcluded } }
+  return { ok: true, result: { ...normalized, status: reviewReasons.size ? 'partial' : 'success', ...(fullTextRevision ? { fullTextRevision } : {}), legibilityIssues: normalizedLegibilityIssues, reviewReasons: [...reviewReasons], transcript, recognitionWarnings: recognitionWarnings.map(({ message }) => message), printedTextExcluded: payload.printedTextExcluded } }
 }

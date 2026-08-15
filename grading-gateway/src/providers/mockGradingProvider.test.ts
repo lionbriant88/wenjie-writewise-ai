@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { GradingRequestV1 } from '../types.js'
 import { buildGradingPrompt } from '../promptBuilder.js'
+import { normalizeGradingResult } from '../normalizeGradingResult.js'
 import { MockGradingProvider } from './mockGradingProvider.js'
 
 const request: GradingRequestV1 = {
@@ -35,5 +36,26 @@ describe('MockGradingProvider', () => {
     expect(dimensions.map(({ dimensionId }) => dimensionId)).toEqual(['content', 'language'])
     expect(JSON.stringify(payload)).toContain('First synthetic sentence.')
     expect(JSON.stringify(payload)).not.toContain('I suggest you joins')
+  })
+
+  it('does not attach a deduction key when production rounding makes a tiny dimension full score', async () => {
+    const tinyRequest: GradingRequestV1 = {
+      ...request,
+      task: {
+        ...request.task, fullScore: 1,
+        rubric: {
+          ...request.task.rubric,
+          dimensions: [
+            { id: 'tiny', name: 'Tiny', weight: 1, description: 'Tiny weight', deductionFocus: [] },
+            { id: 'rest', name: 'Rest', weight: 99, description: 'Remaining weight', deductionFocus: [] },
+          ],
+        },
+      },
+    }
+    const provider = new MockGradingProvider()
+    const payload = await provider.grade({ request: tinyRequest, prompt: buildGradingPrompt(tinyRequest), signal: new AbortController().signal })
+    expect(payload.dimensionScores[0]).toMatchObject({ dimensionId: 'tiny', score: 0.01, relatedIssueKeys: [] })
+    expect(payload.dimensionScores[1]).toMatchObject({ dimensionId: 'rest', relatedIssueKeys: ['mock-structure'] })
+    expect(normalizeGradingResult(payload, tinyRequest, { provider: 'mock', createdAt: '2026-08-15T00:00:00.000Z' })).toMatchObject({ ok: true })
   })
 })

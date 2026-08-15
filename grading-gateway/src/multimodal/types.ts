@@ -116,6 +116,13 @@ export interface RawDimensionScoreV1 {
   relatedIssueKeys: string[]
 }
 
+export type RawRecognitionWarningScopeV1 = 'global_unreadable' | 'printed_boundary'
+
+export interface RawRecognitionWarningV1 {
+  scope: RawRecognitionWarningScopeV1
+  message: string
+}
+
 export interface RawExpressionUpgradeV1 {
   originalText: string
   upgradedText: string

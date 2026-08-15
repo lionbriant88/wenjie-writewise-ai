@@ -210,6 +210,30 @@ describe('normalizeGradingResult', () => {
     expectFailure(payload)
   })
 
+  it.each(['duplicate-first', 'duplicate-last'] as const)('rejects duplicate generic dimensions before projection: %s', (order) => {
+    const payload = validPayload()
+    const duplicate = { ...(payload.dimensionScores as Array<Record<string, unknown>>)[0] }
+    payload.dimensionScores = order === 'duplicate-first'
+      ? [duplicate, ...(payload.dimensionScores as Array<Record<string, unknown>>)]
+      : [...(payload.dimensionScores as Array<Record<string, unknown>>), duplicate]
+    expectFailure(payload)
+  })
+
+  it.each(['\uD83D', '\uDE00'])('rejects ill-formed Unicode in generic transcript and evidence: %s', (surrogate) => {
+    const illFormedRequest = { ...request, essay: { ...request.essay, confirmedTranscript: `A${surrogate}B` } }
+    const payload = validPayload()
+    payload.issues = []
+    payload.sentenceRevisions = []
+    payload.expressionUpgrades = []
+    payload.dimensionScores = [
+      { dimensionId: 'content', score: 6, reason: 'Complete.', evidence: surrogate, relatedIssueKeys: [] },
+      { dimensionId: 'language', score: 9, reason: 'Accurate.', evidence: surrogate, relatedIssueKeys: [] },
+    ]
+    payload.reportedTotalScore = 15
+    payload.fullTextRevision = { correctedText: illFormedRequest.essay.confirmedTranscript, improvedText: illFormedRequest.essay.confirmedTranscript, sentencePairs: [], logicNotes: [], logicIssues: [] }
+    expect(normalizeGradingResult(payload, illFormedRequest, context)).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
+  })
+
   it('keeps expression-upgrade quotes exact and rejects collapsed or duplicate source text', () => {
     const collapsed = validPayload()
     ;(collapsed.expressionUpgrades as Array<Record<string, unknown>>)[0].originalText = 'First  synthetic line.'

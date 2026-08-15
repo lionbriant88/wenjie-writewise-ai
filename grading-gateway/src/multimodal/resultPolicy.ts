@@ -6,6 +6,7 @@ import type {
   RawLegibilityIssueV1,
   RawLogicIssueV1,
   RawMultimodalIssueV1,
+  RawRecognitionWarningV1,
   RawSentencePairV1,
   RawSentenceRevisionV1,
 } from './types.js'
@@ -18,7 +19,7 @@ export interface ResultPolicyInput {
   logicIssues: RawLogicIssueV1[]
   legibilityIssues: RawLegibilityIssueV1[]
   dimensionScores: RawDimensionScoreV1[]
-  recognitionWarnings: string[]
+  recognitionWarnings: RawRecognitionWarningV1[]
   overallComment: string
   logicNotes: string[]
   logicNoteRecords?: Array<{ quote: string; note: string }>
@@ -41,6 +42,32 @@ function hasUniqueKeys(keys: string[]): boolean {
 
 function overlapsAny(range: TranscriptRange, blocked: TranscriptRange[]): boolean {
   return blocked.some((candidate) => transcriptRangesOverlap(range, candidate))
+}
+
+function isWordCharacter(value: string | undefined): boolean {
+  return value !== undefined && /[\p{L}\p{N}_]/u.test(value)
+}
+
+function containsTerm(value: string, term: string): boolean {
+  let start = value.indexOf(term)
+  while (start >= 0) {
+    const end = start + term.length
+    if (!isWordCharacter(value[start - 1]) && !isWordCharacter(value[end])) return true
+    start = value.indexOf(term, start + 1)
+  }
+  return false
+}
+
+const FILTERED_REFERENCE_CUES = /\b(?:change|changed|correct|corrected|correction|form|handwriting|instead|misspell|misspelled|read|replace|should|spell|spelling|uncertain|unclear|word|written)\b|改为|拼写|应为|不清/iu
+
+function explicitlyReferencesFilteredSpelling(
+  value: string,
+  filtered: RawMultimodalIssueV1[],
+): boolean {
+  return filtered.some(({ originalText, suggestion }) => {
+    const mentionsOriginal = containsTerm(value, originalText)
+    return mentionsOriginal && (containsTerm(value, suggestion) || FILTERED_REFERENCE_CUES.test(value))
+  })
 }
 
 function revisionKeysAreKnown(revision: RawSentenceRevisionV1 | RawSentencePairV1, allIssueKeys: Set<string>): boolean {
@@ -90,6 +117,11 @@ export function rebuildCorrectedText(transcript: string, edits: CorrectedTextEdi
 }
 
 export function applyResultPolicy(raw: ResultPolicyInput, transcript: string): ResultPolicyOutcome | null {
+  if (raw.recognitionWarnings.some(({ scope, message }) => (
+    (scope !== 'global_unreadable' && scope !== 'printed_boundary')
+    || !message.trim()
+    || message.length > 1_000
+  ))) return null
   const allKeyValues = [
     ...raw.issues.map(({ issueKey }) => issueKey),
     ...raw.logicIssues.map(({ issueKey }) => issueKey),
@@ -99,15 +131,28 @@ export function applyResultPolicy(raw: ResultPolicyInput, transcript: string): R
 
   const allIssueKeys = new Set(allKeyValues)
   const rangesByKey = new Map<string, TranscriptRange>()
+  const logicRangesByIssue = new Map<RawLogicIssueV1, TranscriptRange[]>()
   for (const issue of raw.issues) {
     const range = exactUniqueTranscriptRange(transcript, issue.originalText)
     if (!range) return null
     rangesByKey.set(issue.issueKey, range)
   }
   for (const issue of raw.logicIssues) {
-    const range = exactUniqueTranscriptRange(transcript, issue.originalText)
-    if (!range) return null
-    rangesByKey.set(issue.issueKey, range)
+    const originalRange = exactUniqueTranscriptRange(transcript, issue.originalText)
+    if (!originalRange) return null
+    const issueRanges = [originalRange]
+    if (issue.contextBefore) {
+      const beforeRange = exactUniqueTranscriptRange(transcript, issue.contextBefore)
+      if (!beforeRange || beforeRange.end > originalRange.start) return null
+      issueRanges.push(beforeRange)
+    }
+    if (issue.contextAfter) {
+      const afterRange = exactUniqueTranscriptRange(transcript, issue.contextAfter)
+      if (!afterRange || afterRange.start < originalRange.end) return null
+      issueRanges.push(afterRange)
+    }
+    rangesByKey.set(issue.issueKey, originalRange)
+    logicRangesByIssue.set(issue, issueRanges)
   }
   for (const issue of raw.legibilityIssues) {
     const range = exactUniqueTranscriptRange(transcript, issue.transcriptText)
@@ -128,7 +173,9 @@ export function applyResultPolicy(raw: ResultPolicyInput, transcript: string): R
     !filteredSpellingKeys.has(issue.issueKey)
     && !overlapsAny(rangesByKey.get(issue.issueKey)!, contaminatedRanges)
   ))
-  const keptLogicIssues = raw.logicIssues.filter((issue) => !overlapsAny(rangesByKey.get(issue.issueKey)!, contaminatedRanges))
+  const keptLogicIssues = raw.logicIssues.filter((issue) => (
+    !logicRangesByIssue.get(issue)!.some((range) => overlapsAny(range, contaminatedRanges))
+  ))
   const keptKeys = new Set([
     ...keptIssues.map(({ issueKey }) => issueKey),
     ...keptLogicIssues.map(({ issueKey }) => issueKey),
@@ -192,23 +239,21 @@ export function applyResultPolicy(raw: ResultPolicyInput, transcript: string): R
     if (!overlapsAny(evidenceRange, legibilityRanges)) return null
   }
 
-  const filteredWords = filteredSpelling.flatMap(({ originalText, suggestion }) => [originalText, suggestion])
-  const leaksFilteredSpelling = (value: string) => filteredWords.some((word) => value.includes(word))
   const narratives = [
     ...raw.dimensionScores.flatMap(({ reason, evidence }) => [reason, evidence]),
     raw.overallComment,
+    ...keptIssues.flatMap(({ suggestion, explanation }) => [suggestion, explanation]),
     ...keptLogicNotes,
     ...keptLogicIssues.flatMap((issue) => [issue.diagnosis, issue.conservativeSuggestion, issue.polishedSuggestion]),
     ...keptSentenceRevisions.flatMap(({ revisedText, note }) => [revisedText, note]),
     ...keptSentencePairs.flatMap(({ correctedText, improvedText, explanation }) => [correctedText, improvedText, explanation]),
     ...keptExpressionUpgrades.flatMap(({ upgradedText, note }) => [upgradedText, note]),
   ]
-  if (filteredWords.length > 0 && narratives.some(leaksFilteredSpelling)) return null
+  if (narratives.some((value) => explicitlyReferencesFilteredSpelling(value, filteredSpelling))) return null
 
   const legibilityWords = raw.legibilityIssues.map(({ transcriptText }) => transcriptText)
   const leaksLegibility = (value: string) => legibilityWords.some((word) => value.includes(word))
   const nonLegibilityNarratives = [
-    ...raw.recognitionWarnings,
     ...raw.dimensionScores.filter(({ dimensionId }) => dimensionId !== 'legibility').flatMap(({ reason, evidence }) => [reason, evidence]),
     raw.overallComment,
     ...keptIssues.flatMap(({ suggestion, explanation }) => [suggestion, explanation]),

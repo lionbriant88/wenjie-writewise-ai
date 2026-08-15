@@ -1,4 +1,4 @@
-import type { EvidenceCertainty, RawLogicIssueV1, RawMultimodalIssueV1, RawSentencePairV1, RawSentenceRevisionV1 } from './multimodal/types.js'
+import type { EvidenceCertainty, RawLogicIssueV1, RawMultimodalIssueV1, RawRecognitionWarningV1, RawSentencePairV1, RawSentenceRevisionV1 } from './multimodal/types.js'
 
 export type WritingGenre = 'practical_writing' | 'continuation_writing'
 export type GradingProviderName = 'mock' | 'remote'
@@ -88,6 +88,8 @@ export type {
   RawExpressionUpgradeV1,
   RawLogicIssueV1,
   RawMultimodalIssueV1,
+  RawRecognitionWarningScopeV1,
+  RawRecognitionWarningV1,
   RawSentencePairV1,
   RawSentenceRevisionV1,
 } from './multimodal/types.js'
@@ -130,7 +132,7 @@ export interface LegibilityIssueV1 {
 export interface ProviderGradingPayloadV1 {
   reportedTotalScore?: number
   dimensionScores: Array<{ dimensionId: string; score: number; reason: string; evidence: string; relatedIssueKeys: string[] }>
-  recognitionWarnings: string[]
+  recognitionWarnings: RawRecognitionWarningV1[]
   legibilityIssues: []
   issues: RawMultimodalIssueV1[]
   sentenceRevisions: RawSentenceRevisionV1[]

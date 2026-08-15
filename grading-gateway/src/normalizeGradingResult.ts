@@ -173,8 +173,15 @@ export function normalizeGradingResult(
   request: GradingRequestV1,
   context: NormalizationContext,
 ): NormalizationResult {
-  if (!isRecord(payload) || !Array.isArray(payload.dimensionScores)) return invalidResponse()
+  if (!isRecord(payload) || !Array.isArray(payload.dimensionScores) || payload.dimensionScores.length !== request.task.rubric.dimensions.length) return invalidResponse()
   const reviewReasons = new Set<string>()
+  const rubricIds = new Set(request.task.rubric.dimensions.map(({ id }) => id))
+  const seenDimensionIds = new Set<string>()
+  for (const item of payload.dimensionScores) {
+    if (!isRecord(item) || typeof item.dimensionId !== 'string' || !rubricIds.has(item.dimensionId) || seenDimensionIds.has(item.dimensionId)) return invalidResponse()
+    seenDimensionIds.add(item.dimensionId)
+  }
+  if (seenDimensionIds.size !== rubricIds.size) return invalidResponse()
   const candidateDimensions = new Map<string, { score: number; reason: string; evidence: string; relatedIssueKeys: string[] }>()
   for (const item of payload.dimensionScores) {
     if (!isRecord(item)) return invalidResponse()
@@ -189,7 +196,6 @@ export function normalizeGradingResult(
     candidateDimensions.set(dimensionId, { score: item.score, reason, evidence, relatedIssueKeys })
   }
 
-  const rubricIds = new Set(request.task.rubric.dimensions.map(({ id }) => id))
   if (candidateDimensions.size !== rubricIds.size || [...candidateDimensions.keys()].some((id) => !rubricIds.has(id))) {
     return invalidResponse()
   }
@@ -224,8 +230,7 @@ export function normalizeGradingResult(
   }
 
   const providerReviewReasons = requiredStringArray(payload.reviewReasons)
-  const recognitionWarnings = requiredStringArray(payload.recognitionWarnings)
-  if (providerReviewReasons === null || recognitionWarnings === null || recognitionWarnings.length !== 0) return invalidResponse()
+  if (providerReviewReasons === null || !Array.isArray(payload.recognitionWarnings) || payload.recognitionWarnings.length !== 0) return invalidResponse()
   const rawPolicy = parsePolicyInput(payload, request.essay.confirmedTranscript)
   const expressionUpgrades = parseExpressionUpgrades(payload.expressionUpgrades, request.essay.confirmedTranscript)
   if (!rawPolicy || !expressionUpgrades) return invalidResponse()

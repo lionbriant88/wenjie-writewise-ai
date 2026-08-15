@@ -60,3 +60,40 @@ git diff --check: passed (only Git line-ending notices)
 - Confirmed Provider corrected/improved aggregates are required only as schema fields and are not trusted as output content.
 - Confirmed no website route, version, layout, or UI production file changed.
 - Confirmed the diff contains no whitespace errors or raw Provider/transcript leakage in failure payloads.
+
+## Review fix round 1 (2026-08-16)
+
+### RED evidence
+
+The six-file focused regression run first reported 24 expected failures and 114 passes. It reproduced both dimension overwrite orders, logic-context contamination, lone-surrogate acceptance, half-surrogate quote matching, filtered-spelling narrative false negatives and false positives, legacy/unscoped warning acceptance, and mock rounded-full-score key mismatch. A later direct-policy scope test reported 1 expected failure and 32 passes before policy-level scope validation was added.
+
+### Implementation
+
+- Both normalizers now require the raw dimension array length to equal the rubric dimension count and reject every duplicate, unknown, or missing ID with a seen set before constructing a raw score map.
+- Logic issue `originalText`, non-empty `contextBefore`, and non-empty `contextAfter` each receive exact unique ranges. Ordering/non-overlap is enforced, contamination of any range removes the entire logic issue, and its removed key cascades through linked revisions, pairs, and dimension validation.
+- The shared transcript-range utility rejects ill-formed UTF-16 in either transcript or quote. A quote cannot select half of a surrogate pair; astral symbols retain complete UTF-16 `[start,end)` ranges for overlap and uniqueness checks.
+- Filtered-spelling narrative defense is centralized over every retained projectable feedback field. It rejects an explicit original reference or an original-plus-suggestion correction in one field, while no longer rejecting a common suggestion or common original used as ordinary evaluation text. Exact raw keys and source ranges remain the primary relationship model.
+- Provider-only recognition warnings are strict `{ scope, message }` objects with only `global_unreadable` and `printed_boundary` scopes. Schema and runtime reject legacy strings, local scopes, extra relationship fields, oversized/empty messages, and extra properties. The public response still projects messages as `string[]`; recognition messages are no longer scanned as local legibility text.
+- Mock dimension scores are rounded first, then receive an empty relationship list when the rounded score equals that dimension's maximum.
+
+### Verification
+
+Fresh verification after the review fixes:
+
+```text
+Gateway focused: 6 files passed, 139 tests passed
+Gateway full: 20 files passed, 264 tests passed
+Gateway typecheck: tsc --noEmit passed
+Shared scoring runtime: shared scoring runtime ok
+App full: 45 files passed, 287 tests passed
+App typecheck: tsc -b passed
+git diff --check: passed (only Git line-ending notices)
+```
+
+### Self-review
+
+- Confirmed duplicate raw dimensions cannot hide a filtered spelling deduction or replace the legibility dimension in either array order.
+- Confirmed filtered deductions remain invalid; no score is restored or increased after filtering.
+- Confirmed the Provider aggregate corrected/improved strings remain untrusted and both outputs are rebuilt solely from retained structured pairs.
+- Confirmed scoped global warning text may contain ordinary English substrings such as `can` without colliding with a local legibility range, while no Provider-local warning representation exists.
+- Confirmed no website version, route, layout, or UI production code changed in this round.

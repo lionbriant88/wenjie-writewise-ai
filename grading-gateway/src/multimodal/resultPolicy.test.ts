@@ -107,9 +107,10 @@ function logicIssueWithNarrative(
   if (field === 'originalText') return { ...issue, originalText: filteredSpellingNarrative }
   if (field === 'contextBefore') return { ...issue, contextBefore: filteredSpellingNarrative }
   if (field === 'contextAfter') return { ...issue, contextAfter: filteredSpellingNarrative }
-  if (field === 'diagnosis') return { ...issue, diagnosis: filteredSpellingNarrative }
-  if (field === 'conservativeSuggestion') return { ...issue, conservativeSuggestion: filteredSpellingNarrative }
-  return { ...issue, polishedSuggestion: filteredSpellingNarrative }
+  const safelyGrounded = { ...issue, originalText: 'the club.', contextAfter: '' }
+  if (field === 'diagnosis') return { ...safelyGrounded, diagnosis: filteredSpellingNarrative }
+  if (field === 'conservativeSuggestion') return { ...safelyGrounded, conservativeSuggestion: filteredSpellingNarrative }
+  return { ...safelyGrounded, polishedSuggestion: filteredSpellingNarrative }
 }
 
 describe('applyResultPolicy', () => {
@@ -129,8 +130,52 @@ describe('applyResultPolicy', () => {
     expect(applyResultPolicy(payloadWithGrammarIssue(), transcript)?.issues[0].type).toBe('grammar')
   })
 
+  it('rejects a recognition warning scope outside the global provider-only contract', () => {
+    const payload = payloadWithGrammarIssue()
+    payload.recognitionWarnings = [{ scope: 'local', message: 'Local warning.' } as never]
+    expect(applyResultPolicy(payload, transcript)).toBeNull()
+  })
+
   it('isolates grammar that overlaps legibility evidence', () => {
     expect(applyResultPolicy(payloadWithLegibilityOverlap(), transcript)?.issues).toHaveLength(0)
+  })
+
+  it.each(['contextBefore', 'contextAfter'] as const)('removes a logic issue whose %s intersects filtered spelling and cascades its key', (field) => {
+    const source = 'Before wark. Core claim. After wark.'
+    const payload: ResultPolicyInput = {
+      issues: [{ issueKey: 'spelling-wark', type: 'spelling', severity: 'low', originalText: field === 'contextBefore' ? 'wark' : 'wark.', suggestion: 'work', explanation: 'Uncertain.', evidenceCertainty: 'uncertain', requiresTeacherReview: false }],
+      logicIssues: [{ issueKey: 'logic-core', originalText: 'Core claim.', contextBefore: 'Before wark.', contextAfter: 'After wark.', subType: 'unclear_logic', severity: 'low', diagnosis: 'Synthetic.', suggestedAction: 'ask_student_to_explain', conservativeSuggestion: 'Explain.', polishedSuggestion: 'Clarify.', requiresTeacherReview: false }],
+      sentenceRevisions: [{ originalText: 'Core claim.', revisedText: 'Clear claim.', note: 'Synthetic.', relatedIssueKeys: ['logic-core'], changeTypes: ['coherence'] }],
+      sentencePairs: [{ originalText: 'Core claim.', correctedText: 'Core claim.', improvedText: 'Clear claim.', explanation: 'Synthetic.', requiresTeacherReview: false, relatedIssueKeys: ['logic-core'], changeTypes: ['coherence'] }],
+      expressionUpgrades: [], legibilityIssues: [], dimensionScores: [{ dimensionId: 'logic', score: 1, maxScore: 1, reason: 'Reviewed.', evidence: 'Core claim.', relatedIssueKeys: [] }], recognitionWarnings: [], overallComment: 'Synthetic.', logicNotes: [], logicNoteRecords: [],
+    }
+    if (field === 'contextBefore') payload.issues[0].originalText = 'Before wark.'
+    else payload.issues[0].originalText = 'After wark.'
+    expect(applyResultPolicy(payload, source)).toMatchObject({ logicIssues: [], sentenceRevisions: [], sentencePairs: [] })
+    payload.dimensionScores[0] = { ...payload.dimensionScores[0], score: 0.5, relatedIssueKeys: ['logic-core'] }
+    expect(applyResultPolicy(payload, source)).toBeNull()
+  })
+
+  it('removes a logic issue when its context intersects local legibility', () => {
+    const source = 'Before blur. Core claim. After.'
+    const payload: ResultPolicyInput = {
+      issues: [],
+      logicIssues: [{ issueKey: 'logic-core', originalText: 'Core claim.', contextBefore: 'Before blur.', contextAfter: 'After.', subType: 'unclear_logic', severity: 'low', diagnosis: 'Synthetic.', suggestedAction: 'ask_student_to_explain', conservativeSuggestion: 'Explain.', polishedSuggestion: 'Clarify.', requiresTeacherReview: false }],
+      sentenceRevisions: [], sentencePairs: [], expressionUpgrades: [],
+      legibilityIssues: [{ issueKey: 'legibility-blur', transcriptText: 'blur', possibleReadings: ['blur', 'blue'], pageNumber: 1, regionDescription: 'line', explanation: 'Synthetic.', defaultOutcome: 'count_as_legibility_error' }],
+      dimensionScores: [
+        { dimensionId: 'logic', score: 1, maxScore: 1, reason: 'Reviewed.', evidence: 'Core claim.', relatedIssueKeys: [] },
+        { dimensionId: 'legibility', score: 0.5, maxScore: 1, reason: 'Unclear.', evidence: 'blur', relatedIssueKeys: ['legibility-blur'] },
+      ], recognitionWarnings: [], overallComment: 'Synthetic.', logicNotes: [], logicNoteRecords: [],
+    }
+    expect(applyResultPolicy(payload, source)).toMatchObject({ logicIssues: [] })
+  })
+
+  it('rejects out-of-order or overlapping logic context ranges', () => {
+    const payload = payloadWithGrammarIssue()
+    payload.logicIssues = [{ issueKey: 'logic-joins', originalText: 'you joins', contextBefore: 'suggest you', contextAfter: 'joins the club.', subType: 'unclear_logic', severity: 'low', diagnosis: 'Synthetic.', suggestedAction: 'ask_student_to_explain', conservativeSuggestion: 'Explain.', polishedSuggestion: 'Clarify.', requiresTeacherReview: false }]
+    payload.dimensionScores = fullDimensionScores()
+    expect(applyResultPolicy(payload, transcript)).toBeNull()
   })
 
   it('rejects duplicate issue keys instead of joining them arbitrarily', () => {
@@ -181,14 +226,40 @@ describe('applyResultPolicy', () => {
     expect(applyResultPolicy(payload, transcript)).toBeNull()
   })
 
+  it('rejects an explicit filtered spelling correction but does not reject ordinary suggestion use', () => {
+    const explicit = payloadWithUncertainSpelling()
+    explicit.issues[0] = { ...explicit.issues[0], originalText: 'wark', suggestion: 'work' }
+    explicit.overallComment = 'wark should be work.'
+    expect(applyResultPolicy(explicit, 'I suggest you joins the club. wark')).toBeNull()
+
+    const ordinary = payloadWithUncertainSpelling()
+    ordinary.issues[0] = { ...ordinary.issues[0], originalText: 'joins', suggestion: 'work' }
+    ordinary.overallComment = 'Good work overall.'
+    expect(applyResultPolicy(ordinary, transcript)).toMatchObject({ overallComment: 'Good work overall.' })
+  })
+
+  it('does not reject an ordinary evaluation when the filtered original is also a common word', () => {
+    const payload = payloadWithUncertainSpelling()
+    payload.issues[0] = { ...payload.issues[0], originalText: 'club', suggestion: 'clue' }
+    payload.dimensionScores = [{ dimensionId: 'language', score: 1, maxScore: 1, reason: 'Reviewed.', evidence: 'I suggest', relatedIssueKeys: [] }]
+    payload.overallComment = 'The club response addresses the task.'
+    expect(applyResultPolicy(payload, transcript)).toMatchObject({ overallComment: payload.overallComment })
+  })
+
+  it('rejects filtered spelling leaked through a retained language issue narrative', () => {
+    const payload = payloadWithUncertainSpelling()
+    payload.issues[0] = { ...payload.issues[0], originalText: 'wark', suggestion: 'work' }
+    payload.issues.push({ issueKey: 'grammar-club', type: 'grammar', severity: 'low', originalText: 'the club.', suggestion: 'wark should be work.', explanation: 'The wording explicitly repeats the filtered correction.', evidenceCertainty: 'certain', requiresTeacherReview: false })
+    expect(applyResultPolicy(payload, `${transcript} wark`)).toBeNull()
+  })
+
   it.each([
     'originalText', 'contextBefore', 'contextAfter', 'diagnosis', 'conservativeSuggestion', 'polishedSuggestion',
   ] as const)('rejects filtered spelling leaked through logic issue %s', (field) => {
     const payload = payloadWithUncertainSpelling()
     payload.logicIssues = [logicIssueWithNarrative(field)]
     const result = applyResultPolicy(payload, transcript)
-    if (field === 'originalText') expect(result).toBeNull()
-    else expect(result).toMatchObject({ logicIssues: [] })
+    expect(result).toBeNull()
   })
 
   it('rejects an uncertain spelling whose own quote is ungrounded', () => {
