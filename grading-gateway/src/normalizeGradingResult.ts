@@ -95,14 +95,66 @@ function parseExpressionUpgrades(value: unknown, transcript: string): AiGradingR
   return result
 }
 
-export function normalizeGradingResultFromPolicyOutcome(input: { request: GradingRequestV1; context: NormalizationContext; policy: ResultPolicyOutcome; dimensionScores: AiGradingResultV1['dimensionScores']; totalScore: number; expressionUpgrades: AiGradingResultV1['expressionUpgrades']; improvedText: string; reviewReasons: string[] }): AiGradingResultV1 {
+interface PolicyProjectionInput {
+  request: GradingRequestV1
+  context: NormalizationContext
+  policy: ResultPolicyOutcome
+  dimensionScores: AiGradingResultV1['dimensionScores']
+  totalScore: number
+  reportedTotalScore?: unknown
+  expressionUpgrades: AiGradingResultV1['expressionUpgrades']
+  improvedText: string
+  reviewReasons: string[]
+}
+
+function safeText(value: unknown): value is string { return typeof value === 'string' && value.trim().length > 0 }
+
+function policyProjectionInputIsSafe(input: PolicyProjectionInput): boolean {
+  const { request, policy, dimensionScores, totalScore } = input
+  if (!Number.isInteger(request.task.fullScore) || request.task.fullScore < 1 || request.task.fullScore > 100 || !safeText(request.essay.confirmedTranscript) || !safeText(policy.overallComment) || !safeText(policy.correctedText) || !safeText(input.improvedText)) return false
+  if (!Number.isInteger(totalScore) || totalScore < 0 || totalScore > request.task.fullScore || !Array.isArray(input.reviewReasons) || !input.reviewReasons.every(safeText)) return false
+  if (input.reportedTotalScore !== undefined && (typeof input.reportedTotalScore !== 'number' || !Number.isFinite(input.reportedTotalScore))) return false
+  if (dimensionScores.length !== request.task.rubric.dimensions.length) return false
+  for (const [index, dimension] of request.task.rubric.dimensions.entries()) {
+    const score = dimensionScores[index]
+    const maxScore = calculateDimensionMaxScore(request.task.fullScore, dimension.weight)
+    if (!score || score.dimensionId !== dimension.id || score.weight !== dimension.weight || score.maxScore !== maxScore || !Number.isFinite(score.score) || score.score < 0 || score.score > maxScore || !safeText(score.reason) || !safeText(score.evidence)) return false
+  }
+  if (calculateTotalScore(dimensionScores.map(({ score }) => score), request.task.fullScore) !== totalScore) return false
+  const issueKeys = policy.issues.map(({ issueKey }) => issueKey)
+  if (!issueKeys.every(safeText) || new Set(issueKeys).size !== issueKeys.length) return false
+  const knownKeys = new Set(issueKeys)
+  const linkedItems = [...policy.sentenceRevisions, ...policy.sentencePairs]
+  if (linkedItems.some(({ relatedIssueKeys, changeTypes }) => relatedIssueKeys.length === 0 || new Set(relatedIssueKeys).size !== relatedIssueKeys.length || !relatedIssueKeys.every((key) => knownKeys.has(key)) || changeTypes.length === 0)) return false
+  return true
+}
+
+export function normalizeGradingResultFromPolicyOutcome(input: PolicyProjectionInput): AiGradingResultV1 | null {
+  if (!policyProjectionInputIsSafe(input)) return null
   const { request, context, policy, dimensionScores, totalScore, improvedText } = input
   const issueIdByKey = new Map(policy.issues.map((issue, index) => [issue.issueKey, `${request.essay.essayId}-issue-${index + 1}`]))
-  const issues: AiGradingResultV1['issues'] = policy.issues.map((issue) => ({ id: issueIdByKey.get(issue.issueKey)!, type: issue.type, severity: issue.severity, originalText: issue.originalText, suggestion: issue.suggestion, explanation: issue.explanation, evidenceCertainty: issue.evidenceCertainty, requiresTeacherReview: issue.requiresTeacherReview }))
-  const sentenceRevisions: AiGradingResultV1['sentenceRevisions'] = policy.sentenceRevisions.map((revision, index) => ({ id: `${request.essay.essayId}-revision-${index + 1}`, relatedIssueIds: revision.relatedIssueKeys.map((key) => issueIdByKey.get(key)!), originalText: revision.originalText, revisedText: revision.revisedText, note: revision.note, changeTypes: revision.changeTypes }))
-  const sentencePairs: NonNullable<AiGradingResultV1['fullTextRevision']>['sentencePairs'] = policy.sentencePairs.map((pair, index) => ({ id: `${request.essay.essayId}-pair-${index + 1}`, originalText: pair.originalText, correctedText: pair.correctedText, improvedText: pair.improvedText, relatedIssueIds: pair.relatedIssueKeys.map((key) => issueIdByKey.get(key)!), changeTypes: pair.changeTypes, explanation: pair.explanation, requiresTeacherReview: pair.requiresTeacherReview }))
+  const issues: AiGradingResultV1['issues'] = []
+  for (const issue of policy.issues) {
+    const id = issueIdByKey.get(issue.issueKey)
+    if (!id) return null
+    issues.push({ id, type: issue.type, severity: issue.severity, originalText: issue.originalText, suggestion: issue.suggestion, explanation: issue.explanation, evidenceCertainty: issue.evidenceCertainty, requiresTeacherReview: issue.requiresTeacherReview })
+  }
+  const sentenceRevisions: AiGradingResultV1['sentenceRevisions'] = []
+  for (const [index, revision] of policy.sentenceRevisions.entries()) {
+    const relatedIssueIds: string[] = []
+    for (const key of revision.relatedIssueKeys) { const id = issueIdByKey.get(key); if (!id) return null; relatedIssueIds.push(id) }
+    sentenceRevisions.push({ id: `${request.essay.essayId}-revision-${index + 1}`, relatedIssueIds, originalText: revision.originalText, revisedText: revision.revisedText, note: revision.note, changeTypes: revision.changeTypes })
+  }
+  const sentencePairs: NonNullable<AiGradingResultV1['fullTextRevision']>['sentencePairs'] = []
+  for (const [index, pair] of policy.sentencePairs.entries()) {
+    const relatedIssueIds: string[] = []
+    for (const key of pair.relatedIssueKeys) { const id = issueIdByKey.get(key); if (!id) return null; relatedIssueIds.push(id) }
+    sentencePairs.push({ id: `${request.essay.essayId}-pair-${index + 1}`, originalText: pair.originalText, correctedText: pair.correctedText, improvedText: pair.improvedText, relatedIssueIds, changeTypes: pair.changeTypes, explanation: pair.explanation, requiresTeacherReview: pair.requiresTeacherReview })
+  }
   const logicIssues = policy.logicIssues.map((issue, index) => ({ id: `${request.essay.essayId}-logic-${index + 1}`, originalText: issue.originalText, contextBefore: issue.contextBefore, contextAfter: issue.contextAfter, subType: issue.subType, severity: issue.severity, diagnosis: issue.diagnosis, suggestedAction: issue.suggestedAction, conservativeSuggestion: issue.conservativeSuggestion, polishedSuggestion: issue.polishedSuggestion, requiresTeacherReview: issue.requiresTeacherReview }))
-  return { resultVersion: 'grading-result-v1', requestId: request.requestId, essayId: request.essay.essayId, provider: context.provider, status: input.reviewReasons.length ? 'partial' : 'success', totalScore, maxScore: request.task.fullScore, dimensionScores, issues, sentenceRevisions, expressionUpgrades: input.expressionUpgrades.map((item) => ({ ...item, id: item.id.startsWith(`${request.essay.essayId}-`) ? item.id : `${request.essay.essayId}-upgrade-${item.id}` })), fullTextRevision: { originalText: request.essay.confirmedTranscript, correctedText: policy.correctedText, improvedText, sentencePairs, logicNotes: policy.logicNotes, logicIssues }, recognitionWarnings: [], legibilityIssues: [], overallComment: policy.overallComment, reviewReasons: [...input.reviewReasons], createdAt: context.createdAt }
+  const reviewReasons = new Set(input.reviewReasons)
+  if (typeof input.reportedTotalScore === 'number' && input.reportedTotalScore !== totalScore) reviewReasons.add('AI 自报总分与产品重算总分不一致。')
+  return { resultVersion: 'grading-result-v1', requestId: request.requestId, essayId: request.essay.essayId, provider: context.provider, status: reviewReasons.size ? 'partial' : 'success', totalScore, maxScore: request.task.fullScore, dimensionScores, issues, sentenceRevisions, expressionUpgrades: input.expressionUpgrades.map((item) => ({ ...item, id: item.id.startsWith(`${request.essay.essayId}-`) ? item.id : `${request.essay.essayId}-upgrade-${item.id}` })), fullTextRevision: { originalText: request.essay.confirmedTranscript, correctedText: policy.correctedText, improvedText, sentencePairs, logicNotes: policy.logicNotes, logicIssues }, recognitionWarnings: [], legibilityIssues: [], overallComment: policy.overallComment, reviewReasons: [...reviewReasons], createdAt: context.createdAt }
 }
 
 function invalidResponse(): NormalizationResult {
@@ -176,7 +228,8 @@ export function normalizeGradingResult(
   if (!policy) return invalidResponse()
   const providerImproved = isRecord(payload.fullTextRevision) ? text(payload.fullTextRevision.improvedText) : null
   if (!providerImproved) return invalidResponse()
-  const result = normalizeGradingResultFromPolicyOutcome({ request, context, policy, dimensionScores, totalScore, expressionUpgrades, improvedText: providerImproved, reviewReasons: [...reviewReasons] })
+  const result = normalizeGradingResultFromPolicyOutcome({ request, context, policy, dimensionScores, totalScore, reportedTotalScore: payload.reportedTotalScore, expressionUpgrades, improvedText: providerImproved, reviewReasons: [...reviewReasons] })
+  if (!result) return invalidResponse()
   if (typeof payload.modelSelfConfidence === 'number' && Number.isFinite(payload.modelSelfConfidence) && payload.modelSelfConfidence >= 0 && payload.modelSelfConfidence <= 1) result.modelSelfConfidence = payload.modelSelfConfidence
   return { ok: true, result }
 

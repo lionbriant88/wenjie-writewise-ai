@@ -39,7 +39,7 @@ function strictMultimodalPayload(transcript: string) {
       { dimensionId: 'legibility', score: 0.75, reason: 'Handwriting is legible.', evidence: transcript },
     ],
     issues: [], sentenceRevisions: [], expressionUpgrades: [],
-    fullTextRevision: { correctedText: transcript, improvedText: transcript, sentencePairs: [], logicNotes: [], logicIssues: [] },
+    fullTextRevision: { correctedText: transcript, improvedText: 'Improved synthetic version.', sentencePairs: [], logicNotes: [], logicIssues: [] },
     legibilityIssues: [], overallComment: 'Synthetic.', reviewReasons: [],
   }
 }

@@ -20,7 +20,8 @@ const CHANGE_TYPES = new Set(['grammar', 'spelling', 'word_choice', 'sentence_up
 function invalid(): MultimodalNormalizationResult { return { ok: false, error: { code: 'provider_invalid_response', message: INVALID_MESSAGE, retryable: true } } }
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) }
 function text(value: unknown, maxLength = 10_000): string | null { if (typeof value !== 'string') return null; const trimmed = value.trim(); return trimmed && trimmed.length <= maxLength ? trimmed : null }
-function logicContext(value: unknown, maxLength = 10_000): string | null { if (typeof value !== 'string') return null; const trimmed = value.trim(); return trimmed.length <= maxLength ? trimmed : null }
+function quote(value: unknown, maxLength = 10_000): string | null { return typeof value === 'string' && value.length > 0 && value.length <= maxLength ? value : null }
+function rawContext(value: unknown, maxLength = 10_000): string | null { return typeof value === 'string' && value.length <= maxLength ? value : null }
 function textArray(value: unknown, maxItems: number, maxLength: number): string[] | null { if (!Array.isArray(value) || value.length > maxItems) return null; const result = value.map((item) => text(item, maxLength)); return result.every((item): item is string => item !== null) ? result : null }
 
 function uniqueQuoteIndex(transcript: string, quote: string): number | null {
@@ -49,7 +50,7 @@ function parseRawIssues(value: unknown): RawMultimodalIssueV1[] | null {
   for (const item of value) {
     if (!isRecord(item)) return null
     const issueKey = text(item.issueKey, 200), type = text(item.type, 32), severity = text(item.severity, 16)
-    const originalText = text(item.originalText), suggestion = text(item.suggestion), explanation = text(item.explanation)
+    const originalText = quote(item.originalText), suggestion = text(item.suggestion), explanation = text(item.explanation)
     if (!issueKey || !type || !['grammar', 'spelling', 'word_choice', 'structure'].includes(type) || !severity || !['low', 'medium', 'high'].includes(severity) || !originalText || !suggestion || !explanation || !['certain', 'uncertain'].includes(String(item.evidenceCertainty)) || typeof item.requiresTeacherReview !== 'boolean') return null
     parsed.push({ issueKey, type: type as RawMultimodalIssueV1['type'], severity: severity as RawMultimodalIssueV1['severity'], originalText, suggestion, explanation, evidenceCertainty: item.evidenceCertainty as RawMultimodalIssueV1['evidenceCertainty'], requiresTeacherReview: item.requiresTeacherReview })
   }
@@ -61,7 +62,7 @@ function parseRawSentenceRevisions(value: unknown): RawSentenceRevisionV1[] | nu
   const parsed: RawSentenceRevisionV1[] = []
   for (const item of value) {
     if (!isRecord(item) || !Array.isArray(item.relatedIssueKeys) || !Array.isArray(item.changeTypes)) return null
-    const originalText = text(item.originalText), revisedText = text(item.revisedText), note = text(item.note)
+    const originalText = quote(item.originalText), revisedText = text(item.revisedText), note = text(item.note)
     const relatedIssueKeys = textArray(item.relatedIssueKeys, 50, 200)
     if (!originalText || !revisedText || !note || !relatedIssueKeys || item.changeTypes.length === 0 || !item.changeTypes.every((entry) => typeof entry === 'string' && CHANGE_TYPES.has(entry))) return null
     parsed.push({ originalText, revisedText, note, relatedIssueKeys, changeTypes: [...item.changeTypes] as RawSentenceRevisionV1['changeTypes'] })
@@ -74,7 +75,7 @@ function parseRawSentencePairs(value: unknown): RawSentencePairV1[] | null {
   const parsed: RawSentencePairV1[] = []
   for (const item of value) {
     if (!isRecord(item) || !Array.isArray(item.relatedIssueKeys) || !Array.isArray(item.changeTypes)) return null
-    const originalText = text(item.originalText), correctedText = text(item.correctedText), improvedText = text(item.improvedText), explanation = text(item.explanation)
+    const originalText = quote(item.originalText), correctedText = text(item.correctedText), improvedText = text(item.improvedText), explanation = text(item.explanation)
     const relatedIssueKeys = textArray(item.relatedIssueKeys, 50, 200)
     if (!originalText || !correctedText || !improvedText || !explanation || !relatedIssueKeys || typeof item.requiresTeacherReview !== 'boolean' || item.changeTypes.length === 0 || !item.changeTypes.every((entry) => typeof entry === 'string' && CHANGE_TYPES.has(entry))) return null
     parsed.push({ originalText, correctedText, improvedText, relatedIssueKeys, changeTypes: [...item.changeTypes] as RawSentencePairV1['changeTypes'], explanation, requiresTeacherReview: item.requiresTeacherReview })
@@ -89,7 +90,7 @@ function parseRawLogicIssues(value: unknown): RawLogicIssueV1[] | null {
   const actions = new Set<RawLogicIssueV1['suggestedAction']>(['add_connector', 'add_bridge_sentence', 'delete_sentence', 'replace_sentence', 'clarify_reference', 'ask_student_to_explain'])
   for (const item of value) {
     if (!isRecord(item)) return null
-    const issueKey = text(item.issueKey, 200), originalText = text(item.originalText), contextBefore = logicContext(item.contextBefore), contextAfter = logicContext(item.contextAfter), subType = text(item.subType, 32), severity = text(item.severity, 16), diagnosis = text(item.diagnosis), suggestedAction = text(item.suggestedAction, 32), conservativeSuggestion = text(item.conservativeSuggestion), polishedSuggestion = text(item.polishedSuggestion)
+    const issueKey = text(item.issueKey, 200), originalText = quote(item.originalText), contextBefore = rawContext(item.contextBefore), contextAfter = rawContext(item.contextAfter), subType = text(item.subType, 32), severity = text(item.severity, 16), diagnosis = text(item.diagnosis), suggestedAction = text(item.suggestedAction, 32), conservativeSuggestion = text(item.conservativeSuggestion), polishedSuggestion = text(item.polishedSuggestion)
     if (!issueKey || !originalText || contextBefore === null || contextAfter === null || !subType || !subTypes.has(subType as RawLogicIssueV1['subType']) || !severity || !['low', 'medium', 'high'].includes(severity) || !diagnosis || !suggestedAction || !actions.has(suggestedAction as RawLogicIssueV1['suggestedAction']) || !conservativeSuggestion || !polishedSuggestion || typeof item.requiresTeacherReview !== 'boolean') return null
     parsed.push({ issueKey, originalText, contextBefore, contextAfter, subType: subType as RawLogicIssueV1['subType'], severity: severity as RawLogicIssueV1['severity'], diagnosis, suggestedAction: suggestedAction as RawLogicIssueV1['suggestedAction'], conservativeSuggestion, polishedSuggestion, requiresTeacherReview: item.requiresTeacherReview })
   }
@@ -101,7 +102,7 @@ function parseRawLegibilityIssues(value: unknown): RawLegibilityIssueV1[] | null
   const parsed: RawLegibilityIssueV1[] = []
   for (const item of value) {
     if (!isRecord(item)) return null
-    const issueKey = text(item.issueKey, 200), transcriptText = text(item.transcriptText), possibleReadings = textArray(item.possibleReadings, 4, 1_000), regionDescription = text(item.regionDescription), explanation = text(item.explanation), defaultOutcome = text(item.defaultOutcome, 64)
+    const issueKey = text(item.issueKey, 200), transcriptText = quote(item.transcriptText), possibleReadings = textArray(item.possibleReadings, 4, 1_000), regionDescription = text(item.regionDescription), explanation = text(item.explanation), defaultOutcome = text(item.defaultOutcome, 64)
     if (!issueKey || !transcriptText || !possibleReadings || possibleReadings.length < 2 || typeof item.pageNumber !== 'number' || !Number.isInteger(item.pageNumber) || item.pageNumber < 1 || !regionDescription || !explanation || defaultOutcome !== 'count_as_legibility_error') return null
     parsed.push({ issueKey, transcriptText, possibleReadings, pageNumber: item.pageNumber, regionDescription, explanation, defaultOutcome })
   }
@@ -113,9 +114,9 @@ function parseLogicNotes(value: unknown): Array<{ quote: string; note: string }>
   const parsed: Array<{ quote: string; note: string }> = []
   for (const item of value) {
     if (!isRecord(item)) return null
-    const quote = text(item.quote), note = text(item.note)
-    if (!quote || !note) return null
-    parsed.push({ quote, note })
+    const rawQuote = quote(item.quote), note = text(item.note)
+    if (!rawQuote || !note) return null
+    parsed.push({ quote: rawQuote, note })
   }
   return parsed
 }
@@ -170,7 +171,7 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
     ? typeof payload.transcript === 'string' && payload.transcript === context.confirmedTranscript
       ? context.confirmedTranscript
       : null
-    : text(payload.transcript, 50_000)
+    : quote(payload.transcript, 50_000)
   const recognitionWarnings = textArray(payload.recognitionWarnings, 50, 1_000)
   if (!transcript || !recognitionWarnings || typeof payload.printedTextExcluded !== 'boolean') return invalid()
   const request = requestFor(context, transcript)
@@ -210,10 +211,15 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
   })
   if (dimensionScoreCandidates.some((item) => item === null)) return invalid()
   const dimensionScores = dimensionScoreCandidates as AiGradingResultV1['dimensionScores']
+  const totalScore = calculateTotalScore(dimensionScores.map(({ score }) => score), request.task.fullScore)
+  if (typeof payload.reportedTotalScore !== 'number' || !Number.isFinite(payload.reportedTotalScore)) return invalid()
+  const improvedText = isRecord(payload.fullTextRevision) ? text(payload.fullTextRevision.improvedText) : null
+  if (!improvedText) return invalid()
   const groundedUpgrades: AiGradingResultV1['expressionUpgrades'] = []
   for (const [index, value] of upgrades.grounded.entries()) { if (!isRecord(value)) return invalid(); const originalText = text(value.originalText), upgradedText = text(value.upgradedText), note = text(value.note); if (!originalText || !upgradedText || !note) return invalid(); groundedUpgrades.push({ id: `${context.essayId}-upgrade-${index + 1}`, originalText, upgradedText, note }) }
   const safePolicy = { ...policy, issues: safeIssues, sentenceRevisions: safeRevisions, sentencePairs: safePairs, correctedText, logicNotes: keptLogicNotes.map(({ note }) => note) }
-  const normalized = normalizeGradingResultFromPolicyOutcome({ request, context: { provider: context.provider, createdAt: context.createdAt }, policy: safePolicy, dimensionScores, totalScore: calculateTotalScore(dimensionScores.map(({ score }) => score), request.task.fullScore), expressionUpgrades: groundedUpgrades, improvedText: text(payload.fullTextRevision.improvedText)!, reviewReasons: [] })
+  const normalized = normalizeGradingResultFromPolicyOutcome({ request, context: { provider: context.provider, createdAt: context.createdAt }, policy: safePolicy, dimensionScores, totalScore, reportedTotalScore: payload.reportedTotalScore, expressionUpgrades: groundedUpgrades, improvedText, reviewReasons: [] })
+  if (!normalized) return invalid()
   const reviewReasons = new Set(normalized.reviewReasons)
   if (recognitionWarnings.length) reviewReasons.add('recognition_uncertain')
   if (!payload.printedTextExcluded) reviewReasons.add('printed_text_exclusion_uncertain')

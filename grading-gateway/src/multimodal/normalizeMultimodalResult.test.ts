@@ -118,6 +118,28 @@ function payloadWithCantAmbiguity(): Record<string, unknown> {
 }
 
 describe('normalizeMultimodalResult', () => {
+  it('rejects raw quote whitespace drift in multimodal issue, revision, pair, logic, note, and legibility fields', () => {
+    for (const mutate of [
+      (payload: Record<string, unknown>) => { ;(payload.issues as Array<Record<string, unknown>>)[0].originalText = 'It  are blue.' },
+      (payload: Record<string, unknown>) => { ;(payload.sentenceRevisions as Array<Record<string, unknown>>)[0].originalText = 'It  are blue.' },
+      (payload: Record<string, unknown>) => { ;((payload.fullTextRevision as Record<string, unknown>).sentencePairs as Array<Record<string, unknown>>)[0].originalText = 'It  are blue.' },
+      (payload: Record<string, unknown>) => { ;(payload.fullTextRevision as Record<string, unknown>).logicIssues = [{ issueKey: 'logic', originalText: 'It  are blue.', contextBefore: 'I has a pen.', contextAfter: '', subType: 'unclear_logic', severity: 'low', diagnosis: 'Synthetic.', suggestedAction: 'add_bridge_sentence', conservativeSuggestion: 'Synthetic.', polishedSuggestion: 'Synthetic.', requiresTeacherReview: false }] },
+      (payload: Record<string, unknown>) => { ;((payload.fullTextRevision as Record<string, unknown>).logicNotes as Array<Record<string, unknown>>)[0].quote = 'I  has a pen.' },
+      (payload: Record<string, unknown>) => { payload.legibilityIssues = [{ issueKey: 'legibility', transcriptText: 'It  are blue.', possibleReadings: ['It are blue.', 'It is blue.'], pageNumber: 1, regionDescription: 'line', explanation: 'Synthetic.', defaultOutcome: 'count_as_legibility_error' }] },
+    ]) { const payload = validPayload(); payload.sentenceRevisions = [{ originalText: 'It are blue.', revisedText: 'It is blue.', note: 'Synthetic.', relatedIssueKeys: ['grammar-blue'], changeTypes: ['grammar'] }]; (payload.fullTextRevision as Record<string, unknown>).sentencePairs = [{ originalText: 'It are blue.', correctedText: 'It is blue.', improvedText: 'It is blue.', relatedIssueKeys: ['grammar-blue'], changeTypes: ['grammar'], explanation: 'Synthetic.', requiresTeacherReview: false }]; mutate(payload); expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: false }) }
+  })
+
+  it('rejects invalid reported totals and blank improved text, and marks a finite mismatch partial', () => {
+    const invalidTotal = validPayload(); invalidTotal.reportedTotalScore = '12'; expect(normalizeMultimodalResult(invalidTotal, context)).toMatchObject({ ok: false })
+    const blankImproved = validPayload(); ;(blankImproved.fullTextRevision as Record<string, unknown>).improvedText = ' '; expect(normalizeMultimodalResult(blankImproved, context)).toMatchObject({ ok: false })
+    const mismatch = validPayload(); mismatch.reportedTotalScore = 14; expect(normalizeMultimodalResult(mismatch, context)).toMatchObject({ ok: true, result: { status: 'partial', reviewReasons: expect.arrayContaining(['AI 自报总分与产品重算总分不一致。']) } })
+  })
+
+  it('rejects whitespace-only dimension evidence before shared public projection', () => {
+    const payload = validPayload()
+    ;(payload.dimensionScores as Array<Record<string, unknown>>)[0].evidence = '   '
+    expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: false })
+  })
   it('projects a grounded structured logic issue into the full-text revision', () => {
     const normalized = normalizeMultimodalResult(payloadWithLogicIssue(), context)
 
