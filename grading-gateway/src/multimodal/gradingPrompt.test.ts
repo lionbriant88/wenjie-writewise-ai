@@ -104,6 +104,8 @@ describe('essay grading prompt', () => {
         'severity', 'diagnosis', 'suggestedAction', 'conservativeSuggestion',
         'polishedSuggestion', 'requiresTeacherReview',
       ])
+    expect(essayGradingSchema.properties.fullTextRevision.required)
+      .toEqual(['correctedText', 'improvedText', 'sentencePairs', 'logicNotes', 'logicIssues'])
     expect(essayGradingSchema.properties.fullTextRevision.properties.logicIssues.items.properties.subType.enum)
       .toEqual(['weak_connection', 'unclear_logic', 'missing_cause_effect', 'unclear_transition', 'topic_drift', 'irrelevant_sentence', 'unclear_reference', 'missing_motivation', 'plot_gap'])
     expect(essayGradingSchema.properties.fullTextRevision.properties.logicIssues.items.properties.suggestedAction.enum)
