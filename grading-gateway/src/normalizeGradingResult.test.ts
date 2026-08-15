@@ -84,6 +84,27 @@ describe('normalizeGradingResult', () => {
     expect(result).toMatchObject({ ok: true, result: { status: 'success', issues: [], sentenceRevisions: [], fullTextRevision: { correctedText: request.essay.confirmedTranscript, sentencePairs: [] } } })
   })
 
+  it('does not let filtered uncertain spelling bypass malformed data or provider review reasons', () => {
+    const malformed = validPayload()
+    malformed.issues = [{ issueKey: 'spell-1', type: 'spelling', severity: 'low', originalText: 'Invented quote.', suggestion: 'Correct.', explanation: 'Synthetic.', evidenceCertainty: 'uncertain', requiresTeacherReview: false }]
+    expectFailure(malformed)
+    const silent = validPayload()
+    silent.issues = [{ issueKey: 'spell-1', type: 'spelling', severity: 'low', originalText: 'Second synthetic line.', suggestion: 'Second corrected line.', explanation: 'Synthetic.', evidenceCertainty: 'uncertain', requiresTeacherReview: false }]
+    silent.sentenceRevisions = [{ originalText: 'Second synthetic line.', revisedText: 'Second corrected line.', note: 'Synthetic.', relatedIssueKeys: ['spell-1'], changeTypes: ['spelling'] }]
+    ;(silent.fullTextRevision as Record<string, unknown>).sentencePairs = [{ originalText: 'Second synthetic line.', correctedText: 'Second corrected line.', improvedText: 'Synthetic.', explanation: 'Synthetic.', requiresTeacherReview: false, relatedIssueKeys: ['spell-1'], changeTypes: ['spelling'] }]
+    silent.reviewReasons = ['Provider narrative must not affect status.']
+    expect(normalizeGradingResult(silent, request, context)).toMatchObject({ ok: true, result: { status: 'success', reviewReasons: [], issues: [], sentenceRevisions: [] } })
+  })
+
+  it('requires the complete full-text revision object', () => {
+    for (const field of ['fullTextRevision', 'logicNotes', 'logicIssues'] as const) {
+      const payload = validPayload()
+      if (field === 'fullTextRevision') delete payload.fullTextRevision
+      else delete (payload.fullTextRevision as Record<string, unknown>)[field]
+      expectFailure(payload)
+    }
+  })
+
   it.each(['sentence revision', 'sentence pair'] as const)('rejects empty generic %s changeTypes', (kind) => {
     const payload = validPayload()
     if (kind === 'sentence revision') (payload.sentenceRevisions as Array<Record<string, unknown>>)[0].changeTypes = []
@@ -146,14 +167,10 @@ describe('normalizeGradingResult', () => {
     expectFailure(payload)
   })
 
-  it('drops an unmatched issue and marks the result partial', () => {
+  it('rejects an unmatched issue instead of guessing its source', () => {
     const payload = validPayload()
     ;(payload.issues as Array<Record<string, unknown>>)[0].originalText = 'Invented quote.'
-    const result = normalizeGradingResult(payload, request, context)
-    expect(result.ok).toBe(true)
-    if (!result.ok) throw new Error(result.error.message)
-    expect(result.result.issues).toEqual([])
-    expect(result.result.status).toBe('partial')
+    expectFailure(payload)
   })
 
   it('replaces a collapsed-whitespace quote with the actual transcript slice', () => {
@@ -162,33 +179,24 @@ describe('normalizeGradingResult', () => {
     if (result.ok) expect(result.result.issues[0].originalText).toBe('Second   synthetic line.')
   })
 
-  it('removes a logic note whose required quote cannot be grounded', () => {
+  it('rejects a logic note whose required quote cannot be grounded', () => {
     const payload = validPayload()
     ;((payload.fullTextRevision as Record<string, unknown>).logicNotes as Array<Record<string, unknown>>)[0].quote = 'Invented logic quote.'
     const result = normalizeGradingResult(payload, request, context)
 
-    expect(result).toMatchObject({ ok: true, result: { fullTextRevision: { logicNotes: [] }, status: 'partial' } })
-    if (result.ok) expect(result.result.reviewReasons.join(' ')).toMatch(/逻辑诊断原文引文无法定位/)
+    expectFailure(payload)
   })
 
-  it('removes a sentence revision with missing revised text and becomes partial', () => {
+  it('rejects a sentence revision with missing revised text', () => {
     const payload = validPayload()
     ;(payload.sentenceRevisions as Array<Record<string, unknown>>)[0].revisedText = ''
-    const result = normalizeGradingResult(payload, request, context)
-    expect(result.ok).toBe(true)
-    if (!result.ok) throw new Error(result.error.message)
-    expect(result.result.sentenceRevisions).toEqual([])
-    expect(result.result.status).toBe('partial')
+    expectFailure(payload)
   })
 
-  it('omits the full revision and becomes partial when corrected text is missing', () => {
+  it('rejects a missing required full revision text', () => {
     const payload = validPayload()
     ;(payload.fullTextRevision as Record<string, unknown>).correctedText = ''
-    const result = normalizeGradingResult(payload, request, context)
-    expect(result.ok).toBe(true)
-    if (!result.ok) throw new Error(result.error.message)
-    expect(result.result.fullTextRevision).toBeUndefined()
-    expect(result.result.status).toBe('partial')
+    expectFailure(payload)
   })
 
   it('rejects a missing required improved text', () => {
@@ -217,14 +225,10 @@ describe('normalizeGradingResult', () => {
     }
   })
 
-  it('fills a safe missing comment and marks the result partial', () => {
+  it('rejects a missing required overall comment', () => {
     const payload = validPayload()
     payload.overallComment = '  '
-    const result = normalizeGradingResult(payload, request, context)
-    expect(result.ok).toBe(true)
-    if (!result.ok) throw new Error(result.error.message)
-    expect(result.result.overallComment).toBe('AI 总评缺失，请教师补充。')
-    expect(result.result.status).toBe('partial')
+    expectFailure(payload)
   })
 
   it('ignores Provider metadata, unknown fields, and claims about preserved intent', () => {
