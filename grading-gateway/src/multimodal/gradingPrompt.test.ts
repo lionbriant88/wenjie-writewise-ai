@@ -48,7 +48,7 @@ describe('essay grading prompt', () => {
       expect(prompt).toContain('优先检查语法、逻辑、任务完成度和表达')
     }
     expect(imagePrompt).toContain('重要字迹歧义只记为 legibility issue')
-    expect(textPrompt).not.toContain('重新识别图片')
+    expect(textPrompt).toContain('教师确认文本是唯一正文来源，不重新识别图片。')
     expect(imagePrompt).not.toContain('Preserve student spelling and grammar exactly')
   })
 
