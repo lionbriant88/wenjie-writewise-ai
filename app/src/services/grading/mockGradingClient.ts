@@ -57,6 +57,7 @@ export function createMockGradingClient(): GradingClient {
           originalText: quote,
           suggestion: quote,
           explanation: '本地 mock 仅标记一处真实文本片段供链路测试。',
+          evidenceCertainty: 'certain',
           requiresTeacherReview: true,
         }],
         sentenceRevisions: [],
@@ -67,9 +68,12 @@ export function createMockGradingClient(): GradingClient {
           improvedText: transcript,
           sentencePairs: [],
           logicNotes: ['本地 mock 仅用于链路回退，不代表真实 AI 质量。'],
+          logicIssues: [],
         },
+        legibilityIssues: [],
         overallComment: '本地 mock 批改结果，请教师复核。',
         reviewReasons: ['本结果由本地 mock 生成。'],
+        recognitionWarnings: [],
         createdAt,
       }
     },
@@ -87,7 +91,7 @@ export function createMockGradingClient(): GradingClient {
         resultVersion: 'grading-result-v1', requestId: request.requestId, essayId: request.essayId, provider: 'mock', status: 'success',
         totalScore: calculateTotalScore(dimensionScores.map(({ score }) => score), request.task.fullScore), maxScore: request.task.fullScore,
         dimensionScores, issues: [], sentenceRevisions: [], expressionUpgrades: [], overallComment: '本地 mock 图片批改结果，请教师复核。', reviewReasons: ['local_mock'], createdAt,
-        transcript: request.confirmedTranscript ?? transcript, transcriptionWarnings: [], printedTextExcluded: true,
+        transcript: request.confirmedTranscript ?? transcript, recognitionWarnings: [], legibilityIssues: [], printedTextExcluded: true,
       }
     },
   }

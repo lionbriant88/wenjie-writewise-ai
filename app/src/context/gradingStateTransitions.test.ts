@@ -64,7 +64,7 @@ describe('grading state transitions', () => {
     const transition = settleGradingSuccess(
       [{ ...essayRunning('request-1'), ocrText: '', ocrAudit: undefined }],
       'essay-1', 'request-1', 'essay-1-result',
-      { ...successResult, transcript: 'Kimi faithfully read this.', transcriptionWarnings: [], printedTextExcluded: true },
+      { ...successResult, transcript: 'Kimi faithfully read this.', recognitionWarnings: [], printedTextExcluded: true },
       { transcriptSource: 'kimi_vision' },
     )
 
@@ -78,7 +78,7 @@ describe('grading state transitions', () => {
     const current = { ...essayRunning('request-1'), ocrText: 'Teacher-confirmed legacy text.' }
     const transition = settleGradingSuccess(
       [current], 'essay-1', 'request-1', 'essay-1-result',
-      { ...successResult, transcript: 'Unexpected legacy transcript.', transcriptionWarnings: [], printedTextExcluded: true },
+      { ...successResult, transcript: 'Unexpected legacy transcript.', recognitionWarnings: [], printedTextExcluded: true },
       {},
     )
 
@@ -91,7 +91,7 @@ describe('grading state transitions', () => {
     const transition = settleGradingSuccess(
       [{ ...essayRunning('request-1'), ocrText: teacherText, transcriptSource: 'teacher_confirmed' }],
       'essay-1', 'request-1', 'essay-1-result',
-      { ...successResult, transcript: 'Kimi transcript.', transcriptionWarnings: [], printedTextExcluded: true },
+      { ...successResult, transcript: 'Kimi transcript.', recognitionWarnings: [], printedTextExcluded: true },
       { transcriptSource: 'teacher_confirmed', confirmedTranscript: teacherText },
     )
     expect(transition.essays[0]).toMatchObject({ ocrText: teacherText, transcriptSource: 'teacher_confirmed' })

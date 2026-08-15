@@ -1,5 +1,6 @@
 import type {
   ErrorAnnotation,
+  LegibilityIssue,
   LogicIssue,
   LogicIssueSubType,
   LogicSuggestionAction,
@@ -8,8 +9,10 @@ import type {
 
 export interface ReviewIssueCardItem {
   id: string
-  source: 'language' | 'logic'
+  source: 'language' | 'logic' | 'legibility'
   typeLabel: string
+  categoryLabel?: string
+  title?: string
   severity: 'low' | 'medium' | 'high'
   original: string
   suggestion?: string
@@ -24,6 +27,7 @@ interface BuildReviewIssueItemsInput {
   annotations: ErrorAnnotation[]
   revisions: SentenceRevision[]
   logicIssues?: LogicIssue[]
+  legibilityIssues?: LegibilityIssue[]
 }
 
 const logicSubtypeLabel: Record<LogicIssueSubType, string> = {
@@ -51,16 +55,18 @@ export function buildReviewIssueItems({
   annotations,
   revisions,
   logicIssues = [],
+  legibilityIssues = [],
 }: BuildReviewIssueItemsInput): ReviewIssueCardItem[] {
   const revisionByErrorId = new Map(revisions.map((item) => [item.relatedErrorId, item]))
 
-  const languageItems = annotations.map((annotation): ReviewIssueCardItem => {
+  const languageItems = annotations.filter((annotation) => annotation.type !== 'spelling').map((annotation): ReviewIssueCardItem => {
     const revision = revisionByErrorId.get(annotation.id)
 
     return {
       id: annotation.id,
       source: 'language',
       typeLabel: annotation.type,
+      categoryLabel: annotation.type,
       severity: annotation.severity,
       original: annotation.original,
       suggestion: revision?.revised ?? annotation.suggestion,
@@ -72,6 +78,7 @@ export function buildReviewIssueItems({
     id: issue.id,
     source: 'logic',
     typeLabel: logicSubtypeLabel[issue.subType],
+    categoryLabel: logicSubtypeLabel[issue.subType],
     severity: issue.severity,
     original: issue.original,
     diagnosis: issue.diagnosis,
@@ -80,5 +87,35 @@ export function buildReviewIssueItems({
     needsTeacherReview: issue.needsTeacherReview,
   }))
 
-  return [...languageItems, ...logicItems]
+  const legibilityItems = legibilityIssues.map((issue): ReviewIssueCardItem => ({
+    id: issue.id,
+    source: 'legibility',
+    typeLabel: '卷面与可读性',
+    categoryLabel: '卷面与可读性',
+    title: '字迹不清导致语义无法确认',
+    severity: 'medium',
+    original: issue.transcriptText,
+    diagnosis: issue.explanation,
+    suggestedActionLabel: '字迹不清导致语义无法确认',
+    suggestion: `系统默认按错误处理；可能读法：${issue.possibleReadings.join(' / ')}`,
+    conservativeSuggestion: `系统默认按错误处理；可能读法：${issue.possibleReadings.join(' / ')}`,
+  }))
+
+  const highCertaintySpellingItems = annotations
+    .filter((annotation) => annotation.type === 'spelling' && annotation.evidenceCertainty === 'certain')
+    .map((annotation): ReviewIssueCardItem => {
+      const revision = revisionByErrorId.get(annotation.id)
+      return {
+        id: annotation.id,
+        source: 'language',
+        typeLabel: annotation.type,
+        categoryLabel: annotation.type,
+        severity: annotation.severity,
+        original: annotation.original,
+        suggestion: revision?.revised ?? annotation.suggestion,
+        explanation: revision?.note ?? annotation.explanation,
+      }
+    })
+
+  return [...languageItems, ...logicItems, ...legibilityItems, ...highCertaintySpellingItems]
 }

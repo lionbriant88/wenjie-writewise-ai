@@ -115,7 +115,7 @@ describe('AppStateContext material-based task creation', () => {
     resolve({
       resultVersion: 'grading-result-v1', requestId: request.requestId, essayId: request.essayId, provider: 'mock', status: 'success', totalScore: 12, maxScore: 15,
       dimensionScores: [], issues: [], sentenceRevisions: [], expressionUpgrades: [], overallComment: 'Done.', reviewReasons: [], createdAt: '2026-08-02T00:00:00.000Z',
-      transcript: 'Kimi settled transcript.', transcriptionWarnings: [], printedTextExcluded: true,
+      transcript: 'Kimi settled transcript.', recognitionWarnings: [], printedTextExcluded: true,
     })
     await act(async () => { await grading })
     expect(latestState.essays.find((item) => item.id === essay.id)).toMatchObject({
@@ -135,7 +135,7 @@ describe('AppStateContext material-based task creation', () => {
         expressionUpgrades: [{ id: 'upgrade-1', originalText: 'plain', upgradedText: 'polished', note: 'Upgrade note.', requiresTeacherReview: true }],
         fullTextRevision: { originalText: 'bad', correctedText: 'better', improvedText: 'polished', sentencePairs: [{ id: 'pair-1', originalText: 'bad', correctedText: 'better', improvedText: 'polished', changeTypes: ['grammar'], explanation: 'Pair explanation.', requiresTeacherReview: false }], logicNotes: [] },
         overallComment: 'Detailed image result.', reviewReasons: [], createdAt: '2026-08-02T00:00:00.000Z',
-        transcript: 'Faithful image transcript.', transcriptionWarnings: ['Low contrast on final line.'], printedTextExcluded: true,
+        transcript: 'Faithful image transcript.', recognitionWarnings: ['Low contrast on final line.'], printedTextExcluded: true,
       }),
     }
     render(<AppStateProvider gradingClient={gradingClient}><StateProbe /></AppStateProvider>)
@@ -157,7 +157,7 @@ describe('AppStateContext material-based task creation', () => {
     expect(latestState.essays.find((item) => item.id === essay!.id)).toMatchObject({ status: 'grading_ready' })
     const gradingResult = latestState.gradingResults.find((result) => result.essayId === essay!.id)
     expect(gradingResult).toMatchObject({
-      source: 'mock', transcript: 'Faithful image transcript.', transcriptionWarnings: ['Low contrast on final line.'], printedTextExcluded: true,
+      source: 'mock', transcript: 'Faithful image transcript.', recognitionWarnings: ['Low contrast on final line.'], printedTextExcluded: true,
       dimensionScores: [{ needsTeacherReview: false }],
       errorAnnotations: [{ needsTeacherReview: true }],
       sentenceRevisions: [{ needsTeacherReview: false }],
@@ -176,7 +176,7 @@ describe('AppStateContext material-based task creation', () => {
       totalScore: 12, maxScore: 15,
       dimensionScores: [{ dimensionId: 'content', name: 'Content', score: 12, maxScore: 15, weight: 100, reason: 'Reason.', evidence: 'Evidence.', requiresTeacherReview: false }],
       issues: [], sentenceRevisions: [], expressionUpgrades: [], overallComment: 'Comment.', reviewReasons: [], createdAt: '2026-08-02T00:00:00.000Z',
-      transcript: request.confirmedTranscript ?? 'Kimi transcript.', transcriptionWarnings: [], printedTextExcluded: true,
+      transcript: request.confirmedTranscript ?? 'Kimi transcript.', recognitionWarnings: [], printedTextExcluded: true,
     }))
     render(<AppStateProvider gradingClient={{ grade: async (request) => resultFor(request), gradeImages }}><StateProbe /></AppStateProvider>)
     let taskId = ''
@@ -420,7 +420,7 @@ describe('AppStateContext grading lifecycle', () => {
   it('does not treat an unexpected legacy transcript as Kimi recognition data', async () => {
     const client: GradingClient = {
       async grade(request) {
-        return { ...resultFor(request), transcript: 'Unexpected legacy transcript.', transcriptionWarnings: [], printedTextExcluded: true }
+        return { ...resultFor(request), transcript: 'Unexpected legacy transcript.', recognitionWarnings: [], printedTextExcluded: true }
       },
     }
     renderGradingState(client)

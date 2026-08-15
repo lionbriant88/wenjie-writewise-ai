@@ -21,6 +21,9 @@ const providers = new Set(['mock', 'remote'])
 const successStatuses = new Set(['success', 'partial'])
 const issueTypes = new Set(['grammar', 'spelling', 'word_choice', 'structure'])
 const severities = new Set(['low', 'medium', 'high'])
+const evidenceCertainties = new Set(['certain', 'uncertain'])
+const logicSubTypes = new Set(['weak_connection', 'unclear_logic', 'missing_cause_effect', 'unclear_transition', 'topic_drift', 'irrelevant_sentence', 'unclear_reference', 'missing_motivation', 'plot_gap'])
+const logicSuggestedActions = new Set(['add_connector', 'add_bridge_sentence', 'delete_sentence', 'replace_sentence', 'clarify_reference', 'ask_student_to_explain'])
 const changeTypes = new Set<FullTextChangeType>([
   'grammar',
   'spelling',
@@ -101,10 +104,11 @@ function projectIssue(value: unknown): AiGradingResultV1['issues'][number] | nul
   const originalText = readString(value.originalText)
   const suggestion = readString(value.suggestion)
   const explanation = readString(value.explanation)
+  const evidenceCertainty = readString(value.evidenceCertainty)
   const requiresTeacherReview = readBoolean(value.requiresTeacherReview)
   if (
     !id || !type || !issueTypes.has(type) || !severity || !severities.has(severity)
-    || !originalText || !suggestion || !explanation || requiresTeacherReview === null
+    || !originalText || !suggestion || !explanation || !evidenceCertainty || !evidenceCertainties.has(evidenceCertainty) || requiresTeacherReview === null
   ) return null
   return {
     id,
@@ -113,6 +117,7 @@ function projectIssue(value: unknown): AiGradingResultV1['issues'][number] | nul
     originalText,
     suggestion,
     explanation,
+    evidenceCertainty: evidenceCertainty as AiGradingResultV1['issues'][number]['evidenceCertainty'],
     requiresTeacherReview,
   }
 }
@@ -123,14 +128,12 @@ function projectSentenceRevision(value: unknown): AiGradingResultV1['sentenceRev
   const originalText = readString(value.originalText)
   const revisedText = readString(value.revisedText)
   const note = readString(value.note)
-  if (!id || !originalText || !revisedText || !note) return null
+  const relatedIssueId = readString(value.relatedIssueId)
+  const projectedChangeTypes = projectChangeTypes(value.changeTypes)
+  if (!id || !relatedIssueId || !originalText || !revisedText || !note || !projectedChangeTypes) return null
   if ('requiresTeacherReview' in value && typeof value.requiresTeacherReview !== 'boolean') return null
   const review = 'requiresTeacherReview' in value ? { requiresTeacherReview: value.requiresTeacherReview as boolean } : {}
-  if ('relatedIssueId' in value) {
-    const relatedIssueId = readString(value.relatedIssueId)
-    return relatedIssueId ? { id, relatedIssueId, originalText, revisedText, note, ...review } : null
-  }
-  return { id, originalText, revisedText, note, ...review }
+  return { id, relatedIssueId, originalText, revisedText, note, changeTypes: projectedChangeTypes, ...review }
 }
 
 function projectExpressionUpgrade(value: unknown): AiGradingResultV1['expressionUpgrades'][number] | null {
@@ -153,22 +156,64 @@ function projectSentencePair(
   const improvedText = readString(value.improvedText)
   const explanation = readString(value.explanation)
   const requiresTeacherReview = readBoolean(value.requiresTeacherReview)
-  if (!Array.isArray(value.changeTypes)) return null
-  const projectedChangeTypes: FullTextChangeType[] = []
-  for (const item of value.changeTypes) {
-    if (typeof item !== 'string' || !changeTypes.has(item as FullTextChangeType)) return null
-    projectedChangeTypes.push(item as FullTextChangeType)
-  }
-  if (!id || !originalText || !correctedText || !improvedText || !explanation || requiresTeacherReview === null) return null
+  const relatedIssueId = readString(value.relatedIssueId)
+  const projectedChangeTypes = projectChangeTypes(value.changeTypes)
+  if (!id || !relatedIssueId || !originalText || !correctedText || !improvedText || !explanation || !projectedChangeTypes || requiresTeacherReview === null) return null
   return {
     id,
     originalText,
     correctedText,
     improvedText,
+    relatedIssueId,
     changeTypes: projectedChangeTypes,
     explanation,
     requiresTeacherReview,
   }
+}
+
+function projectChangeTypes(value: unknown): FullTextChangeType[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null
+  const projected: FullTextChangeType[] = []
+  for (const item of value) {
+    if (typeof item !== 'string' || !changeTypes.has(item as FullTextChangeType)) return null
+    projected.push(item as FullTextChangeType)
+  }
+  return projected
+}
+
+function projectLogicIssue(value: unknown): NonNullable<NonNullable<AiGradingResultV1['fullTextRevision']>['logicIssues']>[number] | null {
+  if (!isRecord(value)) return null
+  const id = readString(value.id)
+  const originalText = readString(value.originalText)
+  const contextBefore = typeof value.contextBefore === 'string' ? value.contextBefore : null
+  const contextAfter = typeof value.contextAfter === 'string' ? value.contextAfter : null
+  const subType = readString(value.subType)
+  const severity = readString(value.severity)
+  const diagnosis = readString(value.diagnosis)
+  const suggestedAction = readString(value.suggestedAction)
+  const conservativeSuggestion = readString(value.conservativeSuggestion)
+  const polishedSuggestion = readString(value.polishedSuggestion)
+  const requiresTeacherReview = readBoolean(value.requiresTeacherReview)
+  if (!id || !originalText || contextBefore === null || contextAfter === null || !subType || !logicSubTypes.has(subType) || !severity || !severities.has(severity) || !diagnosis || !suggestedAction || !logicSuggestedActions.has(suggestedAction) || !conservativeSuggestion || !polishedSuggestion || requiresTeacherReview === null) return null
+  return {
+    id, originalText, contextBefore, contextAfter,
+    subType: subType as NonNullable<NonNullable<AiGradingResultV1['fullTextRevision']>['logicIssues']>[number]['subType'],
+    severity: severity as NonNullable<NonNullable<AiGradingResultV1['fullTextRevision']>['logicIssues']>[number]['severity'],
+    diagnosis,
+    suggestedAction: suggestedAction as NonNullable<NonNullable<AiGradingResultV1['fullTextRevision']>['logicIssues']>[number]['suggestedAction'],
+    conservativeSuggestion, polishedSuggestion, requiresTeacherReview,
+  }
+}
+
+function projectLegibilityIssue(value: unknown): NonNullable<AiGradingResultV1['legibilityIssues']>[number] | null {
+  if (!isRecord(value)) return null
+  const id = readString(value.id)
+  const transcriptText = readString(value.transcriptText)
+  const possibleReadings = readStringArray(value.possibleReadings)
+  const regionDescription = readString(value.regionDescription)
+  const explanation = readString(value.explanation)
+  if (!id || !transcriptText || !possibleReadings || possibleReadings.length < 2 || possibleReadings.length > 4 || !Number.isInteger(value.pageNumber) || (value.pageNumber as number) < 1 || !regionDescription || !explanation || value.defaultOutcome !== 'count_as_legibility_error') return null
+  return { id, transcriptText, possibleReadings, pageNumber: value.pageNumber as number, regionDescription, explanation, defaultOutcome: 'count_as_legibility_error' }
 }
 
 function projectFullTextRevision(value: unknown): NonNullable<AiGradingResultV1['fullTextRevision']> | null {
@@ -178,8 +223,9 @@ function projectFullTextRevision(value: unknown): NonNullable<AiGradingResultV1[
   const improvedText = readString(value.improvedText)
   const sentencePairs = projectArray(value.sentencePairs, projectSentencePair)
   const logicNotes = readStringArray(value.logicNotes)
-  if (!originalText || !correctedText || !improvedText || !sentencePairs || !logicNotes) return null
-  return { originalText, correctedText, improvedText, sentencePairs, logicNotes }
+  const logicIssues = projectArray(value.logicIssues, projectLogicIssue)
+  if (!originalText || !correctedText || !improvedText || !sentencePairs || !logicNotes || !logicIssues) return null
+  return { originalText, correctedText, improvedText, sentencePairs, logicNotes, logicIssues }
 }
 
 function projectSuccess(value: unknown, expected: ExpectedGradingResponse): AiGradingResultV1 | null {
@@ -194,6 +240,8 @@ function projectSuccess(value: unknown, expected: ExpectedGradingResponse): AiGr
   const issues = projectArray(value.issues, projectIssue)
   const sentenceRevisions = projectArray(value.sentenceRevisions, projectSentenceRevision)
   const expressionUpgrades = projectArray(value.expressionUpgrades, projectExpressionUpgrade)
+  const recognitionWarnings = readStringArray(value.recognitionWarnings)
+  const legibilityIssues = projectArray(value.legibilityIssues, projectLegibilityIssue)
   const overallComment = readString(value.overallComment)
   const reviewReasons = readStringArray(value.reviewReasons)
   const createdAt = readString(value.createdAt)
@@ -204,7 +252,7 @@ function projectSuccess(value: unknown, expected: ExpectedGradingResponse): AiGr
     || !provider || !providers.has(provider)
     || !status || !successStatuses.has(status)
     || totalScore === null || maxScore === null
-    || !dimensionScores || !issues || !sentenceRevisions || !expressionUpgrades
+    || !dimensionScores || !issues || !sentenceRevisions || !expressionUpgrades || !recognitionWarnings || !legibilityIssues
     || !overallComment || !reviewReasons || !createdAt || !Number.isFinite(Date.parse(createdAt))
   ) return null
 
@@ -223,14 +271,13 @@ function projectSuccess(value: unknown, expected: ExpectedGradingResponse): AiGr
   }
 
   let transcript: string | undefined
-  let transcriptionWarnings: string[] | undefined
   let printedTextExcluded: boolean | undefined
-  const hasMultimodalFields = expected.requireMultimodal || 'transcript' in value || 'transcriptionWarnings' in value || 'printedTextExcluded' in value
+  if ('transcriptionWarnings' in value) return null
+  const hasMultimodalFields = expected.requireMultimodal || 'transcript' in value || 'printedTextExcluded' in value
   if (hasMultimodalFields) {
     transcript = readString(value.transcript) ?? undefined
-    transcriptionWarnings = readStringArray(value.transcriptionWarnings) ?? undefined
     printedTextExcluded = readBoolean(value.printedTextExcluded) ?? undefined
-    if (!transcript || !transcriptionWarnings || printedTextExcluded === undefined) return null
+    if (!transcript || printedTextExcluded === undefined) return null
   }
 
   return {
@@ -245,10 +292,12 @@ function projectSuccess(value: unknown, expected: ExpectedGradingResponse): AiGr
     issues,
     sentenceRevisions,
     expressionUpgrades,
+    recognitionWarnings: [...recognitionWarnings],
+    legibilityIssues,
     ...(fullTextRevision ? { fullTextRevision } : {}),
     overallComment,
     ...(modelSelfConfidence === undefined ? {} : { modelSelfConfidence }),
-    ...(transcript === undefined ? {} : { transcript, transcriptionWarnings: [...transcriptionWarnings!], printedTextExcluded }),
+    ...(transcript === undefined ? {} : { transcript, printedTextExcluded }),
     reviewReasons,
     createdAt,
   }

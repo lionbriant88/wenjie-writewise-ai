@@ -1,5 +1,31 @@
 import type { FullTextChangeType, WritingGenre } from '../../types'
 
+export type EvidenceCertainty = 'certain' | 'uncertain'
+
+export interface LogicIssueV1 {
+  id: string
+  originalText: string
+  contextBefore: string
+  contextAfter: string
+  subType: 'weak_connection' | 'unclear_logic' | 'missing_cause_effect' | 'unclear_transition' | 'topic_drift' | 'irrelevant_sentence' | 'unclear_reference' | 'missing_motivation' | 'plot_gap'
+  severity: 'low' | 'medium' | 'high'
+  diagnosis: string
+  suggestedAction: 'add_connector' | 'add_bridge_sentence' | 'delete_sentence' | 'replace_sentence' | 'clarify_reference' | 'ask_student_to_explain'
+  conservativeSuggestion: string
+  polishedSuggestion: string
+  requiresTeacherReview: boolean
+}
+
+export interface LegibilityIssueV1 {
+  id: string
+  transcriptText: string
+  possibleReadings: string[]
+  pageNumber: number
+  regionDescription: string
+  explanation: string
+  defaultOutcome: 'count_as_legibility_error'
+}
+
 export type GradingProviderName = 'mock' | 'remote'
 export type GradingStatus = 'success' | 'partial'
 export type GradingErrorCode =
@@ -131,6 +157,7 @@ export interface AiGradingResultV1 {
     originalText: string
     suggestion: string
     explanation: string
+    evidenceCertainty?: EvidenceCertainty
     requiresTeacherReview: boolean
   }>
   sentenceRevisions: Array<{
@@ -139,6 +166,7 @@ export interface AiGradingResultV1 {
     originalText: string
     revisedText: string
     note: string
+    changeTypes?: FullTextChangeType[]
     requiresTeacherReview?: boolean
   }>
   expressionUpgrades: Array<{
@@ -157,18 +185,21 @@ export interface AiGradingResultV1 {
       originalText: string
       correctedText: string
       improvedText: string
+      relatedIssueId?: string
       changeTypes: FullTextChangeType[]
       explanation: string
       requiresTeacherReview: boolean
     }>
     logicNotes: string[]
+    logicIssues?: LogicIssueV1[]
   }
+  legibilityIssues?: LegibilityIssueV1[]
   overallComment: string
   modelSelfConfidence?: number
   reviewReasons: string[]
   createdAt: string
   transcript?: string
-  transcriptionWarnings?: string[]
+  recognitionWarnings?: string[]
   printedTextExcluded?: boolean
 }
 

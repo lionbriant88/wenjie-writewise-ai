@@ -19,11 +19,11 @@ function validSuccess(): Record<string, unknown> {
     issues: [{
       id: 'issue-1', type: 'grammar', severity: 'medium', originalText: 'Synthetic error.',
       suggestion: 'Synthetic correction.', explanation: 'Synthetic explanation.',
-      requiresTeacherReview: true, unknownNested: 'discard',
+      evidenceCertainty: 'certain', requiresTeacherReview: true, unknownNested: 'discard',
     }],
     sentenceRevisions: [{
       id: 'revision-1', relatedIssueId: 'issue-1', originalText: 'Synthetic error.',
-      revisedText: 'Synthetic correction.', note: 'Synthetic note.', requiresTeacherReview: true, unknownNested: 'discard',
+      revisedText: 'Synthetic correction.', note: 'Synthetic note.', changeTypes: ['grammar'], requiresTeacherReview: true, unknownNested: 'discard',
     }],
     expressionUpgrades: [{
       id: 'upgrade-1', originalText: 'useful', upgradedText: 'beneficial',
@@ -35,12 +35,20 @@ function validSuccess(): Record<string, unknown> {
       improvedText: 'Synthetic improvement.',
       sentencePairs: [{
         id: 'pair-1', originalText: 'Synthetic error.', correctedText: 'Synthetic correction.',
-        improvedText: 'Synthetic improvement.', changeTypes: ['grammar'],
+        improvedText: 'Synthetic improvement.', relatedIssueId: 'issue-1', changeTypes: ['grammar'],
         explanation: 'Synthetic explanation.', requiresTeacherReview: true, unknownNested: 'discard',
       }],
       logicNotes: ['Teacher review required.'],
+      logicIssues: [{
+        id: 'logic-1', originalText: 'Synthetic error.', contextBefore: '', contextAfter: '',
+        subType: 'unclear_logic', severity: 'medium', diagnosis: 'Synthetic logic diagnosis.',
+        suggestedAction: 'add_bridge_sentence', conservativeSuggestion: 'Synthetic conservative suggestion.',
+        polishedSuggestion: 'Synthetic polished suggestion.', requiresTeacherReview: true,
+      }],
       unknownNested: 'discard',
     },
+    legibilityIssues: [],
+    recognitionWarnings: [],
     overallComment: 'Synthetic comment.',
     modelSelfConfidence: 0.8,
     reviewReasons: ['Review the rewrite.'],
@@ -49,7 +57,7 @@ function validSuccess(): Record<string, unknown> {
   }
 }
 
-function expectInvalid(value: unknown, override = expected) {
+function expectInvalid(value: unknown, override: Parameters<typeof projectGradingClientResponse>[1] = expected) {
   expect(projectGradingClientResponse(value, override)).toEqual({
     requestId: override.requestId,
     status: 'failed',
@@ -80,6 +88,39 @@ describe('projectGradingClientResponse', () => {
     expect(result.sentenceRevisions[0].requiresTeacherReview).toBe(true)
     expect(result.expressionUpgrades[0].requiresTeacherReview).toBe(false)
     expect(result.fullTextRevision?.sentencePairs[0].requiresTeacherReview).toBe(true)
+    expect(result).toMatchObject({
+      recognitionWarnings: [],
+      legibilityIssues: [],
+      fullTextRevision: { logicIssues: [expect.objectContaining({ id: 'logic-1' })] },
+    })
+  })
+
+  it.each([
+    ['spelling certainty', (raw: Record<string, unknown>) => {
+      const issue = (raw.issues as Array<Record<string, unknown>>)[0]
+      issue.type = 'spelling'
+      delete issue.evidenceCertainty
+    }],
+    ['unknown certainty', (raw: Record<string, unknown>) => {
+      ;(raw.issues as Array<Record<string, unknown>>)[0].evidenceCertainty = 'maybe'
+    }],
+    ['revision change type', (raw: Record<string, unknown>) => {
+      ;(raw.sentenceRevisions as Array<Record<string, unknown>>)[0].changeTypes = ['invented_change']
+    }],
+    ['logic issue action', (raw: Record<string, unknown>) => {
+      const revision = raw.fullTextRevision as Record<string, unknown>
+      ;(revision.logicIssues as Array<Record<string, unknown>>)[0].suggestedAction = 'invented_action'
+    }],
+    ['legibility outcome', (raw: Record<string, unknown>) => {
+      raw.legibilityIssues = [{
+        id: 'legibility-1', transcriptText: 'cant', possibleReadings: ['cant', "can't"], pageNumber: 1,
+        regionDescription: 'Synthetic region.', explanation: 'Synthetic ambiguity.', defaultOutcome: 'ignore',
+      }]
+    }],
+  ] as const)('rejects a removed or invalid structured field: %s', (_label, mutate) => {
+    const raw = validSuccess()
+    mutate(raw)
+    expectInvalid(raw)
   })
 
   it.each([
@@ -149,10 +190,10 @@ describe('projectGradingClientResponse', () => {
   })
 
   it('requires the full multimodal transcript contract when requested', () => {
-    for (const missing of ['transcript', 'transcriptionWarnings', 'printedTextExcluded'] as const) {
+    for (const missing of ['transcript', 'recognitionWarnings', 'printedTextExcluded', 'legibilityIssues'] as const) {
       const raw = validSuccess()
       raw.transcript = 'Student text.'
-      raw.transcriptionWarnings = []
+      raw.recognitionWarnings = []
       raw.printedTextExcluded = true
       delete raw[missing]
       expect(projectGradingClientResponse(raw, { ...expected, requireMultimodal: true })).toMatchObject({ status: 'failed', error: { code: 'gateway_invalid_response' } })
@@ -168,20 +209,20 @@ describe('projectGradingClientResponse', () => {
   it('preserves every multimodal review field after strict projection', () => {
     const raw = validSuccess()
     raw.transcript = 'Student text.'
-    raw.transcriptionWarnings = ['One word unclear.']
+    raw.recognitionWarnings = ['One word unclear.']
     raw.printedTextExcluded = true
     const result = projectGradingClientResponse(raw, { ...expected, requireMultimodal: true })
-    expect(result).toMatchObject({ status: 'success', transcript: 'Student text.', transcriptionWarnings: ['One word unclear.'], printedTextExcluded: true })
+    expect(result).toMatchObject({ status: 'success', transcript: 'Student text.', recognitionWarnings: ['One word unclear.'], legibilityIssues: [], printedTextExcluded: true })
     if (result.status === 'failed') throw new Error('Expected a projected multimodal success')
-    expect(result.transcriptionWarnings).not.toBe(raw.transcriptionWarnings)
-    ;(raw.transcriptionWarnings as string[]).push('Raw mutation must not leak.')
-    expect(result.transcriptionWarnings).toEqual(['One word unclear.'])
+    expect(result.recognitionWarnings).not.toBe(raw.recognitionWarnings)
+    ;(raw.recognitionWarnings as string[]).push('Raw mutation must not leak.')
+    expect(result.recognitionWarnings).toEqual(['One word unclear.'])
   })
 
   it('drops unknown Kimi response fields while keeping failures free of raw upstream content', () => {
     const raw = validSuccess()
     raw.transcript = 'Student text.'
-    raw.transcriptionWarnings = []
+    raw.recognitionWarnings = []
     raw.printedTextExcluded = true
     raw.rawKimiReasoning = 'sk-kimi-secret-marker'
     const result = projectGradingClientResponse(raw, { ...expected, requireMultimodal: true })
@@ -189,6 +230,15 @@ describe('projectGradingClientResponse', () => {
 
     const failure = projectGradingClientResponse({ requestId: 'request-1', status: 'failed', error: { code: 'provider_invalid_response', message: 'Kimi raw secret marker', retryable: false } }, { ...expected, httpOk: false })
     expect(JSON.stringify(failure)).not.toContain('Kimi raw secret marker')
+  })
+
+  it('rejects the removed legacy transcription warning field', () => {
+    const raw = validSuccess()
+    raw.transcript = 'Student text.'
+    raw.recognitionWarnings = []
+    raw.printedTextExcluded = true
+    raw.transcriptionWarnings = []
+    expectInvalid(raw, { ...expected, requireMultimodal: true })
   })
 
   it.each([

@@ -226,6 +226,7 @@ export function EssayResultPage() {
     annotations: result.errorAnnotations,
     revisions: result.sentenceRevisions,
     logicIssues: result.fullTextRevision?.logicIssues,
+    legibilityIssues: result.legibilityIssues ?? [],
   })
   const sourceIssueMarkers = buildSourceIssueMarkers(essay.ocrText, reviewIssueItems)
   const activeIssue = reviewIssueItems.find((issue) => issue.id === activeIssueId) ?? null
@@ -326,7 +327,7 @@ export function EssayResultPage() {
               activeHighlightText={activeIssue?.original}
               issueMarkers={sourceIssueMarkers}
               activeIssueId={activeIssueId}
-              transcriptionWarnings={result.transcriptionWarnings}
+              transcriptionWarnings={result.recognitionWarnings ?? []}
               printedTextExcluded={result.printedTextExcluded}
               onIssueMarkerSelect={(issueId) => {
                 setActiveIssueId(issueId)

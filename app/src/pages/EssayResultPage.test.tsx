@@ -136,6 +136,35 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.queryByRole('button', { name: '确认本篇批改' })).not.toBeInTheDocument()
   })
 
+  it('shows a structured legibility finding in the existing issue tab without changing the result tabs', async () => {
+    const user = userEvent.setup()
+    const localClient = createMockGradingClient()
+    const gradingClient: GradingClient = {
+      grade: async (request) => {
+        const response = await localClient.grade(request)
+        if (response.status === 'failed') return response
+        return {
+          ...response,
+          recognitionWarnings: [],
+          legibilityIssues: [{
+            id: 'legibility-1', transcriptText: 'mock', possibleReadings: ['mock', 'mark'], pageNumber: 1,
+            regionDescription: 'Synthetic region.', explanation: 'Synthetic ambiguous handwriting.', defaultOutcome: 'count_as_legibility_error',
+          }],
+        }
+      },
+    }
+    renderPendingReviewFlow(gradingClient)
+
+    await user.click(screen.getByRole('button', { name: '开始批改' }))
+    await user.click(await screen.findByRole('link', { name: '查看并确认' }))
+    await user.click(screen.getByRole('tab', { name: '问题批改' }))
+
+    expect(screen.getByText('字迹不清导致语义无法确认')).toBeInTheDocument()
+    expect(screen.getByText(/卷面与可读性/)).toBeInTheDocument()
+    expect(screen.getByText('系统默认按错误处理；可能读法：mock / mark')).toBeInTheDocument()
+    expect(screen.getAllByRole('tab')).toHaveLength(4)
+  })
+
   it('labels browser-local recovery as mock fallback', async () => {
     const user = userEvent.setup()
     const gradingClient: GradingClient = {

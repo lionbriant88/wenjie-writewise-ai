@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ErrorAnnotation, LogicIssue, SentenceRevision } from '../types'
+import type { ErrorAnnotation, LegibilityIssue, LogicIssue, SentenceRevision } from '../types'
 import { buildReviewIssueItems } from './reviewIssueItems'
 
 describe('buildReviewIssueItems', () => {
@@ -37,6 +37,16 @@ describe('buildReviewIssueItems', () => {
     },
   ]
 
+  const legibilityIssues: LegibilityIssue[] = [{
+    id: 'legibility-1',
+    transcriptText: 'cant',
+    possibleReadings: ['cant', "can't"],
+    pageNumber: 1,
+    regionDescription: 'Synthetic final line.',
+    explanation: 'The handwriting does not establish the intended word.',
+    defaultOutcome: 'count_as_legibility_error',
+  }]
+
   it('adapts language issues into display items', () => {
     const items = buildReviewIssueItems({ annotations, revisions, logicIssues: [] })
 
@@ -66,5 +76,31 @@ describe('buildReviewIssueItems', () => {
         needsTeacherReview: true,
       }),
     ])
+  })
+
+  it('orders language and logic before legibility, then certain spelling', () => {
+    const items = buildReviewIssueItems({
+      annotations: [
+        ...annotations,
+        {
+          id: 'spell-1', type: 'spelling', original: 'enviroment', suggestion: 'environment',
+          explanation: 'Synthetic spelling correction.', severity: 'medium', evidenceCertainty: 'certain',
+        },
+      ],
+      revisions,
+      logicIssues,
+      legibilityIssues,
+    })
+
+    expect(items.map(({ id }) => id)).toEqual(['err-1', 'logic-1', 'legibility-1', 'spell-1'])
+    expect(items[2]).toMatchObject({
+      source: 'legibility',
+      categoryLabel: '卷面与可读性',
+      title: '字迹不清导致语义无法确认',
+      original: 'cant',
+      diagnosis: 'The handwriting does not establish the intended word.',
+      suggestion: "系统默认按错误处理；可能读法：cant / can't",
+      severity: 'medium',
+    })
   })
 })

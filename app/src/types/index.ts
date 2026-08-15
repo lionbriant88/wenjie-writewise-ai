@@ -153,6 +153,7 @@ export interface ErrorAnnotation {
   suggestion: string
   explanation: string
   severity: 'low' | 'medium' | 'high'
+  evidenceCertainty?: EvidenceCertainty
   needsTeacherReview?: boolean
 }
 
@@ -162,6 +163,7 @@ export interface SentenceRevision {
   original: string
   revised: string
   note: string
+  changeTypes?: FullTextChangeType[]
   needsTeacherReview?: boolean
 }
 
@@ -223,9 +225,22 @@ export interface FullTextSentencePair {
   original: string
   corrected: string
   polished: string
+  relatedErrorId?: string
   changeTypes: FullTextChangeType[]
   explanation: string
   needsTeacherReview?: boolean
+}
+
+export type EvidenceCertainty = 'certain' | 'uncertain'
+
+export interface LegibilityIssue {
+  id: string
+  transcriptText: string
+  possibleReadings: string[]
+  pageNumber: number
+  regionDescription: string
+  explanation: string
+  defaultOutcome: 'count_as_legibility_error'
 }
 
 export interface FullTextRevision {
@@ -253,8 +268,9 @@ export interface GradingResult {
   source?: 'mock' | 'remote'
   reviewReasons?: string[]
   transcript?: string
-  transcriptionWarnings?: string[]
+  recognitionWarnings?: string[]
   printedTextExcluded?: boolean
+  legibilityIssues?: LegibilityIssue[]
   teacherAdjusted: boolean
   createdAt: string
   updatedAt: string

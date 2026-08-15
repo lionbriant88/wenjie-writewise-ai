@@ -28,7 +28,7 @@ function successBody() {
       reason: 'Accurate.', evidence: 'Synthetic evidence.',
     }],
     issues: [], sentenceRevisions: [], expressionUpgrades: [], overallComment: 'Synthetic.',
-    reviewReasons: [], createdAt: '2026-07-20T00:00:00.000Z',
+    recognitionWarnings: [], legibilityIssues: [], reviewReasons: [], createdAt: '2026-07-20T00:00:00.000Z',
   }
 }
 
@@ -43,7 +43,7 @@ function imageRequest(): MultimodalGradingRequestV2 {
 describe('createRemoteGradingClient', () => {
   it('posts ordered image files to the multimodal endpoint without binary metadata and projects transcript fields', async () => {
     const request = imageRequest()
-    const body = { ...successBody(), requestId: request.requestId, essayId: request.essayId, transcript: 'Student text.', transcriptionWarnings: ['One word unclear.'], printedTextExcluded: true }
+    const body = { ...successBody(), requestId: request.requestId, essayId: request.essayId, transcript: 'Student text.', recognitionWarnings: ['One word unclear.'], printedTextExcluded: true }
     const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }))
     const result = await createRemoteGradingClient({ apiBase: 'http://gateway', fetchImpl }).gradeImages!(request)
     const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
@@ -53,13 +53,13 @@ describe('createRemoteGradingClient', () => {
     expect(metadata).toEqual({ requestId: request.requestId, essayId: request.essayId, pageIds: ['page-1', 'page-2'], task: request.task })
     expect(JSON.stringify(metadata)).not.toContain('first')
     expect(form.getAll('pages').map((file) => (file as File).name)).toEqual(['first.png', 'second.png'])
-    expect(result).toMatchObject({ status: 'success', transcript: 'Student text.', transcriptionWarnings: ['One word unclear.'], printedTextExcluded: true })
+    expect(result).toMatchObject({ status: 'success', transcript: 'Student text.', recognitionWarnings: ['One word unclear.'], printedTextExcluded: true })
   })
 
   it('sends a teacher-confirmed transcript without page IDs or image files', async () => {
     const request = imageRequest()
     request.confirmedTranscript = 'Teacher corrected transcript.'
-    const body = { ...successBody(), requestId: request.requestId, essayId: request.essayId, transcript: request.confirmedTranscript, transcriptionWarnings: [], printedTextExcluded: true }
+    const body = { ...successBody(), requestId: request.requestId, essayId: request.essayId, transcript: request.confirmedTranscript, recognitionWarnings: [], printedTextExcluded: true }
     const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }))
     await createRemoteGradingClient({ apiBase: 'http://gateway', fetchImpl }).gradeImages!(request)
     const form = (fetchImpl.mock.calls[0][1] as RequestInit).body as FormData
