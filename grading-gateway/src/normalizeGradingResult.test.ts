@@ -179,6 +179,23 @@ describe('normalizeGradingResult', () => {
     expectFailure(payload)
   })
 
+  it('keeps expression-upgrade quotes exact and rejects collapsed or duplicate source text', () => {
+    const collapsed = validPayload()
+    ;(collapsed.expressionUpgrades as Array<Record<string, unknown>>)[0].originalText = 'First  synthetic line.'
+    expectFailure(collapsed)
+
+    const duplicateRequest = { ...request, essay: { ...request.essay, confirmedTranscript: 'Repeated source. Repeated source.' } }
+    const duplicate = validPayload()
+    duplicate.issues = []
+    duplicate.sentenceRevisions = []
+    duplicate.fullTextRevision = { correctedText: 'Provider aggregate.', improvedText: 'Improved.', sentencePairs: [], logicNotes: [], logicIssues: [] }
+    duplicate.expressionUpgrades = [{ originalText: 'Repeated source.', upgradedText: 'Improved source.', note: 'Synthetic note.' }]
+    expect(normalizeGradingResult(duplicate, duplicateRequest, context)).toMatchObject({ ok: false })
+
+    const exact = normalizeGradingResult(validPayload(), request, context)
+    expect(exact).toMatchObject({ ok: true, result: { expressionUpgrades: [{ originalText: 'First synthetic line.' }] } })
+  })
+
   it('does not let uncertain spelling or logic narratives fold whitespace before policy', () => {
     const spelling = validPayload()
     spelling.issues = [{ issueKey: 'spell-1', type: 'spelling', severity: 'low', originalText: 'Second synthetic line.', suggestion: 'Second corrected line.', explanation: 'Synthetic.', evidenceCertainty: 'uncertain', requiresTeacherReview: false }]

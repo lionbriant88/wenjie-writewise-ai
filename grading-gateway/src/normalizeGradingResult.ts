@@ -4,6 +4,7 @@ import {
   roundScore2,
 } from '../../app/src/services/grading/scoringRules.js'
 import { applyResultPolicy } from './multimodal/resultPolicy.js'
+import { strictlyGroundTranscriptQuote } from './strictTranscriptQuote.js'
 import type { ResultPolicyInput, ResultPolicyOutcome } from './multimodal/resultPolicy.js'
 import type {
   AiGradingResultV1,
@@ -91,7 +92,7 @@ function parsePolicyInput(payload: Record<string, unknown>, transcript: string):
 function parseExpressionUpgrades(value: unknown, transcript: string): AiGradingResultV1['expressionUpgrades'] | null {
   if (!Array.isArray(value)) return null
   const result: AiGradingResultV1['expressionUpgrades'] = []
-  for (const [index, item] of value.entries()) { if (!isRecord(item)) return null; const originalText = quote(item.originalText), upgradedText = text(item.upgradedText), note = text(item.note); if (!originalText || uniqueQuoteIndex(transcript, originalText) === null || !upgradedText || !note) return null; result.push({ id: `${index + 1}`, originalText, upgradedText, note }) }
+  for (const [index, item] of value.entries()) { if (!isRecord(item)) return null; const originalText = strictlyGroundTranscriptQuote(transcript, item.originalText), upgradedText = text(item.upgradedText), note = text(item.note); if (!originalText || !upgradedText || !note) return null; result.push({ id: `${index + 1}`, originalText, upgradedText, note }) }
   return result
 }
 

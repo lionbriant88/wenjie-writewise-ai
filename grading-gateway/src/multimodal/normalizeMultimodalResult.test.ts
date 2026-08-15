@@ -140,6 +140,24 @@ describe('normalizeMultimodalResult', () => {
     ;(payload.dimensionScores as Array<Record<string, unknown>>)[0].evidence = '   '
     expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: false })
   })
+
+  it('keeps expression-upgrade quotes exact and rejects collapsed or duplicate source text', () => {
+    const collapsed = validPayload()
+    collapsed.expressionUpgrades = [{ originalText: 'I  has a pen.', upgradedText: 'I have a pen.', note: 'Synthetic.' }]
+    expect(normalizeMultimodalResult(collapsed, context)).toMatchObject({ ok: false })
+
+    const duplicate = validPayload()
+    duplicate.transcript = 'Repeated source. Repeated source.'
+    duplicate.issues = []
+    duplicate.sentenceRevisions = []
+    duplicate.expressionUpgrades = [{ originalText: 'Repeated source.', upgradedText: 'Improved source.', note: 'Synthetic.' }]
+    duplicate.fullTextRevision = { correctedText: 'Repeated source. Repeated source.', improvedText: 'Improved.', sentencePairs: [], logicNotes: [], logicIssues: [] }
+    expect(normalizeMultimodalResult(duplicate, context)).toMatchObject({ ok: false })
+
+    const exact = validPayload()
+    exact.expressionUpgrades = [{ originalText: 'I has a pen.', upgradedText: 'I have a pen.', note: 'Synthetic.' }]
+    expect(normalizeMultimodalResult(exact, context)).toMatchObject({ ok: true, result: { expressionUpgrades: [{ originalText: 'I has a pen.' }] } })
+  })
   it('projects a grounded structured logic issue into the full-text revision', () => {
     const normalized = normalizeMultimodalResult(payloadWithLogicIssue(), context)
 
