@@ -43,3 +43,42 @@ Result: **PASS** — Gateway tests: 17 files, 187 tests; TypeScript typecheck ex
 ## Commit
 
 `feat: normalize logic and legibility findings`
+
+## Fix round 1 — independent-review findings
+
+### RED
+
+Added five direct normalizer regressions before changing production code:
+
+- first-sentence structured logic with an empty `contextBefore` succeeds;
+- final-sentence structured logic with an empty `contextAfter` succeeds;
+- a non-empty `contextBefore` located after the original text fails;
+- a non-empty `contextAfter` located before the original text fails;
+- a structured logic finding paired with an empty raw `fullTextRevision.correctedText` fails safely instead of being silently omitted.
+
+The local-legibility fixture was also corrected so its final-sentence logic diagnostic uses `contextAfter: ''`, matching the field's intended semantics.
+
+Ran before the implementation:
+
+```powershell
+npm.cmd test -- src/multimodal/normalizeMultimodalResult.test.ts src/server.test.ts
+```
+
+Result: **RED** — the two boundary-success cases were rejected; both order-violation cases and the unprojectable raw revision were accepted. The corrected local-legibility fixture also demonstrated the same empty-context parsing defect.
+
+### GREEN implementation
+
+- Raw `contextBefore` and `contextAfter` remain required strings but now accept the empty string.
+- Added unique-index grounding that validates each non-empty context is non-overlapping and ordered before/after the unique `originalText`; no adjacency is required.
+- When structured logic is present, an empty raw `correctedText` now returns the existing `provider_invalid_response` safe failure before corrected-text rebuilding can hide an unprojectable raw revision.
+
+### Fix-round verification
+
+```powershell
+npm.cmd test
+npm.cmd run typecheck
+npm.cmd run verify:shared-scoring-runtime
+git diff --check
+```
+
+Result: **PASS** — Gateway tests: 17 files, 192 tests; typecheck and shared scoring runtime exited 0; diff check exited 0.

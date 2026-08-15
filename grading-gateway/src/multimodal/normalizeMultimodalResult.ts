@@ -20,11 +20,27 @@ const CHANGE_TYPES = new Set(['grammar', 'spelling', 'word_choice', 'sentence_up
 function invalid(): MultimodalNormalizationResult { return { ok: false, error: { code: 'provider_invalid_response', message: INVALID_MESSAGE, retryable: true } } }
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) }
 function text(value: unknown, maxLength = 10_000): string | null { if (typeof value !== 'string') return null; const trimmed = value.trim(); return trimmed && trimmed.length <= maxLength ? trimmed : null }
+function logicContext(value: unknown, maxLength = 10_000): string | null { if (typeof value !== 'string') return null; const trimmed = value.trim(); return trimmed.length <= maxLength ? trimmed : null }
 function textArray(value: unknown, maxItems: number, maxLength: number): string[] | null { if (!Array.isArray(value) || value.length > maxItems) return null; const result = value.map((item) => text(item, maxLength)); return result.every((item): item is string => item !== null) ? result : null }
 
-function hasUniqueQuote(transcript: string, quote: string): boolean {
+function uniqueQuoteIndex(transcript: string, quote: string): number | null {
   const start = transcript.indexOf(quote)
-  return start >= 0 && transcript.indexOf(quote, start + 1) < 0
+  return start >= 0 && transcript.indexOf(quote, start + 1) < 0 ? start : null
+}
+function hasUniqueQuote(transcript: string, quote: string): boolean { return uniqueQuoteIndex(transcript, quote) !== null }
+
+function hasOrderedLogicContext(transcript: string, { originalText, contextBefore, contextAfter }: RawLogicIssueV1): boolean {
+  const originalStart = uniqueQuoteIndex(transcript, originalText)
+  if (originalStart === null) return false
+  if (contextBefore) {
+    const beforeStart = uniqueQuoteIndex(transcript, contextBefore)
+    if (beforeStart === null || beforeStart + contextBefore.length > originalStart) return false
+  }
+  if (contextAfter) {
+    const afterStart = uniqueQuoteIndex(transcript, contextAfter)
+    if (afterStart === null || afterStart < originalStart + originalText.length) return false
+  }
+  return true
 }
 
 function parseRawIssues(value: unknown): RawMultimodalIssueV1[] | null {
@@ -73,8 +89,8 @@ function parseRawLogicIssues(value: unknown): RawLogicIssueV1[] | null {
   const actions = new Set<RawLogicIssueV1['suggestedAction']>(['add_connector', 'add_bridge_sentence', 'delete_sentence', 'replace_sentence', 'clarify_reference', 'ask_student_to_explain'])
   for (const item of value) {
     if (!isRecord(item)) return null
-    const issueKey = text(item.issueKey, 200), originalText = text(item.originalText), contextBefore = text(item.contextBefore), contextAfter = text(item.contextAfter), subType = text(item.subType, 32), severity = text(item.severity, 16), diagnosis = text(item.diagnosis), suggestedAction = text(item.suggestedAction, 32), conservativeSuggestion = text(item.conservativeSuggestion), polishedSuggestion = text(item.polishedSuggestion)
-    if (!issueKey || !originalText || !contextBefore || !contextAfter || !subType || !subTypes.has(subType as RawLogicIssueV1['subType']) || !severity || !['low', 'medium', 'high'].includes(severity) || !diagnosis || !suggestedAction || !actions.has(suggestedAction as RawLogicIssueV1['suggestedAction']) || !conservativeSuggestion || !polishedSuggestion || typeof item.requiresTeacherReview !== 'boolean') return null
+    const issueKey = text(item.issueKey, 200), originalText = text(item.originalText), contextBefore = logicContext(item.contextBefore), contextAfter = logicContext(item.contextAfter), subType = text(item.subType, 32), severity = text(item.severity, 16), diagnosis = text(item.diagnosis), suggestedAction = text(item.suggestedAction, 32), conservativeSuggestion = text(item.conservativeSuggestion), polishedSuggestion = text(item.polishedSuggestion)
+    if (!issueKey || !originalText || contextBefore === null || contextAfter === null || !subType || !subTypes.has(subType as RawLogicIssueV1['subType']) || !severity || !['low', 'medium', 'high'].includes(severity) || !diagnosis || !suggestedAction || !actions.has(suggestedAction as RawLogicIssueV1['suggestedAction']) || !conservativeSuggestion || !polishedSuggestion || typeof item.requiresTeacherReview !== 'boolean') return null
     parsed.push({ issueKey, originalText, contextBefore, contextAfter, subType: subType as RawLogicIssueV1['subType'], severity: severity as RawLogicIssueV1['severity'], diagnosis, suggestedAction: suggestedAction as RawLogicIssueV1['suggestedAction'], conservativeSuggestion, polishedSuggestion, requiresTeacherReview: item.requiresTeacherReview })
   }
   return parsed
@@ -222,7 +238,7 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
   const legibilityIssues = parseRawLegibilityIssues(payload.legibilityIssues)
   const scoreReasons = dimensionReasons(payload.dimensionScores)
   const overallComment = text(payload.overallComment) ?? ''
-  if (!request || !issues || !revisions || !upgrades || !pairs || !logicNotes || !logicIssues || !legibilityIssues || !scoreReasons || !rawScoresAreBounded(payload.dimensionScores, context) || !isRecord(payload.fullTextRevision) || logicNotes.some(({ quote }) => !hasUniqueQuote(transcript, quote)) || logicIssues.some(({ originalText, contextBefore, contextAfter }) => !hasUniqueQuote(transcript, originalText) || !hasUniqueQuote(transcript, contextBefore) || !hasUniqueQuote(transcript, contextAfter))) return invalid()
+  if (!request || !issues || !revisions || !upgrades || !pairs || !logicNotes || !logicIssues || !legibilityIssues || !scoreReasons || !rawScoresAreBounded(payload.dimensionScores, context) || !isRecord(payload.fullTextRevision) || logicNotes.some(({ quote }) => !hasUniqueQuote(transcript, quote)) || logicIssues.some((issue) => !hasOrderedLogicContext(transcript, issue)) || (logicIssues.length > 0 && !text(payload.fullTextRevision.correctedText))) return invalid()
   if ((context.confirmedTranscript !== undefined && legibilityIssues.length > 0) || (context.confirmedTranscript === undefined && legibilityIssues.some(({ pageNumber }) => pageNumber > context.pageCount))) return invalid()
   if ((payload.dimensionScores as Array<Record<string, unknown>>).some((score) => {
     const dimensionId = score.dimensionId

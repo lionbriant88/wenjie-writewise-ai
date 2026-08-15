@@ -84,6 +84,18 @@ function payloadWithLogicIssue(): Record<string, unknown> {
   return payload
 }
 
+function payloadWithLogicContext(transcript: string, contextBefore: string, contextAfter: string): Record<string, unknown> {
+  const payload = payloadWithLogicIssue()
+  payload.transcript = transcript
+  payload.dimensionScores = (payload.dimensionScores as Array<Record<string, unknown>>).map((score) => ({ ...score, evidence: 'My cat is blue.' }))
+  ;(payload.fullTextRevision as Record<string, unknown>).correctedText = transcript
+  ;(payload.fullTextRevision as Record<string, unknown>).improvedText = transcript
+  const issue = ((payload.fullTextRevision as Record<string, unknown>).logicIssues as Array<Record<string, unknown>>)[0]
+  issue.contextBefore = contextBefore
+  issue.contextAfter = contextAfter
+  return payload
+}
+
 function payloadWithCantAmbiguity(): Record<string, unknown> {
   const payload = validPayload()
   ;(payload.issues as Array<Record<string, unknown>>).push({
@@ -93,7 +105,7 @@ function payloadWithCantAmbiguity(): Record<string, unknown> {
   ;(payload.dimensionScores as Array<Record<string, unknown>>)[1].evidence = 'I has a pen.'
   ;(payload.dimensionScores as Array<Record<string, unknown>>)[2].evidence = 'It are blue.'
   ;(payload.fullTextRevision as Record<string, unknown>).logicIssues = [{
-    issueKey: 'logic-blue', originalText: 'It are blue.', contextBefore: 'I has a pen.', contextAfter: 'I has a pen.',
+    issueKey: 'logic-blue', originalText: 'It are blue.', contextBefore: 'I has a pen.', contextAfter: '',
     subType: 'irrelevant_sentence', severity: 'medium', diagnosis: 'The sentence is irrelevant.',
     suggestedAction: 'delete_sentence', conservativeSuggestion: 'Remove the sentence.', polishedSuggestion: 'Delete the unrelated sentence.',
     requiresTeacherReview: false,
@@ -117,6 +129,43 @@ describe('normalizeMultimodalResult', () => {
   it.each(['originalText', 'contextBefore', 'contextAfter'] as const)('rejects an ungrounded structured logic %s', (field) => {
     const payload = payloadWithLogicIssue()
     ;(((payload.fullTextRevision as Record<string, unknown>).logicIssues as Array<Record<string, unknown>>)[0])[field] = 'Invented logic source.'
+
+    expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
+  })
+
+  it('accepts a first-sentence logic issue with no preceding context', () => {
+    const normalized = normalizeMultimodalResult(
+      payloadWithLogicContext('My cat is blue. After the party.', '', 'After the party.'),
+      context,
+    )
+
+    expect(normalized).toMatchObject({ ok: true, result: { fullTextRevision: { logicIssues: [{ originalText: 'My cat is blue.', contextBefore: '', contextAfter: 'After the party.' }] } } })
+  })
+
+  it('accepts a final-sentence logic issue with no following context', () => {
+    const normalized = normalizeMultimodalResult(
+      payloadWithLogicContext('Before the party. My cat is blue.', 'Before the party.', ''),
+      context,
+    )
+
+    expect(normalized).toMatchObject({ ok: true, result: { fullTextRevision: { logicIssues: [{ originalText: 'My cat is blue.', contextBefore: 'Before the party.', contextAfter: '' }] } } })
+  })
+
+  it('rejects a logic contextBefore that appears after the diagnosed text', () => {
+    const payload = payloadWithLogicContext('My cat is blue. Before the party. After the party.', 'Before the party.', 'After the party.')
+
+    expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
+  })
+
+  it('rejects a logic contextAfter that appears before the diagnosed text', () => {
+    const payload = payloadWithLogicContext('Before the party. After the party. My cat is blue.', 'Before the party.', 'After the party.')
+
+    expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
+  })
+
+  it('rejects structured logic when the raw full-text revision cannot be projected', () => {
+    const payload = payloadWithLogicIssue()
+    ;(payload.fullTextRevision as Record<string, unknown>).correctedText = ''
 
     expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
   })
