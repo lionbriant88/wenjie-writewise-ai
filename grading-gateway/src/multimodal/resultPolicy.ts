@@ -15,6 +15,7 @@ export interface ResultPolicyInput {
   dimensionReasons: string[]
   overallComment: string
   logicNotes: string[]
+  logicNoteRecords?: Array<{ quote: string; note: string }>
 }
 
 export interface ResultPolicyOutcome extends ResultPolicyInput {
@@ -35,7 +36,7 @@ interface LocatedEdit extends CorrectedTextEdit {
 function uniqueIndex(source: string, quote: string): number | null {
   if (!quote || !quote.trim()) return null
   const start = source.indexOf(quote)
-  if (start < 0 || source.indexOf(quote, start + quote.length) >= 0) return null
+  if (start < 0 || source.indexOf(quote, start + 1) >= 0) return null
   return start
 }
 
@@ -45,7 +46,20 @@ function hasUniqueKeys(keys: string[]): boolean {
 
 function filteredSpellingLeaks(issue: RawMultimodalIssueV1, input: ResultPolicyInput): boolean {
   const containsBoth = (value: string) => value.includes(issue.originalText) && value.includes(issue.suggestion)
-  return input.dimensionReasons.some(containsBoth) || containsBoth(input.overallComment) || input.logicNotes.some(containsBoth)
+  const logicNarratives = input.logicIssues.flatMap((logicIssue) => [
+    logicIssue.originalText,
+    logicIssue.contextBefore,
+    logicIssue.contextAfter,
+    logicIssue.diagnosis,
+    logicIssue.conservativeSuggestion,
+    logicIssue.polishedSuggestion,
+  ])
+  const logicNoteNarratives = input.logicNoteRecords?.flatMap(({ quote, note }) => [quote, note]) ?? []
+  return input.dimensionReasons.some(containsBoth)
+    || containsBoth(input.overallComment)
+    || input.logicNotes.some(containsBoth)
+    || logicNarratives.some(containsBoth)
+    || logicNoteNarratives.some(containsBoth)
 }
 
 function revisionKeysAreKnown(revision: RawSentenceRevisionV1 | RawSentencePairV1, allIssueKeys: Set<string>): boolean {
@@ -105,6 +119,10 @@ export function applyResultPolicy(raw: ResultPolicyInput, transcript: string): R
   ))
   if (filteredSpelling.some((issue) => filteredSpellingLeaks(issue, raw))) return null
 
+  if (raw.issues.some((issue) => uniqueIndex(transcript, issue.originalText) === null)) return null
+  if (raw.logicIssues.some((issue) => uniqueIndex(transcript, issue.originalText) === null)) return null
+  if (raw.logicNoteRecords?.some((note) => uniqueIndex(transcript, note.quote) === null)) return null
+
   const legibilityQuotes = new Set<string>()
   for (const issue of raw.legibilityIssues) {
     if (uniqueIndex(transcript, issue.transcriptText) === null) return null
@@ -115,22 +133,23 @@ export function applyResultPolicy(raw: ResultPolicyInput, transcript: string): R
     (issue.type !== 'spelling' || (issue.evidenceCertainty === 'certain' && issue.requiresTeacherReview === false))
     && !(['grammar', 'word_choice'].includes(issue.type) && legibilityQuotes.has(issue.originalText))
   ))
-  if (keptIssues.some((issue) => uniqueIndex(transcript, issue.originalText) === null)) return null
-
   const keptKeys = new Set(keptIssues.map((issue) => issue.issueKey))
   const keptCertainSpellingKeys = new Set(keptIssues
     .filter((issue) => issue.type === 'spelling' && issue.evidenceCertainty === 'certain')
     .map((issue) => issue.issueKey))
 
   const revisions = [...raw.sentenceRevisions, ...raw.sentencePairs]
-  if (revisions.some((revision) => !revisionKeysAreKnown(revision, allIssueKeys))) return null
+  if (revisions.some((revision) => (
+    revision.changeTypes.length === 0
+    || uniqueIndex(transcript, revision.originalText) === null
+    || !revisionKeysAreKnown(revision, allIssueKeys)
+  ))) return null
 
   const keptSentenceRevisions = raw.sentenceRevisions.filter((revision) => revisionIsAllowed(revision, keptKeys, keptCertainSpellingKeys))
   const keptSentencePairs = raw.sentencePairs.filter((pair) => revisionIsAllowed(pair, keptKeys, keptCertainSpellingKeys))
   if (!hasSafeEditLocations(transcript, keptSentenceRevisions) || !hasSafeEditLocations(transcript, keptSentencePairs)) return null
 
   const keptLogicIssues = raw.logicIssues.filter((issue) => !legibilityQuotes.has(issue.originalText))
-  if (keptLogicIssues.some((issue) => uniqueIndex(transcript, issue.originalText) === null)) return null
 
   const correctedText = rebuildCorrectedText(transcript, keptSentencePairs)
   if (correctedText === null) return null

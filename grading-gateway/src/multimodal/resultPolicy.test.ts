@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { applyResultPolicy, rebuildCorrectedText } from './resultPolicy.js'
 import type { ResultPolicyInput } from './resultPolicy.js'
+import type { RawLogicIssueV1 } from './types.js'
 
 const transcript = 'I suggest you joins the club.'
 
@@ -84,6 +85,25 @@ function payloadWithLegibilityOverlap(): ResultPolicyInput {
   }
 }
 
+const filteredSpellingNarrative = 'Change joins to join.'
+
+function logicIssueWithNarrative(
+  field: 'originalText' | 'contextBefore' | 'contextAfter' | 'diagnosis' | 'conservativeSuggestion' | 'polishedSuggestion',
+): RawLogicIssueV1 {
+  const issue: RawLogicIssueV1 = {
+    issueKey: 'logic-joins', originalText: 'joins', contextBefore: 'you', contextAfter: 'the club.',
+    subType: 'unclear_logic', severity: 'low', diagnosis: 'The wording is unclear.',
+    suggestedAction: 'ask_student_to_explain', conservativeSuggestion: 'Explain the wording.',
+    polishedSuggestion: 'Clarify the sentence.', requiresTeacherReview: false,
+  }
+  if (field === 'originalText') return { ...issue, originalText: filteredSpellingNarrative }
+  if (field === 'contextBefore') return { ...issue, contextBefore: filteredSpellingNarrative }
+  if (field === 'contextAfter') return { ...issue, contextAfter: filteredSpellingNarrative }
+  if (field === 'diagnosis') return { ...issue, diagnosis: filteredSpellingNarrative }
+  if (field === 'conservativeSuggestion') return { ...issue, conservativeSuggestion: filteredSpellingNarrative }
+  return { ...issue, polishedSuggestion: filteredSpellingNarrative }
+}
+
 describe('applyResultPolicy', () => {
   it('silently removes uncertain spelling and every linked change', () => {
     expect(applyResultPolicy(payloadWithUncertainSpelling(), transcript)).toMatchObject({
@@ -151,6 +171,48 @@ describe('applyResultPolicy', () => {
     payload.overallComment = 'Change joins to join.'
     expect(applyResultPolicy(payload, transcript)).toBeNull()
   })
+
+  it.each([
+    'originalText', 'contextBefore', 'contextAfter', 'diagnosis', 'conservativeSuggestion', 'polishedSuggestion',
+  ] as const)('rejects filtered spelling leaked through logic issue %s', (field) => {
+    const payload = payloadWithUncertainSpelling()
+    payload.logicIssues = [logicIssueWithNarrative(field)]
+    expect(applyResultPolicy(payload, transcript)).toBeNull()
+  })
+
+  it('rejects an uncertain spelling whose own quote is ungrounded', () => {
+    const payload = payloadWithUncertainSpelling()
+    payload.issues[0].originalText = 'missing spelling'
+    expect(applyResultPolicy(payload, transcript)).toBeNull()
+  })
+
+  it('rejects an ungrounded revision linked to uncertain spelling', () => {
+    const payload = payloadWithUncertainSpelling()
+    payload.sentencePairs = []
+    payload.sentenceRevisions[0].originalText = 'missing revision'
+    expect(applyResultPolicy(payload, transcript)).toBeNull()
+  })
+
+  it('rejects an ambiguous pair linked to uncertain spelling', () => {
+    const payload = payloadWithUncertainSpelling()
+    payload.sentenceRevisions = []
+    payload.sentencePairs[0].originalText = 'joins'
+    expect(applyResultPolicy(payload, 'suggest joins joins')).toBeNull()
+  })
+
+  it('rejects an empty revision change type list', () => {
+    const payload = payloadWithGrammarIssue()
+    payload.sentencePairs = []
+    payload.sentenceRevisions[0].changeTypes = []
+    expect(applyResultPolicy(payload, transcript)).toBeNull()
+  })
+
+  it('rejects an empty sentence-pair change type list', () => {
+    const payload = payloadWithGrammarIssue()
+    payload.sentenceRevisions = []
+    payload.sentencePairs[0].changeTypes = []
+    expect(applyResultPolicy(payload, transcript)).toBeNull()
+  })
 })
 
 describe('rebuildCorrectedText', () => {
@@ -166,5 +228,13 @@ describe('rebuildCorrectedText', () => {
       'work and work',
       [{ originalText: 'work', correctedText: 'walk' }],
     )).toBeNull()
+  })
+
+  it('rejects an ASCII quote with overlapping occurrences', () => {
+    expect(rebuildCorrectedText('aaa', [{ originalText: 'aa', correctedText: 'b' }])).toBeNull()
+  })
+
+  it('rejects a Unicode quote with overlapping occurrences', () => {
+    expect(rebuildCorrectedText('你好你好你', [{ originalText: '你好你', correctedText: '甲' }])).toBeNull()
   })
 })

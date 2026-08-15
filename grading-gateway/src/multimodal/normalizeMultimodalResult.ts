@@ -21,7 +21,7 @@ function textArray(value: unknown, maxItems: number, maxLength: number): string[
 
 function hasUniqueQuote(transcript: string, quote: string): boolean {
   const start = transcript.indexOf(quote)
-  return start >= 0 && transcript.indexOf(quote, start + quote.length) < 0
+  return start >= 0 && transcript.indexOf(quote, start + 1) < 0
 }
 
 function parseRawIssues(value: unknown): RawMultimodalIssueV1[] | null {
@@ -44,7 +44,7 @@ function parseRawSentenceRevisions(value: unknown): RawSentenceRevisionV1[] | nu
     if (!isRecord(item) || !Array.isArray(item.relatedIssueKeys) || !Array.isArray(item.changeTypes)) return null
     const originalText = text(item.originalText), revisedText = text(item.revisedText), note = text(item.note)
     const relatedIssueKeys = textArray(item.relatedIssueKeys, 50, 200)
-    if (!originalText || !revisedText || !note || !relatedIssueKeys || !item.changeTypes.every((entry) => typeof entry === 'string' && CHANGE_TYPES.has(entry))) return null
+    if (!originalText || !revisedText || !note || !relatedIssueKeys || item.changeTypes.length === 0 || !item.changeTypes.every((entry) => typeof entry === 'string' && CHANGE_TYPES.has(entry))) return null
     parsed.push({ originalText, revisedText, note, relatedIssueKeys, changeTypes: [...item.changeTypes] as RawSentenceRevisionV1['changeTypes'] })
   }
   return parsed
@@ -57,7 +57,7 @@ function parseRawSentencePairs(value: unknown): RawSentencePairV1[] | null {
     if (!isRecord(item) || !Array.isArray(item.relatedIssueKeys) || !Array.isArray(item.changeTypes)) return null
     const originalText = text(item.originalText), correctedText = text(item.correctedText), improvedText = text(item.improvedText), explanation = text(item.explanation)
     const relatedIssueKeys = textArray(item.relatedIssueKeys, 50, 200)
-    if (!originalText || !correctedText || !improvedText || !explanation || !relatedIssueKeys || typeof item.requiresTeacherReview !== 'boolean' || !item.changeTypes.every((entry) => typeof entry === 'string' && CHANGE_TYPES.has(entry))) return null
+    if (!originalText || !correctedText || !improvedText || !explanation || !relatedIssueKeys || typeof item.requiresTeacherReview !== 'boolean' || item.changeTypes.length === 0 || !item.changeTypes.every((entry) => typeof entry === 'string' && CHANGE_TYPES.has(entry))) return null
     parsed.push({ originalText, correctedText, improvedText, relatedIssueKeys, changeTypes: [...item.changeTypes] as RawSentencePairV1['changeTypes'], explanation, requiresTeacherReview: item.requiresTeacherReview })
   }
   return parsed
@@ -220,11 +220,11 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
   const scoreReasons = dimensionReasons(payload.dimensionScores)
   const overallComment = text(payload.overallComment) ?? ''
   if (!request || !issues || !revisions || !upgrades || !pairs || !logicNotes || !logicIssues || !legibilityIssues || !scoreReasons || !rawScoresAreBounded(payload.dimensionScores, context) || !isRecord(payload.fullTextRevision) || logicNotes.some(({ quote }) => !hasUniqueQuote(transcript, quote))) return invalid()
-  const policyInput: ResultPolicyInput = { issues, sentenceRevisions: revisions, sentencePairs: pairs, logicIssues, legibilityIssues, dimensionReasons: scoreReasons, overallComment, logicNotes: logicNotes.map(({ note }) => note) }
+  const policyInput: ResultPolicyInput = { issues, sentenceRevisions: revisions, sentencePairs: pairs, logicIssues, legibilityIssues, dimensionReasons: scoreReasons, overallComment, logicNotes: logicNotes.map(({ note }) => note), logicNoteRecords: logicNotes }
   const policy = applyResultPolicy(policyInput, transcript)
   if (!policy) return invalid()
   const keptLogicNotes = logicNotes.filter(({ quote }) => !legibilityIssues.some(({ transcriptText }) => transcriptText === quote))
-  const basePayload = { ...payload, issues: policy.issues, sentenceRevisions: policy.sentenceRevisions, expressionUpgrades: upgrades.grounded, fullTextRevision: { ...payload.fullTextRevision, correctedText: policy.correctedText, sentencePairs: policy.sentencePairs, logicNotes: keptLogicNotes } }
+  const basePayload = { ...payload, issues: policy.issues, sentenceRevisions: policy.sentenceRevisions, expressionUpgrades: upgrades.grounded, fullTextRevision: { ...payload.fullTextRevision, correctedText: policy.correctedText, sentencePairs: policy.sentencePairs, logicNotes: keptLogicNotes }, reviewReasons: policy.reviewReasons }
   const normalized = normalizeGradingResult(basePayload, request, { provider: context.provider, createdAt: context.createdAt })
   if (!normalized.ok) return invalid()
   const reviewReasons = new Set(normalized.result.reviewReasons)

@@ -126,6 +126,41 @@ describe('normalizeMultimodalResult', () => {
     })
   })
 
+  it('does not retain provider review reasons after filtering uncertain spelling', () => {
+    const payload = validPayload()
+    payload.issues = [{
+      issueKey: 'spelling-has', type: 'spelling', severity: 'low', originalText: 'has', suggestion: 'have',
+      explanation: 'The letter shape is uncertain.', evidenceCertainty: 'uncertain', requiresTeacherReview: false,
+    }]
+    payload.reviewReasons = ['Change has to have.']
+
+    const normalized = normalizeMultimodalResult(payload, context)
+    expect(normalized).toMatchObject({ ok: true, result: { status: 'success', reviewReasons: [], issues: [] } })
+  })
+
+  it('rejects a self-overlapping logic note quote', () => {
+    const payload = validPayload()
+    payload.transcript = 'aaa'
+    payload.issues = []
+    payload.dimensionScores = (payload.dimensionScores as Array<Record<string, unknown>>).map((score) => ({ ...score, evidence: 'aaa' }))
+    payload.fullTextRevision = { correctedText: 'aaa', improvedText: 'aaa', sentencePairs: [], logicNotes: [{ quote: 'aa', note: 'Logic note.' }], logicIssues: [] }
+
+    expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
+  })
+
+  it('rejects filtered spelling leaked through a logic note quote', () => {
+    const payload = validPayload()
+    payload.transcript = 'joins join'
+    payload.dimensionScores = (payload.dimensionScores as Array<Record<string, unknown>>).map((score) => ({ ...score, evidence: 'joins join' }))
+    payload.issues = [{
+      issueKey: 'spelling-joins', type: 'spelling', severity: 'low', originalText: 'joins', suggestion: 'join',
+      explanation: 'The letter shape is uncertain.', evidenceCertainty: 'uncertain', requiresTeacherReview: false,
+    }]
+    payload.fullTextRevision = { correctedText: 'joins join', improvedText: 'joins join', sentencePairs: [], logicNotes: [{ quote: 'joins join', note: 'Neutral note.' }], logicIssues: [] }
+
+    expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
+  })
+
   it('keeps only logic diagnostics whose quotes are grounded in the transcript', () => {
     const payload = validPayload()
     const normalized = normalizeMultimodalResult(payload, context)
