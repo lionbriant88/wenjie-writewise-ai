@@ -1,4 +1,4 @@
-import 'dotenv/config'
+import { config as loadDotenv } from 'dotenv'
 import { readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -6,6 +6,7 @@ import { GRADING_POLICY_VERSION } from '../src/multimodal/gradingPolicy.js'
 import { normalizeMultimodalResult } from '../src/multimodal/normalizeMultimodalResult.js'
 import type { ConfirmedTaskPackageV2 } from '../src/multimodal/types.js'
 import type { GatewayImageInput } from '../src/providers/multimodalProviderTypes.js'
+import type { MultimodalProvider } from '../src/providers/multimodalProviderTypes.js'
 import { getMultimodalProvider, parseKimiConfig } from '../src/providers/index.js'
 
 type PublicGoldenResult = {
@@ -21,6 +22,16 @@ export interface GoldenEvaluationResult {
   model: string
   policyVersion: string
   failureCategory?: string
+}
+
+export interface GoldenEvaluationDependencies {
+  env?: NodeJS.ProcessEnv
+  parseConfig?: typeof parseKimiConfig
+  createProvider?: () => Pick<MultimodalProvider, 'gradeEssay'>
+  readFixture?: (path: string) => Promise<Buffer>
+  normalize?: typeof normalizeMultimodalResult
+  output?: (line: string) => void
+  now?: () => string
 }
 
 const task: ConfirmedTaskPackageV2 = {
@@ -50,6 +61,22 @@ const cases = [
   { id: 'CASE-A04', file: 'grammar-and-logic.png', check: 'grammarAndLogic' },
 ] as const
 
+const allowedCaseIds = new Set<string>(cases.map(({ id }) => id))
+const allowedFailureCategories = new Set([
+  'assertion_failed',
+  'not_run_missing_local_credentials',
+  'provider_auth_failed',
+  'provider_balance_unavailable',
+  'provider_invalid_response',
+  'provider_not_configured',
+  'provider_rate_limited',
+  'provider_request_rejected',
+  'provider_timeout',
+  'provider_unavailable',
+  'unexpected_failure',
+])
+const SAFE_TOKEN = /^[a-z0-9][a-z0-9._-]{0,63}$/
+
 export function evaluatePolicyChecks(results: Record<typeof cases[number]['check'], PublicGoldenResult>): Record<typeof cases[number]['check'], boolean> {
   return {
     ambiguousWork: results.ambiguousWork.issues.every((issue) => issue.type !== 'spelling')
@@ -67,17 +94,29 @@ export function evaluatePolicyChecks(results: Record<typeof cases[number]['check
 }
 
 export function formatGoldenEvaluationLine(result: GoldenEvaluationResult): string {
+  const caseId = allowedCaseIds.has(result.caseId) ? result.caseId : 'CASE-INVALID'
+  const model = safeToken(result.model, 'unknown_model')
+  const policyVersion = safeToken(result.policyVersion, 'unknown_policy')
+  const category = result.failureCategory ? safeFailureCategory(result.failureCategory) : undefined
   return [
-    result.caseId,
+    caseId,
     result.passed ? 'pass' : 'fail',
-    `model=${result.model}`,
-    `policy=${result.policyVersion}`,
-    ...(result.failureCategory ? [`category=${result.failureCategory}`] : []),
+    `model=${model}`,
+    `policy=${policyVersion}`,
+    ...(category ? [`category=${category}`] : []),
   ].join(' ')
 }
 
+function safeToken(value: string, fallback: string): string {
+  return SAFE_TOKEN.test(value) ? value : fallback
+}
+
+function safeFailureCategory(value: string): string {
+  return allowedFailureCategories.has(value) ? value : 'unexpected_failure'
+}
+
 function failureCategory(error: unknown): string {
-  if (typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string') return error.code
+  if (typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string') return safeFailureCategory(error.code)
   return 'unexpected_failure'
 }
 
@@ -92,10 +131,11 @@ export function isDirectGoldenEvaluationExecution(argvEntry: string | undefined,
 async function evaluateOne(
   item: typeof cases[number],
   model: string,
+  dependencies: Required<Pick<GoldenEvaluationDependencies, 'createProvider' | 'readFixture' | 'normalize' | 'now'>>,
 ): Promise<{ check: typeof item.check; result: PublicGoldenResult } | GoldenEvaluationResult> {
   try {
-    const buffer = await readFile(fixturePath(item.file))
-    const provider = getMultimodalProvider('kimi')
+    const buffer = await dependencies.readFixture(fixturePath(item.file))
+    const provider = dependencies.createProvider()
     const raw = await provider.gradeEssay({
       requestId: `golden-${item.id}`,
       task,
@@ -103,13 +143,13 @@ async function evaluateOne(
       pages: [{ pageId: 'page-1', buffer, mimeType: 'image/png' } satisfies GatewayImageInput],
       signal: AbortSignal.timeout(60_000),
     })
-    const normalized = normalizeMultimodalResult(raw, {
+    const normalized = dependencies.normalize(raw, {
       requestId: `golden-${item.id}`,
       essayId: `golden-${item.id}`,
       task,
       provider: 'remote',
       pageCount: 1,
-      createdAt: new Date().toISOString(),
+      createdAt: dependencies.now(),
     })
     if (!normalized.ok) {
       return { caseId: item.id, passed: false, model, policyVersion: GRADING_POLICY_VERSION, failureCategory: normalized.error.code }
@@ -120,20 +160,43 @@ async function evaluateOne(
   }
 }
 
-async function main(): Promise<void> {
-  const key = process.env.KIMI_API_KEY?.trim()
-  const { model } = parseKimiConfig(process.env)
+function emitAll(
+  output: (line: string) => void,
+  model: string,
+  failureCategory: string,
+): void {
+  for (const item of cases) {
+    output(formatGoldenEvaluationLine({ caseId: item.id, passed: false, model, policyVersion: GRADING_POLICY_VERSION, failureCategory }))
+  }
+}
+
+export async function runPolicyGoldenEvaluation(dependencies: GoldenEvaluationDependencies = {}): Promise<number> {
+  const env = dependencies.env ?? process.env
+  const output = dependencies.output ?? console.log
+  const key = env.KIMI_API_KEY?.trim()
   if (!key) {
-    for (const item of cases) {
-      console.log(formatGoldenEvaluationLine({ caseId: item.id, passed: false, model, policyVersion: GRADING_POLICY_VERSION, failureCategory: 'not_run_missing_local_credentials' }))
-    }
-    return
+    emitAll(output, 'unconfigured', 'not_run_missing_local_credentials')
+    return 0
   }
 
+  let model: string
+  try {
+    model = (dependencies.parseConfig ?? parseKimiConfig)(env).model
+  } catch {
+    emitAll(output, 'unconfigured', 'unexpected_failure')
+    return 1
+  }
+
+  const evaluationDependencies = {
+    createProvider: dependencies.createProvider ?? (() => getMultimodalProvider('kimi')),
+    readFixture: dependencies.readFixture ?? readFile,
+    normalize: dependencies.normalize ?? normalizeMultimodalResult,
+    now: dependencies.now ?? (() => new Date().toISOString()),
+  }
   const checks: Partial<Record<typeof cases[number]['check'], PublicGoldenResult>> = {}
   const failures: GoldenEvaluationResult[] = []
   for (const item of cases) {
-    const outcome = await evaluateOne(item, model)
+    const outcome = await evaluateOne(item, model, evaluationDependencies)
     if ('check' in outcome) checks[outcome.check] = outcome.result
     else failures.push(outcome)
   }
@@ -141,17 +204,32 @@ async function main(): Promise<void> {
   const evaluated = Object.keys(checks).length === cases.length
     ? evaluatePolicyChecks(checks as Record<typeof cases[number]['check'], PublicGoldenResult>)
     : null
+  let failed = false
   for (const item of cases) {
     const failure = failures.find(({ caseId }) => caseId === item.id)
     const passed = evaluated?.[item.check] ?? false
-    console.log(formatGoldenEvaluationLine(failure ?? {
+    output(formatGoldenEvaluationLine(failure ?? {
       caseId: item.id,
       passed,
       model,
       policyVersion: GRADING_POLICY_VERSION,
       ...(!passed ? { failureCategory: 'assertion_failed' } : {}),
     }))
-    if (!passed) process.exitCode = 1
+    if (!passed) failed = true
+  }
+  return failed ? 1 : 0
+}
+
+async function main(): Promise<void> {
+  try {
+    loadDotenv()
+    process.exitCode = await runPolicyGoldenEvaluation()
+  } catch {
+    try {
+      emitAll(console.log, 'unconfigured', 'unexpected_failure')
+    } finally {
+      process.exitCode = 1
+    }
   }
 }
 

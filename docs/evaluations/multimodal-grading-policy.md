@@ -9,9 +9,12 @@ The command calls the production Kimi transport and production multimodal normal
 Run from `grading-gateway`:
 
 ```powershell
+npm.cmd run render:grading-policy-fixtures
 npm.cmd test
 npm.cmd run typecheck
 ```
+
+`render:grading-policy-fixtures` uses the locked `@resvg/resvg-js` renderer. The offline test suite verifies each committed PNG is byte-identical to rendering its paired SVG.
 
 ## Evaluation status
 

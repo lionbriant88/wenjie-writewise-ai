@@ -8,7 +8,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "verify:shared-scoring-runtime": "tsx scripts/verifySharedScoringRuntime.ts",
-    "eval:grading-policy": "tsx scripts/runPolicyGoldenEval.ts"
+    "eval:grading-policy": "tsx scripts/runPolicyGoldenEval.ts",
+    "render:grading-policy-fixtures": "tsx scripts/renderPolicyGoldenFixtures.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -17,6 +18,7 @@
     "multer": "^1.4.5-lts.2"
   },
   "devDependencies": {
+    "@resvg/resvg-js": "2.6.2",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/multer": "^1.4.12",
