@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700">
+  <rect width="1200" height="700" fill="#fffdf8"/>
+  <text x="70" y="90" font-family="Arial, sans-serif" font-size="28" fill="#55616b">CASE-A01</text>
+  <line x1="65" y1="145" x2="1135" y2="145" stroke="#dce3e8" stroke-width="2"/>
+  <text x="100" y="270" font-family="Comic Sans MS, cursive" font-size="68" font-style="italic" fill="#1d3557">We w</text>
+  <path d="M 332 218 C 349 205, 370 220, 367 245 C 364 274, 334 275, 332 246 C 330 229, 338 217, 350 215" fill="none" stroke="#1d3557" stroke-width="8" stroke-linecap="round"/>
+  <path d="M 347 247 C 361 252, 371 260, 378 272" fill="none" stroke="#1d3557" stroke-width="5" stroke-linecap="round" opacity="0.62"/>
+  <text x="382" y="270" font-family="Comic Sans MS, cursive" font-size="68" font-style="italic" fill="#1d3557">k together after school.</text>
+  <line x1="75" y1="315" x2="1125" y2="315" stroke="#e7ecef" stroke-width="2"/>
+</svg>

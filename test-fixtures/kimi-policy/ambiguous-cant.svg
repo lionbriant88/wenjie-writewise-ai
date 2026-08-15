@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700">
+  <rect width="1200" height="700" fill="#fffdf8"/>
+  <text x="70" y="90" font-family="Arial, sans-serif" font-size="28" fill="#55616b">CASE-A03</text>
+  <line x1="65" y1="145" x2="1135" y2="145" stroke="#dce3e8" stroke-width="2"/>
+  <text x="100" y="270" font-family="Comic Sans MS, cursive" font-size="68" font-style="italic" fill="#1d3557">I can</text>
+  <path d="M 270 222 L 280 272 M 264 244 L 292 244" fill="none" stroke="#1d3557" stroke-width="7" stroke-linecap="round" opacity="0.62"/>
+  <path d="M 285 248 Q 297 238, 304 250" fill="none" stroke="#1d3557" stroke-width="5" stroke-linecap="round" opacity="0.58"/>
+  <text x="310" y="270" font-family="Comic Sans MS, cursive" font-size="68" font-style="italic" fill="#1d3557"> come to the meeting.</text>
+  <line x1="75" y1="315" x2="1125" y2="315" stroke="#e7ecef" stroke-width="2"/>
+</svg>

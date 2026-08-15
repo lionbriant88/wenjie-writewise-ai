@@ -7,7 +7,8 @@
     "dev": "tsx src/index.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "verify:shared-scoring-runtime": "tsx scripts/verifySharedScoringRuntime.ts"
+    "verify:shared-scoring-runtime": "tsx scripts/verifySharedScoringRuntime.ts",
+    "eval:grading-policy": "tsx scripts/runPolicyGoldenEval.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",
