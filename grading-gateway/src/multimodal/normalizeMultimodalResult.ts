@@ -5,7 +5,7 @@ import type { AiGradingResultV1, GradingRequestV1, GradingProviderName } from '.
 import { validateGeneratedRubric } from './validateRubric.js'
 import type { ConfirmedTaskPackageV2 } from './types.js'
 
-export interface MultimodalGradingResult extends AiGradingResultV1 { transcript: string; transcriptionWarnings: string[]; printedTextExcluded: boolean }
+export interface MultimodalGradingResult extends AiGradingResultV1 { transcript: string; recognitionWarnings: string[]; printedTextExcluded: boolean }
 export type MultimodalNormalizationResult = { ok: true; result: MultimodalGradingResult } | { ok: false; error: { code: 'provider_invalid_response'; message: string; retryable: true } }
 export interface MultimodalNormalizationContext { requestId: string; essayId: string; task: ConfirmedTaskPackageV2; provider: GradingProviderName; createdAt: string; confirmedTranscript?: string }
 
@@ -110,8 +110,8 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
       ? context.confirmedTranscript
       : null
     : text(payload.transcript, 50_000)
-  const transcriptionWarnings = textArray(payload.transcriptionWarnings, 50, 1_000)
-  if (!transcript || !transcriptionWarnings || typeof payload.printedTextExcluded !== 'boolean') return invalid()
+  const recognitionWarnings = textArray(payload.recognitionWarnings, 50, 1_000)
+  if (!transcript || !recognitionWarnings || typeof payload.printedTextExcluded !== 'boolean') return invalid()
   const request = requestFor(context, transcript)
   const issues = splitIssues(payload.issues, transcript, context.essayId)
   const revisions = splitRevisions(payload.sentenceRevisions, transcript, context.essayId)
@@ -123,7 +123,7 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
   const normalized = normalizeGradingResult(basePayload, request, { provider: context.provider, createdAt: context.createdAt })
   if (!normalized.ok) return invalid()
   const reviewReasons = new Set(normalized.result.reviewReasons)
-  if (transcriptionWarnings.length) reviewReasons.add('transcription_uncertain')
+  if (recognitionWarnings.length) reviewReasons.add('recognition_uncertain')
   if (!payload.printedTextExcluded) reviewReasons.add('printed_text_exclusion_uncertain')
   if (issues.ungrounded.length) reviewReasons.add('issue_quote_unmatched')
   if (revisions.ungrounded.length) reviewReasons.add('sentence_revision_quote_unmatched')
@@ -133,5 +133,5 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
   const dimensionScores = normalized.result.dimensionScores.map((item) => matchTranscriptQuote(transcript, item.evidence) ? item : { ...item, requiresTeacherReview: true })
   if (dimensionScores.some(({ requiresTeacherReview }) => requiresTeacherReview)) reviewReasons.add('dimension_evidence_unmatched')
   const fullTextRevision = normalized.result.fullTextRevision ? { ...normalized.result.fullTextRevision, sentencePairs: [...normalized.result.fullTextRevision.sentencePairs, ...pairs.ungrounded] } : undefined
-  return { ok: true, result: { ...normalized.result, status: reviewReasons.size ? 'partial' : 'success', dimensionScores, issues: [...normalized.result.issues, ...issues.ungrounded], sentenceRevisions: [...normalized.result.sentenceRevisions, ...revisions.ungrounded], expressionUpgrades: [...normalized.result.expressionUpgrades, ...upgrades.ungrounded], ...(fullTextRevision ? { fullTextRevision } : {}), reviewReasons: [...reviewReasons], transcript, transcriptionWarnings, printedTextExcluded: payload.printedTextExcluded } }
+  return { ok: true, result: { ...normalized.result, status: reviewReasons.size ? 'partial' : 'success', dimensionScores, issues: [...normalized.result.issues, ...issues.ungrounded], sentenceRevisions: [...normalized.result.sentenceRevisions, ...revisions.ungrounded], expressionUpgrades: [...normalized.result.expressionUpgrades, ...upgrades.ungrounded], ...(fullTextRevision ? { fullTextRevision } : {}), reviewReasons: [...reviewReasons], transcript, recognitionWarnings, printedTextExcluded: payload.printedTextExcluded } }
 }

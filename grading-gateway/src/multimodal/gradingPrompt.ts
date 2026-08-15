@@ -47,7 +47,7 @@ export function buildEssayGradingMessages(input: BuildEssayGradingMessagesInput)
       '可合理读成正确单词的字迹歧义必须保持静默：recognitionWarnings 和 reviewReasons 均为空；不得要求教师复核。',
       '只有无法合理读成正确单词且会影响语义、语法或评分的重要歧义，才能写入 recognitionWarnings、recognition_uncertain review reason 或要求教师复核。',
     ]),
-    'Ground every issue quote and scoring evidence quote in the returned transcript. 每条 logicNotes 和 logicIssues.originalText 必须可在 transcript 中逐字定位。If a required quote cannot be located, omit that diagnostic rather than inventing text.',
+    'Ground every issue quote and scoring evidence quote in the returned transcript. 每条 logicNotes、logicIssues.originalText 和 legibilityIssues.transcriptText 必须可在 transcript 中逐字定位。If a required quote cannot be located, omit that diagnostic rather than inventing text.',
     'Calculate each dimension score using its percentage weights and the full score; return every rubric dimension exactly once.',
     'Return only the object defined by the supplied JSON Schema.',
   ].join('\n') }, { role: 'user', content: [{ type: 'text', text: JSON.stringify({

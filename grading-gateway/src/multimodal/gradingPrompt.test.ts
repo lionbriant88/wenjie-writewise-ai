@@ -61,7 +61,8 @@ describe('essay grading prompt', () => {
 
     expect(imagePrompt).toContain('可合理读成正确单词的字迹歧义必须保持静默：recognitionWarnings 和 reviewReasons 均为空')
     expect(imagePrompt).toContain('只有无法合理读成正确单词且会影响语义、语法或评分的重要歧义，才能写入 recognitionWarnings、recognition_uncertain review reason 或要求教师复核')
-    expect(imagePrompt).toContain('每条 logicNotes 和 logicIssues.originalText 必须可在 transcript 中逐字定位')
+    expect(imagePrompt).toContain('logicIssues.originalText')
+    expect(imagePrompt).toContain('legibilityIssues.transcriptText 必须可在 transcript 中逐字定位')
   })
 
   it('requires the transcript, printed-text exclusion state, warnings, and grading payload', () => {
@@ -75,16 +76,56 @@ describe('essay grading prompt', () => {
   })
 
   it('requires structured certainty, logic diagnostics, and legibility diagnostics', () => {
-    expect(essayGradingSchema.required).toContain('legibilityIssues')
-    expect(essayGradingSchema.required).toContain('recognitionWarnings')
+    expect(essayGradingSchema.required).toEqual([
+      'transcript', 'recognitionWarnings', 'printedTextExcluded', 'reportedTotalScore',
+      'dimensionScores', 'issues', 'sentenceRevisions', 'expressionUpgrades',
+      'fullTextRevision', 'legibilityIssues', 'overallComment', 'reviewReasons',
+    ])
+    expect(essayGradingSchema.properties).not.toHaveProperty('transcriptionWarnings')
+    expect(essayGradingSchema.additionalProperties).toBe(false)
     expect(essayGradingSchema.properties.issues.items.properties.evidenceCertainty.enum)
       .toEqual(['certain', 'uncertain'])
+    expect(essayGradingSchema.properties.issues.items.required).toEqual([
+      'issueKey', 'type', 'severity', 'originalText', 'suggestion', 'explanation',
+      'evidenceCertainty', 'requiresTeacherReview',
+    ])
+    expect(essayGradingSchema.properties.issues).toMatchObject({ maxItems: 100 })
+    expect(essayGradingSchema.properties.issues.items.additionalProperties).toBe(false)
+    expect(essayGradingSchema.properties.sentenceRevisions).toMatchObject({ maxItems: 100 })
+    expect(essayGradingSchema.properties.sentenceRevisions.items.required).toEqual([
+      'originalText', 'revisedText', 'note', 'relatedIssueKeys', 'changeTypes',
+    ])
+    expect(essayGradingSchema.properties.sentenceRevisions.items.properties.changeTypes.items.enum)
+      .toEqual(['grammar', 'spelling', 'word_choice', 'sentence_upgrade', 'coherence', 'logic_bridge', 'delete_suggestion', 'replace_sentence', 'reference_clarification'])
+    expect(essayGradingSchema.properties.sentenceRevisions.items.additionalProperties).toBe(false)
     expect(essayGradingSchema.properties.fullTextRevision.properties.logicIssues.items.required)
       .toEqual([
         'issueKey', 'originalText', 'contextBefore', 'contextAfter', 'subType',
         'severity', 'diagnosis', 'suggestedAction', 'conservativeSuggestion',
         'polishedSuggestion', 'requiresTeacherReview',
       ])
+    expect(essayGradingSchema.properties.fullTextRevision.properties.logicIssues.items.properties.subType.enum)
+      .toEqual(['weak_connection', 'unclear_logic', 'missing_cause_effect', 'unclear_transition', 'topic_drift', 'irrelevant_sentence', 'unclear_reference', 'missing_motivation', 'plot_gap'])
+    expect(essayGradingSchema.properties.fullTextRevision.properties.logicIssues.items.properties.suggestedAction.enum)
+      .toEqual(['add_connector', 'add_bridge_sentence', 'delete_sentence', 'replace_sentence', 'clarify_reference', 'ask_student_to_explain'])
+    expect(essayGradingSchema.properties.fullTextRevision.properties.logicIssues.items.properties.severity.enum)
+      .toEqual(['low', 'medium', 'high'])
+    expect(essayGradingSchema.properties.fullTextRevision.properties.logicIssues).toMatchObject({ maxItems: 50 })
+    expect(essayGradingSchema.properties.fullTextRevision.properties.logicIssues.items.additionalProperties).toBe(false)
+    expect(essayGradingSchema.properties.fullTextRevision.additionalProperties).toBe(false)
+    expect(essayGradingSchema.properties.fullTextRevision.properties.sentencePairs).toMatchObject({ maxItems: 100 })
+    expect(essayGradingSchema.properties.fullTextRevision.properties.sentencePairs.items.required).toEqual([
+      'originalText', 'correctedText', 'improvedText', 'relatedIssueKeys', 'changeTypes', 'explanation', 'requiresTeacherReview',
+    ])
+    expect(essayGradingSchema.properties.fullTextRevision.properties.sentencePairs.items.additionalProperties).toBe(false)
+    expect(essayGradingSchema.properties.legibilityIssues).toMatchObject({ maxItems: 50 })
+    expect(essayGradingSchema.properties.legibilityIssues.items).toMatchObject({
+      additionalProperties: false,
+      required: ['issueKey', 'transcriptText', 'possibleReadings', 'pageNumber', 'regionDescription', 'explanation', 'defaultOutcome'],
+    })
+    expect(essayGradingSchema.properties.legibilityIssues.items.properties.possibleReadings).toMatchObject({ minItems: 2, maxItems: 4 })
+    expect(essayGradingSchema.properties.legibilityIssues.items.properties.pageNumber).toMatchObject({ minimum: 1 })
+    expect(essayGradingSchema.properties.legibilityIssues.items.properties.defaultOutcome.enum).toEqual(['count_as_legibility_error'])
   })
 
   it('treats teacher-confirmed text as an authoritative JSON field, not image instructions', () => {

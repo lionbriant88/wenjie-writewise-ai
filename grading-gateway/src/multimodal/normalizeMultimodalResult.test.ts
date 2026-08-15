@@ -1,5 +1,33 @@
 import { describe, expect, it } from 'vitest'
 import { normalizeMultimodalResult } from './normalizeMultimodalResult.js'
+import type { MultimodalGradingResult } from './normalizeMultimodalResult.js'
+import type { AiGradingResultV1, EvidenceCertainty, LegibilityIssueV1, LogicIssueV1, RawMultimodalIssueV1 } from '../types.js'
+
+type HasLegacyTranscriptionWarnings = 'transcriptionWarnings' extends keyof MultimodalGradingResult ? true : false
+type HasRootLogicIssueProjection = 'logicIssues' extends keyof AiGradingResultV1 ? true : false
+const noLegacyTranscriptionWarnings: HasLegacyTranscriptionWarnings = false
+const noRootLogicIssueProjection: HasRootLogicIssueProjection = false
+void noLegacyTranscriptionWarnings
+void noRootLogicIssueProjection
+
+const evidenceCertainty: EvidenceCertainty = 'uncertain'
+const rawIssue: RawMultimodalIssueV1 = {
+  issueKey: 'issue-1', type: 'grammar', severity: 'low', originalText: 'I has',
+  suggestion: 'I have', explanation: 'Agreement.', evidenceCertainty, requiresTeacherReview: false,
+}
+const logicIssue: LogicIssueV1 = {
+  id: 'logic-1', originalText: 'Then it happened.', contextBefore: 'I waited.', contextAfter: 'We went home.',
+  subType: 'unclear_transition', severity: 'medium', diagnosis: 'The connection is unclear.',
+  suggestedAction: 'add_bridge_sentence', conservativeSuggestion: 'Explain what changed.',
+  polishedSuggestion: 'Add a sentence explaining the change.', requiresTeacherReview: false,
+}
+const legibilityIssue: LegibilityIssueV1 = {
+  id: 'legibility-1', transcriptText: 'went', possibleReadings: ['went', 'want'], pageNumber: 1,
+  regionDescription: 'line 2', explanation: 'Two readings are plausible.', defaultOutcome: 'count_as_legibility_error',
+}
+void rawIssue
+void logicIssue
+void legibilityIssue
 
 const task = {
   taskId: 'task-normalize', fullScore: 15,
@@ -18,7 +46,7 @@ const context = { requestId: 'request-normalize', essayId: 'essay-normalize', ta
 
 function validPayload(): Record<string, unknown> {
   return {
-    transcript: 'I has a pen.\nIt are blue.', transcriptionWarnings: [], printedTextExcluded: true,
+    transcript: 'I has a pen.\nIt are blue.', recognitionWarnings: [], printedTextExcluded: true,
     reportedTotalScore: 12,
     dimensionScores: [
       { dimensionId: 'content', score: 4.8, reason: 'Relevant.', evidence: 'I has a pen.' },
@@ -33,6 +61,27 @@ function validPayload(): Record<string, unknown> {
 }
 
 describe('normalizeMultimodalResult', () => {
+  it('accepts recognition warnings and exposes recognition uncertainty without accepting the legacy field', () => {
+    const payload = validPayload()
+    payload.recognitionWarnings = ['A word is unclear.']
+
+    const normalized = normalizeMultimodalResult(payload, context)
+    expect(normalized).toMatchObject({
+      ok: true,
+      result: {
+        recognitionWarnings: ['A word is unclear.'],
+        reviewReasons: expect.arrayContaining(['recognition_uncertain']),
+        status: 'partial',
+      },
+    })
+
+    const legacyPayload = validPayload()
+    delete legacyPayload.recognitionWarnings
+    legacyPayload.transcriptionWarnings = ['A word is unclear.']
+    const legacy = normalizeMultimodalResult(legacyPayload, context)
+    expect(legacy).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
+  })
+
   it('returns the faithful student transcript and rubric-derived weighted scores', () => {
     const normalized = normalizeMultimodalResult(validPayload(), context)
     expect(normalized.ok).toBe(true)
@@ -41,14 +90,14 @@ describe('normalizeMultimodalResult', () => {
     expect(normalized.result.dimensionScores.map(({ maxScore }) => maxScore)).toEqual([6, 8.25, 0.75])
   })
 
-  it('marks transcription uncertainty as partial with a stable reason', () => {
+  it('marks recognition uncertainty as partial with a stable reason', () => {
     const payload = validPayload()
-    payload.transcriptionWarnings = ['A word is unclear.']
+    payload.recognitionWarnings = ['A word is unclear.']
     const normalized = normalizeMultimodalResult(payload, context)
     expect(normalized.ok).toBe(true)
     if (!normalized.ok) throw new Error(normalized.error.message)
     expect(normalized.result.status).toBe('partial')
-    expect(normalized.result.reviewReasons).toContain('transcription_uncertain')
+    expect(normalized.result.reviewReasons).toContain('recognition_uncertain')
   })
 
   it('keeps only logic diagnostics whose quotes are grounded in the transcript', () => {

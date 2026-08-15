@@ -214,8 +214,5 @@ export interface AiGradingResultV1 {
   overallComment: string
   modelSelfConfidence?: number
   reviewReasons: string[]
-  recognitionWarnings?: string[]
-  legibilityIssues?: LegibilityIssueV1[]
-  logicIssues?: LogicIssueV1[]
   createdAt: string
 }
