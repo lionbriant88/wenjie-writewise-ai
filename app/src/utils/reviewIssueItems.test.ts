@@ -30,11 +30,14 @@ describe('buildReviewIssueItems', () => {
     {
       id: 'logic-1',
       original: 'My mother was angry.',
+      contextBefore: 'The activity helps classmates.',
+      contextAfter: 'I hope my advice can help you.',
       subType: 'weak_connection',
       severity: 'high',
       diagnosis: '上下文关联度差：与前后文缺少明确关系。',
       suggestedAction: 'ask_student_to_explain',
       conservativeSuggestion: '建议学生补充原因，或由教师判断是否删除。',
+      polishedSuggestion: '提升版暂不保留该句，等待教师复核。',
       needsTeacherReview: true,
     },
   ]

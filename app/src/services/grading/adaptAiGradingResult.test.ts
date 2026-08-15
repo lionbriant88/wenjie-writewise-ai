@@ -96,7 +96,7 @@ describe('adaptAiGradingResult', () => {
       suggestion: 'I suggest you join the club.',
       evidenceCertainty: 'certain',
     })
-    expect(adapted.fullTextRevision?.originalText).toBe('Student text.')
+    expect(adapted.fullTextRevision?.originalText).toBe('provider raw original')
     expect(adapted.fullTextRevision?.sentencePairs[0].needsTeacherReview).toBe(true)
     expect(adapted.dimensionScores[0].needsTeacherReview).toBe(true)
     expect(adapted.errorAnnotations[0].needsTeacherReview).toBe(true)
@@ -111,9 +111,9 @@ describe('adaptAiGradingResult', () => {
     expect(adapted).toMatchObject({ transcript: 'Student text.', recognitionWarnings: ['One word unclear.'], printedTextExcluded: true })
   })
 
-  it('never uses a Provider-supplied original full text', () => {
-    const adapted = adaptAiGradingResult(aiResult, request)
-    expect(JSON.stringify(adapted)).not.toContain('provider raw original')
+  it('copies the validated wire full-text original without guessing from transcript or request', () => {
+    const adapted = adaptAiGradingResult({ ...aiResult, transcript: 'Different transcript.', fullTextRevision: { ...aiResult.fullTextRevision!, originalText: 'Wire-owned original.' } }, request)
+    expect(adapted.fullTextRevision?.originalText).toBe('Wire-owned original.')
   })
 
   it('does not map optional model self-confidence into the teacher page model', () => {

@@ -135,14 +135,14 @@ export interface ProviderGradingPayloadV1 {
   expressionUpgrades: Array<{ originalText: string; upgradedText: string; note: string }>
   fullTextRevision: {
     correctedText: string
-    improvedText?: string
+    improvedText: string
     sentencePairs: RawSentencePairV1[]
     logicNotes: Array<{ quote: string; note: string }>
     logicIssues: RawLogicIssueV1[]
   }
   overallComment: string
   modelSelfConfidence?: number
-  reviewReasons?: string[]
+  reviewReasons: string[]
 }
 
 export interface AiGradingResultV1 {

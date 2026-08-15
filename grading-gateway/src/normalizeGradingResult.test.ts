@@ -75,6 +75,31 @@ function expectFailure(payload: unknown) {
 }
 
 describe('normalizeGradingResult', () => {
+  it('silently filters uncertain spelling and rebuilds corrected text from structured pairs', () => {
+    const payload = validPayload()
+    payload.issues = [{ issueKey: 'spell-1', type: 'spelling', severity: 'low', originalText: 'Second synthetic line.', suggestion: 'Second corrected line.', explanation: 'Synthetic spelling.', evidenceCertainty: 'uncertain', requiresTeacherReview: false }]
+    payload.sentenceRevisions = [{ originalText: 'Second synthetic line.', revisedText: 'Second corrected line.', note: 'Synthetic.', relatedIssueKeys: ['spell-1'], changeTypes: ['spelling'] }]
+    payload.fullTextRevision = { correctedText: 'Provider aggregate must not win.', improvedText: 'Synthetic improved.', sentencePairs: [{ originalText: 'Second synthetic line.', correctedText: 'Second corrected line.', improvedText: 'Synthetic improved.', relatedIssueKeys: ['spell-1'], changeTypes: ['spelling'], explanation: 'Synthetic.', requiresTeacherReview: false }], logicNotes: [], logicIssues: [] }
+    const result = normalizeGradingResult(payload, request, context)
+    expect(result).toMatchObject({ ok: true, result: { status: 'success', issues: [], sentenceRevisions: [], fullTextRevision: { correctedText: request.essay.confirmedTranscript, sentencePairs: [] } } })
+  })
+
+  it.each(['sentence revision', 'sentence pair'] as const)('rejects empty generic %s changeTypes', (kind) => {
+    const payload = validPayload()
+    if (kind === 'sentence revision') (payload.sentenceRevisions as Array<Record<string, unknown>>)[0].changeTypes = []
+    else ((payload.fullTextRevision as Record<string, unknown>).sentencePairs as Array<Record<string, unknown>>)[0].changeTypes = []
+    expectFailure(payload)
+  })
+
+  it.each(['unknown action', 'ungrounded original', 'wrong context order'] as const)('rejects unsafe generic logic: %s', (kind) => {
+    const payload = validPayload()
+    ;(payload.fullTextRevision as Record<string, unknown>).logicIssues = [{ issueKey: 'logic-1', originalText: 'Second synthetic line.', contextBefore: 'First synthetic line.', contextAfter: '', subType: 'unclear_logic', severity: 'medium', diagnosis: 'Synthetic logic.', suggestedAction: 'add_bridge_sentence', conservativeSuggestion: 'Synthetic conservative.', polishedSuggestion: 'Synthetic polished.', requiresTeacherReview: false }]
+    const logic = ((payload.fullTextRevision as Record<string, unknown>).logicIssues as Array<Record<string, unknown>>)[0]
+    if (kind === 'unknown action') logic.suggestedAction = 'invented'
+    if (kind === 'ungrounded original') logic.originalText = 'Invented sentence.'
+    if (kind === 'wrong context order') logic.contextBefore = 'Second synthetic line.'
+    expectFailure(payload)
+  })
   it('creates a trusted success with rubric-derived maximums and product total', () => {
     const result = normalizeGradingResult(validPayload(), request, context)
     expect(result.ok).toBe(true)
@@ -166,14 +191,10 @@ describe('normalizeGradingResult', () => {
     expect(result.result.status).toBe('partial')
   })
 
-  it('uses corrected text as the improved fallback and becomes partial', () => {
+  it('rejects a missing required improved text', () => {
     const payload = validPayload()
     delete (payload.fullTextRevision as Record<string, unknown>).improvedText
-    const result = normalizeGradingResult(payload, request, context)
-    expect(result.ok).toBe(true)
-    if (!result.ok) throw new Error(result.error.message)
-    expect(result.result.fullTextRevision?.improvedText).toBe(result.result.fullTextRevision?.correctedText)
-    expect(result.result.status).toBe('partial')
+    expectFailure(payload)
   })
 
   it('keeps model self-confidence optional and drops invalid values without partial status', () => {

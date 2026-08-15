@@ -201,7 +201,7 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
   const correctedText = rebuildCorrectedText(transcript, safePairs)
   if (correctedText === null) return invalid()
   const keptLogicNotes = logicNotes.filter(({ quote }) => !legibilityIssues.some(({ transcriptText }) => transcriptText === quote))
-  const basePayload = { ...payload, issues: safeIssues, sentenceRevisions: safeRevisions, expressionUpgrades: upgrades.grounded, legibilityIssues: [], fullTextRevision: { ...payload.fullTextRevision, correctedText, sentencePairs: safePairs, logicNotes: keptLogicNotes }, reviewReasons: policy.reviewReasons }
+  const basePayload = { ...payload, issues: safeIssues, sentenceRevisions: safeRevisions, expressionUpgrades: upgrades.grounded, recognitionWarnings: [], legibilityIssues: [], fullTextRevision: { ...payload.fullTextRevision, correctedText, sentencePairs: safePairs, logicNotes: keptLogicNotes }, reviewReasons: policy.reviewReasons }
   const normalized = normalizeGradingResult(basePayload, request, { provider: context.provider, createdAt: context.createdAt })
   if (!normalized.ok) return invalid()
   const reviewReasons = new Set(normalized.result.reviewReasons)

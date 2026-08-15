@@ -251,6 +251,15 @@ describe('projectGradingClientResponse', () => {
     expectInvalid(imageLegibility, { ...expected, inputMode: 'confirmed_text' })
   })
 
+  it('uses the shared rounded total and dimension maximum rules', () => {
+    const raw = validSuccess()
+    raw.totalScore = 12
+    raw.dimensionScores = [{ dimensionId: 'language', name: 'Language', score: 11.6, maxScore: 15, weight: 100, reason: 'Accurate.', evidence: 'Synthetic evidence.' }]
+    expect(projectGradingClientResponse(raw, { ...expected, fullScore: 15 }).status).toBe('success')
+    raw.totalScore = 11
+    expectInvalid(raw, { ...expected, fullScore: 15 })
+  })
+
   it('drops unknown Kimi response fields while keeping failures free of raw upstream content', () => {
     const raw = validSuccess()
     raw.transcript = 'Student text.'

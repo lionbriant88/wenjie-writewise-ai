@@ -209,15 +209,15 @@ export interface LogicIssue {
   id: string
   sentenceId?: string
   original: string
-  contextBefore?: string
-  contextAfter?: string
+  contextBefore: string
+  contextAfter: string
   subType: LogicIssueSubType
   severity: 'low' | 'medium' | 'high'
   diagnosis: string
   suggestedAction: LogicSuggestionAction
-  conservativeSuggestion?: string
-  polishedSuggestion?: string
-  needsTeacherReview?: boolean
+  conservativeSuggestion: string
+  polishedSuggestion: string
+  needsTeacherReview: boolean
 }
 
 export interface FullTextSentencePair {
