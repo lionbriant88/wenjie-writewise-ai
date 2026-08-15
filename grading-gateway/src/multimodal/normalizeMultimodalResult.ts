@@ -1,6 +1,6 @@
 import { matchTranscriptQuote } from '../matchTranscriptQuote.js'
-import { normalizeGradingResult } from '../normalizeGradingResult.js'
-import { calculateDimensionMaxScore } from '../../../app/src/services/grading/scoringRules.js'
+import { normalizeGradingResultFromPolicyOutcome } from '../normalizeGradingResult.js'
+import { calculateDimensionMaxScore, calculateTotalScore, roundScore2 } from '../../../app/src/services/grading/scoringRules.js'
 import type { AiGradingResultV1, GradingRequestV1, GradingProviderName } from '../types.js'
 import { validateGeneratedRubric } from './validateRubric.js'
 import { applyResultPolicy } from './resultPolicy.js'
@@ -8,7 +8,7 @@ import { rebuildCorrectedText } from './resultPolicy.js'
 import type { ResultPolicyInput } from './resultPolicy.js'
 import type { ConfirmedTaskPackageV2 } from './types.js'
 import type { RawLegibilityIssueV1, RawLogicIssueV1, RawMultimodalIssueV1, RawSentencePairV1, RawSentenceRevisionV1 } from './types.js'
-import type { LegibilityIssueV1, LogicIssueV1 } from '../types.js'
+import type { LegibilityIssueV1 } from '../types.js'
 import { LEGIBILITY_DIMENSION_ID } from './gradingPolicy.js'
 
 export interface MultimodalGradingResult extends AiGradingResultV1 { transcript: string; recognitionWarnings: string[]; printedTextExcluded: boolean }
@@ -201,17 +201,26 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
   const correctedText = rebuildCorrectedText(transcript, safePairs)
   if (correctedText === null) return invalid()
   const keptLogicNotes = logicNotes.filter(({ quote }) => !legibilityIssues.some(({ transcriptText }) => transcriptText === quote))
-  const basePayload = { ...payload, issues: safeIssues, sentenceRevisions: safeRevisions, expressionUpgrades: upgrades.grounded, recognitionWarnings: [], legibilityIssues: [], fullTextRevision: { ...payload.fullTextRevision, correctedText, sentencePairs: safePairs, logicNotes: keptLogicNotes }, reviewReasons: policy.reviewReasons }
-  const normalized = normalizeGradingResult(basePayload, request, { provider: context.provider, createdAt: context.createdAt })
-  if (!normalized.ok) return invalid()
-  const reviewReasons = new Set(normalized.result.reviewReasons)
+  const rawScores = new Map((payload.dimensionScores as Array<Record<string, unknown>>).map((score) => [score.dimensionId, score]))
+  if (rawScores.size !== request.task.rubric.dimensions.length || request.task.rubric.dimensions.some((dimension) => !rawScores.has(dimension.id))) return invalid()
+  const dimensionScoreCandidates = request.task.rubric.dimensions.map((dimension) => {
+    const score = rawScores.get(dimension.id)
+    if (!score || typeof score.score !== 'number' || typeof score.reason !== 'string' || typeof score.evidence !== 'string') return null
+    return { dimensionId: dimension.id, name: dimension.name, score: roundScore2(score.score), maxScore: calculateDimensionMaxScore(request.task.fullScore, dimension.weight), weight: dimension.weight, reason: score.reason, evidence: score.evidence }
+  })
+  if (dimensionScoreCandidates.some((item) => item === null)) return invalid()
+  const dimensionScores = dimensionScoreCandidates as AiGradingResultV1['dimensionScores']
+  const groundedUpgrades: AiGradingResultV1['expressionUpgrades'] = []
+  for (const [index, value] of upgrades.grounded.entries()) { if (!isRecord(value)) return invalid(); const originalText = text(value.originalText), upgradedText = text(value.upgradedText), note = text(value.note); if (!originalText || !upgradedText || !note) return invalid(); groundedUpgrades.push({ id: `${context.essayId}-upgrade-${index + 1}`, originalText, upgradedText, note }) }
+  const safePolicy = { ...policy, issues: safeIssues, sentenceRevisions: safeRevisions, sentencePairs: safePairs, correctedText, logicNotes: keptLogicNotes.map(({ note }) => note) }
+  const normalized = normalizeGradingResultFromPolicyOutcome({ request, context: { provider: context.provider, createdAt: context.createdAt }, policy: safePolicy, dimensionScores, totalScore: calculateTotalScore(dimensionScores.map(({ score }) => score), request.task.fullScore), expressionUpgrades: groundedUpgrades, improvedText: text(payload.fullTextRevision.improvedText)!, reviewReasons: [] })
+  const reviewReasons = new Set(normalized.reviewReasons)
   if (recognitionWarnings.length) reviewReasons.add('recognition_uncertain')
   if (!payload.printedTextExcluded) reviewReasons.add('printed_text_exclusion_uncertain')
   if (upgrades.ungrounded.length) reviewReasons.add('expression_upgrade_quote_unmatched')
-  const dimensionScores = normalized.result.dimensionScores.map((item) => matchTranscriptQuote(transcript, item.evidence) ? item : { ...item, requiresTeacherReview: true })
-  if (dimensionScores.some(({ requiresTeacherReview }) => requiresTeacherReview)) reviewReasons.add('dimension_evidence_unmatched')
-  const normalizedLogicIssues: LogicIssueV1[] = policy.logicIssues.map(({ issueKey: _issueKey, ...issue }, index) => ({ id: `${context.essayId}-logic-${index + 1}`, ...issue }))
+  const reviewedDimensionScores = normalized.dimensionScores.map((item) => matchTranscriptQuote(transcript, item.evidence) ? item : { ...item, requiresTeacherReview: true })
+  if (reviewedDimensionScores.some(({ requiresTeacherReview }) => requiresTeacherReview)) reviewReasons.add('dimension_evidence_unmatched')
   const normalizedLegibilityIssues: LegibilityIssueV1[] = legibilityIssues.map(({ issueKey: _issueKey, ...issue }, index) => ({ id: `${context.essayId}-legibility-${index + 1}`, ...issue }))
-  const fullTextRevision = normalized.result.fullTextRevision
-  return { ok: true, result: { ...normalized.result, status: reviewReasons.size ? 'partial' : 'success', dimensionScores, expressionUpgrades: [...normalized.result.expressionUpgrades, ...upgrades.ungrounded], ...(fullTextRevision ? { fullTextRevision: { ...fullTextRevision, logicIssues: normalizedLogicIssues } } : {}), legibilityIssues: normalizedLegibilityIssues, reviewReasons: [...reviewReasons], transcript, recognitionWarnings, printedTextExcluded: payload.printedTextExcluded } }
+  const fullTextRevision = normalized.fullTextRevision
+  return { ok: true, result: { ...normalized, status: reviewReasons.size ? 'partial' : 'success', dimensionScores: reviewedDimensionScores, expressionUpgrades: [...normalized.expressionUpgrades, ...upgrades.ungrounded], ...(fullTextRevision ? { fullTextRevision } : {}), legibilityIssues: normalizedLegibilityIssues, reviewReasons: [...reviewReasons], transcript, recognitionWarnings, printedTextExcluded: payload.printedTextExcluded } }
 }

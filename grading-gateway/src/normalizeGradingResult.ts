@@ -3,9 +3,8 @@ import {
   calculateTotalScore,
   roundScore2,
 } from '../../app/src/services/grading/scoringRules.js'
-import { matchTranscriptQuote } from './matchTranscriptQuote.js'
 import { applyResultPolicy } from './multimodal/resultPolicy.js'
-import type { ResultPolicyInput } from './multimodal/resultPolicy.js'
+import type { ResultPolicyInput, ResultPolicyOutcome } from './multimodal/resultPolicy.js'
 import type {
   AiGradingResultV1,
   GradingChangeType,
@@ -56,6 +55,7 @@ function requiredStringArray(value: unknown) {
   const projected = value.map(text)
   return projected.every((item): item is string => item !== null) ? projected : null
 }
+function quote(value: unknown) { return typeof value === 'string' && value.length > 0 && value.length <= 10_000 ? value : null }
 
 function uniqueQuoteIndex(transcript: string, quote: string): number | null { const start = transcript.indexOf(quote); return start >= 0 && transcript.indexOf(quote, start + 1) < 0 ? start : null }
 
@@ -66,22 +66,21 @@ function parsePolicyInput(payload: Record<string, unknown>, transcript: string):
   const issues: RawMultimodalIssueV1[] = []
   for (const value of payload.issues) {
     if (!isRecord(value)) return null
-    const issueKey = text(value.issueKey), type = text(value.type), severity = text(value.severity), originalText = text(value.originalText), suggestion = text(value.suggestion), explanation = text(value.explanation), evidenceCertainty = text(value.evidenceCertainty)
+    const issueKey = text(value.issueKey), type = text(value.type), severity = text(value.severity), originalText = quote(value.originalText), suggestion = text(value.suggestion), explanation = text(value.explanation), evidenceCertainty = text(value.evidenceCertainty)
     if (!issueKey || !type || !issueTypes.has(type) || !severity || !severities.has(severity) || !originalText || !suggestion || !explanation || !evidenceCertainty || !evidenceCertainties.has(evidenceCertainty) || typeof value.requiresTeacherReview !== 'boolean') return null
-    const matched = matchTranscriptQuote(transcript, originalText); if (!matched) return null
-    issues.push({ issueKey, type: type as RawMultimodalIssueV1['type'], severity: severity as RawMultimodalIssueV1['severity'], originalText: matched, suggestion, explanation, evidenceCertainty: evidenceCertainty as RawMultimodalIssueV1['evidenceCertainty'], requiresTeacherReview: value.requiresTeacherReview })
+    issues.push({ issueKey, type: type as RawMultimodalIssueV1['type'], severity: severity as RawMultimodalIssueV1['severity'], originalText, suggestion, explanation, evidenceCertainty: evidenceCertainty as RawMultimodalIssueV1['evidenceCertainty'], requiresTeacherReview: value.requiresTeacherReview })
   }
   const parseLinks = (value: Record<string, unknown>) => { const relatedIssueKeys = Array.isArray(value.relatedIssueKeys) ? value.relatedIssueKeys : null; const changes = Array.isArray(value.changeTypes) ? value.changeTypes : null; return relatedIssueKeys && relatedIssueKeys.length > 0 && relatedIssueKeys.every((key) => typeof key === 'string' && key.trim()) && changes && changes.length > 0 && changes.every((change) => typeof change === 'string' && changeTypes.has(change as GradingChangeType)) && new Set(relatedIssueKeys).size === relatedIssueKeys.length ? { relatedIssueKeys: relatedIssueKeys as string[], changeTypes: changes as GradingChangeType[] } : null }
   const sentenceRevisions: RawSentenceRevisionV1[] = []
-  for (const value of payload.sentenceRevisions) { if (!isRecord(value)) return null; const originalText = text(value.originalText), revisedText = text(value.revisedText), note = text(value.note), links = parseLinks(value), matched = originalText ? matchTranscriptQuote(transcript, originalText) : null; if (!matched || !revisedText || !note || !links) return null; sentenceRevisions.push({ originalText: matched, revisedText, note, ...links }) }
+  for (const value of payload.sentenceRevisions) { if (!isRecord(value)) return null; const originalText = quote(value.originalText), revisedText = text(value.revisedText), note = text(value.note), links = parseLinks(value); if (!originalText || !revisedText || !note || !links) return null; sentenceRevisions.push({ originalText, revisedText, note, ...links }) }
   const sentencePairs: RawSentencePairV1[] = []
-  for (const value of payload.fullTextRevision.sentencePairs) { if (!isRecord(value)) return null; const originalText = text(value.originalText), correctedText = text(value.correctedText), improvedText = text(value.improvedText), explanation = text(value.explanation), links = parseLinks(value), matched = originalText ? matchTranscriptQuote(transcript, originalText) : null; if (!matched || !correctedText || !improvedText || !explanation || !links || typeof value.requiresTeacherReview !== 'boolean') return null; sentencePairs.push({ originalText: matched, correctedText, improvedText, explanation, requiresTeacherReview: value.requiresTeacherReview, ...links }) }
+  for (const value of payload.fullTextRevision.sentencePairs) { if (!isRecord(value)) return null; const originalText = quote(value.originalText), correctedText = text(value.correctedText), improvedText = text(value.improvedText), explanation = text(value.explanation), links = parseLinks(value); if (!originalText || !correctedText || !improvedText || !explanation || !links || typeof value.requiresTeacherReview !== 'boolean') return null; sentencePairs.push({ originalText, correctedText, improvedText, explanation, requiresTeacherReview: value.requiresTeacherReview, ...links }) }
   const logicNotes: string[] = []; const logicNoteRecords: Array<{ quote: string; note: string }> = []
-  for (const value of payload.fullTextRevision.logicNotes) { if (!isRecord(value)) return null; const quote = text(value.quote), note = text(value.note), matched = quote ? matchTranscriptQuote(transcript, quote) : null; if (!matched || !note) return null; logicNotes.push(note); logicNoteRecords.push({ quote: matched, note }) }
+  for (const value of payload.fullTextRevision.logicNotes) { if (!isRecord(value)) return null; const rawQuote = quote(value.quote), note = text(value.note); if (!rawQuote || !note) return null; logicNotes.push(note); logicNoteRecords.push({ quote: rawQuote, note }) }
   const logicIssues: RawLogicIssueV1[] = []
   for (const value of payload.fullTextRevision.logicIssues) {
     if (!isRecord(value)) return null
-    const issueKey = text(value.issueKey), originalText = text(value.originalText), subType = text(value.subType), severity = text(value.severity), diagnosis = text(value.diagnosis), suggestedAction = text(value.suggestedAction), conservativeSuggestion = text(value.conservativeSuggestion), polishedSuggestion = text(value.polishedSuggestion)
+    const issueKey = text(value.issueKey), originalText = quote(value.originalText), subType = text(value.subType), severity = text(value.severity), diagnosis = text(value.diagnosis), suggestedAction = text(value.suggestedAction), conservativeSuggestion = text(value.conservativeSuggestion), polishedSuggestion = text(value.polishedSuggestion)
     const originalStart = originalText ? uniqueQuoteIndex(transcript, originalText) : null, beforeStart = typeof value.contextBefore === 'string' && value.contextBefore ? uniqueQuoteIndex(transcript, value.contextBefore) : null, afterStart = typeof value.contextAfter === 'string' && value.contextAfter ? uniqueQuoteIndex(transcript, value.contextAfter) : null
     if (!issueKey || !originalText || originalStart === null || typeof value.contextBefore !== 'string' || typeof value.contextAfter !== 'string' || (value.contextBefore && (beforeStart === null || beforeStart + value.contextBefore.length > originalStart)) || (value.contextAfter && (afterStart === null || afterStart < originalStart + originalText.length)) || !subType || !logicSubTypes.has(subType) || !severity || !severities.has(severity) || !diagnosis || !suggestedAction || !logicSuggestedActions.has(suggestedAction) || !conservativeSuggestion || !polishedSuggestion || typeof value.requiresTeacherReview !== 'boolean') return null
     logicIssues.push({ issueKey, originalText, contextBefore: value.contextBefore, contextAfter: value.contextAfter, subType: subType as RawLogicIssueV1['subType'], severity: severity as RawLogicIssueV1['severity'], diagnosis, suggestedAction: suggestedAction as RawLogicIssueV1['suggestedAction'], conservativeSuggestion, polishedSuggestion, requiresTeacherReview: value.requiresTeacherReview })
@@ -92,8 +91,18 @@ function parsePolicyInput(payload: Record<string, unknown>, transcript: string):
 function parseExpressionUpgrades(value: unknown, transcript: string): AiGradingResultV1['expressionUpgrades'] | null {
   if (!Array.isArray(value)) return null
   const result: AiGradingResultV1['expressionUpgrades'] = []
-  for (const [index, item] of value.entries()) { if (!isRecord(item)) return null; const originalText = text(item.originalText), upgradedText = text(item.upgradedText), note = text(item.note); const matched = originalText ? matchTranscriptQuote(transcript, originalText) : null; if (!matched || !upgradedText || !note) return null; result.push({ id: `${index + 1}`, originalText: matched, upgradedText, note }) }
+  for (const [index, item] of value.entries()) { if (!isRecord(item)) return null; const originalText = quote(item.originalText), upgradedText = text(item.upgradedText), note = text(item.note); if (!originalText || uniqueQuoteIndex(transcript, originalText) === null || !upgradedText || !note) return null; result.push({ id: `${index + 1}`, originalText, upgradedText, note }) }
   return result
+}
+
+export function normalizeGradingResultFromPolicyOutcome(input: { request: GradingRequestV1; context: NormalizationContext; policy: ResultPolicyOutcome; dimensionScores: AiGradingResultV1['dimensionScores']; totalScore: number; expressionUpgrades: AiGradingResultV1['expressionUpgrades']; improvedText: string; reviewReasons: string[] }): AiGradingResultV1 {
+  const { request, context, policy, dimensionScores, totalScore, improvedText } = input
+  const issueIdByKey = new Map(policy.issues.map((issue, index) => [issue.issueKey, `${request.essay.essayId}-issue-${index + 1}`]))
+  const issues: AiGradingResultV1['issues'] = policy.issues.map((issue) => ({ id: issueIdByKey.get(issue.issueKey)!, type: issue.type, severity: issue.severity, originalText: issue.originalText, suggestion: issue.suggestion, explanation: issue.explanation, evidenceCertainty: issue.evidenceCertainty, requiresTeacherReview: issue.requiresTeacherReview }))
+  const sentenceRevisions: AiGradingResultV1['sentenceRevisions'] = policy.sentenceRevisions.map((revision, index) => ({ id: `${request.essay.essayId}-revision-${index + 1}`, relatedIssueIds: revision.relatedIssueKeys.map((key) => issueIdByKey.get(key)!), originalText: revision.originalText, revisedText: revision.revisedText, note: revision.note, changeTypes: revision.changeTypes }))
+  const sentencePairs: NonNullable<AiGradingResultV1['fullTextRevision']>['sentencePairs'] = policy.sentencePairs.map((pair, index) => ({ id: `${request.essay.essayId}-pair-${index + 1}`, originalText: pair.originalText, correctedText: pair.correctedText, improvedText: pair.improvedText, relatedIssueIds: pair.relatedIssueKeys.map((key) => issueIdByKey.get(key)!), changeTypes: pair.changeTypes, explanation: pair.explanation, requiresTeacherReview: pair.requiresTeacherReview }))
+  const logicIssues = policy.logicIssues.map((issue, index) => ({ id: `${request.essay.essayId}-logic-${index + 1}`, originalText: issue.originalText, contextBefore: issue.contextBefore, contextAfter: issue.contextAfter, subType: issue.subType, severity: issue.severity, diagnosis: issue.diagnosis, suggestedAction: issue.suggestedAction, conservativeSuggestion: issue.conservativeSuggestion, polishedSuggestion: issue.polishedSuggestion, requiresTeacherReview: issue.requiresTeacherReview }))
+  return { resultVersion: 'grading-result-v1', requestId: request.requestId, essayId: request.essay.essayId, provider: context.provider, status: input.reviewReasons.length ? 'partial' : 'success', totalScore, maxScore: request.task.fullScore, dimensionScores, issues, sentenceRevisions, expressionUpgrades: input.expressionUpgrades.map((item) => ({ ...item, id: item.id.startsWith(`${request.essay.essayId}-`) ? item.id : `${request.essay.essayId}-upgrade-${item.id}` })), fullTextRevision: { originalText: request.essay.confirmedTranscript, correctedText: policy.correctedText, improvedText, sentencePairs, logicNotes: policy.logicNotes, logicIssues }, recognitionWarnings: [], legibilityIssues: [], overallComment: policy.overallComment, reviewReasons: [...input.reviewReasons], createdAt: context.createdAt }
 }
 
 function invalidResponse(): NormalizationResult {
@@ -167,12 +176,9 @@ export function normalizeGradingResult(
   if (!policy) return invalidResponse()
   const providerImproved = isRecord(payload.fullTextRevision) ? text(payload.fullTextRevision.improvedText) : null
   if (!providerImproved) return invalidResponse()
-  const issueIdByKey = new Map(policy.issues.map((issue, index) => [issue.issueKey, `${request.essay.essayId}-issue-${index + 1}`]))
-  const issues: AiGradingResultV1['issues'] = policy.issues.map((issue) => ({ id: issueIdByKey.get(issue.issueKey)!, type: issue.type, severity: issue.severity, originalText: issue.originalText, suggestion: issue.suggestion, explanation: issue.explanation, evidenceCertainty: issue.evidenceCertainty, requiresTeacherReview: issue.requiresTeacherReview }))
-  const sentenceRevisions: AiGradingResultV1['sentenceRevisions'] = policy.sentenceRevisions.map((revision, index) => ({ id: `${request.essay.essayId}-revision-${index + 1}`, relatedIssueIds: revision.relatedIssueKeys.map((key) => issueIdByKey.get(key)!), originalText: revision.originalText, revisedText: revision.revisedText, note: revision.note, changeTypes: revision.changeTypes }))
-  const sentencePairs: NonNullable<AiGradingResultV1['fullTextRevision']>['sentencePairs'] = policy.sentencePairs.map((pair, index) => ({ id: `${request.essay.essayId}-pair-${index + 1}`, originalText: pair.originalText, correctedText: pair.correctedText, improvedText: pair.improvedText, relatedIssueIds: pair.relatedIssueKeys.map((key) => issueIdByKey.get(key)!), changeTypes: pair.changeTypes, explanation: pair.explanation, requiresTeacherReview: pair.requiresTeacherReview }))
-  const logicIssues = policy.logicIssues.map((issue, index) => ({ id: `${request.essay.essayId}-logic-${index + 1}`, ...issue }))
-  return { ok: true, result: { resultVersion: 'grading-result-v1', requestId: request.requestId, essayId: request.essay.essayId, provider: context.provider, status: reviewReasons.size ? 'partial' : 'success', totalScore, maxScore: request.task.fullScore, dimensionScores, issues, sentenceRevisions, expressionUpgrades: expressionUpgrades.map((item) => ({ ...item, id: `${request.essay.essayId}-upgrade-${item.id}` })), fullTextRevision: { originalText: request.essay.confirmedTranscript, correctedText: policy.correctedText, improvedText: providerImproved, sentencePairs, logicNotes: policy.logicNotes, logicIssues }, recognitionWarnings: [], legibilityIssues: [], overallComment: policy.overallComment, ...(typeof payload.modelSelfConfidence === 'number' && Number.isFinite(payload.modelSelfConfidence) && payload.modelSelfConfidence >= 0 && payload.modelSelfConfidence <= 1 ? { modelSelfConfidence: payload.modelSelfConfidence } : {}), reviewReasons: [...reviewReasons], createdAt: context.createdAt } }
+  const result = normalizeGradingResultFromPolicyOutcome({ request, context, policy, dimensionScores, totalScore, expressionUpgrades, improvedText: providerImproved, reviewReasons: [...reviewReasons] })
+  if (typeof payload.modelSelfConfidence === 'number' && Number.isFinite(payload.modelSelfConfidence) && payload.modelSelfConfidence >= 0 && payload.modelSelfConfidence <= 1) result.modelSelfConfidence = payload.modelSelfConfidence
+  return { ok: true, result }
 
   /* Legacy projection retained only as migration reference; generic results return above from the shared policy output.
   const rawIssues = payload.issues
