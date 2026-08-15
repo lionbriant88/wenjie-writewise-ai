@@ -157,16 +157,16 @@ export interface AiGradingResultV1 {
     originalText: string
     suggestion: string
     explanation: string
-    evidenceCertainty?: EvidenceCertainty
+    evidenceCertainty: EvidenceCertainty
     requiresTeacherReview: boolean
   }>
   sentenceRevisions: Array<{
     id: string
-    relatedIssueId?: string
+    relatedIssueIds: string[]
     originalText: string
     revisedText: string
     note: string
-    changeTypes?: FullTextChangeType[]
+    changeTypes: FullTextChangeType[]
     requiresTeacherReview?: boolean
   }>
   expressionUpgrades: Array<{
@@ -185,21 +185,21 @@ export interface AiGradingResultV1 {
       originalText: string
       correctedText: string
       improvedText: string
-      relatedIssueId?: string
+      relatedIssueIds: string[]
       changeTypes: FullTextChangeType[]
       explanation: string
       requiresTeacherReview: boolean
     }>
     logicNotes: string[]
-    logicIssues?: LogicIssueV1[]
+    logicIssues: LogicIssueV1[]
   }
-  legibilityIssues?: LegibilityIssueV1[]
+  legibilityIssues: LegibilityIssueV1[]
   overallComment: string
   modelSelfConfidence?: number
   reviewReasons: string[]
   createdAt: string
   transcript?: string
-  recognitionWarnings?: string[]
+  recognitionWarnings: string[]
   printedTextExcluded?: boolean
 }
 

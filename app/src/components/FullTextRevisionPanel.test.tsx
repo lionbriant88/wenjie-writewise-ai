@@ -25,6 +25,7 @@ describe('FullTextRevisionPanel', () => {
             original: 'Synthetic original.',
             corrected: 'Synthetic corrected.',
             polished: 'Synthetic improved.',
+            relatedErrorIds: ['issue-1'],
             changeTypes: ['grammar'],
             explanation: 'Synthetic explanation.',
             needsTeacherReview: true,

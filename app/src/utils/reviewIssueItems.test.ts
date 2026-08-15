@@ -11,16 +11,18 @@ describe('buildReviewIssueItems', () => {
       suggestion: 'I suggest you join the club.',
       explanation: 'suggest 后使用动词原形。',
       severity: 'high',
+      evidenceCertainty: 'certain',
     },
   ]
 
   const revisions: SentenceRevision[] = [
     {
       id: 'rev-1',
-      relatedErrorId: 'err-1',
+      relatedErrorIds: ['err-1'],
       original: 'I suggest you joins the club.',
       revised: 'I suggest you join the club.',
       note: '修正 suggest 句型。',
+      changeTypes: ['grammar'],
     },
   ]
 
@@ -85,6 +87,10 @@ describe('buildReviewIssueItems', () => {
         {
           id: 'spell-1', type: 'spelling', original: 'enviroment', suggestion: 'environment',
           explanation: 'Synthetic spelling correction.', severity: 'medium', evidenceCertainty: 'certain',
+        },
+        {
+          id: 'spell-uncertain', type: 'spelling', original: 'cant', suggestion: "can't",
+          explanation: 'Synthetic uncertain spelling.', severity: 'medium', evidenceCertainty: 'uncertain',
         },
       ],
       revisions,

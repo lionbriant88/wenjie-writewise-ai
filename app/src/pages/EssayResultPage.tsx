@@ -321,7 +321,7 @@ export function EssayResultPage() {
         </div>
 
         <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
-          <div className="space-y-5">
+          <div role="region" aria-label="作文源文本面板" className="space-y-5">
             <EssaySourcePanel
               essay={essay}
               activeHighlightText={activeIssue?.original}
@@ -338,7 +338,7 @@ export function EssayResultPage() {
             />
           </div>
 
-          <div className="space-y-5">
+          <div role="region" aria-label="教师反馈面板" className="space-y-5">
             {(saveNotice || result.teacherAdjusted) ? (
               <div className="flex flex-wrap items-center gap-2">
                 {saveNotice ? (

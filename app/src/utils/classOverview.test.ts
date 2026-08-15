@@ -29,6 +29,8 @@ function result(essayId: string, totalScore: number): GradingResult {
     errorAnnotations: [],
     sentenceRevisions: [],
     upgradedExpressions: [],
+    recognitionWarnings: [],
+    legibilityIssues: [],
     overallComment: '',
     aiConfidence: 0.9,
     teacherAdjusted: false,

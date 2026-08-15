@@ -239,6 +239,8 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.queryByRole('heading', { name: '问题与修改建议' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '全文优化稿' })).not.toBeInTheDocument()
     expect(screen.queryByLabelText('教师补充建议')).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '作文源文本面板' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '教师反馈面板' })).toBeInTheDocument()
   })
 
   it('syncs dimension score edits with integer total score and five-band grade', async () => {

@@ -52,6 +52,7 @@ const highIssues: ErrorAnnotation[] = [
     suggestion: 'I suggest you join.',
     explanation: 'suggest 后用动词原形。',
     severity: 'high',
+    evidenceCertainty: 'certain',
   },
   {
     id: 'err-2',
@@ -60,6 +61,7 @@ const highIssues: ErrorAnnotation[] = [
     suggestion: 'Add a closing sentence.',
     explanation: '结尾不完整。',
     severity: 'high',
+    evidenceCertainty: 'certain',
   },
 ]
 

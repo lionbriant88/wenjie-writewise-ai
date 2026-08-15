@@ -153,17 +153,17 @@ export interface ErrorAnnotation {
   suggestion: string
   explanation: string
   severity: 'low' | 'medium' | 'high'
-  evidenceCertainty?: EvidenceCertainty
+  evidenceCertainty: EvidenceCertainty
   needsTeacherReview?: boolean
 }
 
 export interface SentenceRevision {
   id: string
-  relatedErrorId: string
+  relatedErrorIds: string[]
   original: string
   revised: string
   note: string
-  changeTypes?: FullTextChangeType[]
+  changeTypes: FullTextChangeType[]
   needsTeacherReview?: boolean
 }
 
@@ -225,7 +225,7 @@ export interface FullTextSentencePair {
   original: string
   corrected: string
   polished: string
-  relatedErrorId?: string
+  relatedErrorIds: string[]
   changeTypes: FullTextChangeType[]
   explanation: string
   needsTeacherReview?: boolean
@@ -268,9 +268,9 @@ export interface GradingResult {
   source?: 'mock' | 'remote'
   reviewReasons?: string[]
   transcript?: string
-  recognitionWarnings?: string[]
+  recognitionWarnings: string[]
   printedTextExcluded?: boolean
-  legibilityIssues?: LegibilityIssue[]
+  legibilityIssues: LegibilityIssue[]
   teacherAdjusted: boolean
   createdAt: string
   updatedAt: string

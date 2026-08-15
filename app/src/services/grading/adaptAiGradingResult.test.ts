@@ -47,7 +47,7 @@ const aiResult: AiGradingResultV1 = {
     explanation: 'Use the base verb.', evidenceCertainty: 'certain', requiresTeacherReview: true,
   }],
   sentenceRevisions: [{
-    id: 'revision-1', relatedIssueId: 'issue-1', originalText: 'joins', revisedText: 'join', note: 'Base verb.', changeTypes: ['grammar'], requiresTeacherReview: false,
+    id: 'revision-1', relatedIssueIds: ['issue-1'], originalText: 'joins', revisedText: 'join', note: 'Base verb.', changeTypes: ['grammar'], requiresTeacherReview: false,
   }],
   expressionUpgrades: [{
     id: 'upgrade-1', originalText: 'very useful', upgradedText: 'highly beneficial', note: 'More precise.', requiresTeacherReview: true,
@@ -58,7 +58,7 @@ const aiResult: AiGradingResultV1 = {
     improvedText: 'Improved synthetic transcript.',
     sentencePairs: [{
       id: 'pair-1', originalText: 'joins', correctedText: 'join', improvedText: 'take part',
-      relatedIssueId: 'issue-1', changeTypes: ['grammar'], explanation: 'Grammar correction.', requiresTeacherReview: true,
+      relatedIssueIds: ['issue-1'], changeTypes: ['grammar'], explanation: 'Grammar correction.', requiresTeacherReview: true,
     }],
     logicNotes: ['Teacher should verify meaning.'],
     logicIssues: [{
@@ -105,8 +105,8 @@ describe('adaptAiGradingResult', () => {
     expect(adapted.fullTextRevision?.logicIssues).toMatchObject([{
       id: 'logic-1', contextBefore: 'I suggest you ', suggestedAction: 'add_bridge_sentence',
     }])
-    expect(adapted.sentenceRevisions[0]).toMatchObject({ relatedErrorId: 'issue-1', changeTypes: ['grammar'] })
-    expect(adapted.fullTextRevision?.sentencePairs[0]).toMatchObject({ relatedErrorId: 'issue-1', changeTypes: ['grammar'] })
+    expect(adapted.sentenceRevisions[0]).toMatchObject({ relatedErrorIds: ['issue-1'], changeTypes: ['grammar'] })
+    expect(adapted.fullTextRevision?.sentencePairs[0]).toMatchObject({ relatedErrorIds: ['issue-1'], changeTypes: ['grammar'] })
     expect(adapted.legibilityIssues?.[0]).toMatchObject({ defaultOutcome: 'count_as_legibility_error' })
     expect(adapted).toMatchObject({ transcript: 'Student text.', recognitionWarnings: ['One word unclear.'], printedTextExcluded: true })
   })

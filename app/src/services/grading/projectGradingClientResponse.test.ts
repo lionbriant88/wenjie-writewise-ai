@@ -14,20 +14,20 @@ function validSuccess(): Record<string, unknown> {
     maxScore: 15,
     dimensionScores: [{
       dimensionId: 'language', name: 'Language', score: 12, maxScore: 15, weight: 100,
-      reason: 'Accurate.', evidence: 'Synthetic evidence.', requiresTeacherReview: true, unknownNested: 'discard',
+      reason: 'Accurate.', evidence: 'Synthetic evidence.', requiresTeacherReview: true,
     }],
     issues: [{
       id: 'issue-1', type: 'grammar', severity: 'medium', originalText: 'Synthetic error.',
       suggestion: 'Synthetic correction.', explanation: 'Synthetic explanation.',
-      evidenceCertainty: 'certain', requiresTeacherReview: true, unknownNested: 'discard',
+      evidenceCertainty: 'certain', requiresTeacherReview: true,
     }],
     sentenceRevisions: [{
-      id: 'revision-1', relatedIssueId: 'issue-1', originalText: 'Synthetic error.',
-      revisedText: 'Synthetic correction.', note: 'Synthetic note.', changeTypes: ['grammar'], requiresTeacherReview: true, unknownNested: 'discard',
+      id: 'revision-1', relatedIssueIds: ['issue-1'], originalText: 'Synthetic error.',
+      revisedText: 'Synthetic correction.', note: 'Synthetic note.', changeTypes: ['grammar'], requiresTeacherReview: true,
     }],
     expressionUpgrades: [{
       id: 'upgrade-1', originalText: 'useful', upgradedText: 'beneficial',
-      note: 'Synthetic note.', requiresTeacherReview: false, unknownNested: 'discard',
+      note: 'Synthetic note.', requiresTeacherReview: false,
     }],
     fullTextRevision: {
       originalText: 'Untrusted provider original.',
@@ -35,8 +35,8 @@ function validSuccess(): Record<string, unknown> {
       improvedText: 'Synthetic improvement.',
       sentencePairs: [{
         id: 'pair-1', originalText: 'Synthetic error.', correctedText: 'Synthetic correction.',
-        improvedText: 'Synthetic improvement.', relatedIssueId: 'issue-1', changeTypes: ['grammar'],
-        explanation: 'Synthetic explanation.', requiresTeacherReview: true, unknownNested: 'discard',
+        improvedText: 'Synthetic improvement.', relatedIssueIds: ['issue-1'], changeTypes: ['grammar'],
+        explanation: 'Synthetic explanation.', requiresTeacherReview: true,
       }],
       logicNotes: ['Teacher review required.'],
       logicIssues: [{
@@ -45,7 +45,6 @@ function validSuccess(): Record<string, unknown> {
         suggestedAction: 'add_bridge_sentence', conservativeSuggestion: 'Synthetic conservative suggestion.',
         polishedSuggestion: 'Synthetic polished suggestion.', requiresTeacherReview: true,
       }],
-      unknownNested: 'discard',
     },
     legibilityIssues: [],
     recognitionWarnings: [],
@@ -53,7 +52,6 @@ function validSuccess(): Record<string, unknown> {
     modelSelfConfidence: 0.8,
     reviewReasons: ['Review the rewrite.'],
     createdAt: '2026-07-20T00:00:00.000Z',
-    unknownTopLevel: 'discard',
   }
 }
 
@@ -70,19 +68,12 @@ function expectInvalid(value: unknown, override: Parameters<typeof projectGradin
 }
 
 describe('projectGradingClientResponse', () => {
-  it('projects every success field into new allowlisted nested objects', () => {
+  it('projects every success field into new exact nested objects', () => {
     const raw = validSuccess()
     const result = projectGradingClientResponse(raw, expected)
     expect(result.status).toBe('success')
     expect(result).not.toBe(raw)
     if (result.status === 'failed') throw new Error(result.error.message)
-    expect(result).not.toHaveProperty('unknownTopLevel')
-    expect(result.dimensionScores[0]).not.toHaveProperty('unknownNested')
-    expect(result.issues[0]).not.toHaveProperty('unknownNested')
-    expect(result.sentenceRevisions[0]).not.toHaveProperty('unknownNested')
-    expect(result.expressionUpgrades[0]).not.toHaveProperty('unknownNested')
-    expect(result.fullTextRevision).not.toHaveProperty('unknownNested')
-    expect(result.fullTextRevision?.sentencePairs[0]).not.toHaveProperty('unknownNested')
     expect(result.dimensionScores[0].requiresTeacherReview).toBe(true)
     expect(result.issues[0].requiresTeacherReview).toBe(true)
     expect(result.sentenceRevisions[0].requiresTeacherReview).toBe(true)
@@ -93,6 +84,24 @@ describe('projectGradingClientResponse', () => {
       legibilityIssues: [],
       fullTextRevision: { logicIssues: [expect.objectContaining({ id: 'logic-1' })] },
     })
+  })
+
+  it.each([
+    ['success top level', (raw: Record<string, unknown>) => { raw.extra = true }],
+    ['dimension', (raw: Record<string, unknown>) => { (raw.dimensionScores as Array<Record<string, unknown>>)[0].extra = true }],
+    ['issue', (raw: Record<string, unknown>) => { (raw.issues as Array<Record<string, unknown>>)[0].extra = true }],
+    ['revision', (raw: Record<string, unknown>) => { (raw.sentenceRevisions as Array<Record<string, unknown>>)[0].extra = true }],
+    ['expression upgrade', (raw: Record<string, unknown>) => { (raw.expressionUpgrades as Array<Record<string, unknown>>)[0].extra = true }],
+    ['full-text revision', (raw: Record<string, unknown>) => { (raw.fullTextRevision as Record<string, unknown>).extra = true }],
+    ['full-text pair', (raw: Record<string, unknown>) => { ((raw.fullTextRevision as Record<string, unknown>).sentencePairs as Array<Record<string, unknown>>)[0].extra = true }],
+    ['logic issue', (raw: Record<string, unknown>) => { ((raw.fullTextRevision as Record<string, unknown>).logicIssues as Array<Record<string, unknown>>)[0].extra = true }],
+    ['legibility issue', (raw: Record<string, unknown>) => {
+      raw.legibilityIssues = [{ id: 'legibility-1', transcriptText: 'cant', possibleReadings: ['cant', "can't"], pageNumber: 1, regionDescription: 'Synthetic.', explanation: 'Synthetic.', defaultOutcome: 'count_as_legibility_error', extra: true }]
+    }],
+  ] as const)('fails closed for an extra %s property', (_label, mutate) => {
+    const raw = validSuccess()
+    mutate(raw)
+    expectInvalid(raw)
   })
 
   it.each([
@@ -179,9 +188,8 @@ describe('projectGradingClientResponse', () => {
       requestId: 'request-1',
       status: 'failed',
       error: {
-        code: 'provider_timeout', message: 'Provider timed out.', retryable: true, secret: 'discard',
+        code: 'provider_timeout', message: 'Provider timed out.', retryable: true,
       },
-      unknownTopLevel: 'discard',
     }
     const result = projectGradingClientResponse(raw, { ...expected, httpOk: false })
     expect(result).toMatchObject({ requestId: 'request-1', status: 'failed', error: { code: 'provider_timeout', retryable: true } })
@@ -217,6 +225,30 @@ describe('projectGradingClientResponse', () => {
     expect(result.recognitionWarnings).not.toBe(raw.recognitionWarnings)
     ;(raw.recognitionWarnings as string[]).push('Raw mutation must not leak.')
     expect(result.recognitionWarnings).toEqual(['One word unclear.'])
+  })
+
+  it('fails closed when a failure object contains unknown keys', () => {
+    expectInvalid({
+      requestId: 'request-1', status: 'failed',
+      error: { code: 'provider_timeout', message: 'Provider timed out.', retryable: true, extra: true },
+    }, { ...expected, httpOk: false })
+  })
+
+  it('fails closed when a failure object has an unknown outer key', () => {
+    expectInvalid({ requestId: 'request-1', status: 'failed', error: { code: 'provider_timeout', message: 'Provider timed out.', retryable: true }, extra: true }, { ...expected, httpOk: false })
+  })
+
+  it('rejects duplicate or unresolved plural issue links and impossible legibility context', () => {
+    const duplicate = validSuccess()
+    ;(duplicate.sentenceRevisions as Array<Record<string, unknown>>)[0].relatedIssueIds = ['issue-1', 'issue-1']
+    expectInvalid(duplicate)
+    const unresolved = validSuccess()
+    ;((unresolved.fullTextRevision as Record<string, unknown>).sentencePairs as Array<Record<string, unknown>>)[0].relatedIssueIds = ['unknown-issue']
+    expectInvalid(unresolved)
+    const imageLegibility = validSuccess()
+    imageLegibility.legibilityIssues = [{ id: 'legibility-1', transcriptText: 'cant', possibleReadings: ['cant', "can't"], pageNumber: 2, regionDescription: 'Synthetic.', explanation: 'Synthetic.', defaultOutcome: 'count_as_legibility_error' }]
+    expectInvalid(imageLegibility, { ...expected, inputMode: 'images', pageCount: 1 })
+    expectInvalid(imageLegibility, { ...expected, inputMode: 'confirmed_text' })
   })
 
   it('drops unknown Kimi response fields while keeping failures free of raw upstream content', () => {

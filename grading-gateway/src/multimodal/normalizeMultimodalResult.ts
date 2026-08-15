@@ -140,35 +140,6 @@ function requestFor(context: MultimodalNormalizationContext, transcript: string)
 
 interface CitationSplit<T> { grounded: unknown[]; ungrounded: T[] }
 
-function splitIssues(value: unknown, transcript: string, essayId: string): CitationSplit<AiGradingResultV1['issues'][number]> | null {
-  if (!Array.isArray(value)) return null
-  const grounded: unknown[] = []; const ungrounded: AiGradingResultV1['issues'] = []; const seen = new Set<string>()
-  for (const [index, item] of value.entries()) {
-    if (!isRecord(item)) return null
-    const type = text(item.type, 32), severity = text(item.severity, 16), originalText = text(item.originalText), suggestion = text(item.suggestion), explanation = text(item.explanation)
-    if (!type || !['grammar', 'spelling', 'word_choice', 'structure'].includes(type) || !severity || !['low', 'medium', 'high'].includes(severity) || !originalText || !suggestion || !explanation || typeof item.requiresTeacherReview !== 'boolean') return null
-    const signature = `${type}\u0000${severity}\u0000${originalText}\u0000${suggestion}`
-    if (seen.has(signature)) return null
-    seen.add(signature)
-    if (matchTranscriptQuote(transcript, originalText)) grounded.push(item)
-    else ungrounded.push({ id: `${essayId}-issue-unmatched-${index + 1}`, type: type as AiGradingResultV1['issues'][number]['type'], severity: severity as AiGradingResultV1['issues'][number]['severity'], originalText, suggestion, explanation, requiresTeacherReview: true })
-  }
-  return { grounded, ungrounded }
-}
-
-function splitRevisions(value: unknown, transcript: string, essayId: string): CitationSplit<AiGradingResultV1['sentenceRevisions'][number]> | null {
-  if (!Array.isArray(value)) return null
-  const grounded: unknown[] = []; const ungrounded: AiGradingResultV1['sentenceRevisions'] = []
-  for (const [index, item] of value.entries()) {
-    if (!isRecord(item)) return null
-    const originalText = text(item.originalText), revisedText = text(item.revisedText), note = text(item.note)
-    if (!originalText || !revisedText || !note) return null
-    if (matchTranscriptQuote(transcript, originalText)) grounded.push(item)
-    else ungrounded.push({ id: `${essayId}-revision-unmatched-${index + 1}`, originalText, revisedText, note, requiresTeacherReview: true })
-  }
-  return { grounded, ungrounded }
-}
-
 function splitUpgrades(value: unknown, transcript: string, essayId: string): CitationSplit<AiGradingResultV1['expressionUpgrades'][number]> | null {
   if (!Array.isArray(value)) return null
   const grounded: unknown[] = []; const ungrounded: AiGradingResultV1['expressionUpgrades'] = []
@@ -182,32 +153,6 @@ function splitUpgrades(value: unknown, transcript: string, essayId: string): Cit
   return { grounded, ungrounded }
 }
 
-function splitSentencePairs(value: unknown, transcript: string, essayId: string): CitationSplit<NonNullable<AiGradingResultV1['fullTextRevision']>['sentencePairs'][number]> | null {
-  if (!isRecord(value) || !Array.isArray(value.sentencePairs)) return null
-  const grounded: unknown[] = []; const ungrounded: NonNullable<AiGradingResultV1['fullTextRevision']>['sentencePairs'] = []
-  for (const [index, item] of value.sentencePairs.entries()) {
-    if (!isRecord(item)) return null
-    const originalText = text(item.originalText), correctedText = text(item.correctedText), improvedText = text(item.improvedText), explanation = text(item.explanation)
-    const changeTypes = item.changeTypes
-    if (!originalText || !correctedText || !improvedText || !explanation || !Array.isArray(changeTypes) || !changeTypes.every((entry) => typeof entry === 'string' && CHANGE_TYPES.has(entry)) || typeof item.requiresTeacherReview !== 'boolean') return null
-    if (matchTranscriptQuote(transcript, originalText)) grounded.push(item)
-    else ungrounded.push({ id: `${essayId}-pair-unmatched-${index + 1}`, originalText, correctedText, improvedText, changeTypes: changeTypes as NonNullable<AiGradingResultV1['fullTextRevision']>['sentencePairs'][number]['changeTypes'], explanation, requiresTeacherReview: true })
-  }
-  return { grounded, ungrounded }
-}
-
-function splitLogicNotes(value: unknown, transcript: string): CitationSplit<{ quote: string; note: string }> | null {
-  if (!Array.isArray(value)) return null
-  const grounded: { quote: string; note: string }[] = []; const ungrounded: { quote: string; note: string }[] = []
-  for (const item of value) {
-    if (!isRecord(item)) return null
-    const quote = text(item.quote), note = text(item.note)
-    if (!quote || !note) return null
-    if (matchTranscriptQuote(transcript, quote)) grounded.push({ quote, note })
-    else ungrounded.push({ quote, note })
-  }
-  return { grounded, ungrounded }
-}
 
 function rawScoresAreBounded(value: unknown, context: MultimodalNormalizationContext) {
   if (!Array.isArray(value)) return false
@@ -256,7 +201,7 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
   const correctedText = rebuildCorrectedText(transcript, safePairs)
   if (correctedText === null) return invalid()
   const keptLogicNotes = logicNotes.filter(({ quote }) => !legibilityIssues.some(({ transcriptText }) => transcriptText === quote))
-  const basePayload = { ...payload, issues: safeIssues, sentenceRevisions: safeRevisions, expressionUpgrades: upgrades.grounded, fullTextRevision: { ...payload.fullTextRevision, correctedText, sentencePairs: safePairs, logicNotes: keptLogicNotes }, reviewReasons: policy.reviewReasons }
+  const basePayload = { ...payload, issues: safeIssues, sentenceRevisions: safeRevisions, expressionUpgrades: upgrades.grounded, legibilityIssues: [], fullTextRevision: { ...payload.fullTextRevision, correctedText, sentencePairs: safePairs, logicNotes: keptLogicNotes }, reviewReasons: policy.reviewReasons }
   const normalized = normalizeGradingResult(basePayload, request, { provider: context.provider, createdAt: context.createdAt })
   if (!normalized.ok) return invalid()
   const reviewReasons = new Set(normalized.result.reviewReasons)

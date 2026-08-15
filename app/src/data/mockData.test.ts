@@ -23,13 +23,13 @@ describe('mock grading result consistency', () => {
       )
 
       for (const revision of result.sentenceRevisions) {
-        const relatedErrorId = (revision as { relatedErrorId?: string }).relatedErrorId
-        const annotation = relatedErrorId ? annotationsById.get(relatedErrorId) : undefined
+        const relatedErrorIds = revision.relatedErrorIds
+        const annotation = relatedErrorIds.length === 1 ? annotationsById.get(relatedErrorIds[0]) : undefined
 
         expect(
-          relatedErrorId,
+          relatedErrorIds,
           `${result.id}/${revision.id} should reference an error annotation`,
-        ).toBeTruthy()
+        ).toHaveLength(1)
         expect(annotation, `${result.id}/${revision.id} should reference an existing annotation`).toBeDefined()
         expect(revision.original).toBe(annotation?.original)
         expect(revision.revised).toBe(annotation?.suggestion)

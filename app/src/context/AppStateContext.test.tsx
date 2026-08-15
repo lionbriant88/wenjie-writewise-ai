@@ -114,7 +114,7 @@ describe('AppStateContext material-based task creation', () => {
     const request = gradeImages.mock.calls[0][0]
     resolve({
       resultVersion: 'grading-result-v1', requestId: request.requestId, essayId: request.essayId, provider: 'mock', status: 'success', totalScore: 12, maxScore: 15,
-      dimensionScores: [], issues: [], sentenceRevisions: [], expressionUpgrades: [], overallComment: 'Done.', reviewReasons: [], createdAt: '2026-08-02T00:00:00.000Z',
+      dimensionScores: [], issues: [], sentenceRevisions: [], expressionUpgrades: [], legibilityIssues: [], overallComment: 'Done.', reviewReasons: [], createdAt: '2026-08-02T00:00:00.000Z',
       transcript: 'Kimi settled transcript.', recognitionWarnings: [], printedTextExcluded: true,
     })
     await act(async () => { await grading })
@@ -130,12 +130,12 @@ describe('AppStateContext material-based task creation', () => {
         resultVersion: 'grading-result-v1', requestId: request.requestId, essayId: request.essayId, provider: 'mock', status: 'success',
         totalScore: 12, maxScore: 15,
         dimensionScores: [{ dimensionId: 'content', name: 'Content', score: 12, maxScore: 15, weight: 100, reason: 'Dimension reason.', evidence: 'Dimension evidence.', requiresTeacherReview: false }],
-        issues: [{ id: 'issue-1', type: 'grammar', severity: 'medium', originalText: 'bad', suggestion: 'better', explanation: 'Issue explanation.', requiresTeacherReview: true }],
-        sentenceRevisions: [{ id: 'revision-1', relatedIssueId: 'issue-1', originalText: 'bad', revisedText: 'better', note: 'Revision note.', requiresTeacherReview: false }],
+        issues: [{ id: 'issue-1', type: 'grammar', severity: 'medium', originalText: 'bad', suggestion: 'better', explanation: 'Issue explanation.', evidenceCertainty: 'certain' as const, requiresTeacherReview: true }],
+        sentenceRevisions: [{ id: 'revision-1', relatedIssueIds: ['issue-1'], originalText: 'bad', revisedText: 'better', note: 'Revision note.', changeTypes: ['grammar'] as const, requiresTeacherReview: false }],
         expressionUpgrades: [{ id: 'upgrade-1', originalText: 'plain', upgradedText: 'polished', note: 'Upgrade note.', requiresTeacherReview: true }],
-        fullTextRevision: { originalText: 'bad', correctedText: 'better', improvedText: 'polished', sentencePairs: [{ id: 'pair-1', originalText: 'bad', correctedText: 'better', improvedText: 'polished', changeTypes: ['grammar'], explanation: 'Pair explanation.', requiresTeacherReview: false }], logicNotes: [] },
+        fullTextRevision: { originalText: 'bad', correctedText: 'better', improvedText: 'polished', sentencePairs: [{ id: 'pair-1', originalText: 'bad', correctedText: 'better', improvedText: 'polished', relatedIssueIds: ['issue-1'], changeTypes: ['grammar'] as const, explanation: 'Pair explanation.', requiresTeacherReview: false }], logicNotes: [], logicIssues: [] },
         overallComment: 'Detailed image result.', reviewReasons: [], createdAt: '2026-08-02T00:00:00.000Z',
-        transcript: 'Faithful image transcript.', recognitionWarnings: ['Low contrast on final line.'], printedTextExcluded: true,
+        transcript: 'Faithful image transcript.', recognitionWarnings: ['Low contrast on final line.'], legibilityIssues: [], printedTextExcluded: true,
       }),
     }
     render(<AppStateProvider gradingClient={gradingClient}><StateProbe /></AppStateProvider>)
@@ -175,7 +175,7 @@ describe('AppStateContext material-based task creation', () => {
       resultVersion: 'grading-result-v1' as const, requestId: request.requestId, essayId: request.essayId, provider: 'mock' as const, status: 'success' as const,
       totalScore: 12, maxScore: 15,
       dimensionScores: [{ dimensionId: 'content', name: 'Content', score: 12, maxScore: 15, weight: 100, reason: 'Reason.', evidence: 'Evidence.', requiresTeacherReview: false }],
-      issues: [], sentenceRevisions: [], expressionUpgrades: [], overallComment: 'Comment.', reviewReasons: [], createdAt: '2026-08-02T00:00:00.000Z',
+      issues: [], sentenceRevisions: [], expressionUpgrades: [], legibilityIssues: [], overallComment: 'Comment.', reviewReasons: [], createdAt: '2026-08-02T00:00:00.000Z',
       transcript: request.confirmedTranscript ?? 'Kimi transcript.', recognitionWarnings: [], printedTextExcluded: true,
     }))
     render(<AppStateProvider gradingClient={{ grade: async (request) => resultFor(request), gradeImages }}><StateProbe /></AppStateProvider>)
@@ -314,6 +314,8 @@ function resultFor(request: GradingRequestV1, provider: 'mock' | 'remote' = 'rem
     issues: [],
     sentenceRevisions: [],
     expressionUpgrades: [],
+    recognitionWarnings: [],
+    legibilityIssues: [],
     overallComment: 'Synthetic result.',
     reviewReasons: [],
     createdAt: '2026-07-20T01:00:00.000Z',

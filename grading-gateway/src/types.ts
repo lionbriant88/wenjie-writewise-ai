@@ -1,3 +1,5 @@
+import type { EvidenceCertainty, RawLogicIssueV1, RawMultimodalIssueV1, RawSentencePairV1, RawSentenceRevisionV1 } from './multimodal/types.js'
+
 export type WritingGenre = 'practical_writing' | 'continuation_writing'
 export type GradingProviderName = 'mock' | 'remote'
 export type GradingErrorCode =
@@ -126,28 +128,17 @@ export interface LegibilityIssueV1 {
 export interface ProviderGradingPayloadV1 {
   reportedTotalScore?: number
   dimensionScores: Array<{ dimensionId: string; score: number; reason: string; evidence: string }>
-  issues: Array<{
-    type: 'grammar' | 'spelling' | 'word_choice' | 'structure'
-    severity: 'low' | 'medium' | 'high'
-    originalText: string
-    suggestion: string
-    explanation: string
-    requiresTeacherReview?: boolean
-  }>
-  sentenceRevisions: Array<{ originalText: string; revisedText: string; note: string }>
+  recognitionWarnings: string[]
+  legibilityIssues: []
+  issues: RawMultimodalIssueV1[]
+  sentenceRevisions: RawSentenceRevisionV1[]
   expressionUpgrades: Array<{ originalText: string; upgradedText: string; note: string }>
   fullTextRevision: {
     correctedText: string
     improvedText?: string
-    sentencePairs: Array<{
-      originalText: string
-      correctedText: string
-      improvedText: string
-      changeTypes: GradingChangeType[]
-      explanation: string
-      requiresTeacherReview?: boolean
-    }>
+    sentencePairs: RawSentencePairV1[]
     logicNotes: Array<{ quote: string; note: string }>
+    logicIssues: RawLogicIssueV1[]
   }
   overallComment: string
   modelSelfConfidence?: number
@@ -179,14 +170,16 @@ export interface AiGradingResultV1 {
     originalText: string
     suggestion: string
     explanation: string
+    evidenceCertainty: EvidenceCertainty
     requiresTeacherReview: boolean
   }>
   sentenceRevisions: Array<{
     id: string
-    relatedIssueId?: string
+    relatedIssueIds: string[]
     originalText: string
     revisedText: string
     note: string
+    changeTypes: GradingChangeType[]
     requiresTeacherReview?: boolean
   }>
   expressionUpgrades: Array<{
@@ -205,6 +198,7 @@ export interface AiGradingResultV1 {
       originalText: string
       correctedText: string
       improvedText: string
+      relatedIssueIds: string[]
       changeTypes: GradingChangeType[]
       explanation: string
       requiresTeacherReview: boolean
@@ -213,6 +207,7 @@ export interface AiGradingResultV1 {
     logicIssues: LogicIssueV1[]
   }
   legibilityIssues: LegibilityIssueV1[]
+  recognitionWarnings: string[]
   overallComment: string
   modelSelfConfidence?: number
   reviewReasons: string[]

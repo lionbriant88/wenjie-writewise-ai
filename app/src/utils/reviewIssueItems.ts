@@ -57,7 +57,7 @@ export function buildReviewIssueItems({
   logicIssues = [],
   legibilityIssues = [],
 }: BuildReviewIssueItemsInput): ReviewIssueCardItem[] {
-  const revisionByErrorId = new Map(revisions.map((item) => [item.relatedErrorId, item]))
+  const revisionByErrorId = new Map(revisions.flatMap((item) => item.relatedErrorIds.map((id) => [id, item] as const)))
 
   const languageItems = annotations.filter((annotation) => annotation.type !== 'spelling').map((annotation): ReviewIssueCardItem => {
     const revision = revisionByErrorId.get(annotation.id)

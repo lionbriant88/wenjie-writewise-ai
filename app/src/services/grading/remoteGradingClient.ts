@@ -56,6 +56,8 @@ export function createRemoteGradingClient({
         httpOk: response.ok,
         requestId: request.requestId,
         essayId: request.essay.essayId,
+        inputMode: 'standard',
+        fullScore: request.task.fullScore,
       })
     },
     async gradeImages(request) {
@@ -79,7 +81,15 @@ export function createRemoteGradingClient({
       }
       let body: unknown
       try { body = await response.json() } catch { return gatewayInvalidResponse(request.requestId) }
-      return projectGradingClientResponse(body, { httpOk: response.ok, requestId: request.requestId, essayId: request.essayId, requireMultimodal: true })
+      return projectGradingClientResponse(body, {
+        httpOk: response.ok,
+        requestId: request.requestId,
+        essayId: request.essayId,
+        requireMultimodal: true,
+        inputMode: isConfirmedTextRegrade ? 'confirmed_text' : 'images',
+        pageCount: request.pages.length,
+        fullScore: request.task.fullScore,
+      })
     },
   }
 }

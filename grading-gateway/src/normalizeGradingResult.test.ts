@@ -31,11 +31,12 @@ function validPayload(): Record<string, unknown> {
       { dimensionId: 'language', score: 7.2, reason: 'Accurate.', evidence: 'Second synthetic line.' },
     ],
     issues: [{
-      type: 'grammar', severity: 'medium', originalText: 'Second synthetic line.',
-      suggestion: 'Second improved line.', explanation: 'Synthetic explanation.', requiresTeacherReview: true,
+      issueKey: 'grammar-1', type: 'grammar', severity: 'medium', originalText: 'Second synthetic line.',
+      suggestion: 'Second improved line.', explanation: 'Synthetic explanation.', evidenceCertainty: 'certain', requiresTeacherReview: true,
     }],
     sentenceRevisions: [{
       originalText: 'Second synthetic line.', revisedText: 'Second improved line.', note: 'Synthetic note.',
+      relatedIssueKeys: ['grammar-1'], changeTypes: ['grammar'],
     }],
     expressionUpgrades: [{
       originalText: 'First synthetic line.', upgradedText: 'First improved line.', note: 'Synthetic note.',
@@ -46,13 +47,16 @@ function validPayload(): Record<string, unknown> {
       sentencePairs: [{
         originalText: 'Second synthetic line.', correctedText: 'Second corrected line.',
         improvedText: 'Second improved line.', changeTypes: ['grammar'],
-        explanation: 'Synthetic explanation.', requiresTeacherReview: true,
+        relatedIssueKeys: ['grammar-1'], explanation: 'Synthetic explanation.', requiresTeacherReview: true,
       }],
       logicNotes: [{ quote: 'First synthetic line.', note: 'Teacher review required.' }],
+      logicIssues: [],
     },
     overallComment: 'Synthetic overall comment.',
     modelSelfConfidence: 0.8,
     reviewReasons: [],
+    recognitionWarnings: [],
+    legibilityIssues: [],
   }
 }
 

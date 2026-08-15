@@ -12,7 +12,7 @@ export function adaptAiGradingResult(
     source: result.provider,
     reviewReasons: [...result.reviewReasons],
     transcript: result.transcript,
-    recognitionWarnings: result.recognitionWarnings ? [...result.recognitionWarnings] : undefined,
+    recognitionWarnings: [...result.recognitionWarnings],
     printedTextExcluded: result.printedTextExcluded,
     totalScore: result.totalScore,
     dimensionScores: result.dimensionScores.map((dimension) => ({
@@ -37,11 +37,11 @@ export function adaptAiGradingResult(
     })),
     sentenceRevisions: result.sentenceRevisions.map((revision) => ({
       id: revision.id,
-      relatedErrorId: revision.relatedIssueId ?? '',
+      relatedErrorIds: [...revision.relatedIssueIds],
       original: revision.originalText,
       revised: revision.revisedText,
       note: revision.note,
-      changeTypes: revision.changeTypes ? [...revision.changeTypes] : undefined,
+      changeTypes: [...revision.changeTypes],
       needsTeacherReview: revision.requiresTeacherReview,
     })),
     upgradedExpressions: result.expressionUpgrades.map((upgrade) => ({
@@ -61,12 +61,12 @@ export function adaptAiGradingResult(
             original: pair.originalText,
             corrected: pair.correctedText,
             polished: pair.improvedText,
-            relatedErrorId: pair.relatedIssueId ?? '',
+            relatedErrorIds: [...pair.relatedIssueIds],
             changeTypes: [...pair.changeTypes],
             explanation: pair.explanation,
             needsTeacherReview: pair.requiresTeacherReview,
           })),
-          logicIssues: (result.fullTextRevision.logicIssues ?? []).map((issue) => ({
+          logicIssues: result.fullTextRevision.logicIssues.map((issue) => ({
             id: issue.id,
             original: issue.originalText,
             contextBefore: issue.contextBefore,
@@ -83,7 +83,7 @@ export function adaptAiGradingResult(
         }
       : undefined,
     overallComment: result.overallComment,
-    legibilityIssues: result.legibilityIssues?.map((issue) => ({ ...issue, possibleReadings: [...issue.possibleReadings] })),
+    legibilityIssues: result.legibilityIssues.map((issue) => ({ ...issue, possibleReadings: [...issue.possibleReadings] })),
     teacherAdjusted: false,
     createdAt: result.createdAt,
     updatedAt: result.createdAt,

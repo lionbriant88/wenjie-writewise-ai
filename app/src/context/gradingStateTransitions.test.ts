@@ -30,6 +30,7 @@ const successResult: AiGradingResultV1 = {
   resultVersion: 'grading-result-v1', requestId: 'request-1', essayId: 'essay-1',
   provider: 'remote', status: 'success', totalScore: 12, maxScore: 15,
   dimensionScores: [], issues: [], sentenceRevisions: [], expressionUpgrades: [],
+  recognitionWarnings: [], legibilityIssues: [],
   overallComment: 'Synthetic.', reviewReasons: [], createdAt: '2026-07-20T00:01:00.000Z',
 }
 
