@@ -76,10 +76,16 @@ export type ValidationResult<T> =
 
 export type {
   ConfirmedTaskPackageV2,
+  EvidenceCertainty,
   GeneratedRubricDimensionV1,
   GeneratedRubricV1,
   MultimodalGradeInputV2,
   ProviderMultimodalPayloadV1,
+  RawLegibilityIssueV1,
+  RawLogicIssueV1,
+  RawMultimodalIssueV1,
+  RawSentencePairV1,
+  RawSentenceRevisionV1,
 } from './multimodal/types.js'
 
 export type GradingChangeType =
@@ -92,6 +98,30 @@ export type GradingChangeType =
   | 'delete_suggestion'
   | 'replace_sentence'
   | 'reference_clarification'
+
+export interface LogicIssueV1 {
+  id: string
+  originalText: string
+  contextBefore: string
+  contextAfter: string
+  subType: 'weak_connection' | 'unclear_logic' | 'missing_cause_effect' | 'unclear_transition' | 'topic_drift' | 'irrelevant_sentence' | 'unclear_reference' | 'missing_motivation' | 'plot_gap'
+  severity: 'low' | 'medium' | 'high'
+  diagnosis: string
+  suggestedAction: 'add_connector' | 'add_bridge_sentence' | 'delete_sentence' | 'replace_sentence' | 'clarify_reference' | 'ask_student_to_explain'
+  conservativeSuggestion: string
+  polishedSuggestion: string
+  requiresTeacherReview: boolean
+}
+
+export interface LegibilityIssueV1 {
+  id: string
+  transcriptText: string
+  possibleReadings: string[]
+  pageNumber: number
+  regionDescription: string
+  explanation: string
+  defaultOutcome: 'count_as_legibility_error'
+}
 
 export interface ProviderGradingPayloadV1 {
   reportedTotalScore?: number
@@ -184,5 +214,8 @@ export interface AiGradingResultV1 {
   overallComment: string
   modelSelfConfidence?: number
   reviewReasons: string[]
+  recognitionWarnings?: string[]
+  legibilityIssues?: LegibilityIssueV1[]
+  logicIssues?: LogicIssueV1[]
   createdAt: string
 }
