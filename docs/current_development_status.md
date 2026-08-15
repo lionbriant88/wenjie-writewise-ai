@@ -1,6 +1,37 @@
 # 当前开发状态
 
-最后更新：2026-07-20
+最后更新：2026-08-15
+
+## 本次新增进展：多模态批改策略 Phase 1 验证与交接
+
+- 已完成 `grading-policy-v1` 的首轮策略收口：图片首批与教师确认文本后的重批使用同一份保守策略。可合理读成正确单词的字迹歧义按正确处理并保持静默；只有影响语义、语法或评分的重要歧义才作为可读性问题进入复核。
+- 评分继续优先覆盖语法、逻辑、任务完成度和表达；逻辑诊断必须有结构化上下文依据，问题引用必须能在 transcript 中精确定位。全文纠错稿、问题关系和前后端数据线协议均采用严格校验，拒绝不安全或无法重建的结果。
+- 合成 golden fixtures 与离线 evaluator 已完成并纳入 Gateway 自动化验证。真实 Kimi 评测状态为 `not_run_missing_local_credentials`：本地缺少 `KIMI_API_KEY`，未发生任何外部 Provider 调用；这不能表述为模型已经通过评测。
+- 已知、延后的 Minor 限制：合成夹具虽使用锁定渲染器，但仍会受不同机器的系统 `cursive` 字体影响，无法保证跨机器 PNG 字节完全一致；evaluator 的安全测试尚可补强为直接捕获 stdout/stderr。
+- 本轮不记录 API key、Provider 原始响应、作文全文、图片内容或学生身份；未修改归档历史规格。
+
+### 本轮精确验证矩阵
+
+| 范围 | 命令 | 最终结果 |
+| --- | --- | --- |
+| Grading Gateway | `Set-Location grading-gateway; npm.cmd test` | 19 个测试文件、223 个用例通过 |
+| Grading Gateway | `Set-Location grading-gateway; npm.cmd run typecheck` | 通过 |
+| Grading Gateway | `Set-Location grading-gateway; npm.cmd run verify:shared-scoring-runtime` | 通过（`shared scoring runtime ok`） |
+| 网站 | `Set-Location app; npm.cmd test` | 45 个测试文件、287 个用例通过 |
+| 网站 | `Set-Location app; npm.cmd run typecheck` | 通过 |
+| 网站 | `Set-Location app; npm.cmd run lint` | 通过 |
+| 网站 | `Set-Location app; npm.cmd run build` | 通过 |
+| 仓库 | `rg -n -e 'Preserve student spelling and grammar exactly' -e 'all spelling errors' -e '逐字保留所有拼写' -e 'transcriptionWarnings' -e 'transcription_uncertain' grading-gateway/src app/src`、`git diff --check` | 见下述分类；diff 检查通过 |
+
+### 策略冲突扫描分类
+
+- 生产代码仅有 `EssaySourcePanel` 的本地显示参数名 `transcriptionWarnings`；其唯一运行时传入值是当前契约的 `recognitionWarnings`，不属于 Gateway 输入/输出线协议，也不会把旧字段传给 Provider。
+- `transcriptionWarnings` 其余命中均位于测试：一部分验证 schema 明确拒绝旧字段，另一部分是兼容性/负向夹具；这些安全回归保留，不得误删。
+- 旧拼写指令只在断言“不得出现”的测试中命中；`transcription_uncertain` 没有命中。活跃生产策略未发现与 `grading-policy-v1` 冲突的指令。
+
+### 下一阶段
+
+下一阶段执行 `2026-08-15-remove-ocr-web-migration.md`：保持网站现有布局不变；小程序完整功能仍属于后续计划。
 
 ## 本次新增进展：真实 AI 批改 Gateway、DeepSeek Provider 与教师确认闭环 v0.1（自动化阶段）
 
