@@ -1,4 +1,8 @@
+import { exactUniqueTranscriptRange, transcriptRangesOverlap } from './transcriptRange.js'
+import type { TranscriptRange } from './transcriptRange.js'
 import type {
+  RawDimensionScoreV1,
+  RawExpressionUpgradeV1,
   RawLegibilityIssueV1,
   RawLogicIssueV1,
   RawMultimodalIssueV1,
@@ -10,9 +14,11 @@ export interface ResultPolicyInput {
   issues: RawMultimodalIssueV1[]
   sentenceRevisions: RawSentenceRevisionV1[]
   sentencePairs: RawSentencePairV1[]
+  expressionUpgrades: RawExpressionUpgradeV1[]
   logicIssues: RawLogicIssueV1[]
   legibilityIssues: RawLegibilityIssueV1[]
-  dimensionReasons: string[]
+  dimensionScores: RawDimensionScoreV1[]
+  recognitionWarnings: string[]
   overallComment: string
   logicNotes: string[]
   logicNoteRecords?: Array<{ quote: string; note: string }>
@@ -20,6 +26,7 @@ export interface ResultPolicyInput {
 
 export interface ResultPolicyOutcome extends ResultPolicyInput {
   correctedText: string
+  improvedText: string
   reviewReasons: string[]
 }
 
@@ -28,43 +35,17 @@ export interface CorrectedTextEdit {
   correctedText: string
 }
 
-interface LocatedEdit extends CorrectedTextEdit {
-  start: number
-  end: number
-}
-
-function uniqueIndex(source: string, quote: string): number | null {
-  if (!quote || !quote.trim()) return null
-  const start = source.indexOf(quote)
-  if (start < 0 || source.indexOf(quote, start + 1) >= 0) return null
-  return start
-}
-
 function hasUniqueKeys(keys: string[]): boolean {
   return keys.every((key) => key.trim().length > 0) && new Set(keys).size === keys.length
 }
 
-function filteredSpellingLeaks(issue: RawMultimodalIssueV1, input: ResultPolicyInput): boolean {
-  const containsBoth = (value: string) => value.includes(issue.originalText) && value.includes(issue.suggestion)
-  const logicNarratives = input.logicIssues.flatMap((logicIssue) => [
-    logicIssue.originalText,
-    logicIssue.contextBefore,
-    logicIssue.contextAfter,
-    logicIssue.diagnosis,
-    logicIssue.conservativeSuggestion,
-    logicIssue.polishedSuggestion,
-  ])
-  const logicNoteNarratives = input.logicNoteRecords?.flatMap(({ quote, note }) => [quote, note]) ?? []
-  return input.dimensionReasons.some(containsBoth)
-    || containsBoth(input.overallComment)
-    || input.logicNotes.some(containsBoth)
-    || logicNarratives.some(containsBoth)
-    || logicNoteNarratives.some(containsBoth)
+function overlapsAny(range: TranscriptRange, blocked: TranscriptRange[]): boolean {
+  return blocked.some((candidate) => transcriptRangesOverlap(range, candidate))
 }
 
 function revisionKeysAreKnown(revision: RawSentenceRevisionV1 | RawSentencePairV1, allIssueKeys: Set<string>): boolean {
   return revision.relatedIssueKeys.length > 0
-    && new Set(revision.relatedIssueKeys).size === revision.relatedIssueKeys.length
+    && hasUniqueKeys(revision.relatedIssueKeys)
     && revision.relatedIssueKeys.every((key) => allIssueKeys.has(key))
 }
 
@@ -78,31 +59,34 @@ function revisionIsAllowed(
       || revision.relatedIssueKeys.some((key) => keptCertainSpellingKeys.has(key)))
 }
 
-function hasSafeEditLocations(transcript: string, edits: Array<{ originalText: string }>): boolean {
-  const ranges: Array<{ start: number; end: number }> = []
+function rebuildText(
+  transcript: string,
+  edits: Array<{ originalText: string; replacementText: string }>,
+): string | null {
+  const located: Array<TranscriptRange & { replacementText: string }> = []
   for (const edit of edits) {
-    const start = uniqueIndex(transcript, edit.originalText)
-    if (start === null) return false
-    const end = start + edit.originalText.length
-    if (ranges.some((range) => start < range.end && end > range.start)) return false
-    ranges.push({ start, end })
+    if (!edit.replacementText || !edit.replacementText.trim()) return null
+    const range = exactUniqueTranscriptRange(transcript, edit.originalText)
+    if (!range || overlapsAny(range, located)) return null
+    located.push({ ...range, replacementText: edit.replacementText })
+  }
+  return located
+    .sort((left, right) => right.start - left.start)
+    .reduce((result, edit) => result.slice(0, edit.start) + edit.replacementText + result.slice(edit.end), transcript)
+}
+
+function hasSafeEditLocations(transcript: string, edits: Array<{ originalText: string }>): boolean {
+  const ranges: TranscriptRange[] = []
+  for (const edit of edits) {
+    const range = exactUniqueTranscriptRange(transcript, edit.originalText)
+    if (!range || overlapsAny(range, ranges)) return false
+    ranges.push(range)
   }
   return true
 }
 
 export function rebuildCorrectedText(transcript: string, edits: CorrectedTextEdit[]): string | null {
-  const located: LocatedEdit[] = []
-  for (const edit of edits) {
-    if (!edit.correctedText || !edit.correctedText.trim()) return null
-    const start = uniqueIndex(transcript, edit.originalText)
-    if (start === null) return null
-    const end = start + edit.originalText.length
-    if (located.some((other) => start < other.end && end > other.start)) return null
-    located.push({ ...edit, start, end })
-  }
-  return located
-    .sort((left, right) => right.start - left.start)
-    .reduce((result, edit) => result.slice(0, edit.start) + edit.correctedText + result.slice(edit.end), transcript)
+  return rebuildText(transcript, edits.map(({ originalText, correctedText }) => ({ originalText, replacementText: correctedText })))
 }
 
 export function applyResultPolicy(raw: ResultPolicyInput, transcript: string): ResultPolicyOutcome | null {
@@ -113,54 +97,144 @@ export function applyResultPolicy(raw: ResultPolicyInput, transcript: string): R
   ]
   if (!hasUniqueKeys(allKeyValues)) return null
 
-  const allIssueKeys = new Set(raw.issues.map(({ issueKey }) => issueKey))
+  const allIssueKeys = new Set(allKeyValues)
+  const rangesByKey = new Map<string, TranscriptRange>()
+  for (const issue of raw.issues) {
+    const range = exactUniqueTranscriptRange(transcript, issue.originalText)
+    if (!range) return null
+    rangesByKey.set(issue.issueKey, range)
+  }
+  for (const issue of raw.logicIssues) {
+    const range = exactUniqueTranscriptRange(transcript, issue.originalText)
+    if (!range) return null
+    rangesByKey.set(issue.issueKey, range)
+  }
+  for (const issue of raw.legibilityIssues) {
+    const range = exactUniqueTranscriptRange(transcript, issue.transcriptText)
+    if (!range) return null
+    rangesByKey.set(issue.issueKey, range)
+  }
+
   const filteredSpelling = raw.issues.filter((issue) => (
     issue.type === 'spelling' && (issue.evidenceCertainty !== 'certain' || issue.requiresTeacherReview)
   ))
-  if (filteredSpelling.some((issue) => filteredSpellingLeaks(issue, raw))) return null
-
-  if (raw.issues.some((issue) => uniqueIndex(transcript, issue.originalText) === null)) return null
-  if (raw.logicIssues.some((issue) => uniqueIndex(transcript, issue.originalText) === null)) return null
-  if (raw.logicNoteRecords?.some((note) => uniqueIndex(transcript, note.quote) === null)) return null
-
-  const legibilityQuotes = new Set<string>()
-  for (const issue of raw.legibilityIssues) {
-    if (uniqueIndex(transcript, issue.transcriptText) === null) return null
-    legibilityQuotes.add(issue.transcriptText)
-  }
+  const filteredSpellingKeys = new Set(filteredSpelling.map(({ issueKey }) => issueKey))
+  const filteredSpellingRanges = filteredSpelling.map(({ issueKey }) => rangesByKey.get(issueKey)!)
+  const legibilityKeys = new Set(raw.legibilityIssues.map(({ issueKey }) => issueKey))
+  const legibilityRanges = raw.legibilityIssues.map(({ issueKey }) => rangesByKey.get(issueKey)!)
+  const contaminatedRanges = [...filteredSpellingRanges, ...legibilityRanges]
 
   const keptIssues = raw.issues.filter((issue) => (
-    (issue.type !== 'spelling' || (issue.evidenceCertainty === 'certain' && issue.requiresTeacherReview === false))
-    && !(['grammar', 'word_choice'].includes(issue.type) && legibilityQuotes.has(issue.originalText))
+    !filteredSpellingKeys.has(issue.issueKey)
+    && !overlapsAny(rangesByKey.get(issue.issueKey)!, contaminatedRanges)
   ))
-  const keptKeys = new Set(keptIssues.map((issue) => issue.issueKey))
+  const keptLogicIssues = raw.logicIssues.filter((issue) => !overlapsAny(rangesByKey.get(issue.issueKey)!, contaminatedRanges))
+  const keptKeys = new Set([
+    ...keptIssues.map(({ issueKey }) => issueKey),
+    ...keptLogicIssues.map(({ issueKey }) => issueKey),
+    ...raw.legibilityIssues.map(({ issueKey }) => issueKey),
+  ])
   const keptCertainSpellingKeys = new Set(keptIssues
     .filter((issue) => issue.type === 'spelling' && issue.evidenceCertainty === 'certain')
-    .map((issue) => issue.issueKey))
+    .map(({ issueKey }) => issueKey))
 
   const revisions = [...raw.sentenceRevisions, ...raw.sentencePairs]
-  if (revisions.some((revision) => (
-    revision.changeTypes.length === 0
-    || uniqueIndex(transcript, revision.originalText) === null
-    || !revisionKeysAreKnown(revision, allIssueKeys)
-  ))) return null
-
-  const keptSentenceRevisions = raw.sentenceRevisions.filter((revision) => revisionIsAllowed(revision, keptKeys, keptCertainSpellingKeys))
-  const keptSentencePairs = raw.sentencePairs.filter((pair) => revisionIsAllowed(pair, keptKeys, keptCertainSpellingKeys))
+  const revisionRanges = new Map<RawSentenceRevisionV1 | RawSentencePairV1, TranscriptRange>()
+  for (const revision of revisions) {
+    const range = exactUniqueTranscriptRange(transcript, revision.originalText)
+    if (revision.changeTypes.length === 0 || !range || !revisionKeysAreKnown(revision, allIssueKeys)) return null
+    revisionRanges.set(revision, range)
+  }
+  const keepRevision = (revision: RawSentenceRevisionV1 | RawSentencePairV1) => (
+    !overlapsAny(revisionRanges.get(revision)!, contaminatedRanges)
+    && revisionIsAllowed(revision, keptKeys, keptCertainSpellingKeys)
+  )
+  const keptSentenceRevisions = raw.sentenceRevisions.filter(keepRevision)
+  const keptSentencePairs = raw.sentencePairs.filter(keepRevision)
   if (!hasSafeEditLocations(transcript, keptSentenceRevisions) || !hasSafeEditLocations(transcript, keptSentencePairs)) return null
 
-  const keptLogicIssues = raw.logicIssues.filter((issue) => !legibilityQuotes.has(issue.originalText))
+  const upgradeRanges = new Map<RawExpressionUpgradeV1, TranscriptRange>()
+  for (const upgrade of raw.expressionUpgrades) {
+    const range = exactUniqueTranscriptRange(transcript, upgrade.originalText)
+    if (!range) return null
+    upgradeRanges.set(upgrade, range)
+  }
+  const keptExpressionUpgrades = raw.expressionUpgrades.filter((upgrade) => !overlapsAny(upgradeRanges.get(upgrade)!, contaminatedRanges))
 
-  const correctedText = rebuildCorrectedText(transcript, keptSentencePairs)
-  if (correctedText === null) return null
+  const keptLogicNoteRecords: Array<{ quote: string; note: string }> = []
+  for (const record of raw.logicNoteRecords ?? []) {
+    const range = exactUniqueTranscriptRange(transcript, record.quote)
+    if (!range) return null
+    if (!overlapsAny(range, contaminatedRanges)) keptLogicNoteRecords.push(record)
+  }
+  const keptLogicNotes = raw.logicNoteRecords ? keptLogicNoteRecords.map(({ note }) => note) : raw.logicNotes
+
+  if (!hasUniqueKeys(raw.dimensionScores.map(({ dimensionId }) => dimensionId))) return null
+  for (const dimension of raw.dimensionScores) {
+    if (!hasUniqueKeys(dimension.relatedIssueKeys) || !dimension.relatedIssueKeys.every((key) => allIssueKeys.has(key))) return null
+    const evidenceRange = exactUniqueTranscriptRange(transcript, dimension.evidence)
+    if (!evidenceRange) return null
+    const atMaximum = dimension.score === dimension.maxScore
+    if ((atMaximum && dimension.relatedIssueKeys.length > 0) || (!atMaximum && dimension.relatedIssueKeys.length === 0)) return null
+    if (dimension.relatedIssueKeys.some((key) => filteredSpellingKeys.has(key) || !keptKeys.has(key))) return null
+    if (overlapsAny(evidenceRange, filteredSpellingRanges)) return null
+    if (dimension.dimensionId === 'legibility') {
+      if (dimension.relatedIssueKeys.some((key) => !legibilityKeys.has(key))) return null
+    } else if (dimension.relatedIssueKeys.some((key) => legibilityKeys.has(key)) || overlapsAny(evidenceRange, legibilityRanges)) {
+      return null
+    }
+  }
+  if (raw.legibilityIssues.length > 0) {
+    const legibilityDimension = raw.dimensionScores.find(({ dimensionId }) => dimensionId === 'legibility')
+    if (!legibilityDimension || legibilityDimension.score >= legibilityDimension.maxScore) return null
+    if (raw.legibilityIssues.some(({ issueKey }) => !legibilityDimension.relatedIssueKeys.includes(issueKey))) return null
+    const evidenceRange = exactUniqueTranscriptRange(transcript, legibilityDimension.evidence)!
+    if (!overlapsAny(evidenceRange, legibilityRanges)) return null
+  }
+
+  const filteredWords = filteredSpelling.flatMap(({ originalText, suggestion }) => [originalText, suggestion])
+  const leaksFilteredSpelling = (value: string) => filteredWords.some((word) => value.includes(word))
+  const narratives = [
+    ...raw.dimensionScores.flatMap(({ reason, evidence }) => [reason, evidence]),
+    raw.overallComment,
+    ...keptLogicNotes,
+    ...keptLogicIssues.flatMap((issue) => [issue.diagnosis, issue.conservativeSuggestion, issue.polishedSuggestion]),
+    ...keptSentenceRevisions.flatMap(({ revisedText, note }) => [revisedText, note]),
+    ...keptSentencePairs.flatMap(({ correctedText, improvedText, explanation }) => [correctedText, improvedText, explanation]),
+    ...keptExpressionUpgrades.flatMap(({ upgradedText, note }) => [upgradedText, note]),
+  ]
+  if (filteredWords.length > 0 && narratives.some(leaksFilteredSpelling)) return null
+
+  const legibilityWords = raw.legibilityIssues.map(({ transcriptText }) => transcriptText)
+  const leaksLegibility = (value: string) => legibilityWords.some((word) => value.includes(word))
+  const nonLegibilityNarratives = [
+    ...raw.recognitionWarnings,
+    ...raw.dimensionScores.filter(({ dimensionId }) => dimensionId !== 'legibility').flatMap(({ reason, evidence }) => [reason, evidence]),
+    raw.overallComment,
+    ...keptIssues.flatMap(({ suggestion, explanation }) => [suggestion, explanation]),
+    ...keptLogicNotes,
+    ...keptLogicIssues.flatMap((issue) => [issue.diagnosis, issue.conservativeSuggestion, issue.polishedSuggestion]),
+    ...keptSentenceRevisions.flatMap(({ revisedText, note }) => [revisedText, note]),
+    ...keptSentencePairs.flatMap(({ correctedText, improvedText, explanation }) => [correctedText, improvedText, explanation]),
+    ...keptExpressionUpgrades.flatMap(({ upgradedText, note }) => [upgradedText, note]),
+  ]
+  if (legibilityWords.length > 0 && nonLegibilityNarratives.some(leaksLegibility)) return null
+
+  const correctedText = rebuildText(transcript, keptSentencePairs.map(({ originalText, correctedText }) => ({ originalText, replacementText: correctedText })))
+  const improvedText = rebuildText(transcript, keptSentencePairs.map(({ originalText, improvedText }) => ({ originalText, replacementText: improvedText })))
+  if (correctedText === null || improvedText === null) return null
 
   return {
     ...raw,
     issues: keptIssues,
     sentenceRevisions: keptSentenceRevisions,
     sentencePairs: keptSentencePairs,
+    expressionUpgrades: keptExpressionUpgrades,
     logicIssues: keptLogicIssues,
+    logicNotes: keptLogicNotes,
+    ...(raw.logicNoteRecords ? { logicNoteRecords: keptLogicNoteRecords } : {}),
     correctedText,
+    improvedText,
     reviewReasons: [],
   }
 }

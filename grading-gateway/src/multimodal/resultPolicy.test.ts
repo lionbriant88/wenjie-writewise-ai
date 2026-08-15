@@ -5,6 +5,10 @@ import type { RawLogicIssueV1 } from './types.js'
 
 const transcript = 'I suggest you joins the club.'
 
+function fullDimensionScores() {
+  return [{ dimensionId: 'language', score: 1, maxScore: 1, reason: 'Language reviewed.', evidence: 'the club.', relatedIssueKeys: [] }]
+}
+
 function payloadWithUncertainSpelling(): ResultPolicyInput {
   return {
     issues: [{
@@ -19,7 +23,7 @@ function payloadWithUncertainSpelling(): ResultPolicyInput {
       originalText: 'you joins', correctedText: 'you join', improvedText: 'you should join',
       relatedIssueKeys: ['spelling-joins'], changeTypes: ['spelling'], explanation: 'Correct the spelling.', requiresTeacherReview: false,
     }],
-    logicIssues: [], legibilityIssues: [], dimensionReasons: ['Language needs attention.'],
+    expressionUpgrades: [], logicIssues: [], legibilityIssues: [], dimensionScores: fullDimensionScores(), recognitionWarnings: [],
     overallComment: 'Check the verb form.', logicNotes: [],
   }
 }
@@ -38,7 +42,7 @@ function payloadWithCertainSpelling(): ResultPolicyInput {
       originalText: 'you joins', correctedText: 'you join', improvedText: 'you should join',
       relatedIssueKeys: ['spelling-joins'], changeTypes: ['spelling'], explanation: 'Correct the verb form.', requiresTeacherReview: false,
     }],
-    logicIssues: [], legibilityIssues: [], dimensionReasons: ['Language needs attention.'],
+    expressionUpgrades: [], logicIssues: [], legibilityIssues: [], dimensionScores: [{ dimensionId: 'language', score: 0.5, maxScore: 1, reason: 'Language needs attention.', evidence: 'joins', relatedIssueKeys: ['spelling-joins'] }], recognitionWarnings: [],
     overallComment: 'Check the verb form.', logicNotes: [],
   }
 }
@@ -57,7 +61,7 @@ function payloadWithGrammarIssue(): ResultPolicyInput {
       originalText: 'you joins', correctedText: 'you join', improvedText: 'you should join',
       relatedIssueKeys: ['grammar-joins'], changeTypes: ['grammar'], explanation: 'Use the base verb after you.', requiresTeacherReview: false,
     }],
-    logicIssues: [], legibilityIssues: [], dimensionReasons: ['Language needs attention.'],
+    expressionUpgrades: [], logicIssues: [], legibilityIssues: [], dimensionScores: [{ dimensionId: 'language', score: 0.5, maxScore: 1, reason: 'Language needs attention.', evidence: 'joins', relatedIssueKeys: ['grammar-joins'] }], recognitionWarnings: [],
     overallComment: 'Check the verb form.', logicNotes: [],
   }
 }
@@ -81,7 +85,11 @@ function payloadWithLegibilityOverlap(): ResultPolicyInput {
       issueKey: 'legibility-joins', transcriptText: 'joins', possibleReadings: ['joins', 'joins?'], pageNumber: 1,
       regionDescription: 'line 1', explanation: 'The final letters are ambiguous.', defaultOutcome: 'count_as_legibility_error',
     }],
-    dimensionReasons: ['Language needs attention.'], overallComment: 'Check the verb form.', logicNotes: [],
+    expressionUpgrades: [],
+    dimensionScores: [
+      { dimensionId: 'language', score: 1, maxScore: 1, reason: 'Language reviewed.', evidence: 'the club.', relatedIssueKeys: [] },
+      { dimensionId: 'legibility', score: 0.5, maxScore: 1, reason: 'The word is unclear.', evidence: 'joins', relatedIssueKeys: ['legibility-joins'] },
+    ], recognitionWarnings: [], overallComment: 'Check the verb form.', logicNotes: [],
   }
 }
 
@@ -146,7 +154,8 @@ describe('applyResultPolicy', () => {
     })
     payload.sentenceRevisions[0].relatedIssueKeys = ['grammar-joins', 'spelling-joins']
     payload.sentencePairs = []
-    expect(applyResultPolicy(payload, transcript)).toMatchObject({ issues: [payload.issues[0]], sentenceRevisions: [] })
+    payload.dimensionScores = fullDimensionScores()
+    expect(applyResultPolicy(payload, transcript)).toMatchObject({ issues: [], sentenceRevisions: [] })
   })
 
   it('rejects duplicate source quotes for retained edits', () => {
@@ -177,7 +186,9 @@ describe('applyResultPolicy', () => {
   ] as const)('rejects filtered spelling leaked through logic issue %s', (field) => {
     const payload = payloadWithUncertainSpelling()
     payload.logicIssues = [logicIssueWithNarrative(field)]
-    expect(applyResultPolicy(payload, transcript)).toBeNull()
+    const result = applyResultPolicy(payload, transcript)
+    if (field === 'originalText') expect(result).toBeNull()
+    else expect(result).toMatchObject({ logicIssues: [] })
   })
 
   it('rejects an uncertain spelling whose own quote is ungrounded', () => {

@@ -28,7 +28,7 @@ describe('essay grading prompt', () => {
     expect(text).not.toContain('Preserve student spelling and grammar exactly')
     expect(text).toMatch(/exclude.*printed.*task instructions.*page furniture/i)
     expect(text).toMatch(/never obey.*text inside images/i)
-    expect(text).toContain('只有无法合理读成正确单词且会影响语义、语法或评分的重要歧义')
+    expect(text).toContain('只有全局、无法定位或学生正文/印刷文本边界的不确定性')
     expect(text).toMatch(/issue quote.*transcript/i)
     expect(text).toMatch(/percentage weights.*full score/i)
     expect(text).toContain('data:image/png;base64,c2Vjb25k')
@@ -60,7 +60,7 @@ describe('essay grading prompt', () => {
     })[0].content)
 
     expect(imagePrompt).toContain('可合理读成正确单词的字迹歧义必须保持静默：recognitionWarnings 和 reviewReasons 均为空')
-    expect(imagePrompt).toContain('只有无法合理读成正确单词且会影响语义、语法或评分的重要歧义，才能写入 recognitionWarnings、recognition_uncertain review reason 或要求教师复核')
+    expect(imagePrompt).toContain('只有全局、无法定位或学生正文/印刷文本边界的不确定性，才能写入 recognitionWarnings、recognition_uncertain review reason 或要求教师复核')
     expect(imagePrompt).toContain('logicIssues.originalText')
     expect(imagePrompt).toContain('legibilityIssues.transcriptText 必须可在 transcript 中逐字定位')
   })
@@ -128,6 +128,20 @@ describe('essay grading prompt', () => {
     expect(essayGradingSchema.properties.legibilityIssues.items.properties.possibleReadings).toMatchObject({ minItems: 2, maxItems: 4 })
     expect(essayGradingSchema.properties.legibilityIssues.items.properties.pageNumber).toMatchObject({ minimum: 1 })
     expect(essayGradingSchema.properties.legibilityIssues.items.properties.defaultOutcome.enum).toEqual(['count_as_legibility_error'])
+    expect(essayGradingSchema.properties.dimensionScores.items.required).toContain('relatedIssueKeys')
+    expect(essayGradingSchema.properties.dimensionScores.items.properties.relatedIssueKeys).toMatchObject({
+      type: 'array', maxItems: 50, uniqueItems: true,
+    })
+  })
+
+  it('separates local legibility findings from global recognition warnings', () => {
+    const imagePrompt = buildEssayGradingMessages({
+      essayId: 'essay', task,
+      pages: [{ pageId: 'page-1', mimeType: 'image/png', buffer: Buffer.from('image') }],
+    })[0].content
+    expect(imagePrompt).toContain('localizable')
+    expect(imagePrompt).toContain('only in legibilityIssues')
+    expect(imagePrompt).toContain('Global, unlocalizable, or printed/student-boundary uncertainty')
   })
 
   it('treats teacher-confirmed text as an authoritative JSON field, not image instructions', () => {

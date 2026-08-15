@@ -24,6 +24,7 @@ export class MockGradingProvider implements GradingProvider {
         score: roundScore2(maxScore * 0.8),
         reason: 'Gateway mock：根据已确认评分维度生成稳定候选结果。',
         evidence: quote,
+        relatedIssueKeys: ['mock-structure'],
       }
     })
     return {

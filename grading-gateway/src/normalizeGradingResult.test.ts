@@ -27,8 +27,8 @@ function validPayload(): Record<string, unknown> {
   return {
     reportedTotalScore: 12,
     dimensionScores: [
-      { dimensionId: 'content', score: 4.8, reason: 'Relevant.', evidence: 'First synthetic line.' },
-      { dimensionId: 'language', score: 7.2, reason: 'Accurate.', evidence: 'Second synthetic line.' },
+      { dimensionId: 'content', score: 4.8, reason: 'Relevant.', evidence: 'First synthetic line.', relatedIssueKeys: ['grammar-1'] },
+      { dimensionId: 'language', score: 7.2, reason: 'Accurate.', evidence: 'Second   synthetic line.', relatedIssueKeys: ['grammar-1'] },
     ],
     issues: [{
       issueKey: 'grammar-1', type: 'grammar', severity: 'medium', originalText: 'Second   synthetic line.',
@@ -78,10 +78,36 @@ describe('normalizeGradingResult', () => {
   it('silently filters uncertain spelling and rebuilds corrected text from structured pairs', () => {
     const payload = validPayload()
     payload.issues = [{ issueKey: 'spell-1', type: 'spelling', severity: 'low', originalText: 'Second   synthetic line.', suggestion: 'Second corrected line.', explanation: 'Synthetic spelling.', evidenceCertainty: 'uncertain', requiresTeacherReview: false }]
+    payload.dimensionScores = [
+      { dimensionId: 'content', score: 6, reason: 'Relevant.', evidence: 'First synthetic line.', relatedIssueKeys: [] },
+      { dimensionId: 'language', score: 9, reason: 'Accurate.', evidence: 'First synthetic line.', relatedIssueKeys: [] },
+    ]
+    payload.reportedTotalScore = 15
     payload.sentenceRevisions = [{ originalText: 'Second   synthetic line.', revisedText: 'Second corrected line.', note: 'Synthetic.', relatedIssueKeys: ['spell-1'], changeTypes: ['spelling'] }]
     payload.fullTextRevision = { correctedText: 'Provider aggregate must not win.', improvedText: 'Synthetic improved.', sentencePairs: [{ originalText: 'Second   synthetic line.', correctedText: 'Second corrected line.', improvedText: 'Synthetic improved.', relatedIssueKeys: ['spell-1'], changeTypes: ['spelling'], explanation: 'Synthetic.', requiresTeacherReview: false }], logicNotes: [], logicIssues: [] }
     const result = normalizeGradingResult(payload, request, context)
     expect(result).toMatchObject({ ok: true, result: { status: 'success', issues: [], sentenceRevisions: [], fullTextRevision: { correctedText: request.essay.confirmedTranscript, sentencePairs: [] } } })
+  })
+
+  it('rejects a generic dimension deduction related to filtered uncertain spelling', () => {
+    const payload = validPayload()
+    payload.issues = [{ issueKey: 'spell-1', type: 'spelling', severity: 'low', originalText: 'Second   synthetic line.', suggestion: 'Second corrected line.', explanation: 'Synthetic spelling.', evidenceCertainty: 'uncertain', requiresTeacherReview: false }]
+    payload.dimensionScores = [
+      { dimensionId: 'content', score: 6, reason: 'Complete.', evidence: 'First synthetic line.', relatedIssueKeys: [] },
+      { dimensionId: 'language', score: 8, reason: 'Spelling deduction.', evidence: 'Second   synthetic line.', relatedIssueKeys: ['spell-1'] },
+    ]
+    payload.reportedTotalScore = 14
+    payload.sentenceRevisions = []
+    payload.expressionUpgrades = []
+    payload.fullTextRevision = { correctedText: request.essay.confirmedTranscript, improvedText: request.essay.confirmedTranscript, sentencePairs: [], logicNotes: [], logicIssues: [] }
+    expectFailure(payload)
+  })
+
+  it('rebuilds generic improved text from retained sentence pairs', () => {
+    const payload = validPayload()
+    ;(payload.fullTextRevision as Record<string, unknown>).improvedText = 'Provider aggregate must not win.'
+    const result = normalizeGradingResult(payload, request, context)
+    expect(result).toMatchObject({ ok: true, result: { fullTextRevision: { improvedText: 'First synthetic line.\nSecond improved line.' } } })
   })
 
   it('does not let filtered uncertain spelling bypass malformed data or provider review reasons', () => {
@@ -90,6 +116,11 @@ describe('normalizeGradingResult', () => {
     expectFailure(malformed)
     const silent = validPayload()
     silent.issues = [{ issueKey: 'spell-1', type: 'spelling', severity: 'low', originalText: 'Second   synthetic line.', suggestion: 'Second corrected line.', explanation: 'Synthetic.', evidenceCertainty: 'uncertain', requiresTeacherReview: false }]
+    silent.dimensionScores = [
+      { dimensionId: 'content', score: 6, reason: 'Relevant.', evidence: 'First synthetic line.', relatedIssueKeys: [] },
+      { dimensionId: 'language', score: 9, reason: 'Accurate.', evidence: 'First synthetic line.', relatedIssueKeys: [] },
+    ]
+    silent.reportedTotalScore = 15
     silent.sentenceRevisions = [{ originalText: 'Second   synthetic line.', revisedText: 'Second corrected line.', note: 'Synthetic.', relatedIssueKeys: ['spell-1'], changeTypes: ['spelling'] }]
     ;(silent.fullTextRevision as Record<string, unknown>).sentencePairs = [{ originalText: 'Second   synthetic line.', correctedText: 'Second corrected line.', improvedText: 'Synthetic.', explanation: 'Synthetic.', requiresTeacherReview: false, relatedIssueKeys: ['spell-1'], changeTypes: ['spelling'] }]
     silent.reviewReasons = ['Provider narrative must not affect status.']
@@ -221,10 +252,12 @@ describe('normalizeGradingResult', () => {
     expectFailure(payload)
   })
 
-  it('rejects a missing required full revision text', () => {
+  it('ignores a blank Provider corrected aggregate and safely rebuilds it', () => {
     const payload = validPayload()
     ;(payload.fullTextRevision as Record<string, unknown>).correctedText = ''
-    expectFailure(payload)
+    expect(normalizeGradingResult(payload, request, context)).toMatchObject({
+      ok: true, result: { fullTextRevision: { correctedText: 'First synthetic line.\nSecond corrected line.' } },
+    })
   })
 
   it('rejects a missing required improved text', () => {

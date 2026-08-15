@@ -6,7 +6,7 @@ import { gradingPolicyInstructions } from './gradingPolicy.js'
 export interface BuildEssayGradingMessagesInput { task: ConfirmedTaskPackageV2; essayId: string; pages: GatewayImageInput[]; confirmedTranscript?: string }
 
 const issueSchema = { type: 'object', additionalProperties: false, required: ['issueKey', 'type', 'severity', 'originalText', 'suggestion', 'explanation', 'evidenceCertainty', 'requiresTeacherReview'], properties: { issueKey: { type: 'string' }, type: { type: 'string', enum: ['grammar', 'spelling', 'word_choice', 'structure'] }, severity: { type: 'string', enum: ['low', 'medium', 'high'] }, originalText: { type: 'string' }, suggestion: { type: 'string' }, explanation: { type: 'string' }, evidenceCertainty: { type: 'string', enum: ['certain', 'uncertain'] }, requiresTeacherReview: { type: 'boolean' } } } as const
-const dimensionScoreSchema = { type: 'object', additionalProperties: false, required: ['dimensionId', 'score', 'reason', 'evidence'], properties: { dimensionId: { type: 'string' }, score: { type: 'number' }, reason: { type: 'string' }, evidence: { type: 'string' } } } as const
+const dimensionScoreSchema = { type: 'object', additionalProperties: false, required: ['dimensionId', 'score', 'reason', 'evidence', 'relatedIssueKeys'], properties: { dimensionId: { type: 'string' }, score: { type: 'number' }, reason: { type: 'string' }, evidence: { type: 'string' }, relatedIssueKeys: { type: 'array', maxItems: 50, uniqueItems: true, items: { type: 'string' } } } } as const
 const changeTypeSchema = { type: 'string', enum: ['grammar', 'spelling', 'word_choice', 'sentence_upgrade', 'coherence', 'logic_bridge', 'delete_suggestion', 'replace_sentence', 'reference_clarification'] } as const
 const revisionSchema = { type: 'object', additionalProperties: false, required: ['originalText', 'revisedText', 'note', 'relatedIssueKeys', 'changeTypes'], properties: { originalText: { type: 'string' }, revisedText: { type: 'string' }, note: { type: 'string' }, relatedIssueKeys: { type: 'array', items: { type: 'string' } }, changeTypes: { type: 'array', items: changeTypeSchema } } } as const
 const upgradeSchema = { type: 'object', additionalProperties: false, required: ['originalText', 'upgradedText', 'note'], properties: { originalText: { type: 'string' }, upgradedText: { type: 'string' }, note: { type: 'string' } } } as const
@@ -45,10 +45,11 @@ export function buildEssayGradingMessages(input: BuildEssayGradingMessagesInput)
     ...(hasConfirmedTranscript ? [] : [
       'Exclude printed task instructions, page furniture, headers, footers, page numbers, and other non-student printed text. Set printedTextExcluded truthfully.',
       '可合理读成正确单词的字迹歧义必须保持静默：recognitionWarnings 和 reviewReasons 均为空；不得要求教师复核。',
-      '只有无法合理读成正确单词且会影响语义、语法或评分的重要歧义，才能写入 recognitionWarnings、recognition_uncertain review reason 或要求教师复核。',
+      '只有全局、无法定位或学生正文/印刷文本边界的不确定性，才能写入 recognitionWarnings、recognition_uncertain review reason 或要求教师复核。',
+      'A localizable important ambiguity belongs only in legibilityIssues; do not repeat it in recognitionWarnings or reviewReasons. Global, unlocalizable, or printed/student-boundary uncertainty may use recognitionWarnings and recognition_uncertain.',
     ]),
     'Ground every issue quote and scoring evidence quote in the returned transcript. 每条 logicNotes、logicIssues.originalText 和 legibilityIssues.transcriptText 必须可在 transcript 中逐字定位。If a required quote cannot be located, omit that diagnostic rather than inventing text.',
-    'Calculate each dimension score using its percentage weights and the full score; return every rubric dimension exactly once.',
+    'Calculate each dimension score using its percentage weights and the full score; return every rubric dimension exactly once. Every dimension must include unique relatedIssueKeys: use an empty array at maximum score and one or more existing raw issue keys for any deduction.',
     'Return only the object defined by the supplied JSON Schema.',
   ].join('\n') }, { role: 'user', content: [{ type: 'text', text: JSON.stringify({
     essayId: input.essayId, fullScore: input.task.fullScore, task: input.task,

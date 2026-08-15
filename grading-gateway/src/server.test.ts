@@ -35,8 +35,8 @@ function strictMultimodalPayload(transcript: string) {
   return {
     transcript, recognitionWarnings: [], printedTextExcluded: true, reportedTotalScore: 15,
     dimensionScores: [
-      { dimensionId: 'content', score: 14.25, reason: 'Relevant.', evidence: transcript },
-      { dimensionId: 'legibility', score: 0.75, reason: 'Handwriting is legible.', evidence: transcript },
+      { dimensionId: 'content', score: 14.25, reason: 'Relevant.', evidence: transcript, relatedIssueKeys: [] },
+      { dimensionId: 'legibility', score: 0.75, reason: 'Handwriting is legible.', evidence: transcript, relatedIssueKeys: [] },
     ],
     issues: [], sentenceRevisions: [], expressionUpgrades: [],
     fullTextRevision: { correctedText: transcript, improvedText: 'Improved synthetic version.', sentencePairs: [], logicNotes: [], logicIssues: [] },

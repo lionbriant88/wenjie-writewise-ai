@@ -106,3 +106,18 @@ export interface RawLegibilityIssueV1 {
   explanation: string
   defaultOutcome: 'count_as_legibility_error'
 }
+
+export interface RawDimensionScoreV1 {
+  dimensionId: string
+  score: number
+  maxScore: number
+  reason: string
+  evidence: string
+  relatedIssueKeys: string[]
+}
+
+export interface RawExpressionUpgradeV1 {
+  originalText: string
+  upgradedText: string
+  note: string
+}

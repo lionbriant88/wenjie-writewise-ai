@@ -84,6 +84,8 @@ export type {
   MultimodalGradeInputV2,
   ProviderMultimodalPayloadV1,
   RawLegibilityIssueV1,
+  RawDimensionScoreV1,
+  RawExpressionUpgradeV1,
   RawLogicIssueV1,
   RawMultimodalIssueV1,
   RawSentencePairV1,
@@ -127,7 +129,7 @@ export interface LegibilityIssueV1 {
 
 export interface ProviderGradingPayloadV1 {
   reportedTotalScore?: number
-  dimensionScores: Array<{ dimensionId: string; score: number; reason: string; evidence: string }>
+  dimensionScores: Array<{ dimensionId: string; score: number; reason: string; evidence: string; relatedIssueKeys: string[] }>
   recognitionWarnings: string[]
   legibilityIssues: []
   issues: RawMultimodalIssueV1[]
