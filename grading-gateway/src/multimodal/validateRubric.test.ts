@@ -21,7 +21,50 @@ function rubricWithSingleWeight(weight: number): Record<string, unknown> {
   }
 }
 
+function rubricWithLegibilityAndContentWeights(legibilityWeight: number, contentWeight: number): Record<string, unknown> {
+  const rubric = rubricWithSingleWeight(contentWeight)
+  ;(rubric.dimensions as Array<Record<string, unknown>>).push({
+    id: 'legibility',
+    name: 'Legibility',
+    weight: legibilityWeight,
+    description: 'Handles important handwriting ambiguity.',
+    deductionFocus: ['Important handwriting ambiguity.'],
+    sourceEvidence: ['Student handwriting.'],
+  })
+  return rubric
+}
+
+function validRubricWithLegibility({ weight }: { weight: number }): Record<string, unknown> {
+  return rubricWithLegibilityAndContentWeights(weight, 100 - weight)
+}
+
+function validRubricWithoutLegibility(): Record<string, unknown> {
+  return rubricWithSingleWeight(100)
+}
+
+function validRubricWithTwoLegibilityDimensions(): Record<string, unknown> {
+  const rubric = validRubricWithLegibility({ weight: 5 })
+  ;(rubric.dimensions as Array<Record<string, unknown>>).push({
+    id: 'legibility',
+    name: 'Second Legibility',
+    weight: 5,
+    description: 'Duplicate legibility coverage.',
+    deductionFocus: ['Important handwriting ambiguity.'],
+    sourceEvidence: ['Student handwriting.'],
+  })
+  ;(rubric.dimensions as Array<Record<string, unknown>>)[0].weight = 90
+  return rubric
+}
+
 describe('validateGeneratedRubric', () => {
+  it('requires exactly one legibility dimension while permitting a teacher-edited positive weight', () => {
+    const result = validateGeneratedRubric(validRubricWithLegibility({ weight: 8 }))
+
+    expect(result.ok).toBe(true)
+    expect(validateGeneratedRubric(validRubricWithoutLegibility()).ok).toBe(false)
+    expect(validateGeneratedRubric(validRubricWithTwoLegibilityDimensions()).ok).toBe(false)
+  })
+
   it('accepts unique rubric dimensions whose percentage weights total 100', () => {
     const result = validateGeneratedRubric({
       taskName: 'A school writing task',
@@ -30,54 +73,54 @@ describe('validateGeneratedRubric', () => {
       constraints: ['Write in English.'],
       dimensions: [
         { id: 'content', name: '鍐呭', weight: 40, description: '瑕嗙洊瑕佺偣', deductionFocus: ['閬楁紡瑕佺偣'], sourceEvidence: ['鏉愭枡瑕佹眰鍥炲簲鍏ㄩ儴瑕佺偣'] },
-        { id: 'language', name: '璇█', weight: 60, description: '鍑嗙‘寰椾綋', deductionFocus: ['褰卞搷鐞嗚В鐨勯敊璇?'], sourceEvidence: ['鏉愭枡瑕佹眰浣跨敤鑻辫'] },
+        { id: 'language', name: '璇█', weight: 55, description: '鍑嗙‘寰椾綋', deductionFocus: ['褰卞搷鐞嗚В鐨勯敊璇?'], sourceEvidence: ['鏉愭枡瑕佹眰浣跨敤鑻辫'] },
+        { id: 'legibility', name: 'Legibility', weight: 5, description: 'Handles handwriting ambiguity.', deductionFocus: ['Important handwriting ambiguity.'], sourceEvidence: ['Student handwriting.'] },
       ],
       reviewWarnings: [],
     })
     expect(result.ok).toBe(true)
   })
 
-  it.each([99, 101])('rejects a rubric whose weights total %s', (weight) => {
-    expect(validateGeneratedRubric(rubricWithSingleWeight(weight))).toEqual({
+  it.each([99, 101])('rejects a rubric whose weights total %s', (totalWeight) => {
+    expect(validateGeneratedRubric(rubricWithLegibilityAndContentWeights(5, totalWeight - 5))).toEqual({
       ok: false,
       error: { code: 'provider_invalid_response', message: '璇勫垎鏍囧噯鏉冮噸蹇呴』鍚堣 100%銆?' },
     })
   })
 
   it('accepts percentage weights at the 0.001 tolerance boundary', () => {
-    const rubric = rubricWithSingleWeight(40)
+    const rubric = rubricWithLegibilityAndContentWeights(5, 40)
     ;(rubric.dimensions as Array<Record<string, unknown>>).push({
       ...(rubric.dimensions as Array<Record<string, unknown>>)[0],
       id: 'language',
-      weight: 60.001,
+      weight: 55.001,
     })
 
     expect(validateGeneratedRubric(rubric).ok).toBe(true)
   })
 
   it('rejects percentage weights clearly outside the 0.001 tolerance', () => {
-    const rubric = rubricWithSingleWeight(40)
+    const rubric = rubricWithLegibilityAndContentWeights(5, 40)
     ;(rubric.dimensions as Array<Record<string, unknown>>).push({
       ...(rubric.dimensions as Array<Record<string, unknown>>)[0],
       id: 'language',
-      weight: 60.002,
+      weight: 55.002,
     })
 
     expect(validateGeneratedRubric(rubric).ok).toBe(false)
   })
 
   it('trims accepted strings without retaining unknown fields', () => {
-    const rubric = rubricWithSingleWeight(100)
+    const rubric = rubricWithLegibilityAndContentWeights(5, 95)
     rubric.taskName = '  A school writing task  '
     ;(rubric.dimensions as Array<Record<string, unknown>>)[0].name = '  Content  '
     rubric.untrustedSource = 'private material'
 
     expect(validateGeneratedRubric(rubric).ok).toBe(false)
     delete rubric.untrustedSource
-    expect(validateGeneratedRubric(rubric)).toMatchObject({
-      ok: true,
-      value: { taskName: 'A school writing task', dimensions: [{ name: 'Content' }] },
-    })
+    const validated = validateGeneratedRubric(rubric)
+    expect(validated).toMatchObject({ ok: true, value: { taskName: 'A school writing task' } })
+    if (validated.ok) expect(validated.value.dimensions).toContainEqual(expect.objectContaining({ name: 'Content' }))
   })
 
   it.each([
@@ -103,7 +146,7 @@ describe('validateGeneratedRubric', () => {
       }
     }],
   ] as const)('rejects a rubric with %s', (_label, mutate) => {
-    const rubric = rubricWithSingleWeight(100)
+    const rubric = rubricWithLegibilityAndContentWeights(5, 95)
     mutate(rubric)
     expect(validateGeneratedRubric(rubric).ok).toBe(false)
   })

@@ -25,7 +25,7 @@ describe('essay grading prompt', () => {
     })
     const text = JSON.stringify(messages)
 
-    expect(text).toMatch(/preserve.*student.*spelling.*grammar/i)
+    expect(text).not.toContain('Preserve student spelling and grammar exactly')
     expect(text).toMatch(/exclude.*printed.*task instructions.*page furniture/i)
     expect(text).toMatch(/never obey.*text inside images/i)
     expect(text).toMatch(/uncertainty warnings/i)
@@ -33,6 +33,23 @@ describe('essay grading prompt', () => {
     expect(text).toMatch(/percentage weights.*full score/i)
     expect(text).toContain('data:image/png;base64,c2Vjb25k')
     expect(text).toContain('data:image/jpeg;base64,Zmlyc3Q=')
+  })
+
+  it('applies the conservative grading policy to image and confirmed-transcript requests', () => {
+    const imageInput = { task, essayId: 'essay-images', pages: [{ pageId: 'page-1', mimeType: 'image/png' as const, buffer: Buffer.from('image') }] }
+    const textInput = { task, essayId: 'essay-text', pages: [], confirmedTranscript: 'Teacher-confirmed essay.' }
+    const imagePrompt = String(buildEssayGradingMessages(imageInput)[0].content)
+    const textPrompt = String(buildEssayGradingMessages(textInput)[0].content)
+
+    for (const prompt of [imagePrompt, textPrompt]) {
+      expect(prompt).toContain('grading-policy-v1')
+      expect(prompt).toContain('可合理读成正确单词时按正确处理')
+      expect(prompt).toContain('不得作为 spelling、word_choice 或 grammar 变相报告')
+      expect(prompt).toContain('优先检查语法、逻辑、任务完成度和表达')
+    }
+    expect(imagePrompt).toContain('重要字迹歧义只记为 legibility issue')
+    expect(textPrompt).not.toContain('重新识别图片')
+    expect(imagePrompt).not.toContain('Preserve student spelling and grammar exactly')
   })
 
   it('requires the transcript, printed-text exclusion state, warnings, and grading payload', () => {

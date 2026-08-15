@@ -1,5 +1,6 @@
 import type { ValidationResult } from '../types.js'
 import type { GeneratedRubricDimensionV1, GeneratedRubricV1 } from './types.js'
+import { LEGIBILITY_DIMENSION_ID } from './gradingPolicy.js'
 
 const INVALID_RUBRIC_MESSAGE = '璇勫垎鏍囧噯鏃犳晥銆?'
 const INVALID_WEIGHT_TOTAL_MESSAGE = '璇勫垎鏍囧噯鏉冮噸蹇呴』鍚堣 100%銆?'
@@ -61,6 +62,7 @@ export function validateGeneratedRubric(value: unknown): ValidationResult<Genera
   const dimensions = value.dimensions.map(readDimension)
   if (!dimensions.every((dimension): dimension is GeneratedRubricDimensionV1 => dimension !== null)) return invalid()
   if (new Set(dimensions.map((dimension) => dimension.id)).size !== dimensions.length) return invalid()
+  if (dimensions.filter((dimension) => dimension.id === LEGIBILITY_DIMENSION_ID).length !== 1) return invalid()
   const totalWeight = dimensions.reduce((sum, dimension) => sum + dimension.weight, 0)
   const roundingAllowance = Number.EPSILON * Math.max(1, Math.abs(totalWeight), 100)
   if (Math.abs(totalWeight - 100) > TOTAL_WEIGHT_TOLERANCE + roundingAllowance) {
