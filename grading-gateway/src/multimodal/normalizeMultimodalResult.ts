@@ -80,6 +80,19 @@ function splitSentencePairs(value: unknown, transcript: string, essayId: string)
   return { grounded, ungrounded }
 }
 
+function splitLogicNotes(value: unknown, transcript: string): CitationSplit<{ quote: string; note: string }> | null {
+  if (!Array.isArray(value)) return null
+  const grounded: { quote: string; note: string }[] = []; const ungrounded: { quote: string; note: string }[] = []
+  for (const item of value) {
+    if (!isRecord(item)) return null
+    const quote = text(item.quote), note = text(item.note)
+    if (!quote || !note) return null
+    if (matchTranscriptQuote(transcript, quote)) grounded.push({ quote, note })
+    else ungrounded.push({ quote, note })
+  }
+  return { grounded, ungrounded }
+}
+
 function rawScoresAreBounded(value: unknown, context: MultimodalNormalizationContext) {
   if (!Array.isArray(value)) return false
   const dimensions = new Map(context.task.rubric.dimensions.map((dimension) => [dimension.id, dimension]))
@@ -104,8 +117,9 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
   const revisions = splitRevisions(payload.sentenceRevisions, transcript, context.essayId)
   const upgrades = splitUpgrades(payload.expressionUpgrades, transcript, context.essayId)
   const pairs = splitSentencePairs(payload.fullTextRevision, transcript, context.essayId)
-  if (!request || !issues || !revisions || !upgrades || !pairs || !rawScoresAreBounded(payload.dimensionScores, context) || !isRecord(payload.fullTextRevision)) return invalid()
-  const basePayload = { ...payload, issues: issues.grounded, sentenceRevisions: revisions.grounded, expressionUpgrades: upgrades.grounded, fullTextRevision: { ...payload.fullTextRevision, sentencePairs: pairs.grounded } }
+  const logicNotes = isRecord(payload.fullTextRevision) ? splitLogicNotes(payload.fullTextRevision.logicNotes, transcript) : null
+  if (!request || !issues || !revisions || !upgrades || !pairs || !logicNotes || !rawScoresAreBounded(payload.dimensionScores, context) || !isRecord(payload.fullTextRevision)) return invalid()
+  const basePayload = { ...payload, issues: issues.grounded, sentenceRevisions: revisions.grounded, expressionUpgrades: upgrades.grounded, fullTextRevision: { ...payload.fullTextRevision, sentencePairs: pairs.grounded, logicNotes: logicNotes.grounded } }
   const normalized = normalizeGradingResult(basePayload, request, { provider: context.provider, createdAt: context.createdAt })
   if (!normalized.ok) return invalid()
   const reviewReasons = new Set(normalized.result.reviewReasons)
@@ -115,6 +129,7 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
   if (revisions.ungrounded.length) reviewReasons.add('sentence_revision_quote_unmatched')
   if (upgrades.ungrounded.length) reviewReasons.add('expression_upgrade_quote_unmatched')
   if (pairs.ungrounded.length) reviewReasons.add('sentence_pair_quote_unmatched')
+  if (logicNotes.ungrounded.length) reviewReasons.add('logic_note_quote_unmatched')
   const dimensionScores = normalized.result.dimensionScores.map((item) => matchTranscriptQuote(transcript, item.evidence) ? item : { ...item, requiresTeacherReview: true })
   if (dimensionScores.some(({ requiresTeacherReview }) => requiresTeacherReview)) reviewReasons.add('dimension_evidence_unmatched')
   const fullTextRevision = normalized.result.fullTextRevision ? { ...normalized.result.fullTextRevision, sentencePairs: [...normalized.result.fullTextRevision.sentencePairs, ...pairs.ungrounded] } : undefined

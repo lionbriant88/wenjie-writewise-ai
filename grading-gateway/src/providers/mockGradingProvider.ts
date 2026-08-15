@@ -46,7 +46,7 @@ export class MockGradingProvider implements GradingProvider {
         correctedText: request.essay.confirmedTranscript,
         improvedText: request.essay.confirmedTranscript,
         sentencePairs: [],
-        logicNotes: ['Gateway mock 不代表真实 AI 批改质量。'],
+        logicNotes: [{ quote, note: 'Gateway mock 不代表真实 AI 批改质量。' }],
       },
       overallComment: 'Gateway mock 批改结果，请教师复核。',
       reviewReasons: [],

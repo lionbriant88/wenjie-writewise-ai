@@ -10,13 +10,14 @@ const dimensionScoreSchema = { type: 'object', additionalProperties: false, requ
 const revisionSchema = { type: 'object', additionalProperties: false, required: ['originalText', 'revisedText', 'note'], properties: { originalText: { type: 'string' }, revisedText: { type: 'string' }, note: { type: 'string' } } } as const
 const upgradeSchema = { type: 'object', additionalProperties: false, required: ['originalText', 'upgradedText', 'note'], properties: { originalText: { type: 'string' }, upgradedText: { type: 'string' }, note: { type: 'string' } } } as const
 const sentencePairSchema = { type: 'object', additionalProperties: false, required: ['originalText', 'correctedText', 'improvedText', 'changeTypes', 'explanation', 'requiresTeacherReview'], properties: { originalText: { type: 'string' }, correctedText: { type: 'string' }, improvedText: { type: 'string' }, changeTypes: { type: 'array', items: { type: 'string', enum: ['grammar', 'spelling', 'word_choice', 'sentence_upgrade', 'coherence', 'logic_bridge', 'delete_suggestion', 'replace_sentence', 'reference_clarification'] } }, explanation: { type: 'string' }, requiresTeacherReview: { type: 'boolean' } } } as const
+const logicNoteSchema = { type: 'object', additionalProperties: false, required: ['quote', 'note'], properties: { quote: { type: 'string' }, note: { type: 'string' } } } as const
 
 export const essayGradingSchema = {
   type: 'object', additionalProperties: false,
   required: ['transcript', 'transcriptionWarnings', 'printedTextExcluded', 'reportedTotalScore', 'dimensionScores', 'issues', 'sentenceRevisions', 'expressionUpgrades', 'fullTextRevision', 'overallComment', 'reviewReasons'],
   properties: {
     transcript: { type: 'string' }, transcriptionWarnings: { type: 'array', items: { type: 'string' } }, printedTextExcluded: { type: 'boolean' }, reportedTotalScore: { type: 'number' }, dimensionScores: { type: 'array', items: dimensionScoreSchema }, issues: { type: 'array', items: issueSchema }, sentenceRevisions: { type: 'array', items: revisionSchema }, expressionUpgrades: { type: 'array', items: upgradeSchema },
-    fullTextRevision: { type: 'object', additionalProperties: false, required: ['correctedText', 'improvedText', 'sentencePairs', 'logicNotes'], properties: { correctedText: { type: 'string' }, improvedText: { type: 'string' }, sentencePairs: { type: 'array', items: sentencePairSchema }, logicNotes: { type: 'array', items: { type: 'string' } } } },
+    fullTextRevision: { type: 'object', additionalProperties: false, required: ['correctedText', 'improvedText', 'sentencePairs', 'logicNotes'], properties: { correctedText: { type: 'string' }, improvedText: { type: 'string' }, sentencePairs: { type: 'array', items: sentencePairSchema }, logicNotes: { type: 'array', items: logicNoteSchema } } },
     overallComment: { type: 'string' }, reviewReasons: { type: 'array', items: { type: 'string' } },
   },
 } as const
@@ -39,9 +40,10 @@ export function buildEssayGradingMessages(input: BuildEssayGradingMessagesInput)
       : 'First transcribe only the student handwriting; do not silently correct it.',
     ...(hasConfirmedTranscript ? [] : [
       'Exclude printed task instructions, page furniture, headers, footers, page numbers, and other non-student printed text. Set printedTextExcluded truthfully.',
-      'Return uncertainty warnings whenever handwriting or the student/printed boundary is unclear.',
+      '可合理读成正确单词的字迹歧义必须保持静默：transcriptionWarnings 和 reviewReasons 均为空；不得要求教师复核。',
+      '只有无法合理读成正确单词且会影响语义、语法或评分的重要歧义，才能写入 transcriptionWarnings 或要求教师复核。',
     ]),
-    'Ground every issue quote and scoring evidence quote in the returned transcript. If a quote is uncertain, mark it for teacher review rather than inventing text.',
+    'Ground every issue quote and scoring evidence quote in the returned transcript. 每条 logicNotes 必须包含可在 transcript 中逐字定位的 quote。If a required quote cannot be located, omit that diagnostic rather than inventing text.',
     'Calculate each dimension score using its percentage weights and the full score; return every rubric dimension exactly once.',
     'Return only the object defined by the supplied JSON Schema.',
   ].join('\n') }, { role: 'user', content: [{ type: 'text', text: JSON.stringify({

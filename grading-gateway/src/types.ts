@@ -117,7 +117,7 @@ export interface ProviderGradingPayloadV1 {
       explanation: string
       requiresTeacherReview?: boolean
     }>
-    logicNotes: string[]
+    logicNotes: Array<{ quote: string; note: string }>
   }
   overallComment: string
   modelSelfConfidence?: number

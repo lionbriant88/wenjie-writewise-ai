@@ -8,7 +8,8 @@ const task = {
     taskName: 'Synthetic task', materialSummary: 'Write an English response.', writingRequirements: ['Address the scenario.'], constraints: ['Use English.'],
     dimensions: [
       { id: 'content', name: 'Content', weight: 40, description: 'Relevant.', deductionFocus: [], sourceEvidence: [] },
-      { id: 'language', name: 'Language', weight: 60, description: 'Accurate.', deductionFocus: [], sourceEvidence: [] },
+      { id: 'language', name: 'Language', weight: 55, description: 'Accurate.', deductionFocus: [], sourceEvidence: [] },
+      { id: 'legibility', name: 'Legibility', weight: 5, description: 'Handles important handwriting ambiguity.', deductionFocus: [], sourceEvidence: [] },
     ], reviewWarnings: [],
   },
 }
@@ -21,11 +22,12 @@ function validPayload(): Record<string, unknown> {
     reportedTotalScore: 12,
     dimensionScores: [
       { dimensionId: 'content', score: 4.8, reason: 'Relevant.', evidence: 'I has a pen.' },
-      { dimensionId: 'language', score: 7.2, reason: 'Grammar needs review.', evidence: 'It are blue.' },
+      { dimensionId: 'language', score: 6.45, reason: 'Grammar needs review.', evidence: 'It are blue.' },
+      { dimensionId: 'legibility', score: 0.75, reason: 'Handwriting is legible.', evidence: 'I has a pen.' },
     ],
     issues: [{ type: 'grammar', severity: 'medium', originalText: 'It are blue.', suggestion: 'It is blue.', explanation: 'Agreement.', requiresTeacherReview: false }],
     sentenceRevisions: [], expressionUpgrades: [],
-    fullTextRevision: { correctedText: 'I have a pen.\nIt is blue.', improvedText: 'I have a blue pen.', sentencePairs: [], logicNotes: [] },
+    fullTextRevision: { correctedText: 'I have a pen.\nIt is blue.', improvedText: 'I have a blue pen.', sentencePairs: [], logicNotes: [{ quote: 'I has a pen.', note: 'The opening subject-verb agreement weakens clarity.' }] },
     overallComment: 'A clear synthetic response.', reviewReasons: [],
   }
 }
@@ -36,7 +38,7 @@ describe('normalizeMultimodalResult', () => {
     expect(normalized.ok).toBe(true)
     if (!normalized.ok) throw new Error(normalized.error.message)
     expect(normalized.result).toMatchObject({ transcript: 'I has a pen.\nIt are blue.', printedTextExcluded: true, totalScore: 12, maxScore: 15, status: 'success' })
-    expect(normalized.result.dimensionScores.map(({ maxScore }) => maxScore)).toEqual([6, 9])
+    expect(normalized.result.dimensionScores.map(({ maxScore }) => maxScore)).toEqual([6, 8.25, 0.75])
   })
 
   it('marks transcription uncertainty as partial with a stable reason', () => {
@@ -47,6 +49,27 @@ describe('normalizeMultimodalResult', () => {
     if (!normalized.ok) throw new Error(normalized.error.message)
     expect(normalized.result.status).toBe('partial')
     expect(normalized.result.reviewReasons).toContain('transcription_uncertain')
+  })
+
+  it('keeps only logic diagnostics whose quotes are grounded in the transcript', () => {
+    const payload = validPayload()
+    const normalized = normalizeMultimodalResult(payload, context)
+
+    expect(normalized).toMatchObject({
+      ok: true,
+      result: { fullTextRevision: { logicNotes: ['The opening subject-verb agreement weakens clarity.'] } },
+    })
+  })
+
+  it('removes an ungrounded logic diagnostic and flags it for teacher review', () => {
+    const payload = validPayload()
+    ;((payload.fullTextRevision as Record<string, unknown>).logicNotes as Array<Record<string, unknown>>)[0].quote = 'Invented logic quote.'
+    const normalized = normalizeMultimodalResult(payload, context)
+
+    expect(normalized).toMatchObject({
+      ok: true,
+      result: { fullTextRevision: { logicNotes: [] }, reviewReasons: expect.arrayContaining(['logic_note_quote_unmatched']), status: 'partial' },
+    })
   })
 
   it('marks an uncertain printed-text exclusion or evidence boundary for teacher review', () => {

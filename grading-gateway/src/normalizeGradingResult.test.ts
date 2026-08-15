@@ -48,7 +48,7 @@ function validPayload(): Record<string, unknown> {
         improvedText: 'Second improved line.', changeTypes: ['grammar'],
         explanation: 'Synthetic explanation.', requiresTeacherReview: true,
       }],
-      logicNotes: ['Teacher review required.'],
+      logicNotes: [{ quote: 'First synthetic line.', note: 'Teacher review required.' }],
     },
     overallComment: 'Synthetic overall comment.',
     modelSelfConfidence: 0.8,
@@ -131,6 +131,15 @@ describe('normalizeGradingResult', () => {
     const result = normalizeGradingResult(validPayload(), request, context)
     expect(result.ok).toBe(true)
     if (result.ok) expect(result.result.issues[0].originalText).toBe('Second   synthetic line.')
+  })
+
+  it('removes a logic note whose required quote cannot be grounded', () => {
+    const payload = validPayload()
+    ;((payload.fullTextRevision as Record<string, unknown>).logicNotes as Array<Record<string, unknown>>)[0].quote = 'Invented logic quote.'
+    const result = normalizeGradingResult(payload, request, context)
+
+    expect(result).toMatchObject({ ok: true, result: { fullTextRevision: { logicNotes: [] }, status: 'partial' } })
+    if (result.ok) expect(result.result.reviewReasons.join(' ')).toMatch(/逻辑诊断原文引文无法定位/)
   })
 
   it('removes a sentence revision with missing revised text and becomes partial', () => {

@@ -49,6 +49,13 @@ function stringArrayOrEmpty(value: unknown) {
   return projected.every((item): item is string => item !== null) ? projected : null
 }
 
+function logicNotesOrEmpty(value: unknown) {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) return null
+  const projected = value.map((item) => isRecord(item) ? { quote: text(item.quote), note: text(item.note) } : null)
+  return projected.every((item): item is { quote: string; note: string } => item !== null) ? projected : null
+}
+
 function invalidResponse(): NormalizationResult {
   return {
     ok: false,
@@ -206,7 +213,7 @@ export function normalizeGradingResult(
       const improvedText = candidateImproved ?? correctedText
       if (!candidateImproved) reviewReasons.add('全文提升稿缺失，已使用纠错稿回退。')
       const rawPairs = payload.fullTextRevision.sentencePairs === undefined ? [] : payload.fullTextRevision.sentencePairs
-      const rawLogicNotes = stringArrayOrEmpty(payload.fullTextRevision.logicNotes)
+      const rawLogicNotes = logicNotesOrEmpty(payload.fullTextRevision.logicNotes)
       if (!Array.isArray(rawPairs) || rawLogicNotes === null) return invalidResponse()
       const sentencePairs: NonNullable<AiGradingResultV1['fullTextRevision']>['sentencePairs'] = []
       rawPairs.forEach((item, index) => {
@@ -247,7 +254,11 @@ export function normalizeGradingResult(
         correctedText,
         improvedText,
         sentencePairs,
-        logicNotes: rawLogicNotes,
+        logicNotes: rawLogicNotes.flatMap(({ quote, note }) => {
+          if (matchTranscriptQuote(request.essay.confirmedTranscript, quote)) return [note]
+          reviewReasons.add('部分逻辑诊断原文引文无法定位，已移除。')
+          return []
+        }),
       }
     }
   } else {
