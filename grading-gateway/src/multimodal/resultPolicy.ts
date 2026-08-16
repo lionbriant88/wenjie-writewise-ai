@@ -66,7 +66,7 @@ function explicitlyReferencesFilteredSpelling(
 ): boolean {
   return filtered.some(({ originalText, suggestion }) => {
     const mentionsOriginal = containsTerm(value, originalText)
-    return mentionsOriginal && (containsTerm(value, suggestion) || FILTERED_REFERENCE_CUES.test(value))
+    return mentionsOriginal || (containsTerm(value, suggestion) && FILTERED_REFERENCE_CUES.test(value))
   })
 }
 

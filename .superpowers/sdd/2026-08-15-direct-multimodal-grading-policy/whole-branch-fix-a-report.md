@@ -97,3 +97,31 @@ git diff --check: passed (only Git line-ending notices)
 - Confirmed the Provider aggregate corrected/improved strings remain untrusted and both outputs are rebuilt solely from retained structured pairs.
 - Confirmed scoped global warning text may contain ordinary English substrings such as `can` without colliding with a local legibility range, while no Provider-local warning representation exists.
 - Confirmed no website version, route, layout, or UI production code changed in this round.
+
+## Review fix round 2 (2026-08-16)
+
+### RED evidence
+
+Before the production change, the focused policy test reported 1 expected failure and 34 passes. It reproduced the remaining bypass: a filtered `wark -> work` spelling item with the bare projectable overall comment `wark` returned a successful policy outcome because the predicate required a suggestion or a correction cue in addition to the original token.
+
+### Implementation
+
+- The shared filtered-spelling narrative predicate now rejects an exact whole-token occurrence of the filtered original by itself. A suggestion remains allowed when used naturally, but a suggestion paired with a correction cue remains rejected.
+- Added regression coverage for the original-plus-cue gate (`wark`) and for a benign suggestion-only phrase (`Good work overall.`). Updated the prior common-original assertion to match the binding policy: an exact original token is always contamination, even when it is an ordinary English word.
+
+### Verification
+
+```text
+RED focused policy: 1 failed, 34 passed (expected bare-original failure)
+GREEN focused policy: 1 file passed, 35 tests passed
+Gateway focused: 6 files passed, 140 tests passed
+Gateway full: 20 files passed, 266 tests passed
+Gateway typecheck: tsc --noEmit passed
+Shared scoring runtime: shared scoring runtime ok
+```
+
+### Self-review
+
+- The existing `containsTerm` helper still enforces word/token boundaries, so `work` does not match an embedded substring such as `workbook`.
+- Confirmed the predicate remains applied to the complete retained projectable narrative list: dimension reason/evidence, overall comment, language/logic/revision/pair/upgrade text, and logic notes. The existing range/key defenses and aggregate reconstruction were not changed.
+- No public result contract changed, so app tests were not required for this Gateway-only correction.

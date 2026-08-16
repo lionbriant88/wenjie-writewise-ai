@@ -226,24 +226,33 @@ describe('applyResultPolicy', () => {
     expect(applyResultPolicy(payload, transcript)).toBeNull()
   })
 
-  it('rejects an explicit filtered spelling correction but does not reject ordinary suggestion use', () => {
+  it('rejects a bare filtered original in a projectable overall comment (regression: original-plus-cue narrative gate)', () => {
+    const payload = payloadWithUncertainSpelling()
+    payload.issues[0] = { ...payload.issues[0], originalText: 'wark', suggestion: 'work' }
+    payload.overallComment = 'wark'
+    expect(applyResultPolicy(payload, 'I suggest you joins the club. wark')).toBeNull()
+  })
+
+  it('rejects an explicit filtered spelling correction', () => {
     const explicit = payloadWithUncertainSpelling()
     explicit.issues[0] = { ...explicit.issues[0], originalText: 'wark', suggestion: 'work' }
     explicit.overallComment = 'wark should be work.'
     expect(applyResultPolicy(explicit, 'I suggest you joins the club. wark')).toBeNull()
+  })
 
+  it('keeps a benign suggestion-only phrase (regression: suggestion overblocking)', () => {
     const ordinary = payloadWithUncertainSpelling()
     ordinary.issues[0] = { ...ordinary.issues[0], originalText: 'joins', suggestion: 'work' }
     ordinary.overallComment = 'Good work overall.'
     expect(applyResultPolicy(ordinary, transcript)).toMatchObject({ overallComment: 'Good work overall.' })
   })
 
-  it('does not reject an ordinary evaluation when the filtered original is also a common word', () => {
+  it('rejects an ordinary evaluation that repeats the filtered original token', () => {
     const payload = payloadWithUncertainSpelling()
     payload.issues[0] = { ...payload.issues[0], originalText: 'club', suggestion: 'clue' }
     payload.dimensionScores = [{ dimensionId: 'language', score: 1, maxScore: 1, reason: 'Reviewed.', evidence: 'I suggest', relatedIssueKeys: [] }]
     payload.overallComment = 'The club response addresses the task.'
-    expect(applyResultPolicy(payload, transcript)).toMatchObject({ overallComment: payload.overallComment })
+    expect(applyResultPolicy(payload, transcript)).toBeNull()
   })
 
   it('rejects filtered spelling leaked through a retained language issue narrative', () => {
