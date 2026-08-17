@@ -247,6 +247,61 @@ describe('applyResultPolicy', () => {
     expect(applyResultPolicy(ordinary, transcript)).toMatchObject({ overallComment: 'Good work overall.' })
   })
 
+  it('rejects a recognition warning that explicitly leaks a filtered spelling correction', () => {
+    const payload = payloadWithUncertainSpelling()
+    payload.issues[0] = { ...payload.issues[0], originalText: 'wark', suggestion: 'work' }
+    payload.recognitionWarnings = [{
+      scope: 'global_unreadable',
+      message: 'The handwritten word wark is unclear and should be read as work.',
+    }]
+
+    expect(applyResultPolicy(payload, `${transcript} wark`)).toBeNull()
+  })
+
+  it('treats strong readability wording as an explicit filtered-spelling warning cue', () => {
+    const payload = payloadWithUncertainSpelling()
+    payload.issues[0] = { ...payload.issues[0], originalText: 'wark', suggestion: 'work' }
+    payload.recognitionWarnings = [{ scope: 'global_unreadable', message: 'The token wark is unreadable.' }]
+
+    expect(applyResultPolicy(payload, `${transcript} wark`)).toBeNull()
+  })
+
+  it('keeps benign positive prose and an independent global warning after filtering spelling', () => {
+    const payload = payloadWithUncertainSpelling()
+    payload.issues[0] = { ...payload.issues[0], originalText: 'wark', suggestion: 'work' }
+    payload.overallComment = 'Good work overall.'
+    payload.recognitionWarnings = [{
+      scope: 'printed_boundary',
+      message: 'The bottom page border cannot be classified confidently.',
+    }]
+
+    expect(applyResultPolicy(payload, `${transcript} wark`)).toMatchObject({
+      issues: [],
+      overallComment: 'Good work overall.',
+      recognitionWarnings: [{ scope: 'printed_boundary' }],
+    })
+  })
+
+  it('rejects a local legibility item that republishes a filtered spelling span', () => {
+    const payload = payloadWithUncertainSpelling()
+    payload.issues = [{
+      issueKey: 'spelling-wark', type: 'spelling', severity: 'low', originalText: 'wark',
+      suggestion: 'work', explanation: 'Uncertain handwriting.', evidenceCertainty: 'uncertain', requiresTeacherReview: false,
+    }]
+    payload.sentenceRevisions = []
+    payload.sentencePairs = []
+    payload.legibilityIssues = [{
+      issueKey: 'legibility-blur', transcriptText: 'blur', possibleReadings: ['blur', 'blue'], pageNumber: 1,
+      regionDescription: 'line 1', explanation: 'The handwritten word wark could be read as work.', defaultOutcome: 'count_as_legibility_error',
+    }]
+    payload.dimensionScores = [
+      { dimensionId: 'language', score: 1, maxScore: 1, reason: 'Language reviewed.', evidence: 'beside', relatedIssueKeys: [] },
+      { dimensionId: 'legibility', score: 0.5, maxScore: 1, reason: 'One local mark is unclear.', evidence: 'blur', relatedIssueKeys: ['legibility-blur'] },
+    ]
+
+    expect(applyResultPolicy(payload, 'A wark appears beside blur.')).toBeNull()
+  })
+
   it('rejects an ordinary evaluation that repeats the filtered original token', () => {
     const payload = payloadWithUncertainSpelling()
     payload.issues[0] = { ...payload.issues[0], originalText: 'club', suggestion: 'clue' }
@@ -303,6 +358,60 @@ describe('applyResultPolicy', () => {
     payload.sentenceRevisions = []
     payload.sentencePairs[0].changeTypes = []
     expect(applyResultPolicy(payload, transcript)).toBeNull()
+  })
+
+  it('does not treat a bounded local quote as a substring of ordinary prose', () => {
+    const source = 'The student can improve.'
+    const payload: ResultPolicyInput = {
+      issues: [], sentenceRevisions: [], sentencePairs: [], expressionUpgrades: [], logicIssues: [],
+      legibilityIssues: [{
+        issueKey: 'legibility-can', transcriptText: 'can', possibleReadings: ['can', "can't"], pageNumber: 1,
+        regionDescription: 'line 1', explanation: 'The apostrophe is unclear.', defaultOutcome: 'count_as_legibility_error',
+      }],
+      dimensionScores: [
+        { dimensionId: 'language', score: 1, maxScore: 1, reason: 'The student can improve.', evidence: 'improve', relatedIssueKeys: [] },
+        { dimensionId: 'legibility', score: 0.5, maxScore: 1, reason: 'One local mark needs review.', evidence: 'can', relatedIssueKeys: ['legibility-can'] },
+      ],
+      recognitionWarnings: [], overallComment: 'The student cannot be faulted elsewhere.', logicNotes: [],
+    }
+
+    expect(applyResultPolicy(payload, source)).toMatchObject({ legibilityIssues: [{ transcriptText: 'can' }] })
+  })
+
+  it('rejects correction/readability prose that explicitly republishes a local legibility quote', () => {
+    const source = 'The student can improve.'
+    const payload: ResultPolicyInput = {
+      issues: [], sentenceRevisions: [], sentencePairs: [], expressionUpgrades: [], logicIssues: [],
+      legibilityIssues: [{
+        issueKey: 'legibility-can', transcriptText: 'can', possibleReadings: ['can', "can't"], pageNumber: 1,
+        regionDescription: 'line 1', explanation: 'The apostrophe is unclear.', defaultOutcome: 'count_as_legibility_error',
+      }],
+      dimensionScores: [
+        { dimensionId: 'language', score: 1, maxScore: 1, reason: 'Language reviewed.', evidence: 'improve', relatedIssueKeys: [] },
+        { dimensionId: 'legibility', score: 0.5, maxScore: 1, reason: 'One local mark needs review.', evidence: 'can', relatedIssueKeys: ['legibility-can'] },
+      ],
+      recognitionWarnings: [], overallComment: 'The word can is unclear and may need correction.', logicNotes: [],
+    }
+
+    expect(applyResultPolicy(payload, source)).toBeNull()
+  })
+
+  it('allows an ordinary linguistic explanation that uses the bounded local term', () => {
+    const source = 'The student can improve.'
+    const payload: ResultPolicyInput = {
+      issues: [], sentenceRevisions: [], sentencePairs: [], expressionUpgrades: [], logicIssues: [],
+      legibilityIssues: [{
+        issueKey: 'legibility-can', transcriptText: 'can', possibleReadings: ['can', "can't"], pageNumber: 1,
+        regionDescription: 'line 1', explanation: 'The apostrophe is unclear.', defaultOutcome: 'count_as_legibility_error',
+      }],
+      dimensionScores: [
+        { dimensionId: 'language', score: 1, maxScore: 1, reason: 'The word can expresses ability.', evidence: 'improve', relatedIssueKeys: [] },
+        { dimensionId: 'legibility', score: 0.5, maxScore: 1, reason: 'One local mark needs review.', evidence: 'can', relatedIssueKeys: ['legibility-can'] },
+      ],
+      recognitionWarnings: [], overallComment: 'The response is otherwise clear.', logicNotes: [],
+    }
+
+    expect(applyResultPolicy(payload, source)).toMatchObject({ legibilityIssues: [{ transcriptText: 'can' }] })
   })
 })
 

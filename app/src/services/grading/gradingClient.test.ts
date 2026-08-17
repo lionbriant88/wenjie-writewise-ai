@@ -13,8 +13,7 @@ const request = {
 describe('createConfiguredGradingClient', () => {
   it.each([undefined, 'mock', 'invalid'])('uses local mock for mode %s', async (mode) => {
     const response = await createConfiguredGradingClient({ VITE_GRADING_MODE: mode }).gradeImages(request)
-    expect(response.status).toBe('success')
-    if (response.status !== 'failed') expect(response.provider).toBe('mock')
+    expect(response).toMatchObject({ status: 'partial', provider: 'mock', reviewReasons: ['local_mock'] })
   })
 
   it('uses the remote client for real mode', async () => {

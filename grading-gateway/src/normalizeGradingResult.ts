@@ -3,6 +3,7 @@ import {
   calculateTotalScore,
   roundScore2,
 } from '../../app/src/services/grading/scoringRules.js'
+import { GRADING_REVIEW_REASONS } from '../../app/src/services/grading/gradingResultSemantics.js'
 import { applyResultPolicy } from './multimodal/resultPolicy.js'
 import { strictlyGroundTranscriptQuote } from './strictTranscriptQuote.js'
 import { exactUniqueTranscriptRange } from './multimodal/transcriptRange.js'
@@ -122,8 +123,10 @@ function policyProjectionInputIsSafe(input: PolicyProjectionInput): boolean {
   }
   if (calculateTotalScore(dimensionScores.map(({ score }) => score), request.task.fullScore) !== totalScore) return false
   const issueKeys = policy.issues.map(({ issueKey }) => issueKey)
-  if (policy.issues.length > 100 || policy.sentenceRevisions.length > 100 || policy.sentencePairs.length > 100 || policy.expressionUpgrades.length > 100 || policy.logicNotes.length > 100 || policy.logicIssues.length > 50 || !issueKeys.every(safeText) || new Set(issueKeys).size !== issueKeys.length) return false
-  const knownKeys = new Set(issueKeys)
+  const logicIssueKeys = policy.logicIssues.map(({ issueKey }) => issueKey)
+  const allIssueKeys = [...issueKeys, ...logicIssueKeys]
+  if (policy.issues.length > 100 || policy.sentenceRevisions.length > 100 || policy.sentencePairs.length > 100 || policy.expressionUpgrades.length > 100 || policy.logicNotes.length > 100 || policy.logicIssues.length > 50 || !allIssueKeys.every(safeText) || new Set(allIssueKeys).size !== allIssueKeys.length) return false
+  const knownKeys = new Set(allIssueKeys)
   const linkedItems = [...policy.sentenceRevisions, ...policy.sentencePairs]
   if (linkedItems.some(({ relatedIssueKeys, changeTypes: changes }) => new Set(relatedIssueKeys).size !== relatedIssueKeys.length || relatedIssueKeys.length > 100 || !relatedIssueKeys.every((key) => knownKeys.has(key)) || changes.length === 0 || changes.length > 20 || new Set(changes).size !== changes.length || !changes.every((change) => changeTypes.has(change)))) return false
   return true
@@ -133,6 +136,8 @@ export function normalizeGradingResultFromPolicyOutcome(input: PolicyProjectionI
   if (!policyProjectionInputIsSafe(input)) return null
   const { request, context, policy, dimensionScores, totalScore } = input
   const issueIdByKey = new Map(policy.issues.map((issue, index) => [issue.issueKey, `${request.essay.essayId}-issue-${index + 1}`]))
+  const logicIssueIdByKey = new Map(policy.logicIssues.map((issue, index) => [issue.issueKey, `${request.essay.essayId}-logic-${index + 1}`]))
+  const publicIssueIdByKey = new Map([...issueIdByKey, ...logicIssueIdByKey])
   const issues: AiGradingResultV1['issues'] = []
   for (const issue of policy.issues) {
     const id = issueIdByKey.get(issue.issueKey)
@@ -142,18 +147,18 @@ export function normalizeGradingResultFromPolicyOutcome(input: PolicyProjectionI
   const sentenceRevisions: AiGradingResultV1['sentenceRevisions'] = []
   for (const [index, revision] of policy.sentenceRevisions.entries()) {
     const relatedIssueIds: string[] = []
-    for (const key of revision.relatedIssueKeys) { const id = issueIdByKey.get(key); if (!id) return null; relatedIssueIds.push(id) }
+    for (const key of revision.relatedIssueKeys) { const id = publicIssueIdByKey.get(key); if (!id) return null; relatedIssueIds.push(id) }
     sentenceRevisions.push({ id: `${request.essay.essayId}-revision-${index + 1}`, relatedIssueIds, originalText: revision.originalText, revisedText: revision.revisedText, note: revision.note, changeTypes: revision.changeTypes })
   }
   const sentencePairs: NonNullable<AiGradingResultV1['fullTextRevision']>['sentencePairs'] = []
   for (const [index, pair] of policy.sentencePairs.entries()) {
     const relatedIssueIds: string[] = []
-    for (const key of pair.relatedIssueKeys) { const id = issueIdByKey.get(key); if (!id) return null; relatedIssueIds.push(id) }
+    for (const key of pair.relatedIssueKeys) { const id = publicIssueIdByKey.get(key); if (!id) return null; relatedIssueIds.push(id) }
     sentencePairs.push({ id: `${request.essay.essayId}-pair-${index + 1}`, originalText: pair.originalText, correctedText: pair.correctedText, improvedText: pair.improvedText, relatedIssueIds, changeTypes: pair.changeTypes, explanation: pair.explanation, requiresTeacherReview: pair.requiresTeacherReview })
   }
-  const logicIssues = policy.logicIssues.map((issue, index) => ({ id: `${request.essay.essayId}-logic-${index + 1}`, originalText: issue.originalText, contextBefore: issue.contextBefore, contextAfter: issue.contextAfter, subType: issue.subType, severity: issue.severity, diagnosis: issue.diagnosis, suggestedAction: issue.suggestedAction, conservativeSuggestion: issue.conservativeSuggestion, polishedSuggestion: issue.polishedSuggestion, requiresTeacherReview: issue.requiresTeacherReview }))
+  const logicIssues = policy.logicIssues.map((issue) => ({ id: logicIssueIdByKey.get(issue.issueKey)!, originalText: issue.originalText, contextBefore: issue.contextBefore, contextAfter: issue.contextAfter, subType: issue.subType, severity: issue.severity, diagnosis: issue.diagnosis, suggestedAction: issue.suggestedAction, conservativeSuggestion: issue.conservativeSuggestion, polishedSuggestion: issue.polishedSuggestion, requiresTeacherReview: issue.requiresTeacherReview }))
   const reviewReasons = new Set(input.reviewReasons)
-  if (typeof input.reportedTotalScore === 'number' && input.reportedTotalScore !== totalScore) reviewReasons.add('AI 自报总分与产品重算总分不一致。')
+  if (typeof input.reportedTotalScore === 'number' && input.reportedTotalScore !== totalScore) reviewReasons.add(GRADING_REVIEW_REASONS.scoreMismatch)
   return { resultVersion: 'grading-result-v2', requestId: request.requestId, essayId: request.essay.essayId, provider: context.provider, status: reviewReasons.size ? 'partial' : 'success', totalScore, maxScore: request.task.fullScore, dimensionScores, issues, sentenceRevisions, expressionUpgrades: policy.expressionUpgrades.map((item, index) => ({ ...item, id: `${request.essay.essayId}-upgrade-${index + 1}` })), fullTextRevision: { originalText: request.essay.confirmedTranscript, correctedText: policy.correctedText, improvedText: policy.improvedText, sentencePairs, logicNotes: policy.logicNotes, logicIssues }, recognitionWarnings: [], legibilityIssues: [], overallComment: policy.overallComment, reviewReasons: [...reviewReasons], createdAt: context.createdAt }
 }
 
@@ -226,7 +231,7 @@ export function normalizeGradingResult(
   const totalScore = calculateTotalScore(dimensionScores.map(({ score }) => score), request.task.fullScore)
   if ('reportedTotalScore' in payload) {
     if (typeof payload.reportedTotalScore !== 'number' || !Number.isFinite(payload.reportedTotalScore)) return invalidResponse()
-    if (payload.reportedTotalScore !== totalScore) reviewReasons.add('AI 自报总分与产品重算总分不一致。')
+    if (payload.reportedTotalScore !== totalScore) reviewReasons.add(GRADING_REVIEW_REASONS.scoreMismatch)
   }
 
   if (!Array.isArray(payload.recognitionWarnings) || payload.recognitionWarnings.length !== 0) return invalidResponse()

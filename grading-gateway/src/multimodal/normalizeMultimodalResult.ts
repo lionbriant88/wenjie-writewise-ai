@@ -9,6 +9,7 @@ import type { ConfirmedTaskPackageV2 } from './types.js'
 import type { RawDimensionScoreV1, RawExpressionUpgradeV1, RawLegibilityIssueV1, RawLogicIssueV1, RawMultimodalIssueV1, RawRecognitionWarningV1, RawSentencePairV1, RawSentenceRevisionV1 } from './types.js'
 import type { LegibilityIssueV1 } from '../types.js'
 import { PROVIDER_RESULT_KEYS as KEYS, PROVIDER_RESULT_LIMITS as LIMITS, hasExactProviderKeys } from './providerResultContract.js'
+import { GRADING_REVIEW_REASONS, hasDistinctNormalizedText } from '../../../app/src/services/grading/gradingResultSemantics.js'
 
 export interface MultimodalGradingResult extends AiGradingResultV1 { transcript: string; recognitionWarnings: string[]; printedTextExcluded: boolean }
 export type MultimodalNormalizationResult = { ok: true; result: MultimodalGradingResult } | { ok: false; error: { code: 'provider_invalid_response'; message: string; retryable: true } }
@@ -108,7 +109,7 @@ function parseRawLegibilityIssues(value: unknown): RawLegibilityIssueV1[] | null
   for (const item of value) {
     if (!isRecord(item) || !hasExactProviderKeys(item, KEYS.legibilityIssue)) return null
     const issueKey = text(item.issueKey, LIMITS.issueKey), transcriptText = quote(item.transcriptText), possibleReadings = textArray(item.possibleReadings, 4, LIMITS.possibleReading), regionDescription = text(item.regionDescription), explanation = text(item.explanation), defaultOutcome = text(item.defaultOutcome, 64)
-    if (!issueKey || !transcriptText || !possibleReadings || possibleReadings.length < 2 || typeof item.pageNumber !== 'number' || !Number.isInteger(item.pageNumber) || item.pageNumber < 1 || !regionDescription || !explanation || defaultOutcome !== 'count_as_legibility_error') return null
+    if (!issueKey || !transcriptText || !possibleReadings || possibleReadings.length < 2 || !hasDistinctNormalizedText(possibleReadings) || typeof item.pageNumber !== 'number' || !Number.isInteger(item.pageNumber) || item.pageNumber < 1 || !regionDescription || !explanation || defaultOutcome !== 'count_as_legibility_error') return null
     parsed.push({ issueKey, transcriptText, possibleReadings, pageNumber: item.pageNumber, regionDescription, explanation, defaultOutcome })
   }
   return new Set(parsed.map(({ issueKey }) => issueKey)).size === parsed.length ? parsed : null
@@ -208,8 +209,8 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
   const normalized = normalizeGradingResultFromPolicyOutcome({ request, context: { provider: context.provider, createdAt: context.createdAt }, policy, dimensionScores, totalScore, reportedTotalScore: payload.reportedTotalScore, reviewReasons: [] })
   if (!normalized) return invalid()
   const reviewReasons = new Set(normalized.reviewReasons)
-  if (recognitionWarnings.length) reviewReasons.add('recognition_uncertain')
-  if (!payload.printedTextExcluded) reviewReasons.add('printed_text_exclusion_uncertain')
+  if (recognitionWarnings.length) reviewReasons.add(GRADING_REVIEW_REASONS.recognitionUncertain)
+  if (!payload.printedTextExcluded) reviewReasons.add(GRADING_REVIEW_REASONS.printedTextExclusionUncertain)
   const normalizedLegibilityIssues: LegibilityIssueV1[] = legibilityIssues.map(({ issueKey: _issueKey, ...issue }, index) => ({ id: `${context.essayId}-legibility-${index + 1}`, ...issue }))
   return { ok: true, result: { ...normalized, status: reviewReasons.size ? 'partial' : 'success', legibilityIssues: normalizedLegibilityIssues, reviewReasons: [...reviewReasons], transcript, recognitionWarnings: recognitionWarnings.map(({ message }) => message), printedTextExcluded: payload.printedTextExcluded } }
 }

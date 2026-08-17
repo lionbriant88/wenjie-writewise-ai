@@ -1,7 +1,23 @@
 import { describe, expect, it } from 'vitest'
 import { projectGradingClientResponse } from './projectGradingClientResponse'
+import type { ConfirmedTaskPackageV2 } from './types'
 
 const expected = { httpOk: true, requestId: 'request-1', essayId: 'essay-1' }
+
+const semanticTask: ConfirmedTaskPackageV2 = {
+  taskId: 'task-semantic', fullScore: 15, materialSummary: 'Synthetic material.',
+  writingRequirements: ['Write clearly.'], constraints: [],
+  rubric: {
+    taskName: 'Synthetic task', materialSummary: 'Synthetic material.',
+    writingRequirements: ['Write clearly.'], constraints: [], reviewWarnings: [],
+    dimensions: [{ id: 'language', name: 'Language', weight: 100, description: 'Accuracy.', deductionFocus: [], sourceEvidence: [] }],
+  },
+}
+
+const semanticExpected = {
+  ...expected, requireMultimodal: true as const, inputMode: 'images' as const,
+  pageCount: 1, fullScore: 15, task: semanticTask,
+}
 
 function validSuccess(): Record<string, unknown> {
   return {
@@ -53,6 +69,75 @@ function validSuccess(): Record<string, unknown> {
     reviewReasons: ['Review the rewrite.'],
     createdAt: '2026-07-20T00:00:00.000Z',
   }
+}
+
+function validSemanticSuccess(): Record<string, unknown> {
+  const raw = validSuccess()
+  const transcript = 'Synthetic error. A useful phrase. Logic sentence. cant'
+  raw.status = 'success'
+  raw.reviewReasons = []
+  raw.transcript = transcript
+  raw.printedTextExcluded = true
+  raw.recognitionWarnings = []
+  raw.dimensionScores = [{
+    dimensionId: 'language', name: 'Language', score: 12, maxScore: 15, weight: 100,
+    reason: 'Accurate.', evidence: 'Synthetic error.',
+  }]
+  raw.issues = [{
+    id: 'issue-1', type: 'grammar', severity: 'medium', originalText: 'Synthetic error.',
+    suggestion: 'Synthetic correction.', explanation: 'Synthetic explanation.',
+    evidenceCertainty: 'certain', requiresTeacherReview: false,
+  }]
+  raw.sentenceRevisions = [{
+    id: 'revision-1', relatedIssueIds: ['issue-1'], originalText: 'Synthetic error.',
+    revisedText: 'Synthetic correction.', note: 'Synthetic note.', changeTypes: ['grammar'],
+  }]
+  raw.expressionUpgrades = [{
+    id: 'upgrade-1', originalText: 'A useful phrase.', upgradedText: 'A beneficial phrase.', note: 'Synthetic note.',
+  }]
+  raw.fullTextRevision = {
+    originalText: transcript,
+    correctedText: 'Synthetic correction. A useful phrase. Logic sentence. cant',
+    improvedText: 'Synthetic improvement. A useful phrase. Logic sentence. cant',
+    sentencePairs: [{
+      id: 'pair-1', originalText: 'Synthetic error.', correctedText: 'Synthetic correction.',
+      improvedText: 'Synthetic improvement.', relatedIssueIds: ['issue-1'], changeTypes: ['grammar'],
+      explanation: 'Synthetic explanation.', requiresTeacherReview: false,
+    }],
+    logicNotes: ['Synthetic logic note.'],
+    logicIssues: [{
+      id: 'logic-1', originalText: 'Logic sentence.', contextBefore: 'A useful phrase.', contextAfter: 'cant',
+      subType: 'unclear_logic', severity: 'medium', diagnosis: 'Synthetic logic diagnosis.',
+      suggestedAction: 'add_bridge_sentence', conservativeSuggestion: 'Synthetic conservative suggestion.',
+      polishedSuggestion: 'Synthetic polished suggestion.', requiresTeacherReview: false,
+    }],
+  }
+  raw.legibilityIssues = []
+  return raw
+}
+
+function validSemanticLegibilitySuccess() {
+  const raw = validSemanticSuccess()
+  const task: ConfirmedTaskPackageV2 = {
+    ...semanticTask,
+    rubric: {
+      ...semanticTask.rubric,
+      dimensions: [
+        { ...semanticTask.rubric.dimensions[0]!, weight: 95 },
+        { id: 'legibility', name: 'Legibility', weight: 5, description: 'Readability.', deductionFocus: [], sourceEvidence: [] },
+      ],
+    },
+  }
+  raw.dimensionScores = [
+    { dimensionId: 'language', name: 'Language', score: 11.5, maxScore: 14.25, weight: 95, reason: 'Accurate.', evidence: 'Synthetic error.' },
+    { dimensionId: 'legibility', name: 'Legibility', score: 0.5, maxScore: 0.75, weight: 5, reason: 'One local ambiguity.', evidence: 'cant' },
+  ]
+  raw.legibilityIssues = [{
+    id: 'legibility-1', transcriptText: 'cant', possibleReadings: ['cant', "can't"], pageNumber: 1,
+    regionDescription: 'Last word.', explanation: 'Local ambiguity.', defaultOutcome: 'count_as_legibility_error',
+  }]
+  ;((raw.fullTextRevision as Record<string, unknown>).logicIssues as Array<Record<string, unknown>>)[0]!.contextAfter = ''
+  return { raw, expected: { ...semanticExpected, task } }
 }
 
 function expectInvalid(value: unknown, override: Parameters<typeof projectGradingClientResponse>[1] = expected) {
@@ -215,12 +300,12 @@ describe('projectGradingClientResponse', () => {
   })
 
   it('preserves every multimodal review field after strict projection', () => {
-    const raw = validSuccess()
-    raw.transcript = 'Student text.'
+    const raw = validSemanticSuccess()
     raw.recognitionWarnings = ['One word unclear.']
-    raw.printedTextExcluded = true
-    const result = projectGradingClientResponse(raw, { ...expected, requireMultimodal: true })
-    expect(result).toMatchObject({ status: 'success', transcript: 'Student text.', recognitionWarnings: ['One word unclear.'], legibilityIssues: [], printedTextExcluded: true })
+    raw.reviewReasons = ['recognition_uncertain']
+    raw.status = 'partial'
+    const result = projectGradingClientResponse(raw, semanticExpected)
+    expect(result).toMatchObject({ status: 'partial', transcript: raw.transcript, recognitionWarnings: ['One word unclear.'], legibilityIssues: [], printedTextExcluded: true })
     if (result.status === 'failed') throw new Error('Expected a projected multimodal success')
     expect(result.recognitionWarnings).not.toBe(raw.recognitionWarnings)
     ;(raw.recognitionWarnings as string[]).push('Raw mutation must not leak.')
@@ -283,15 +368,15 @@ describe('projectGradingClientResponse', () => {
     raw.transcript = 't'.repeat(50_000)
     ;(raw.fullTextRevision as Record<string, unknown>).originalText = raw.transcript
     raw.printedTextExcluded = true
-    expect(projectGradingClientResponse(raw, { ...expected, requireMultimodal: true, fullScore: 15 })).toMatchObject({
+    expect(projectGradingClientResponse(raw, { ...expected, fullScore: 15 })).toMatchObject({
       status: 'success', overallComment: raw.overallComment, transcript: raw.transcript,
     })
 
     raw.overallComment = 'x'.repeat(50_001)
-    expectInvalid(raw, { ...expected, requireMultimodal: true, fullScore: 15 })
+    expectInvalid(raw, { ...expected, fullScore: 15 })
     raw.overallComment = 'Allowed.'
     raw.transcript = 't'.repeat(50_001)
-    expectInvalid(raw, { ...expected, requireMultimodal: true, fullScore: 15 })
+    expectInvalid(raw, { ...expected, fullScore: 15 })
   })
 
   it.each([
@@ -367,5 +452,188 @@ describe('projectGradingClientResponse', () => {
     const raw = validSuccess()
     raw.issues = [{ id: 'incomplete' }]
     expectInvalid(raw)
+  })
+
+  it('accepts a semantically grounded multimodal result and a valid astral character', () => {
+    expect(projectGradingClientResponse(validSemanticSuccess(), semanticExpected)).toMatchObject({ status: 'success' })
+
+    const astral = validSemanticSuccess()
+    const transcript = 'Synthetic error. A useful phrase. Logic sentence. 😀'
+    astral.transcript = transcript
+    const revision = astral.fullTextRevision as Record<string, unknown>
+    revision.originalText = transcript
+    revision.correctedText = 'Synthetic correction. A useful phrase. Logic sentence. 😀'
+    revision.improvedText = 'Synthetic improvement. A useful phrase. Logic sentence. 😀'
+    ;(revision.logicIssues as Array<Record<string, unknown>>)[0]!.contextAfter = '😀'
+    expect(projectGradingClientResponse(astral, semanticExpected)).toMatchObject({ status: 'success' })
+  })
+
+  it.each([
+    ['dimension evidence', (raw: Record<string, unknown>) => { (raw.dimensionScores as Array<Record<string, unknown>>)[0]!.evidence = 'Invented quote.' }],
+    ['language issue', (raw: Record<string, unknown>) => { (raw.issues as Array<Record<string, unknown>>)[0]!.originalText = 'Invented quote.' }],
+    ['sentence revision', (raw: Record<string, unknown>) => { (raw.sentenceRevisions as Array<Record<string, unknown>>)[0]!.originalText = 'Invented quote.' }],
+    ['expression upgrade', (raw: Record<string, unknown>) => { (raw.expressionUpgrades as Array<Record<string, unknown>>)[0]!.originalText = 'Invented quote.' }],
+    ['sentence pair', (raw: Record<string, unknown>) => { ((raw.fullTextRevision as Record<string, unknown>).sentencePairs as Array<Record<string, unknown>>)[0]!.originalText = 'Invented quote.' }],
+    ['logic issue', (raw: Record<string, unknown>) => { ((raw.fullTextRevision as Record<string, unknown>).logicIssues as Array<Record<string, unknown>>)[0]!.originalText = 'Invented quote.' }],
+  ] as const)('rejects an ungrounded public %s quote', (_label, mutate) => {
+    const raw = validSemanticSuccess()
+    mutate(raw)
+    expectInvalid(raw, semanticExpected)
+  })
+
+  it.each(['\uD83D', '\uDE00'])('rejects ill-formed UTF-16 in transcript and quote-bearing fields: %s', (surrogate) => {
+    const transcript = validSemanticSuccess()
+    transcript.transcript = `Synthetic error. ${surrogate}`
+    ;(transcript.fullTextRevision as Record<string, unknown>).originalText = transcript.transcript
+    expectInvalid(transcript, semanticExpected)
+
+    const quote = validSemanticSuccess()
+    ;(quote.dimensionScores as Array<Record<string, unknown>>)[0]!.evidence = surrogate
+    expectInvalid(quote, semanticExpected)
+  })
+
+  it('rejects repeated quotes, unordered logic context, overlapping edits, and aggregate drift', () => {
+    const repeated = validSemanticSuccess()
+    const repeatedTranscript = 'Synthetic error. Synthetic error. A useful phrase. Logic sentence. cant'
+    repeated.transcript = repeatedTranscript
+    const repeatedRevision = repeated.fullTextRevision as Record<string, unknown>
+    repeatedRevision.originalText = repeatedTranscript
+    expectInvalid(repeated, semanticExpected)
+
+    const unordered = validSemanticSuccess()
+    ;((unordered.fullTextRevision as Record<string, unknown>).logicIssues as Array<Record<string, unknown>>)[0]!.contextBefore = 'cant'
+    expectInvalid(unordered, semanticExpected)
+
+    for (const field of ['sentenceRevisions', 'sentencePairs'] as const) {
+      const overlapping = validSemanticSuccess()
+      const item = field === 'sentenceRevisions'
+        ? (overlapping.sentenceRevisions as Array<Record<string, unknown>>)[0]!
+        : ((overlapping.fullTextRevision as Record<string, unknown>).sentencePairs as Array<Record<string, unknown>>)[0]!
+      const nested = { ...item, id: `${field}-nested`, originalText: 'error.' }
+      if (field === 'sentenceRevisions') (overlapping.sentenceRevisions as Array<Record<string, unknown>>).push(nested)
+      else ((overlapping.fullTextRevision as Record<string, unknown>).sentencePairs as Array<Record<string, unknown>>).push(nested)
+      expectInvalid(overlapping, semanticExpected)
+    }
+
+    for (const field of ['correctedText', 'improvedText'] as const) {
+      const drift = validSemanticSuccess()
+      ;(drift.fullTextRevision as Record<string, unknown>)[field] = 'Provider aggregate drift.'
+      expectInvalid(drift, semanticExpected)
+    }
+  })
+
+  it.each([
+    ['id', 'legacy-language'], ['name', 'Writing'], ['weight', 99], ['maxScore', 14],
+  ] as const)('rejects a rubric dimension with mismatched %s', (field, value) => {
+    const raw = validSemanticSuccess()
+    ;(raw.dimensionScores as Array<Record<string, unknown>>)[0]![field] = value
+    expectInvalid(raw, semanticExpected)
+  })
+
+  it('rejects missing, duplicate, and extra requested rubric dimensions', () => {
+    const missing = validSemanticSuccess()
+    missing.dimensionScores = []
+    expectInvalid(missing, semanticExpected)
+
+    const duplicate = validSemanticSuccess()
+    const dimension = (duplicate.dimensionScores as Array<Record<string, unknown>>)[0]!
+    duplicate.dimensionScores = [dimension, { ...dimension }]
+    expectInvalid(duplicate, semanticExpected)
+  })
+
+  it('accepts logic-only and mixed links but rejects unknown, legibility, and colliding IDs', () => {
+    const linked = validSemanticSuccess()
+    ;(linked.sentenceRevisions as Array<Record<string, unknown>>)[0]!.relatedIssueIds = ['logic-1']
+    ;((linked.fullTextRevision as Record<string, unknown>).sentencePairs as Array<Record<string, unknown>>)[0]!.relatedIssueIds = ['issue-1', 'logic-1']
+    expect(projectGradingClientResponse(linked, semanticExpected)).toMatchObject({
+      status: 'success', sentenceRevisions: [{ relatedIssueIds: ['logic-1'] }],
+      fullTextRevision: { sentencePairs: [{ relatedIssueIds: ['issue-1', 'logic-1'] }] },
+    })
+
+    const unknown = validSemanticSuccess()
+    ;(unknown.sentenceRevisions as Array<Record<string, unknown>>)[0]!.relatedIssueIds = ['unknown-1']
+    expectInvalid(unknown, semanticExpected)
+
+    const collision = validSemanticSuccess()
+    ;((collision.fullTextRevision as Record<string, unknown>).logicIssues as Array<Record<string, unknown>>)[0]!.id = 'issue-1'
+    expectInvalid(collision, semanticExpected)
+
+    const legibility = validSemanticLegibilitySuccess()
+    ;(legibility.raw.sentenceRevisions as Array<Record<string, unknown>>)[0]!.relatedIssueIds = ['legibility-1']
+    expectInvalid(legibility.raw, legibility.expected)
+  })
+
+  it('requires distinct normalized legibility readings and grounded page-local evidence', () => {
+    const valid = validSemanticLegibilitySuccess()
+    expect(projectGradingClientResponse(valid.raw, valid.expected)).toMatchObject({ status: 'success' })
+
+    for (const readings of [['cant', 'cant'], ['cant', ' cant '], ['café', 'cafe\u0301']]) {
+      const candidate = validSemanticLegibilitySuccess()
+      ;(candidate.raw.legibilityIssues as Array<Record<string, unknown>>)[0]!.possibleReadings = readings
+      expectInvalid(candidate.raw, candidate.expected)
+    }
+    const ungrounded = validSemanticLegibilitySuccess()
+    ;(ungrounded.raw.legibilityIssues as Array<Record<string, unknown>>)[0]!.transcriptText = 'invented'
+    expectInvalid(ungrounded.raw, ungrounded.expected)
+  })
+
+  it('keeps local legibility out of public non-legibility narratives without bare-term false positives', () => {
+    const explicit = validSemanticLegibilitySuccess()
+    explicit.raw.overallComment = 'The handwriting for cant is unclear.'
+    expectInvalid(explicit.raw, explicit.expected)
+
+    const benign = validSemanticLegibilitySuccess()
+    benign.raw.overallComment = 'The word cant is discussed in the lesson.'
+    expect(projectGradingClientResponse(benign.raw, benign.expected)).toMatchObject({ status: 'success' })
+  })
+
+  it('derives review reasons and status from recognition and printed-text state', () => {
+    const recognition = validSemanticSuccess()
+    recognition.status = 'partial'
+    recognition.recognitionWarnings = ['A global region is unreadable.']
+    recognition.reviewReasons = ['recognition_uncertain']
+    expect(projectGradingClientResponse(recognition, semanticExpected)).toMatchObject({ status: 'partial' })
+
+    const printed = validSemanticSuccess()
+    printed.status = 'partial'
+    printed.printedTextExcluded = false
+    printed.reviewReasons = ['printed_text_exclusion_uncertain']
+    expect(projectGradingClientResponse(printed, semanticExpected)).toMatchObject({ status: 'partial' })
+
+    const scoreMismatch = validSemanticSuccess()
+    scoreMismatch.status = 'partial'
+    scoreMismatch.reviewReasons = ['AI 自报总分与产品重算总分不一致。']
+    expect(projectGradingClientResponse(scoreMismatch, semanticExpected)).toMatchObject({ status: 'partial' })
+
+    for (const mutate of [
+      (raw: Record<string, unknown>) => { raw.recognitionWarnings = ['Warning.'] },
+      (raw: Record<string, unknown>) => { raw.printedTextExcluded = false },
+      (raw: Record<string, unknown>) => { raw.status = 'partial'; raw.reviewReasons = ['Provider says review this.'] },
+      (raw: Record<string, unknown>) => { raw.status = 'partial'; raw.reviewReasons = [] },
+      (raw: Record<string, unknown>) => { raw.reviewReasons = ['recognition_uncertain'] },
+      (raw: Record<string, unknown>) => { raw.status = 'partial'; raw.reviewReasons = ['recognition_uncertain', 'recognition_uncertain']; raw.recognitionWarnings = ['Warning.'] },
+    ]) {
+      const raw = validSemanticSuccess()
+      mutate(raw)
+      expectInvalid(raw, semanticExpected)
+    }
+  })
+
+  it('enforces confirmed-text and image page invariants from the submitted request', () => {
+    const confirmed = validSemanticSuccess()
+    const confirmedExpected = { ...semanticExpected, inputMode: 'confirmed_text' as const, confirmedTranscript: confirmed.transcript as string, pageCount: 0 }
+    expect(projectGradingClientResponse(confirmed, confirmedExpected)).toMatchObject({ status: 'success' })
+
+    const warning = validSemanticSuccess()
+    warning.status = 'partial'
+    warning.recognitionWarnings = ['Warning.']
+    warning.reviewReasons = ['recognition_uncertain']
+    expectInvalid(warning, confirmedExpected)
+
+    const missingTask = validSemanticSuccess()
+    const { task: _task, ...withoutTask } = semanticExpected
+    expectInvalid(missingTask, withoutTask)
+
+    expectInvalid(validSemanticSuccess(), { ...semanticExpected, pageCount: 0 })
   })
 })

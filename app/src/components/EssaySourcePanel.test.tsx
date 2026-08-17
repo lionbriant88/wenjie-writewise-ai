@@ -2,6 +2,8 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import type { Essay } from '../types'
+import type { ReviewIssueCardItem } from '../utils/reviewIssueItems'
+import { buildSourceIssueMarkers } from '../utils/sourceIssueMarkers'
 import { EssaySourcePanel } from './EssaySourcePanel'
 
 const kimiEssay: Essay = {
@@ -87,5 +89,44 @@ describe('EssaySourcePanel', () => {
     )
 
     expect(screen.getByRole('button', { name: '查看问题：student text' })).toHaveAttribute('data-active', 'true')
+  })
+
+  it('renders nested issue ranges as flat segments with deterministic active ids and click ownership', async () => {
+    const user = userEvent.setup()
+    const essay = { ...kimiEssay, ocrText: 'Before outer inner tail after.' }
+    const nestedIssues: ReviewIssueCardItem[] = [
+      {
+        id: 'outer-high', source: 'language', typeLabel: 'structure', severity: 'high',
+        original: 'outer inner tail', suggestion: 'outer revised tail', explanation: 'Outer issue.',
+      },
+      {
+        id: 'inner-medium', source: 'logic', typeLabel: 'unclear_logic', severity: 'medium',
+        original: 'inner', diagnosis: 'Inner issue.', suggestedActionLabel: 'Clarify it.',
+      },
+    ]
+    const issueMarkers = buildSourceIssueMarkers(essay.ocrText, nestedIssues)
+    const onIssueMarkerSelect = vi.fn()
+    const renderPanel = (activeIssueId: string) => (
+      <EssaySourcePanel
+        essay={essay}
+        activeIssueId={activeIssueId}
+        issueMarkers={issueMarkers}
+        onIssueMarkerSelect={onIssueMarkerSelect}
+        onOcrTextChange={vi.fn()}
+        onViewOriginalImage={vi.fn()}
+      />
+    )
+    const view = render(renderPanel('outer-high'))
+    const markerButtons = () => [...view.container.querySelectorAll<HTMLElement>('[data-issue-source]')]
+
+    expect(markerButtons().map(({ textContent }) => textContent)).toEqual(['outer ', 'inner', ' tail'])
+    expect(view.container.querySelector('button button')).toBeNull()
+    expect(markerButtons().map((button) => button.dataset.active)).toEqual(['true', 'true', 'true'])
+
+    view.rerender(renderPanel('inner-medium'))
+    expect(markerButtons().map((button) => button.dataset.active)).toEqual(['false', 'true', 'false'])
+
+    await user.click(screen.getByRole('button', { name: '查看问题：inner' }))
+    expect(onIssueMarkerSelect).toHaveBeenCalledWith('outer-high')
   })
 })

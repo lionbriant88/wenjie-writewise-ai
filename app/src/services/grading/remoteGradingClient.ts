@@ -1,5 +1,6 @@
 import { gatewayInvalidResponse, projectGradingClientResponse } from './projectGradingClientResponse'
 import type { GradingClient } from './types'
+import { validateMultimodalGradingRequestMode } from './validateMultimodalGradingRequestMode'
 
 interface RemoteClientOptions {
   apiBase?: string
@@ -12,11 +13,15 @@ export function createRemoteGradingClient({
 }: RemoteClientOptions): GradingClient {
   return {
     async gradeImages(request) {
+      const requestMode = validateMultimodalGradingRequestMode(request)
+      if (!requestMode.ok) {
+        return { requestId: request.requestId, status: 'failed', error: { code: 'invalid_request', message: 'Grading request is invalid.', retryable: false } }
+      }
       if (!apiBase) {
         return { requestId: request.requestId, status: 'failed', error: { code: 'gateway_unavailable', message: '未配置批改服务地址，请使用 mock 回退。', retryable: false } }
       }
       const form = new FormData()
-      const isConfirmedTextRegrade = request.confirmedTranscript !== undefined
+      const isConfirmedTextRegrade = requestMode.mode === 'confirmed_text'
       form.append('metadata', JSON.stringify({
         requestVersion: request.requestVersion,
         requestId: request.requestId, essayId: request.essayId, pageIds: isConfirmedTextRegrade ? [] : request.pageIds, task: request.task,
@@ -37,6 +42,7 @@ export function createRemoteGradingClient({
         httpOk: response.ok,
         requestId: request.requestId,
         essayId: request.essayId,
+        task: request.task,
         requireMultimodal: true,
         inputMode: isConfirmedTextRegrade ? 'confirmed_text' : 'images',
         ...(request.confirmedTranscript !== undefined ? { confirmedTranscript: request.confirmedTranscript } : {}),

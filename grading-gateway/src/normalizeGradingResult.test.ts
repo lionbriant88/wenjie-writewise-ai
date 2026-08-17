@@ -151,6 +151,42 @@ describe('normalizeGradingResult', () => {
     if (kind === 'wrong context order') logic.contextBefore = 'Second   synthetic line.'
     expectFailure(payload)
   })
+
+  it('normalizes language and logic links through one stable public ID namespace', () => {
+    const payload = validPayload()
+    ;(payload.fullTextRevision as Record<string, unknown>).logicIssues = [{
+      issueKey: 'logic-1', originalText: 'Second   synthetic line.', contextBefore: 'First synthetic line.', contextAfter: '',
+      subType: 'unclear_logic', severity: 'medium', diagnosis: 'Synthetic logic.', suggestedAction: 'add_bridge_sentence',
+      conservativeSuggestion: 'Second clearer line.', polishedSuggestion: 'Second polished line.', requiresTeacherReview: false,
+    }]
+    ;(payload.sentenceRevisions as Array<Record<string, unknown>>)[0].relatedIssueKeys = ['logic-1']
+    ;((payload.fullTextRevision as Record<string, unknown>).sentencePairs as Array<Record<string, unknown>>)[0].relatedIssueKeys = ['grammar-1', 'logic-1']
+
+    expect(normalizeGradingResult(payload, request, context)).toMatchObject({
+      ok: true,
+      result: {
+        sentenceRevisions: [{ relatedIssueIds: ['essay-normalize-logic-1'] }],
+        fullTextRevision: {
+          sentencePairs: [{ relatedIssueIds: ['essay-normalize-issue-1', 'essay-normalize-logic-1'] }],
+          logicIssues: [{ id: 'essay-normalize-logic-1' }],
+        },
+      },
+    })
+  })
+
+  it('rejects unknown, legibility, and colliding relationship keys', () => {
+    const unknown = validPayload()
+    ;(unknown.sentenceRevisions as Array<Record<string, unknown>>)[0].relatedIssueKeys = ['missing-key']
+    expectFailure(unknown)
+
+    const collision = validPayload()
+    ;(collision.fullTextRevision as Record<string, unknown>).logicIssues = [{
+      issueKey: 'grammar-1', originalText: 'Second   synthetic line.', contextBefore: 'First synthetic line.', contextAfter: '',
+      subType: 'unclear_logic', severity: 'medium', diagnosis: 'Synthetic logic.', suggestedAction: 'add_bridge_sentence',
+      conservativeSuggestion: 'Second clearer line.', polishedSuggestion: 'Second polished line.', requiresTeacherReview: false,
+    }]
+    expectFailure(collision)
+  })
   it('creates a trusted success with rubric-derived maximums and product total', () => {
     const result = normalizeGradingResult(validPayload(), request, context)
     expect(result.ok).toBe(true)

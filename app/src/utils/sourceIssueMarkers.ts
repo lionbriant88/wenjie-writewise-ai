@@ -23,39 +23,56 @@ const severityRank: Record<ReviewIssueCardItem['severity'], number> = {
   high: 3,
 }
 
-function shouldReplaceMarker(current: SourceIssueMarker, next: SourceIssueMarker) {
-  return severityRank[next.severity] > severityRank[current.severity]
-}
-
 export function buildSourceIssueMarkers(sourceText: string, issues: ReviewIssueCardItem[]): SourceIssueMarker[] {
-  const markerByRange = new Map<string, SourceIssueMarker>()
+  const matchedIssues: Array<{ marker: SourceIssueMarker; order: number }> = []
 
-  for (const issue of issues) {
+  for (const [order, issue] of issues.entries()) {
     const match = findTextMatch(sourceText, issue.original)
 
     if (!match) {
       continue
     }
 
-    const marker: SourceIssueMarker = {
-      issueId: issue.id,
-      issueIds: [issue.id],
-      source: issue.source,
-      severity: issue.severity,
-      original: issue.original,
-      matchedText: match.matchedText,
-      start: match.start,
-      end: match.end,
-    }
-    const rangeKey = `${marker.start}:${marker.end}`
-    const current = markerByRange.get(rangeKey)
-
-    if (!current) markerByRange.set(rangeKey, marker)
-    else if (shouldReplaceMarker(current, marker)) markerByRange.set(rangeKey, { ...marker, issueIds: [...current.issueIds, issue.id] })
-    else markerByRange.set(rangeKey, { ...current, issueIds: [...current.issueIds, issue.id] })
+    matchedIssues.push({
+      order,
+      marker: {
+        issueId: issue.id,
+        issueIds: [issue.id],
+        source: issue.source,
+        severity: issue.severity,
+        original: issue.original,
+        matchedText: match.matchedText,
+        start: match.start,
+        end: match.end,
+      },
+    })
   }
 
-  return [...markerByRange.values()].sort((first, second) => first.start - second.start)
+  const boundaries = [...new Set(matchedIssues.flatMap(({ marker }) => [marker.start, marker.end]))]
+    .sort((first, second) => first - second)
+
+  return boundaries.slice(0, -1).flatMap((start, index) => {
+    const end = boundaries[index + 1]
+    const coveringIssues = matchedIssues.filter(({ marker }) => marker.start < end && marker.end > start)
+
+    if (coveringIssues.length === 0) return []
+
+    const primary = coveringIssues.reduce((current, next) => {
+      const severityDifference = severityRank[next.marker.severity] - severityRank[current.marker.severity]
+      return severityDifference > 0 || (severityDifference === 0 && next.order < current.order) ? next : current
+    })
+    const issueIds = [...new Set(coveringIssues
+      .sort((first, second) => first.order - second.order)
+      .map(({ marker }) => marker.issueId))]
+
+    return [{
+      ...primary.marker,
+      issueIds,
+      matchedText: sourceText.slice(start, end),
+      start,
+      end,
+    }]
+  })
 }
 
 export function splitTextByIssueMarkers(sourceText: string, markers: SourceIssueMarker[]): SourceIssueMarkerPart[] {

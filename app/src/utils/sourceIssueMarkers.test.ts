@@ -88,4 +88,27 @@ describe('sourceIssueMarkers', () => {
       { text: ' After.', marker: null },
     ])
   })
+
+  it('segments nested issue ranges without dropping either issue id', () => {
+    const source = 'Before outer inner tail after.'
+    const nestedIssues: ReviewIssueCardItem[] = [
+      {
+        id: 'outer-high', source: 'language', typeLabel: 'structure', severity: 'high',
+        original: 'outer inner tail', suggestion: 'outer revised tail', explanation: 'Outer issue.',
+      },
+      {
+        id: 'inner-medium', source: 'logic', typeLabel: 'unclear_logic', severity: 'medium',
+        original: 'inner', diagnosis: 'Inner issue.', suggestedActionLabel: 'Clarify it.',
+      },
+    ]
+
+    const markers = buildSourceIssueMarkers(source, nestedIssues)
+
+    expect(markers.map(({ matchedText, issueId, issueIds }) => ({ matchedText, issueId, issueIds }))).toEqual([
+      { matchedText: 'outer ', issueId: 'outer-high', issueIds: ['outer-high'] },
+      { matchedText: 'inner', issueId: 'outer-high', issueIds: ['outer-high', 'inner-medium'] },
+      { matchedText: ' tail', issueId: 'outer-high', issueIds: ['outer-high'] },
+    ])
+    expect(splitTextByIssueMarkers(source, markers).map(({ text }) => text).join('')).toBe(source)
+  })
 })

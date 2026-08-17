@@ -10,15 +10,58 @@ const validWeights = (weights: number[]) => weights.length > 0
   && weights.every((weight) => Number.isFinite(weight) && weight > 0 && weight <= 100)
   && Math.abs(weights.reduce((sum, weight) => sum + weight, 0) - 100) <= TOTAL_WEIGHT_TOLERANCE
 
+function trimUnique(values: Array<string | undefined>): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+
+  for (const value of values) {
+    const trimmed = value?.trim()
+    if (!trimmed || seen.has(trimmed)) continue
+    seen.add(trimmed)
+    result.push(trimmed)
+  }
+
+  return result
+}
+
+/**
+ * Stable legacy-to-v2 map: prompt/type/source/openings plus writingGoal become materialSummary;
+ * teacher requirements (or the manual-prompt fallback), excellentFocus, and excellentFeatures
+ * become writingRequirements; deductionFocus and offTopicCriteria become constraints; review
+ * triggers and teacher notes become reviewWarnings. All entries are trimmed and deduplicated.
+ */
 function legacyTaskText(task: Task) {
   const prompt = task.promptInfo
   if (!prompt) return null
-  const materialSummary = prompt.writingGenre === 'continuation_writing' && prompt.continuationPrompt
-    ? [prompt.continuationPrompt.sourceText, prompt.continuationPrompt.paragraph1Opening, prompt.continuationPrompt.paragraph2Opening].join('\n')
-    : prompt.manualPromptText
-  const writingRequirements = [prompt.teacherRequirements ?? prompt.manualPromptText].filter((item): item is string => Boolean(item?.trim()))
-  const constraints = [prompt.deductionFocus, prompt.excellentFocus].filter((item): item is string => Boolean(item?.trim()))
-  return { materialSummary, writingRequirements, constraints, reviewWarnings: [...(task.rubricDraft?.reviewTriggers ?? [])] }
+  const rubric = task.rubricDraft
+  const genreMaterial = prompt.writingGenre === 'continuation_writing'
+    ? [
+        prompt.continuationPrompt?.sourceText,
+        prompt.continuationPrompt?.paragraph1Opening,
+        prompt.continuationPrompt?.paragraph2Opening,
+      ]
+    : [prompt.practicalWritingType]
+  const materialSummary = trimUnique([
+    prompt.manualPromptText,
+    ...genreMaterial,
+    rubric?.writingGoal,
+  ]).join('\n')
+  const teacherRequirement = prompt.teacherRequirements?.trim() || prompt.manualPromptText
+  const writingRequirements = trimUnique([
+    teacherRequirement,
+    prompt.excellentFocus,
+    ...(rubric?.excellentFeatures ?? []),
+  ])
+  const constraints = trimUnique([
+    prompt.deductionFocus,
+    ...(rubric?.offTopicCriteria ?? []),
+  ])
+  const reviewWarnings = trimUnique([
+    ...(rubric?.reviewTriggers ?? []),
+    rubric?.teacherEditableNotes,
+  ])
+
+  return { materialSummary, writingRequirements, constraints, reviewWarnings }
 }
 
 function withLegibilityDimension(dimensions: RubricDimension[]): RubricDimension[] | null {

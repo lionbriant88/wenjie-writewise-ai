@@ -40,12 +40,12 @@ describe('Gateway-to-website public grading contract', () => {
         { issueKey: 'grammar-join', type: 'grammar', severity: 'medium', originalText: 'I suggest you joins the club.', suggestion: 'I suggest you join the club.', explanation: 'Use the base verb.', evidenceCertainty: 'certain', requiresTeacherReview: true },
         { issueKey: 'word-club', type: 'word_choice', severity: 'low', originalText: 'club', suggestion: 'activity club', explanation: 'Use a more specific phrase.', evidenceCertainty: 'certain', requiresTeacherReview: false },
       ],
-      sentenceRevisions: [{ originalText: 'I suggest you joins the club.', revisedText: 'I suggest you join the activity club.', note: 'Correct the verb and clarify the noun.', relatedIssueKeys: ['grammar-join', 'word-club'], changeTypes: ['grammar', 'word_choice'] }],
+      sentenceRevisions: [{ originalText: 'I suggest you joins the club.', revisedText: 'I suggest you join the activity club.', note: 'Clarify the logical bridge.', relatedIssueKeys: ['logic-moon'], changeTypes: ['logic_bridge'] }],
       expressionUpgrades: [],
       fullTextRevision: {
         correctedText: "I suggest you join the club. The moon is made of green paper. I can't attend today.",
         improvedText: "I suggest joining the activity club. The moon is made of green paper. I can't attend today.",
-        sentencePairs: [{ originalText: 'I suggest you joins the club.', correctedText: 'I suggest you join the club.', improvedText: 'I suggest joining the activity club.', relatedIssueKeys: ['grammar-join', 'word-club'], changeTypes: ['grammar', 'word_choice'], explanation: 'Correct and refine the recommendation.', requiresTeacherReview: true }],
+        sentencePairs: [{ originalText: 'I suggest you joins the club.', correctedText: 'I suggest you join the club.', improvedText: 'I suggest joining the activity club.', relatedIssueKeys: ['grammar-join', 'logic-moon'], changeTypes: ['grammar', 'logic_bridge'], explanation: 'Correct and refine the recommendation.', requiresTeacherReview: true }],
         logicNotes: [{ quote: 'The moon is made of green paper.', note: 'This sentence does not support the recommendation.' }],
         logicIssues: [{ issueKey: 'logic-moon', originalText: 'The moon is made of green paper.', contextBefore: 'I suggest you joins the club.', contextAfter: '', subType: 'irrelevant_sentence', severity: 'high', diagnosis: 'The claim is unrelated to the recommendation.', suggestedAction: 'delete_sentence', conservativeSuggestion: 'Delete this sentence.', polishedSuggestion: 'Keep the response focused on the club.', requiresTeacherReview: true }],
       },
@@ -56,20 +56,20 @@ describe('Gateway-to-website public grading contract', () => {
     expect(normalized.ok).toBe(true)
     if (!normalized.ok) return
     expect(normalized.result).toMatchObject({ status: 'success', recognitionWarnings: [], reviewReasons: [] })
-    const projected = projectGradingClientResponse(normalized.result, { httpOk: true, requestId: context.requestId, essayId: context.essayId, requireMultimodal: true, inputMode: 'images', pageCount: 1, fullScore: 20 })
+    const projected = projectGradingClientResponse(normalized.result, { httpOk: true, requestId: context.requestId, essayId: context.essayId, requireMultimodal: true, inputMode: 'images', pageCount: 1, fullScore: 20, task: verticalTask })
     expect(projected.status).toBe('success')
     if (projected.status === 'failed') return
     const request = { requestVersion: 'multimodal-grading-request-v2' as const, requestId: context.requestId, essayId: context.essayId, pageIds: ['page-1'], task: verticalTask, pages: [{ pageId: 'page-1', file: new File(['synthetic'], 'essay.png', { type: 'image/png' }) }] }
     const adapted = adaptAiGradingResult(projected, request)
-    expect(adapted.sentenceRevisions[0]).toMatchObject({ relatedErrorIds: ['essay-contract-issue-1', 'essay-contract-issue-2'], changeTypes: ['grammar', 'word_choice'] })
-    expect(adapted.fullTextRevision?.sentencePairs[0]).toMatchObject({ relatedErrorIds: ['essay-contract-issue-1', 'essay-contract-issue-2'], needsTeacherReview: true })
+    expect(adapted.sentenceRevisions[0]).toMatchObject({ relatedErrorIds: ['essay-contract-logic-1'], changeTypes: ['logic_bridge'] })
+    expect(adapted.fullTextRevision?.sentencePairs[0]).toMatchObject({ relatedErrorIds: ['essay-contract-issue-1', 'essay-contract-logic-1'], changeTypes: ['grammar', 'logic_bridge'], needsTeacherReview: true })
     expect(adapted.fullTextRevision).toMatchObject({ originalText: transcript, correctedText: "I suggest you join the club. The moon is made of green paper. I can't attend today.", polishedText: "I suggest joining the activity club. The moon is made of green paper. I can't attend today." })
     const cards = buildReviewIssueItems({ annotations: adapted.errorAnnotations, revisions: adapted.sentenceRevisions, logicIssues: adapted.fullTextRevision?.logicIssues, legibilityIssues: adapted.legibilityIssues })
     expect([...new Set(cards.map(({ source }) => source))]).toEqual(['language', 'logic', 'legibility'])
     expect(cards.filter(({ needsTeacherReview }) => needsTeacherReview).map(({ source }) => source)).toEqual(['language', 'logic'])
     const markers = buildSourceIssueMarkers(transcript, cards)
     expect([...new Set(markers.map(({ source }) => source))]).toEqual(['language', 'logic', 'legibility'])
-    expect(markers.map(({ matchedText }) => matchedText)).toEqual(['I suggest you joins the club.', 'club', 'The moon is made of green paper.', "can't"])
+    expect(markers.map(({ matchedText }) => matchedText)).toEqual(['I suggest you joins the ', 'club', '.', 'The moon is made of green paper.', "can't"])
   })
 
   it('takes a teacher-confirmed zero-page regrade through the real builder and client multipart boundary', async () => {
@@ -112,7 +112,7 @@ describe('Gateway-to-website public grading contract', () => {
     }, context)
     expect(normalized.ok).toBe(true)
     if (!normalized.ok) return
-    const projected = projectGradingClientResponse(normalized.result, { httpOk: true, requestId: context.requestId, essayId: context.essayId, requireMultimodal: true, inputMode: 'images', pageCount: 1, fullScore: 15 })
+    const projected = projectGradingClientResponse(normalized.result, { httpOk: true, requestId: context.requestId, essayId: context.essayId, requireMultimodal: true, inputMode: 'images', pageCount: 1, fullScore: 15, task })
     expect(projected.status).toBe('success')
     if (projected.status === 'failed') return
     expect(projected.recognitionWarnings).toEqual([])

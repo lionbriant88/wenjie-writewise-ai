@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "types": ["node", "vitest"]
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts", "../app/src/services/grading/scoringRules.ts"]
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "../app/src/services/grading/scoringRules.ts", "../app/src/services/grading/gradingResultSemantics.ts", "../app/src/services/grading/validateMultimodalGradingRequestMode.ts"]
 }

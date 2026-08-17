@@ -562,6 +562,20 @@ describe('normalizeMultimodalResult', () => {
     expect(normalizeMultimodalResult(linked, context)).toMatchObject({ ok: false })
   })
 
+  it.each([
+    ['exact duplicate', ['can', 'can']],
+    ['trimmed duplicate', ['can', ' can ']],
+    ['Unicode-normalized duplicate', ['caf\u00e9', 'cafe\u0301']],
+  ])('rejects %s possible readings', (_label, possibleReadings) => {
+    const payload = payloadWithCantAmbiguity()
+    ;(payload.legibilityIssues as Array<Record<string, unknown>>)[0].possibleReadings = possibleReadings
+
+    expect(normalizeMultimodalResult(payload, context)).toMatchObject({
+      ok: false,
+      error: { code: 'provider_invalid_response' },
+    })
+  })
+
   it.each(['\uD83D', '\uDE00'])('rejects ill-formed Unicode in multimodal transcript and quotes: %s', (surrogate) => {
     const payload = validPayload()
     payload.transcript = `A${surrogate}B`

@@ -98,6 +98,19 @@ describe('buildMultimodalGradingRequest', () => {
     expect(rejected).toMatchObject({ ok: false, error: { code: 'invalid_request' } })
   })
 
+  it('accepts a valid astral pair and rejects either direction of an unpaired UTF-16 surrogate', () => {
+    const astralText = 'Teacher \u{1F600} transcript.'
+    expect(buildMultimodalGradingRequest(task, {
+      ...essay(), ocrText: astralText, transcriptSource: 'teacher_confirmed',
+    }, 'astral-request')).toMatchObject({ ok: true, request: { confirmedTranscript: astralText } })
+
+    for (const malformedText of [`Teacher ${'\uD800'} transcript.`, `Teacher ${'\uDC00'} transcript.`]) {
+      expect(buildMultimodalGradingRequest(task, {
+        ...essay(), ocrText: malformedText, transcriptSource: 'teacher_confirmed',
+      }, 'malformed-request')).toMatchObject({ ok: false, error: { code: 'invalid_request' } })
+    }
+  })
+
   it.each([
     ['missing image', essay(), task, 'request-1'],
     ['unconfirmed rubric', essay(new File([], 'a.png')), { ...task, rubricDraft: { ...task.rubricDraft!, status: 'draft' as const } }, 'request-1'],

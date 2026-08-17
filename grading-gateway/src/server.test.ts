@@ -172,6 +172,33 @@ describe('grading gateway server boundary', () => {
     expect(calls).toBe(1)
   })
 
+  it('rejects either lone surrogate before Provider use while accepting a valid astral pair', async () => {
+    let calls = 0
+    const provider: MultimodalProvider = {
+      async generateRubric() { throw new Error('not used') },
+      async gradeEssay(input) {
+        calls += 1
+        return strictMultimodalPayload(input.confirmedTranscript ?? '')
+      },
+    }
+    const task = { taskId: 'unicode-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: [], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: [], dimensions: imageRubricDimensions(), reviewWarnings: [] } }
+    const app = createServer({ multimodalProvider: provider })
+
+    for (const confirmedTranscript of [`Teacher ${'\uD800'} text.`, `Teacher ${'\uDC00'} text.`]) {
+      const response = await request(app).post('/grading/grade-images').field('metadata', JSON.stringify({
+        requestVersion: 'multimodal-grading-request-v2', requestId: 'malformed-unicode', essayId: 'unicode-essay', pageIds: [], task, confirmedTranscript,
+      })).expect(400)
+      expect(response.body).toMatchObject({ status: 'failed', error: { code: 'invalid_request', retryable: false } })
+    }
+    expect(calls).toBe(0)
+
+    const astralText = 'Teacher \u{1F600} text.'
+    await request(app).post('/grading/grade-images').field('metadata', JSON.stringify({
+      requestVersion: 'multimodal-grading-request-v2', requestId: 'valid-unicode', essayId: 'unicode-essay', pageIds: [], task, confirmedTranscript: astralText,
+    })).expect(200)
+    expect(calls).toBe(1)
+  })
+
   it('isolates image grading failures without retrying or exposing the raw essay', async () => {
     let calls = 0
     const provider: MultimodalProvider = {

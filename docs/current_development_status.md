@@ -34,7 +34,9 @@
 
 下一阶段执行 `2026-08-15-remove-ocr-web-migration.md`：保持网站现有布局不变；小程序完整功能仍属于后续计划。
 
-## 本次新增进展：真实 AI 批改 Gateway、DeepSeek Provider 与教师确认闭环 v0.1（自动化阶段）
+## 历史记录：真实 AI 批改 Gateway、DeepSeek Provider 与教师确认闭环 v0.1（已由多模态 v2/Kimi 主流程取代）
+
+> 本节仅保留 2026 年 7 月阶段性实现记录，不再代表当前运行方式。当前合同、路由和 Provider 以文末的多模态 v2/Kimi 说明为准；旧 `GradingRequestV1`、`POST /grading/grade` 与 DeepSeek 配置不得用于现网部署。
 
 - 已建立 Provider 无关的 `GradingRequestV1`、`AiGradingResultV1` 与 `GradingFailureV1`；前端只投影允许字段，并完整校验嵌套结构、HTTP 成功/失败类型、`requestId` 和 `essayId` 绑定。
 - 新结果通过唯一适配器进入现有 `GradingResult`，没有建立第二套页面状态模型。Gateway mock、Gateway mock_failure、浏览器本地 mock 回退和真实 Provider 共用同一结果契约。
@@ -569,6 +571,8 @@ http://localhost:5173/tasks/task-1/class-review
 ## 2026-08-17：多模态批改 v2 原子部署要求
 
 网站与 Grading Gateway 现共享唯一的 `multimodal-grading-request-v2` / `grading-result-v2` 合同。该版本为破坏性升级，发布时必须原子部署网站和 Gateway，不支持新旧版本混跑；旧的 `POST /grading/grade` 已停用，首次图片批改与教师确认文本重批都使用 `POST /grading/grade-images`。
+
+可达的旧任务统一按确定性规则转换为 v2：题目正文、文体/续写原文与段首、`writingGoal` 进入 `materialSummary`；非空教师要求（空白时回退题目正文）、`excellentFocus` 与 `excellentFeatures` 进入 `writingRequirements`；`deductionFocus` 与 `offTopicCriteria` 进入 `constraints`；`reviewTriggers` 与教师备注进入 `reviewWarnings`。各组按原顺序去空白、去重；`excellentFocus` 不作为硬约束。兼容转换只保留既有的 95% 原评分维度加 5% 卷面可读性维度，不作其他权重变更。
 
 ## 2026-08-17：多模态策略 golden 证据加固
 

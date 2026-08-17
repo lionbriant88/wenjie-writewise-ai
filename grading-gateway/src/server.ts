@@ -1,6 +1,8 @@
 import cors from 'cors'
 import express from 'express'
 import multer from 'multer'
+import { isWellFormedUnicode } from '../../app/src/services/grading/gradingResultSemantics.js'
+import { validateMultimodalGradingRequestMode } from '../../app/src/services/grading/validateMultimodalGradingRequestMode.js'
 import { MAX_RUBRIC_IMAGE_BYTES, MAX_RUBRIC_PAGES, requestIdFromMultipartBody, validateRubricMultipart } from './multipartImages.js'
 import { normalizeMultimodalResult } from './multimodal/normalizeMultimodalResult.js'
 import { validateConfirmedRubric, validateGeneratedRubric } from './multimodal/validateRubric.js'
@@ -72,7 +74,7 @@ function readMetadataString(value: unknown, maxLength: number): string | null {
 }
 
 function readConfirmedTranscript(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() && value.length <= 50_000 ? value : null
+  return typeof value === 'string' && value.trim() && value.length <= 50_000 && isWellFormedUnicode(value) ? value : null
 }
 
 function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]) {
@@ -183,13 +185,17 @@ export function createServer(options: CreateServerOptions = {}) {
       response.status(400).json(failure(imageGradeRequestId(request.body), { code: 'invalid_request', message: 'Image grading request is invalid.' }, false))
       return
     }
+    const requestMode = validateMultimodalGradingRequestMode({
+      confirmedTranscript: metadata.confirmedTranscript,
+      pageIds: metadata.pageIds,
+      pages: files ?? [],
+    })
+    if (!requestMode.ok) {
+      response.status(400).json(failure(metadata.requestId, { code: 'invalid_request', message: 'Image grading request is invalid.' }, false))
+      return
+    }
     let pages: GatewayImageInput[] = []
-    if (metadata.confirmedTranscript !== undefined) {
-      if (files?.length) {
-        response.status(400).json(failure(metadata.requestId, { code: 'invalid_request', message: 'Confirmed-text regrade must not include images.' }, false))
-        return
-      }
-    } else {
+    if (requestMode.mode === 'images') {
       const images = validateRubricMultipart({ requestId: metadata.requestId, fullScore: String(metadata.task.fullScore), pageIds: JSON.stringify(metadata.pageIds) }, files)
       if (!images.ok) {
         response.status(images.error.code === 'request_too_large' ? 413 : 400).json(failure(metadata.requestId, images.error, false))

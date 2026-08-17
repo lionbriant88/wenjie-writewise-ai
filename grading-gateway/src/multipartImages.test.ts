@@ -1,3 +1,7 @@
+import { createServer as createHttpServer } from 'node:http'
+import net from 'node:net'
+import type { Request, Response } from 'express'
+import multer from 'multer'
 import request from 'supertest'
 import { describe, expect, it } from 'vitest'
 import { createServer } from './server.js'
@@ -7,6 +11,61 @@ function safeBody(response: { body: unknown }) {
 }
 
 describe('rubric multipart image boundary', () => {
+  it('settles the upload middleware once when a multipart client aborts mid-file', async () => {
+    const upload = multer({ storage: multer.memoryStorage() }).single('pages')
+    let callbackCalls = 0
+    let settleCallback: (error: unknown) => void = () => undefined
+    const callbackResult = new Promise<unknown>((resolve) => { settleCallback = resolve })
+    const server = createHttpServer((incoming, outgoing) => {
+      upload(incoming as unknown as Request, outgoing as unknown as Response, (error) => {
+        callbackCalls += 1
+        settleCallback(error)
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('Expected a TCP test address.')
+
+    const boundary = 'synthetic-abort-boundary'
+    const partialBody = [
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="pages"; filename="synthetic.png"',
+      'Content-Type: image/png',
+      '',
+      'partial',
+    ].join('\r\n')
+    const rawRequest = [
+      'POST /upload HTTP/1.1',
+      'Host: 127.0.0.1',
+      `Content-Type: multipart/form-data; boundary=${boundary}`,
+      `Content-Length: ${Buffer.byteLength(partialBody) + 1024}`,
+      '',
+      partialBody,
+    ].join('\r\n')
+    const socket = net.createConnection({ host: '127.0.0.1', port: address.port })
+    await new Promise<void>((resolve, reject) => {
+      socket.once('error', reject)
+      socket.once('connect', () => {
+        socket.write(rawRequest, () => {
+          socket.destroy()
+          resolve()
+        })
+      })
+    })
+
+    let timeout: NodeJS.Timeout | undefined
+    const outcome = await Promise.race([
+      callbackResult.then((error) => ({ kind: 'callback' as const, error })),
+      new Promise<{ kind: 'timeout' }>((resolve) => { timeout = setTimeout(() => resolve({ kind: 'timeout' }), 500) }),
+    ])
+    if (timeout) clearTimeout(timeout)
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+
+    expect(outcome.kind).toBe('callback')
+    if (outcome.kind === 'callback') expect(outcome.error).toBeInstanceOf(Error)
+    expect(callbackCalls).toBe(1)
+  })
+
   it('rejects missing pages without exposing multipart data', async () => {
     const response = await request(createServer())
       .post('/tasks/rubric')
@@ -17,6 +76,19 @@ describe('rubric multipart image boundary', () => {
 
     expect(response.body).toMatchObject({ requestId: 'missing-pages', status: 'failed', error: { code: 'invalid_request', retryable: false } })
     expect(safeBody(response)).not.toMatch(/filename|bytes|material\.png|stack/i)
+  })
+
+  it('rejects an abruptly terminated multipart form without echoing parser details', async () => {
+    const marker = 'PRIVATE-MALFORMED-PAYLOAD'
+    const boundary = 'synthetic-malformed-boundary'
+    const response = await request(createServer())
+      .post('/tasks/rubric')
+      .set('Content-Type', `multipart/form-data; boundary=${boundary}`)
+      .send(`--${boundary}\r\nContent-Disposition: form-data; name="requestId"\r\n\r\n${marker}`)
+      .expect(400)
+
+    expect(response.body).toMatchObject({ requestId: 'unavailable', status: 'failed', error: { code: 'invalid_request', retryable: false } })
+    expect(safeBody(response)).not.toMatch(/PRIVATE-MALFORMED-PAYLOAD|boundary|multipart|stack/i)
   })
 
   it('rejects page and file count mismatches without exposing filenames', async () => {

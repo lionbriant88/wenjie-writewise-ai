@@ -140,7 +140,7 @@ describe('essay grading prompt', () => {
       additionalProperties: false,
       required: ['issueKey', 'transcriptText', 'possibleReadings', 'pageNumber', 'regionDescription', 'explanation', 'defaultOutcome'],
     })
-    expect(essayGradingSchema.properties.legibilityIssues.items.properties.possibleReadings).toMatchObject({ minItems: 2, maxItems: 4 })
+    expect(essayGradingSchema.properties.legibilityIssues.items.properties.possibleReadings).toMatchObject({ minItems: 2, maxItems: 4, uniqueItems: true })
     expect(essayGradingSchema.properties.legibilityIssues.items.properties.pageNumber).toMatchObject({ minimum: 1 })
     expect(essayGradingSchema.properties.legibilityIssues.items.properties.defaultOutcome.enum).toEqual(['count_as_legibility_error'])
     expect(essayGradingSchema.properties.dimensionScores.items.required).toContain('relatedIssueKeys')

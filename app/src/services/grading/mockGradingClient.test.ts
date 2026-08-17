@@ -11,7 +11,33 @@ describe('createMockGradingClient', () => {
       task: { taskId: 'task-image', fullScore: 15, materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], rubric: { taskName: 'Task', materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], reviewWarnings: [], dimensions: [{ id: 'all', name: 'All', weight: 100, description: 'All', deductionFocus: [], sourceEvidence: ['Material.'] }] } },
       pages: [{ pageId: 'page-1', file: new File(['image'], 'page.png', { type: 'image/png' }) }],
     }
-    await expect(createMockGradingClient().gradeImages!(request)).resolves.toMatchObject({ status: 'success', provider: 'mock', transcript: expect.any(String), printedTextExcluded: true })
+    await expect(createMockGradingClient().gradeImages!(request)).resolves.toMatchObject({
+      status: 'partial', provider: 'mock', transcript: expect.any(String), printedTextExcluded: true,
+      reviewReasons: ['local_mock'],
+    })
+  })
+
+  it('uses the same request-mode and UTF-16 preflight for local grading', async () => {
+    const imageRequest: MultimodalGradingRequestV2 = {
+      requestVersion: 'multimodal-grading-request-v2', requestId: 'preflight-request', essayId: 'preflight-essay', pageIds: ['page-1'],
+      task: { taskId: 'task-image', fullScore: 15, materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], rubric: { taskName: 'Task', materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], reviewWarnings: [], dimensions: [{ id: 'all', name: 'All', weight: 100, description: 'All', deductionFocus: [], sourceEvidence: ['Material.'] }] } },
+      pages: [{ pageId: 'page-1', file: new File(['image'], 'page.png', { type: 'image/png' }) }],
+    }
+    const client = createMockGradingClient()
+
+    await expect(client.gradeImages({ ...imageRequest, confirmedTranscript: 'Teacher-confirmed text.' })).resolves.toMatchObject({
+      status: 'failed', error: { code: 'invalid_request', retryable: false },
+    })
+    for (const confirmedTranscript of [`Teacher ${'\uD800'} text.`, `Teacher ${'\uDC00'} text.`]) {
+      await expect(client.gradeImages({ ...imageRequest, pageIds: [], pages: [], confirmedTranscript })).resolves.toMatchObject({
+        status: 'failed', error: { code: 'invalid_request', retryable: false },
+      })
+    }
+    await expect(client.gradeImages({
+      ...imageRequest, pageIds: [], pages: [], confirmedTranscript: 'Teacher \u{1F600} text.',
+    })).resolves.toMatchObject({
+      status: 'partial', transcript: 'Teacher \u{1F600} text.', reviewReasons: ['local_mock'],
+    })
   })
 
   it('accepts the real zero-page confirmed request and rejects zero-page image mode', async () => {

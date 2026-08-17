@@ -1,5 +1,6 @@
 import type { Essay, Task } from '../../types'
 import { buildConfirmedTaskPackage } from './buildConfirmedTaskPackage'
+import { isWellFormedUnicode } from './gradingResultSemantics'
 import type { MultimodalGradingRequestV2 } from './types'
 
 export type BuildMultimodalGradingRequestResult =
@@ -25,7 +26,7 @@ export function buildMultimodalGradingRequest(
     return invalid('题目材料或评分标准尚未确认。')
   }
   const confirmedTranscript = essay.transcriptSource === 'teacher_confirmed' ? essay.ocrText : undefined
-  if (confirmedTranscript !== undefined && (!confirmedTranscript.trim() || confirmedTranscript.length > 50_000)) {
+  if (confirmedTranscript !== undefined && (!confirmedTranscript.trim() || confirmedTranscript.length > 50_000 || !isWellFormedUnicode(confirmedTranscript))) {
     return invalid('Teacher-confirmed transcript is unavailable.')
   }
   let pageIds: string[] = []

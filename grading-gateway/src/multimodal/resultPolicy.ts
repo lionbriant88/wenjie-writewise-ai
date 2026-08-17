@@ -1,4 +1,11 @@
-import { exactUniqueTranscriptRange, transcriptRangesOverlap } from './transcriptRange.js'
+import {
+  containsBoundedTerm,
+  exactUniqueTranscriptRange,
+  locateUniqueNonOverlappingTranscriptRanges,
+  narrativeExplicitlyReferencesLocalLegibility,
+  rebuildTranscriptFromEdits,
+  transcriptRangesOverlap,
+} from './transcriptRange.js'
 import type { TranscriptRange } from './transcriptRange.js'
 import type {
   RawDimensionScoreV1,
@@ -44,30 +51,26 @@ function overlapsAny(range: TranscriptRange, blocked: TranscriptRange[]): boolea
   return blocked.some((candidate) => transcriptRangesOverlap(range, candidate))
 }
 
-function isWordCharacter(value: string | undefined): boolean {
-  return value !== undefined && /[\p{L}\p{N}_]/u.test(value)
-}
-
-function containsTerm(value: string, term: string): boolean {
-  let start = value.indexOf(term)
-  while (start >= 0) {
-    const end = start + term.length
-    if (!isWordCharacter(value[start - 1]) && !isWordCharacter(value[end])) return true
-    start = value.indexOf(term, start + 1)
-  }
-  return false
-}
-
-const FILTERED_REFERENCE_CUES = /\b(?:change|changed|correct|corrected|correction|form|handwriting|instead|misspell|misspelled|read|replace|should|spell|spelling|uncertain|unclear|word|written)\b|改为|拼写|应为|不清/iu
+const FILTERED_REFERENCE_CUES = /\b(?:ambiguous|ambiguity|change|changed|correct|corrected|correction|form|handwriting|illegible|instead|legibility|misspell|misspelled|read|readable|readability|reading|replace|replaced|should|spell|spelling|uncertain|unclear|unreadable|word|written)\b|改为|拼写|应为|字迹|辨认|可读|难辨|不清/iu
 
 function explicitlyReferencesFilteredSpelling(
   value: string,
   filtered: RawMultimodalIssueV1[],
 ): boolean {
   return filtered.some(({ originalText, suggestion }) => {
-    const mentionsOriginal = containsTerm(value, originalText)
-    return mentionsOriginal || (containsTerm(value, suggestion) && FILTERED_REFERENCE_CUES.test(value))
+    const mentionsOriginal = containsBoundedTerm(value, originalText)
+    return mentionsOriginal || (containsBoundedTerm(value, suggestion) && FILTERED_REFERENCE_CUES.test(value))
   })
+}
+
+function explicitlyReferencesFilteredSpellingWithCue(
+  value: string,
+  filtered: RawMultimodalIssueV1[],
+): boolean {
+  if (!FILTERED_REFERENCE_CUES.test(value)) return false
+  return filtered.some(({ originalText, suggestion }) => (
+    containsBoundedTerm(value, originalText) || containsBoundedTerm(value, suggestion)
+  ))
 }
 
 function revisionKeysAreKnown(revision: RawSentenceRevisionV1 | RawSentencePairV1, allIssueKeys: Set<string>): boolean {
@@ -89,26 +92,11 @@ function rebuildText(
   transcript: string,
   edits: Array<{ originalText: string; replacementText: string }>,
 ): string | null {
-  const located: Array<TranscriptRange & { replacementText: string }> = []
-  for (const edit of edits) {
-    if (!edit.replacementText || !edit.replacementText.trim()) return null
-    const range = exactUniqueTranscriptRange(transcript, edit.originalText)
-    if (!range || overlapsAny(range, located)) return null
-    located.push({ ...range, replacementText: edit.replacementText })
-  }
-  return located
-    .sort((left, right) => right.start - left.start)
-    .reduce((result, edit) => result.slice(0, edit.start) + edit.replacementText + result.slice(edit.end), transcript)
+  return rebuildTranscriptFromEdits(transcript, edits)
 }
 
 function hasSafeEditLocations(transcript: string, edits: Array<{ originalText: string }>): boolean {
-  const ranges: TranscriptRange[] = []
-  for (const edit of edits) {
-    const range = exactUniqueTranscriptRange(transcript, edit.originalText)
-    if (!range || overlapsAny(range, ranges)) return false
-    ranges.push(range)
-  }
-  return true
+  return locateUniqueNonOverlappingTranscriptRanges(transcript, edits.map(({ originalText }) => originalText)) !== null
 }
 
 export function rebuildCorrectedText(transcript: string, edits: CorrectedTextEdit[]): string | null {
@@ -247,11 +235,13 @@ export function applyResultPolicy(raw: ResultPolicyInput, transcript: string): R
     ...keptSentenceRevisions.flatMap(({ revisedText, note }) => [revisedText, note]),
     ...keptSentencePairs.flatMap(({ correctedText, improvedText, explanation }) => [correctedText, improvedText, explanation]),
     ...keptExpressionUpgrades.flatMap(({ upgradedText, note }) => [upgradedText, note]),
+    ...raw.legibilityIssues.flatMap(({ transcriptText, possibleReadings, regionDescription, explanation }) => (
+      [transcriptText, ...possibleReadings, regionDescription, explanation]
+    )),
   ]
   if (narratives.some((value) => explicitlyReferencesFilteredSpelling(value, filteredSpelling))) return null
+  if (raw.recognitionWarnings.some(({ message }) => explicitlyReferencesFilteredSpellingWithCue(message, filteredSpelling))) return null
 
-  const legibilityWords = raw.legibilityIssues.map(({ transcriptText }) => transcriptText)
-  const leaksLegibility = (value: string) => legibilityWords.some((word) => value.includes(word))
   const nonLegibilityNarratives = [
     ...raw.dimensionScores.filter(({ dimensionId }) => dimensionId !== 'legibility').flatMap(({ reason, evidence }) => [reason, evidence]),
     raw.overallComment,
@@ -262,7 +252,7 @@ export function applyResultPolicy(raw: ResultPolicyInput, transcript: string): R
     ...keptSentencePairs.flatMap(({ correctedText, improvedText, explanation }) => [correctedText, improvedText, explanation]),
     ...keptExpressionUpgrades.flatMap(({ upgradedText, note }) => [upgradedText, note]),
   ]
-  if (legibilityWords.length > 0 && nonLegibilityNarratives.some(leaksLegibility)) return null
+  if (raw.legibilityIssues.length > 0 && nonLegibilityNarratives.some((value) => narrativeExplicitlyReferencesLocalLegibility(value, raw.legibilityIssues))) return null
 
   const correctedText = rebuildText(transcript, keptSentencePairs.map(({ originalText, correctedText }) => ({ originalText, replacementText: correctedText })))
   const improvedText = rebuildText(transcript, keptSentencePairs.map(({ originalText, improvedText }) => ({ originalText, replacementText: improvedText })))
