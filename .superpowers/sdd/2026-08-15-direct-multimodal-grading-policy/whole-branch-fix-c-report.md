@@ -58,3 +58,31 @@ DONE. Findings 8 and 9 and the directly related evaluator/privacy/reproducibilit
 ## Non-blocking note
 
 The lockfile refresh reported two existing dependency advisories (one moderate and one high). No broad dependency upgrade or automated audit fix was performed because it is outside Fix C scope.
+
+## Review round 1: evaluator predicate closure
+
+### RED
+
+- Command: `Set-Location grading-gateway; npm.cmd test -- --run scripts/runPolicyGoldenEval.test.ts`
+- Output: 1 file ran, 77 tests; 8 failed and 69 passed. The failures were exactly the three A01 mutations (`generic ambiguity in score reason`, `generic uncertainty in score evidence`, `generic alternate-reading trace in overall comment`) and five A02 mutations (`unrelated sentence revision`, `unrelated sentence pair`, `expression upgrade`, `unrelated corrected aggregate edit`, `unrelated improved aggregate edit`). Each received `true` where the hand-derived expectation was `false`.
+
+### GREEN
+
+- Command: `Set-Location grading-gateway; npm.cmd test -- scripts/runPolicyGoldenEval.test.ts scripts/verifyPolicyGoldenFixtures.test.ts`
+- Output: 2 files passed; 84 tests passed. A01 now rejects ambiguity/uncertainty wording across score reason, score evidence, overall comment, and the already-covered logic-note channel while ordinary positive feedback remains accepted. A02 rejects fully shaped unrelated revisions, pairs, upgrades, and aggregate edits, while allowing no auxiliary edits or one exclusively linked `enviroment` to `environment` spelling revision/pair with the exact rebuilt aggregate.
+
+### Proportionate full verification
+
+- `Set-Location grading-gateway; npm.cmd test`: 20 files passed; 353 tests passed.
+- `Set-Location grading-gateway; npm.cmd run typecheck`: exit 0.
+- `Set-Location grading-gateway; npm.cmd run verify:shared-scoring-runtime`: exit 0; `shared scoring runtime ok`.
+- `Set-Location grading-gateway; npm.cmd run verify:grading-policy-fixtures`: exit 0 with no output.
+- Direct evaluator: key absent; four allowlisted `not_run_missing_local_credentials` lines; captured evaluator exit 2; zero external Provider calls. No real Provider evaluation ran.
+- `git diff --check`: exit 0; only line-ending conversion notices were emitted.
+
+### Review round 1 self-review
+
+- A01 retains its stronger success, exact transcript, no-deduction, no-structured-output, no-warning, and unchanged-aggregate requirements. The new vocabulary check is limited to explicit ambiguity/readability-uncertainty language; the positive fixture remains accepted.
+- A02 still requires exactly one low, certain, non-review spelling issue. Every accepted revision/pair is uniquely bounded to the same issue, exact original/correction, and spelling-only change type; expression upgrades and all unrelated aggregate edits are rejected.
+- The active status summary now records canonical committed-PNG verification and direct CLI stdout/stderr/exit capture as complete, while preserving the true `not_run_missing_local_credentials`, exit-2, zero-call result.
+- No transcript, image data, raw response, environment, credential, private marker, or absolute local path was added to evaluator output or this report.

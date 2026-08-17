@@ -46,7 +46,7 @@ function cleanResult(transcript: string): GoldenPolicyResult {
 }
 
 function languageIssue(type: GoldenPolicyResult['issues'][number]['type']): GoldenPolicyResult['issues'][number] {
-  return { type, severity: 'low', originalText: 'work', suggestion: 'walk', evidenceCertainty: 'certain', requiresTeacherReview: false }
+  return { id: 'test-issue', type, severity: 'low', originalText: 'work', suggestion: 'walk', evidenceCertainty: 'certain', requiresTeacherReview: false }
 }
 
 function passingResults(): Record<'ambiguousWork' | 'clearEnviroment' | 'ambiguousCant' | 'grammarAndLogic', GoldenPolicyResult> {
@@ -58,7 +58,7 @@ function passingResults(): Record<'ambiguousWork' | 'clearEnviroment' | 'ambiguo
       { dimensionId: 'relevance', score: 4, maxScore: 4, reason: 'The response is focused.', evidence: 'protect the enviroment.' },
       { dimensionId: 'legibility', score: 0.5, maxScore: 0.5, reason: 'The writing is readable.', evidence: 'protect the enviroment.' },
     ],
-    issues: [{ type: 'spelling', severity: 'low', originalText: 'enviroment', suggestion: 'environment', evidenceCertainty: 'certain', requiresTeacherReview: false }],
+    issues: [{ id: 'a02-spelling', type: 'spelling', severity: 'low', originalText: 'enviroment', suggestion: 'environment', evidenceCertainty: 'certain', requiresTeacherReview: false }],
   }
   const ambiguousCant: GoldenPolicyResult = {
     ...cleanResult(transcriptA03),
@@ -71,7 +71,7 @@ function passingResults(): Record<'ambiguousWork' | 'clearEnviroment' | 'ambiguo
   }
   const grammarAndLogic: GoldenPolicyResult = {
     ...cleanResult(transcriptA04),
-    issues: [{ type: 'grammar', severity: 'medium', originalText: 'I suggest you joins the club.', suggestion: 'I suggest you join the club.', evidenceCertainty: 'certain', requiresTeacherReview: false }],
+    issues: [{ id: 'a04-grammar', type: 'grammar', severity: 'medium', originalText: 'I suggest you joins the club.', suggestion: 'I suggest you join the club.', evidenceCertainty: 'certain', requiresTeacherReview: false }],
     fullTextRevision: {
       correctedText: 'I suggest you join the club. The moon is made of green paper. We can meet after class.',
       improvedText: 'I suggest you join the club. The moon claim is unrelated. We can meet after class.',
@@ -110,9 +110,20 @@ describe('policy golden predicates', () => {
     ['score evidence trace', (value: ReturnType<typeof cleanResult>) => { value.dimensionScores[0]!.evidence = 'work' }],
     ['overall narrative trace', (value: ReturnType<typeof cleanResult>) => { value.overallComment = 'Please review work.' }],
     ['alternate-reading narrative trace', (value: ReturnType<typeof cleanResult>) => { value.overallComment = 'Please review whether the student wrote walk.' }],
+    ['generic ambiguity in score reason', (value: ReturnType<typeof cleanResult>) => { value.dimensionScores[0]!.reason = 'The handwriting remains ambiguous.' }],
+    ['generic uncertainty in score evidence', (value: ReturnType<typeof cleanResult>) => { value.dimensionScores[0]!.evidence = 'The letters remain uncertain.' }],
+    ['generic alternate-reading trace in overall comment', (value: ReturnType<typeof cleanResult>) => { value.overallComment = 'There are multiple possible readings.' }],
   ])('fails A01 on %s', (_label, mutate) => {
     const results = passingResults(); mutate(results.ambiguousWork)
     expect(evaluatePolicyChecks(results).ambiguousWork).toBe(false)
+  })
+
+  it('allows ordinary positive A01 feedback without an ambiguity narrative', () => {
+    const results = passingResults()
+    results.ambiguousWork.dimensionScores[0]!.reason = 'The language is accurate.'
+    results.ambiguousWork.dimensionScores[1]!.evidence = 'together after school.'
+    results.ambiguousWork.overallComment = 'The response is clear and focused.'
+    expect(evaluatePolicyChecks(results).ambiguousWork).toBe(true)
   })
 
   it.each([
@@ -128,9 +139,23 @@ describe('policy golden predicates', () => {
     ['legibility uncertainty', (value: ReturnType<typeof passingResults>['clearEnviroment']) => { value.legibilityIssues.push({ transcriptText: 'enviroment', possibleReadings: ['enviroment', 'environment'], pageNumber: 1, defaultOutcome: 'count_as_legibility_error' }) }],
     ['recognition uncertainty', (value: ReturnType<typeof passingResults>['clearEnviroment']) => { value.recognitionWarnings.push('Uncertain.') }],
     ['review reason', (value: ReturnType<typeof passingResults>['clearEnviroment']) => { value.reviewReasons.push('recognition_uncertain') }],
+    ['unrelated sentence revision', (value: ReturnType<typeof passingResults>['clearEnviroment']) => { value.sentenceRevisions.push({ id: 'a02-unrelated-revision', relatedIssueIds: ['a02-spelling'], originalText: 'protect', revisedText: 'preserve', note: 'Change the verb.', changeTypes: ['word_choice'] }) }],
+    ['unrelated sentence pair', (value: ReturnType<typeof passingResults>['clearEnviroment']) => { value.fullTextRevision.sentencePairs.push({ id: 'a02-unrelated-pair', originalText: 'protect', correctedText: 'preserve', improvedText: 'preserve', relatedIssueIds: ['a02-spelling'], changeTypes: ['word_choice'], explanation: 'Change the verb.', requiresTeacherReview: false }) }],
+    ['expression upgrade', (value: ReturnType<typeof passingResults>['clearEnviroment']) => { value.expressionUpgrades.push({ id: 'a02-upgrade', originalText: 'protect', upgradedText: 'safeguard', note: 'Use a stronger verb.' }) }],
+    ['unrelated corrected aggregate edit', (value: ReturnType<typeof passingResults>['clearEnviroment']) => { value.fullTextRevision.correctedText = 'We must protect the environment.' }],
+    ['unrelated improved aggregate edit', (value: ReturnType<typeof passingResults>['clearEnviroment']) => { value.fullTextRevision.improvedText = 'We should safeguard the environment.' }],
   ])('fails A02 on %s', (_label, mutate) => {
     const results = passingResults(); mutate(results.clearEnviroment)
     expect(evaluatePolicyChecks(results).clearEnviroment).toBe(false)
+  })
+
+  it('allows A02 auxiliary output only when it exclusively applies enviroment to environment', () => {
+    const results = passingResults()
+    results.clearEnviroment.sentenceRevisions = [{ id: 'a02-revision', relatedIssueIds: ['a02-spelling'], originalText: 'enviroment', revisedText: 'environment', note: 'Correct the spelling.', changeTypes: ['spelling'] }]
+    results.clearEnviroment.fullTextRevision.sentencePairs = [{ id: 'a02-pair', originalText: 'enviroment', correctedText: 'environment', improvedText: 'environment', relatedIssueIds: ['a02-spelling'], changeTypes: ['spelling'], explanation: 'Correct the spelling.', requiresTeacherReview: false }]
+    results.clearEnviroment.fullTextRevision.correctedText = 'We should protect the environment.'
+    results.clearEnviroment.fullTextRevision.improvedText = 'We should protect the environment.'
+    expect(evaluatePolicyChecks(results).clearEnviroment).toBe(true)
   })
 
   it.each([

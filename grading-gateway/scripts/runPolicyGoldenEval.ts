@@ -32,7 +32,7 @@ export interface GoldenPolicyResult {
   status: MultimodalGradingResult['status']
   transcript: MultimodalGradingResult['transcript']
   dimensionScores: Array<Pick<MultimodalGradingResult['dimensionScores'][number], 'dimensionId' | 'score' | 'maxScore' | 'reason' | 'evidence'>>
-  issues: Array<Pick<MultimodalGradingResult['issues'][number], 'type' | 'severity' | 'originalText' | 'suggestion' | 'evidenceCertainty' | 'requiresTeacherReview'>>
+  issues: Array<Pick<MultimodalGradingResult['issues'][number], 'id' | 'type' | 'severity' | 'originalText' | 'suggestion' | 'evidenceCertainty' | 'requiresTeacherReview'>>
   legibilityIssues: Array<Pick<MultimodalGradingResult['legibilityIssues'][number], 'transcriptText' | 'possibleReadings' | 'pageNumber' | 'defaultOutcome'>>
   recognitionWarnings: MultimodalGradingResult['recognitionWarnings']
   reviewReasons: MultimodalGradingResult['reviewReasons']
@@ -107,6 +107,16 @@ function exactTerm(value: unknown, term: string): boolean {
   return typeof value === 'string' && new RegExp(`(^|[^A-Za-z0-9_])${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Za-z0-9_]|$)`, 'i').test(value)
 }
 
+function containsAmbiguityNarrative(value: unknown): boolean {
+  if (typeof value !== 'string') return false
+  return /\b(?:ambiguous|ambiguity|uncertain|uncertainty|unresolved|indeterminate|illegible|indistinct)\b|\b(?:multiple|alternative|possible)\s+(?:reading|readings|interpretation|interpretations)\b|\b(?:hard|difficult)\s+to\s+read\b|歧义|不确定|无法确认|字迹不清|难以辨认|可能读作/iu.test(value)
+}
+
+function exactStrings(value: unknown, expected: string[]): boolean {
+  const entries = strings(value)
+  return entries.length === expected.length && entries.every((entry, index) => entry === expected[index])
+}
+
 function commonResult(value: unknown) {
   if (!isRecord(value) || !isRecord(value.fullTextRevision)) return null
   return {
@@ -141,13 +151,36 @@ function ambiguousWorkPasses(value: unknown): boolean {
     ...result.logicNotes,
   ]
   return noStructuredFindings && noWarnings && noDeduction && revisionsUnchanged
-    && !narratives.some((text) => exactTerm(text, 'work') || exactTerm(text, 'walk'))
+    && !narratives.some((text) => exactTerm(text, 'work') || exactTerm(text, 'walk') || containsAmbiguityNarrative(text))
+}
+
+function isExactA02Revision(value: Record<string, unknown>, issueId: unknown): boolean {
+  return value.originalText === 'enviroment'
+    && value.revisedText === 'environment'
+    && exactStrings(value.relatedIssueIds, [String(issueId)])
+    && exactStrings(value.changeTypes, ['spelling'])
+}
+
+function isExactA02Pair(value: Record<string, unknown>, issueId: unknown): boolean {
+  return value.originalText === 'enviroment'
+    && value.correctedText === 'environment'
+    && value.improvedText === 'environment'
+    && exactStrings(value.relatedIssueIds, [String(issueId)])
+    && exactStrings(value.changeTypes, ['spelling'])
+    && value.requiresTeacherReview === false
 }
 
 function clearEnviromentPasses(value: unknown): boolean {
   const result = commonResult(value)
   if (!result || result.value.status !== 'success' || result.issues.length !== 1) return false
   const issue = result.issues[0]!
+  const exactRevisionOnly = result.revisions.length <= 1
+    && result.revisions.every((revision) => isExactA02Revision(revision, issue.id))
+  const exactPairOnly = result.pairs.length <= 1
+    && result.pairs.every((pair) => isExactA02Pair(pair, issue.id))
+  const expectedAggregate = result.pairs.length === 1
+    ? 'We should protect the environment.'
+    : 'We should protect the enviroment.'
   return issue.type === 'spelling'
     && issue.severity === 'low'
     && issue.originalText === 'enviroment'
@@ -160,6 +193,11 @@ function clearEnviromentPasses(value: unknown): boolean {
     && result.legibilityIssues.length === 0
     && result.recognitionWarnings.length === 0
     && result.reviewReasons.length === 0
+    && exactRevisionOnly
+    && exactPairOnly
+    && result.upgrades.length === 0
+    && result.fullText.correctedText === expectedAggregate
+    && result.fullText.improvedText === expectedAggregate
 }
 
 function ambiguousCantPasses(value: unknown): boolean {

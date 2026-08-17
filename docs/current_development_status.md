@@ -1,23 +1,24 @@
 # 当前开发状态
 
-最后更新：2026-08-15
+最后更新：2026-08-17
 
 ## 本次新增进展：多模态批改策略 Phase 1 验证与交接
 
 - 已完成 `grading-policy-v1` 的首轮策略收口：图片首批与教师确认文本后的重批使用同一份保守策略。可合理读成正确单词的字迹歧义按正确处理并保持静默；只有影响语义、语法或评分的重要歧义才作为可读性问题进入复核。
 - 评分继续优先覆盖语法、逻辑、任务完成度和表达；逻辑诊断必须有结构化上下文依据，问题引用必须能在 transcript 中精确定位。全文纠错稿、问题关系和前后端数据线协议均采用严格校验，拒绝不安全或无法重建的结果。
 - 合成 golden fixtures 与离线 evaluator 已完成并纳入 Gateway 自动化验证。真实 Kimi 评测状态为 `not_run_missing_local_credentials`：本地缺少 `KIMI_API_KEY`，未发生任何外部 Provider 调用；这不能表述为模型已经通过评测。
-- 已知、延后的 Minor 限制：合成夹具虽使用锁定渲染器，但仍会受不同机器的系统 `cursive` 字体影响，无法保证跨机器 PNG 字节完全一致；evaluator 的安全测试尚可补强为直接捕获 stdout/stderr。
+- 权威合成 fixture 已采用仓库提交的 canonical PNG；校验固定 PNG 签名、`1200×700` 尺寸、字节长度和 SHA-256，不依赖环境字体。SVG 只保留为非权威设计源，不再声明渲染器跨机器字节确定性。
+- evaluator 的 CLI 子进程验证已直接捕获 stdout、stderr 和退出码。当前无本地凭证时会输出四条白名单化的 `not_run_missing_local_credentials`，退出码为 2，且外部 Provider 调用数为零。
 - 本轮不记录 API key、Provider 原始响应、作文全文、图片内容或学生身份；未修改归档历史规格。
 
 ### 本轮精确验证矩阵
 
 | 范围 | 命令 | 最终结果 |
 | --- | --- | --- |
-| Grading Gateway | `Set-Location grading-gateway; npm.cmd test` | 19 个测试文件、223 个用例通过 |
+| Grading Gateway | `Set-Location grading-gateway; npm.cmd test` | 20 个测试文件、353 个用例通过 |
 | Grading Gateway | `Set-Location grading-gateway; npm.cmd run typecheck` | 通过 |
 | Grading Gateway | `Set-Location grading-gateway; npm.cmd run verify:shared-scoring-runtime` | 通过（`shared scoring runtime ok`） |
-| 网站 | `Set-Location app; npm.cmd test` | 45 个测试文件、287 个用例通过 |
+| 网站 | `Set-Location app; npm.cmd test` | 45 个测试文件、289 个用例通过 |
 | 网站 | `Set-Location app; npm.cmd run typecheck` | 通过 |
 | 网站 | `Set-Location app; npm.cmd run lint` | 通过 |
 | 网站 | `Set-Location app; npm.cmd run build` | 通过 |
