@@ -10,7 +10,7 @@ export function createMockGradingClient(): GradingClient {
         : request.pages.length < 1 || request.pages.length !== request.pageIds.length || request.pages.some(({ file }) => !file)) {
         return { requestId: request.requestId, status: 'failed', error: { code: 'invalid_request', message: '作文图片不可用。', retryable: false } }
       }
-      const transcript = '本地 mock 图片文本，用于验证图片直传批改流程。'
+      const transcript = request.confirmedTranscript ?? '本地 mock 图片文本，用于验证图片直传批改流程。'
       const createdAt = new Date().toISOString()
       const dimensionScores = request.task.rubric.dimensions.map((dimension) => {
         const maxScore = calculateDimensionMaxScore(request.task.fullScore, dimension.weight)
@@ -19,8 +19,10 @@ export function createMockGradingClient(): GradingClient {
       return {
         resultVersion: 'grading-result-v2', requestId: request.requestId, essayId: request.essayId, provider: 'mock', status: 'success',
         totalScore: calculateTotalScore(dimensionScores.map(({ score }) => score), request.task.fullScore), maxScore: request.task.fullScore,
-        dimensionScores, issues: [], sentenceRevisions: [], expressionUpgrades: [], overallComment: '本地 mock 图片批改结果，请教师复核。', reviewReasons: ['local_mock'], createdAt,
-        transcript: request.confirmedTranscript ?? transcript, recognitionWarnings: [], legibilityIssues: [], printedTextExcluded: true,
+        dimensionScores, issues: [], sentenceRevisions: [], expressionUpgrades: [],
+        fullTextRevision: { originalText: transcript, correctedText: transcript, improvedText: transcript, sentencePairs: [], logicNotes: [], logicIssues: [] },
+        overallComment: '本地 mock 图片批改结果，请教师复核。', reviewReasons: ['local_mock'], createdAt,
+        transcript, recognitionWarnings: [], legibilityIssues: [], printedTextExcluded: true,
       }
     },
   }

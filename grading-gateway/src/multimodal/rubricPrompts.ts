@@ -33,7 +33,7 @@ function completeRubricSchema() {
     properties: {
       taskName: { type: 'string' },
       materialSummary: { type: 'string' },
-      writingRequirements: { type: 'array', items: { type: 'string' } },
+      writingRequirements: { type: 'array', minItems: 1, items: { type: 'string' } },
       constraints: { type: 'array', items: { type: 'string' } },
       dimensions: { type: 'array', minItems: 1, maxItems: 10, items: rubricDimensionSchema },
       reviewWarnings: { type: 'array', items: { type: 'string' } },

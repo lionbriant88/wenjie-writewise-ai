@@ -55,6 +55,7 @@ describe('rubric prompts', () => {
         'taskName', 'materialSummary', 'writingRequirements', 'constraints', 'dimensions', 'reviewWarnings',
       ])
       expect(schema.properties.dimensions).toMatchObject({ type: 'array', minItems: 1 })
+      expect(schema.properties.writingRequirements).toMatchObject({ type: 'array', minItems: 1 })
       expect(schema.properties.dimensions.items).toMatchObject({ type: 'object', additionalProperties: false })
     }
   })

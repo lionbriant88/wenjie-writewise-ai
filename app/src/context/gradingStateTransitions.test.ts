@@ -31,6 +31,7 @@ const successResult: AiGradingResultV1 = {
   provider: 'remote', status: 'success', totalScore: 12, maxScore: 15,
   dimensionScores: [], issues: [], sentenceRevisions: [], expressionUpgrades: [],
   recognitionWarnings: [], legibilityIssues: [],
+  fullTextRevision: { originalText: 'Synthetic transcript.', correctedText: 'Synthetic transcript.', improvedText: 'Synthetic transcript.', sentencePairs: [], logicNotes: [], logicIssues: [] },
   overallComment: 'Synthetic.', reviewReasons: [], createdAt: '2026-07-20T00:01:00.000Z',
 }
 

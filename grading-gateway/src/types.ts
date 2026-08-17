@@ -192,7 +192,7 @@ export interface AiGradingResultV1 {
     note: string
     requiresTeacherReview?: boolean
   }>
-  fullTextRevision?: {
+  fullTextRevision: {
     originalText: string
     correctedText: string
     improvedText: string

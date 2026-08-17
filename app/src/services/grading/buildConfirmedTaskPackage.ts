@@ -21,14 +21,10 @@ function legacyTaskText(task: Task) {
   return { materialSummary, writingRequirements, constraints, reviewWarnings: [...(task.rubricDraft?.reviewTriggers ?? [])] }
 }
 
-function withLegibilityDimension(dimensions: RubricDimension[], source: NonNullable<Task['rubricDraft']>['source']): RubricDimension[] | null {
+function withLegibilityDimension(dimensions: RubricDimension[]): RubricDimension[] | null {
   const legibility = dimensions.filter(({ id }) => id === 'legibility')
   if (legibility.length > 1) return null
-  if (legibility.length === 1) {
-    if (source !== 'teacher' && legibility[0].weight !== LEGIBILITY_WEIGHT) return null
-    return dimensions.map((dimension) => ({ ...dimension }))
-  }
-  if (source !== 'teacher') return null
+  if (legibility.length === 1) return dimensions.map((dimension) => ({ ...dimension }))
   return [
     ...dimensions.map((dimension) => ({ ...dimension, weight: dimension.weight * (100 - LEGIBILITY_WEIGHT) / 100 })),
     {
@@ -46,7 +42,7 @@ export function buildConfirmedTaskPackage(task: Task): ConfirmedTaskPackageV2 | 
   if (!validText(task.id, 128) || !validText(task.taskName, 2_000) || !Number.isInteger(task.fullScore) || task.fullScore < 1 || task.fullScore > 100 || rubric?.status !== 'confirmed' || !source) return null
   if (!validText(source.materialSummary, 20_000) || !validTextArray(source.writingRequirements, 50) || source.writingRequirements.length < 1 || !validTextArray(source.constraints, 50) || !validTextArray(source.reviewWarnings, 50)) return null
   if (rubric.dimensions.length < 1 || rubric.dimensions.length > 10 || !validWeights(rubric.dimensions.map(({ weight }) => weight))) return null
-  const dimensions = withLegibilityDimension(rubric.dimensions, rubric.source)
+  const dimensions = withLegibilityDimension(rubric.dimensions)
   if (!dimensions || dimensions.length > 10 || !validWeights(dimensions.map(({ weight }) => weight)) || new Set(dimensions.map(({ id }) => id)).size !== dimensions.length) return null
   if (dimensions.some((dimension) => !validText(dimension.id, 128) || !validText(dimension.name, 256) || !validText(dimension.description, 2_000) || !validTextArray(dimension.deductionFocus, 50, 1_000) || !validTextArray(dimension.sourceEvidence ?? [], 50, 5_000))) return null
 

@@ -93,7 +93,7 @@ function projectRubric(value: unknown): GeneratedTaskRubric | null {
   if (!Array.isArray(value.dimensions)) return null
   const dimensions = value.dimensions.map(projectDimension)
   if (
-    !taskName || !materialSummary || !writingRequirements || !constraints || !reviewWarnings
+    !taskName || !materialSummary || !writingRequirements || writingRequirements.length < 1 || !constraints || !reviewWarnings
     || !dimensions.every((item): item is GeneratedRubricDimension => item !== null)
     || dimensions.length === 0
     || Math.abs(dimensions.reduce((total, dimension) => total + dimension.weight, 0) - 100) > 0.001

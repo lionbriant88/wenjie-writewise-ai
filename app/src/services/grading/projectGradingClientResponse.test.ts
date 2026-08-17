@@ -30,7 +30,7 @@ function validSuccess(): Record<string, unknown> {
       note: 'Synthetic note.', requiresTeacherReview: false,
     }],
     fullTextRevision: {
-      originalText: 'Untrusted provider original.',
+      originalText: 'Student text.',
       correctedText: 'Synthetic correction.',
       improvedText: 'Synthetic improvement.',
       sentencePairs: [{
@@ -227,6 +227,18 @@ describe('projectGradingClientResponse', () => {
     expect(result.recognitionWarnings).toEqual(['One word unclear.'])
   })
 
+  it('requires fullTextRevision and binds its original text to the multimodal transcript', () => {
+    const missing = validSuccess()
+    delete missing.fullTextRevision
+    expectInvalid(missing)
+
+    const mismatch = validSuccess()
+    mismatch.transcript = 'Teacher-confirmed transcript.'
+    mismatch.recognitionWarnings = []
+    mismatch.printedTextExcluded = true
+    expectInvalid(mismatch, { ...expected, requireMultimodal: true, inputMode: 'confirmed_text', confirmedTranscript: 'Teacher-confirmed transcript.' })
+  })
+
   it('fails closed when a failure object contains unknown keys', () => {
     expectInvalid({
       requestId: 'request-1', status: 'failed',
@@ -269,6 +281,7 @@ describe('projectGradingClientResponse', () => {
     ]
     raw.overallComment = 'x'.repeat(50_000)
     raw.transcript = 't'.repeat(50_000)
+    ;(raw.fullTextRevision as Record<string, unknown>).originalText = raw.transcript
     raw.printedTextExcluded = true
     expect(projectGradingClientResponse(raw, { ...expected, requireMultimodal: true, fullScore: 15 })).toMatchObject({
       status: 'success', overallComment: raw.overallComment, transcript: raw.transcript,

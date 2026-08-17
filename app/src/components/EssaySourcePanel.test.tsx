@@ -71,4 +71,21 @@ describe('EssaySourcePanel', () => {
     expect(screen.getByRole('button', { name: '复核识别结果' })).toBeDisabled()
     expect(screen.getByText('批改完成后再编辑')).toBeInTheDocument()
   })
+
+  it('highlights a shared-range marker when its secondary issue is active', () => {
+    render(
+      <EssaySourcePanel
+        essay={kimiEssay}
+        activeIssueId="issue-secondary"
+        issueMarkers={[{
+          issueId: 'issue-primary', issueIds: ['issue-primary', 'issue-secondary'], source: 'language', severity: 'medium',
+          original: 'student text', matchedText: 'student text', start: 27, end: 39,
+        }]}
+        onOcrTextChange={vi.fn()}
+        onViewOriginalImage={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: '查看问题：student text' })).toHaveAttribute('data-active', 'true')
+  })
 })

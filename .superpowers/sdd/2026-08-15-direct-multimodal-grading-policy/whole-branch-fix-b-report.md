@@ -44,3 +44,81 @@ Repository callers and the migration plan were inspected before implementation. 
 ## Self-review
 
 Checked the exact v2 request/result values, zero-page confirmed mock flow, decimal weights and tolerance, 50,000 boundaries, array bounds, unique nonempty `changeTypes`, relationship uniqueness, raw Provider review-reason removal, confirmed runtime invariants, generated-vs-teacher rubric rules, preserved review flags, and same-range issue relationships. No essay text, image content, Provider payload, or credential was logged or placed in failures.
+
+## Review round 1 (2026-08-17)
+
+### RED evidence and minimal fixes
+
+1. Saved confirmed rubrics and decimal editing:
+   - `app: npm.cmd test -- src/services/grading/buildMultimodalGradingRequest.test.ts -t "decimal weights even when rubric originated from AI"` — RED: expected `ok: true`, received `ok: false` for a positive decimal teacher edit totaling 100.
+   - `app: npm.cmd test -- src/pages/CreateTaskPage.test.tsx -t "allows decimal teacher edits"` — RED: the weight input had no decimal `step`.
+   - The confirmed-package builder now treats every saved confirmed rubric as teacher-confirmed; exact 5% remains solely in generated Provider-return validation. The existing UI layout is unchanged and the number input uses `step="any"`.
+2. Complete confirmed mock projection:
+   - `app: npm.cmd test -- src/services/grading/mockGradingClient.test.ts -t "accepts the real zero-page"` — RED: one failed test; body-derived evidence used the image-mode placeholder and `fullTextRevision` was missing (payload text redacted here).
+   - Mock mode now selects the authoritative transcript first and uses it for evidence and complete `originalText`/`correctedText`/`improvedText` revision fields.
+3. Nonempty writing requirements:
+   - `grading-gateway: npm.cmd test -- src/multimodal/validateRubric.test.ts src/multimodal/rubricPrompts.test.ts` — RED: two assertions failed because empty `writingRequirements` validated and the schema lacked `minItems: 1`.
+   - `app: npm.cmd test -- src/services/taskRubric/rubricClient.test.ts -t "empty writingRequirements"` — RED: one assertion failed because the response projected as success.
+   - Generated/reviewed schemas, both Gateway trust-mode validators, and the app rubric projector now require at least one writing requirement.
+4. Provider schema/runtime parity:
+   - `grading-gateway: npm.cmd test -- src/multimodal/normalizeMultimodalResult.test.ts -t "unexpected nested"` — RED: 9 failed / 1 passed; unexpected keys were accepted in every tested nested structure except recognition warnings.
+   - `grading-gateway: npm.cmd test -- src/multimodal/gradingPrompt.test.ts` — RED: 1 failed / 8 passed; the first missing bound was `issueKey.maxLength`.
+   - `grading-gateway: npm.cmd test -- src/multimodal/normalizeMultimodalResult.test.ts -t "measures bounded identifiers"` — RED: the 201-code-unit padded identifier was accepted after trimming.
+   - Staged-diff review found a remaining minima gap. `grading-gateway: npm.cmd test -- src/multimodal/gradingPrompt.test.ts -t "nonempty and numeric minima"` — RED: 1 failed / 9 skipped; `transcript.minLength` was absent, followed by the missing nonblank and score/array minima assertions.
+   - A follow-up RED on the same command additionally showed the nonblank pattern absent from transcript/evidence/comment fields. Shared exact-key and limit constants now drive the Provider schema and runtime parser. Separate bounded allow-empty, nonempty, and nonblank schemas match runtime field semantics; transcript, dimension evidence, and overall comment are nonblank; only context and ignored aggregate rewrite fields allow empty; `dimensionScores` requires one item and score has minimum 0. Nested extras reject; raw length is measured before trimming; 50,000 is accepted and 50,001 rejects.
+5. Required and transcript-bound full-text revision:
+   - `app: npm.cmd test -- src/services/grading/projectGradingClientResponse.test.ts -t "requires fullTextRevision"` — RED: 1 failed / 49 skipped; a v2 result missing the revision projected as success.
+   - Gateway/app public result types and projector now require the complete revision, and multimodal projection requires `fullTextRevision.originalText === transcript` (including confirmed mode). Mocks and fixtures were aligned.
+6. Shared-range active marker:
+   - `app: npm.cmd test -- src/components/EssaySourcePanel.test.tsx -t "secondary issue"` — RED: expected `data-active="true"`, received `data-active="false"`.
+   - Active state now uses `marker.issueIds.includes(activeIssueId)` while clicks retain the deterministic primary `marker.issueId` and the existing layout.
+
+### Focused GREEN evidence
+
+```text
+grading-gateway> npm.cmd test -- src/multimodal/normalizeMultimodalResult.test.ts src/multimodal/gradingPrompt.test.ts src/multimodal/rubricPrompts.test.ts src/multimodal/validateRubric.test.ts
+Test Files  4 passed (4)
+Tests       104 passed (104)
+
+app> npm.cmd test -- src/services/grading/buildMultimodalGradingRequest.test.ts src/pages/CreateTaskPage.test.tsx src/services/grading/mockGradingClient.test.ts src/services/taskRubric/rubricClient.test.ts src/services/grading/projectGradingClientResponse.test.ts src/components/EssaySourcePanel.test.tsx
+Test Files  6 passed (6)
+Tests       95 passed (95)
+```
+
+The first full app integration run then exposed one stale remote-client fixture (`1 failed / 286 passed`); the fixture omitted the newly required revision. After aligning that fixture and the typed state-transition fixtures to the v2 contract, the focused remote-client run passed `1 file / 4 tests`.
+
+### Final exact verification
+
+```text
+grading-gateway> npm.cmd test
+Test Files  20 passed (20)
+Tests       286 passed (286)
+
+grading-gateway> npm.cmd run typecheck
+> tsc --noEmit
+
+grading-gateway> npm.cmd run verify:shared-scoring-runtime
+shared scoring runtime ok
+
+app> npm.cmd test
+Test Files  45 passed (45)
+Tests       287 passed (287)
+
+app> npm.cmd run typecheck
+> tsc -b
+
+app> npm.cmd run lint
+> oxlint .
+
+app> npm.cmd run build
+> tsc -b && vite build
+107 modules transformed.
+dist/index.html                   0.41 kB | gzip:   0.29 kB
+dist/assets/index-CJx8tR0j.css   35.88 kB | gzip:   7.36 kB
+dist/assets/index-D4c2xr4g.js   391.51 kB | gzip: 115.73 kB
+built in 189ms
+```
+
+### Review-round self-review and deferred minor
+
+Rechecked saved-teacher versus generated rubric trust, decimal inputs, complete confirmed mock body derivation, nonempty writing requirements, every Provider nested exact-key set and public bound, required transcript-bound revisions, and secondary same-range activation. Failures remain bounded/redacted; no essay or image content is logged. Reviewer Minor intentionally remains for controller triage: `remoteGradingClient` discards supplied pages when `confirmedTranscript` is present while the mock rejects a malformed mixed-mode request; this round did not change that behavior.

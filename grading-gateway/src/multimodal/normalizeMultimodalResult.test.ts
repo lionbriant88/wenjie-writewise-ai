@@ -125,6 +125,61 @@ function payloadWithCantAmbiguity(): Record<string, unknown> {
 }
 
 describe('normalizeMultimodalResult', () => {
+  it.each([
+    ['dimension score', () => validPayload(), (payload: Record<string, unknown>) => { ;(payload.dimensionScores as Array<Record<string, unknown>>)[0].extra = true }],
+    ['issue', () => validPayload(), (payload: Record<string, unknown>) => { ;(payload.issues as Array<Record<string, unknown>>)[0].extra = true }],
+    ['sentence revision', () => { const payload = validPayload(); payload.sentenceRevisions = [{ originalText: 'It are blue.', revisedText: 'It is blue.', note: 'Synthetic.', relatedIssueKeys: ['grammar-blue'], changeTypes: ['grammar'] }]; return payload }, (payload: Record<string, unknown>) => { ;(payload.sentenceRevisions as Array<Record<string, unknown>>)[0].extra = true }],
+    ['expression upgrade', () => { const payload = validPayload(); payload.expressionUpgrades = [{ originalText: 'I has a pen.', upgradedText: 'I have a pen.', note: 'Synthetic.' }]; return payload }, (payload: Record<string, unknown>) => { ;(payload.expressionUpgrades as Array<Record<string, unknown>>)[0].extra = true }],
+    ['full-text revision', () => validPayload(), (payload: Record<string, unknown>) => { ;(payload.fullTextRevision as Record<string, unknown>).extra = true }],
+    ['sentence pair', () => { const payload = validPayload(); ;(payload.fullTextRevision as Record<string, unknown>).sentencePairs = [{ originalText: 'It are blue.', correctedText: 'It is blue.', improvedText: 'It is blue.', relatedIssueKeys: ['grammar-blue'], changeTypes: ['grammar'], explanation: 'Synthetic.', requiresTeacherReview: false }]; return payload }, (payload: Record<string, unknown>) => { ;((payload.fullTextRevision as Record<string, unknown>).sentencePairs as Array<Record<string, unknown>>)[0].extra = true }],
+    ['logic note', () => validPayload(), (payload: Record<string, unknown>) => { ;((payload.fullTextRevision as Record<string, unknown>).logicNotes as Array<Record<string, unknown>>)[0].extra = true }],
+    ['logic issue', () => payloadWithLogicIssue(), (payload: Record<string, unknown>) => { ;((payload.fullTextRevision as Record<string, unknown>).logicIssues as Array<Record<string, unknown>>)[0].extra = true }],
+    ['legibility issue', () => payloadWithCantAmbiguity(), (payload: Record<string, unknown>) => { ;(payload.legibilityIssues as Array<Record<string, unknown>>)[0].extra = true }],
+    ['recognition warning', () => { const payload = validPayload(); payload.recognitionWarnings = [{ scope: 'global_unreadable', message: 'Synthetic warning.' }]; return payload }, (payload: Record<string, unknown>) => { ;(payload.recognitionWarnings as Array<Record<string, unknown>>)[0].extra = true }],
+  ] as const)('rejects an unexpected nested %s key', (_label, makePayload, mutate) => {
+    const payload = makePayload()
+    expect(normalizeMultimodalResult(payload, context).ok).toBe(true)
+    mutate(payload)
+    expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
+  })
+
+  it('accepts 50,000-code-unit public text and rejects 50,001', () => {
+    const atLimit = validPayload()
+    ;(atLimit.fullTextRevision as Record<string, unknown>).correctedText = 'x'.repeat(50_000)
+    expect(normalizeMultimodalResult(atLimit, context)).toMatchObject({ ok: true })
+
+    const overLimit = validPayload()
+    ;(overLimit.fullTextRevision as Record<string, unknown>).correctedText = 'x'.repeat(50_001)
+    expect(normalizeMultimodalResult(overLimit, context)).toMatchObject({ ok: false })
+  })
+
+  it('measures bounded identifiers before trimming so runtime matches the Provider schema', () => {
+    const setIssueKey = (payload: Record<string, unknown>, issueKey: string) => {
+      ;(payload.issues as Array<Record<string, unknown>>)[0].issueKey = issueKey
+      for (const dimension of payload.dimensionScores as Array<Record<string, unknown>>) {
+        if ((dimension.relatedIssueKeys as string[]).length > 0) dimension.relatedIssueKeys = [issueKey]
+      }
+    }
+    const atLimit = validPayload()
+    setIssueKey(atLimit, 'x'.repeat(200))
+    expect(normalizeMultimodalResult(atLimit, context)).toMatchObject({ ok: true })
+
+    const overLimitAfterTrimming = validPayload()
+    setIssueKey(overLimitAfterTrimming, ` ${'x'.repeat(200)}`)
+    expect(normalizeMultimodalResult(overLimitAfterTrimming, context)).toMatchObject({ ok: false })
+  })
+
+  it('rejects whitespace-only relationship identifiers and negative dimension scores', () => {
+    const whitespaceKey = validPayload()
+    ;(whitespaceKey.issues as Array<Record<string, unknown>>)[0].issueKey = '   '
+    ;(whitespaceKey.dimensionScores as Array<Record<string, unknown>>)[0].relatedIssueKeys = ['   ']
+    expect(normalizeMultimodalResult(whitespaceKey, context)).toMatchObject({ ok: false })
+
+    const negativeScore = validPayload()
+    ;(negativeScore.dimensionScores as Array<Record<string, unknown>>)[0].score = -0.01
+    expect(normalizeMultimodalResult(negativeScore, context)).toMatchObject({ ok: false })
+  })
+
   it('rejects raw quote whitespace drift in multimodal issue, revision, pair, logic, note, and legibility fields', () => {
     for (const mutate of [
       (payload: Record<string, unknown>) => { ;(payload.issues as Array<Record<string, unknown>>)[0].originalText = 'It  are blue.' },

@@ -68,6 +68,13 @@ describe('validateGeneratedRubric', () => {
     expect(validateGeneratedRubric(validRubricWithTwoLegibilityDimensions()).ok).toBe(false)
   })
 
+  it('rejects generated and confirmed rubrics without a writing requirement', () => {
+    const rubric = validRubricWithLegibility({ weight: 5 })
+    rubric.writingRequirements = []
+    expect(validateGeneratedRubric(rubric).ok).toBe(false)
+    expect(validateConfirmedRubric(rubric).ok).toBe(false)
+  })
+
   it('accepts unique rubric dimensions whose percentage weights total 100', () => {
     const result = validateGeneratedRubric({
       taskName: 'A school writing task',

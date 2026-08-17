@@ -121,6 +121,7 @@ describe('AppStateContext material-based task creation', () => {
       resultVersion: 'grading-result-v2', requestId: request.requestId, essayId: request.essayId, provider: 'mock', status: 'success', totalScore: 12, maxScore: 15,
       dimensionScores: [], issues: [], sentenceRevisions: [], expressionUpgrades: [], legibilityIssues: [], overallComment: 'Done.', reviewReasons: [], createdAt: '2026-08-02T00:00:00.000Z',
       transcript: 'Kimi settled transcript.', recognitionWarnings: [], printedTextExcluded: true,
+      fullTextRevision: { originalText: 'Kimi settled transcript.', correctedText: 'Kimi settled transcript.', improvedText: 'Kimi settled transcript.', sentencePairs: [], logicNotes: [], logicIssues: [] },
     })
     await act(async () => { await grading })
     expect(latestState.essays.find((item) => item.id === essay.id)).toMatchObject({
@@ -137,7 +138,7 @@ describe('AppStateContext material-based task creation', () => {
         issues: [{ id: 'issue-1', type: 'grammar', severity: 'medium', originalText: 'bad', suggestion: 'better', explanation: 'Issue explanation.', evidenceCertainty: 'certain' as const, requiresTeacherReview: true }],
         sentenceRevisions: [{ id: 'revision-1', relatedIssueIds: ['issue-1'], originalText: 'bad', revisedText: 'better', note: 'Revision note.', changeTypes: ['grammar'] as const, requiresTeacherReview: false }],
         expressionUpgrades: [{ id: 'upgrade-1', originalText: 'plain', upgradedText: 'polished', note: 'Upgrade note.', requiresTeacherReview: true }],
-        fullTextRevision: { originalText: 'bad', correctedText: 'better', improvedText: 'polished', sentencePairs: [{ id: 'pair-1', originalText: 'bad', correctedText: 'better', improvedText: 'polished', relatedIssueIds: ['issue-1'], changeTypes: ['grammar'] as const, explanation: 'Pair explanation.', requiresTeacherReview: false }], logicNotes: [], logicIssues: [] },
+        fullTextRevision: { originalText: 'Faithful image transcript.', correctedText: 'better', improvedText: 'polished', sentencePairs: [{ id: 'pair-1', originalText: 'bad', correctedText: 'better', improvedText: 'polished', relatedIssueIds: ['issue-1'], changeTypes: ['grammar'] as const, explanation: 'Pair explanation.', requiresTeacherReview: false }], logicNotes: [], logicIssues: [] },
         overallComment: 'Detailed image result.', reviewReasons: [], createdAt: '2026-08-02T00:00:00.000Z',
         transcript: 'Faithful image transcript.', recognitionWarnings: ['Low contrast on final line.'], legibilityIssues: [], printedTextExcluded: true,
       }),
@@ -181,6 +182,7 @@ describe('AppStateContext material-based task creation', () => {
       dimensionScores: [{ dimensionId: 'content', name: 'Content', score: 12, maxScore: 15, weight: 100, reason: 'Reason.', evidence: 'Evidence.', requiresTeacherReview: false }],
       issues: [], sentenceRevisions: [], expressionUpgrades: [], legibilityIssues: [], overallComment: 'Comment.', reviewReasons: [], createdAt: '2026-08-02T00:00:00.000Z',
       transcript: request.confirmedTranscript ?? 'Kimi transcript.', recognitionWarnings: [], printedTextExcluded: true,
+      fullTextRevision: { originalText: request.confirmedTranscript ?? 'Kimi transcript.', correctedText: request.confirmedTranscript ?? 'Kimi transcript.', improvedText: request.confirmedTranscript ?? 'Kimi transcript.', sentencePairs: [], logicNotes: [], logicIssues: [] },
     }))
     render(<AppStateProvider gradingClient={{ gradeImages }}><StateProbe /></AppStateProvider>)
     let taskId = ''
@@ -317,6 +319,7 @@ function resultForImages(request: MultimodalGradingRequestV2, provider: 'mock' |
     maxScore: request.task.fullScore,
     dimensionScores,
     issues: [], sentenceRevisions: [], expressionUpgrades: [], recognitionWarnings: [], legibilityIssues: [],
+    fullTextRevision: { originalText: transcript, correctedText: transcript, improvedText: transcript, sentencePairs: [], logicNotes: [], logicIssues: [] },
     overallComment: 'Synthetic result.', reviewReasons: [], createdAt: '2026-08-16T00:00:00.000Z',
     transcript, printedTextExcluded: true,
   }

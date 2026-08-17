@@ -34,7 +34,19 @@ describe('createMockGradingClient', () => {
     const built = buildMultimodalGradingRequest(task, essay, 'image-request-confirmed')
     expect(built).toMatchObject({ ok: true, request: { pageIds: [], pages: [], confirmedTranscript: essay.ocrText } })
     if (!built.ok) throw new Error(built.error.message)
-    await expect(createMockGradingClient().gradeImages!(built.request)).resolves.toMatchObject({ transcript: essay.ocrText })
+    const confirmedResult = await createMockGradingClient().gradeImages(built.request)
+    expect(confirmedResult).toMatchObject({
+      transcript: essay.ocrText,
+      fullTextRevision: {
+        originalText: essay.ocrText,
+        correctedText: essay.ocrText,
+        improvedText: essay.ocrText,
+        sentencePairs: [], logicNotes: [], logicIssues: [],
+      },
+    })
+    if (confirmedResult.status === 'failed') throw new Error(confirmedResult.error.message)
+    expect(confirmedResult.dimensionScores.every(({ evidence }) => evidence === essay.ocrText)).toBe(true)
+    expect(JSON.stringify(confirmedResult)).not.toContain('本地 mock 图片文本')
 
     const imageMode = { ...built.request, confirmedTranscript: undefined }
     await expect(createMockGradingClient().gradeImages!(imageMode)).resolves.toMatchObject({ status: 'failed', error: { code: 'invalid_request' } })

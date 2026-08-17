@@ -67,6 +67,23 @@ describe('buildMultimodalGradingRequest', () => {
     expect(result).toMatchObject({ ok: true, request: { confirmedTranscript: teacherText, pageIds: [], pages: [] } })
   })
 
+  it('accepts a saved teacher edit with decimal weights even when the rubric originated from AI', () => {
+    const editedTask: Task = {
+      ...task,
+      rubricDraft: {
+        ...task.rubricDraft!,
+        dimensions: task.rubricDraft!.dimensions.map((dimension) => dimension.id === 'legibility'
+          ? { ...dimension, weight: 5.5 }
+          : { ...dimension, weight: 94.5 }),
+      },
+    }
+    expect(buildMultimodalGradingRequest(
+      editedTask,
+      essay(new File(['image'], 'essay.png', { type: 'image/png' })),
+      'teacher-edited-decimals',
+    )).toMatchObject({ ok: true, request: { task: { rubric: { dimensions: [{ weight: 94.5 }, { id: 'legibility', weight: 5.5 }] } } } })
+  })
+
   it('accepts exactly 50,000 UTF-16 code units and rejects 50,001 without trimming teacher text', () => {
     const exactly50k = `\n${'x'.repeat(49_997)} \n`
     expect(exactly50k).toHaveLength(50_000)

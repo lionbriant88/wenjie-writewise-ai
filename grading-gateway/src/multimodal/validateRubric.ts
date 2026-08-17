@@ -55,7 +55,7 @@ function validateRubric(value: unknown, trustMode: 'generated' | 'teacher_confir
   const writingRequirements = readStringArray(value.writingRequirements, 50, 5_000)
   const constraints = readStringArray(value.constraints, 50, 5_000)
   const reviewWarnings = readStringArray(value.reviewWarnings, 50, 5_000)
-  if (!taskName || !materialSummary || !writingRequirements || !constraints || !reviewWarnings || !Array.isArray(value.dimensions) || value.dimensions.length < 1 || value.dimensions.length > 10) {
+  if (!taskName || !materialSummary || !writingRequirements || writingRequirements.length < 1 || !constraints || !reviewWarnings || !Array.isArray(value.dimensions) || value.dimensions.length < 1 || value.dimensions.length > 10) {
     return invalid()
   }
 

@@ -233,8 +233,8 @@ export function CreateTaskPage() {
                           <input
                             aria-label={`${dimension.name}权重`}
                             type="number"
-                            min={1}
                             max={100}
+                            step="any"
                             value={Number.isFinite(dimension.weight) ? dimension.weight : ''}
                             disabled={rubricState === 'generating'}
                             onChange={(event) => changeDimension(dimension.id, { weight: Number(event.target.value) })}

@@ -116,6 +116,32 @@ describe('CreateTaskPage', () => {
     expect(screen.getByRole('button', { name: '确认并创建任务' })).toBeEnabled()
   })
 
+  it('allows decimal teacher edits to a generated legibility weight before saving the confirmed rubric', async () => {
+    const user = userEvent.setup()
+    generate.mockResolvedValue({
+      requestId: 'rubric-decimals', status: 'success', rubric: {
+        ...generatedRubric,
+        dimensions: [
+          { ...generatedRubric.dimensions[0], weight: 95 },
+          { ...generatedRubric.dimensions[1], id: 'legibility', name: '卷面与可读性', weight: 5 },
+        ],
+      },
+    })
+    renderCreateTaskPage()
+
+    await uploadMaterial(user)
+    await generateDraft(user)
+    expect(screen.getByLabelText('内容权重')).toHaveAttribute('step', 'any')
+    fireEvent.change(screen.getByLabelText('内容权重'), { target: { value: '94.5' } })
+    fireEvent.change(screen.getByLabelText('卷面与可读性权重'), { target: { value: '5.5' } })
+    await user.click(screen.getByRole('button', { name: '确认采用该标准' }))
+    await user.click(screen.getByRole('button', { name: '确认并创建任务' }))
+
+    expect(createTask).toHaveBeenCalledWith(expect.objectContaining({
+      rubricDraft: expect.objectContaining({ dimensions: [expect.objectContaining({ weight: 94.5 }), expect.objectContaining({ id: 'legibility', weight: 5.5 })] }),
+    }))
+  })
+
   it('preserves source evidence in the genre-free task input and sends ordered original files to the rubric client', async () => {
     const user = userEvent.setup()
     generate.mockResolvedValue({ requestId: 'rubric-1', status: 'success', rubric: generatedRubric })

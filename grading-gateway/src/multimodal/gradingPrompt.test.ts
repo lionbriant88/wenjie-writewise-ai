@@ -149,6 +149,31 @@ describe('essay grading prompt', () => {
     })
   })
 
+  it('publishes the same nested string limits enforced by the runtime parser', () => {
+    expect(essayGradingSchema.properties.issues.items.properties.issueKey).toMatchObject({ maxLength: 200 })
+    expect(essayGradingSchema.properties.issues.items.properties.suggestion).toMatchObject({ maxLength: 50_000 })
+    expect(essayGradingSchema.properties.dimensionScores.items.properties.relatedIssueKeys.items).toMatchObject({ maxLength: 200 })
+    expect(essayGradingSchema.properties.sentenceRevisions.items.properties.note).toMatchObject({ maxLength: 50_000 })
+    expect(essayGradingSchema.properties.expressionUpgrades.items.properties.note).toMatchObject({ maxLength: 50_000 })
+    expect(essayGradingSchema.properties.fullTextRevision.properties.logicIssues.items.properties.contextBefore).toMatchObject({ maxLength: 50_000 })
+    expect(essayGradingSchema.properties.legibilityIssues.items.properties.possibleReadings.items).toMatchObject({ maxLength: 1_000 })
+  })
+
+  it('publishes the same nonempty and numeric minima enforced by the runtime parser', () => {
+    expect(essayGradingSchema.properties.transcript).toMatchObject({ minLength: 1, pattern: '\\S' })
+    expect(essayGradingSchema.properties.dimensionScores).toMatchObject({ minItems: 1, maxItems: 10 })
+    expect(essayGradingSchema.properties.dimensionScores.items.properties.score).toMatchObject({ minimum: 0 })
+    expect(essayGradingSchema.properties.dimensionScores.items.properties.dimensionId).toMatchObject({ minLength: 1, pattern: '\\S' })
+    expect(essayGradingSchema.properties.dimensionScores.items.properties.evidence).toMatchObject({ minLength: 1, pattern: '\\S' })
+    expect(essayGradingSchema.properties.issues.items.properties.issueKey).toMatchObject({ minLength: 1, pattern: '\\S' })
+    expect(essayGradingSchema.properties.issues.items.properties.originalText).toMatchObject({ minLength: 1 })
+    expect(essayGradingSchema.properties.legibilityIssues.items.properties.possibleReadings.items).toMatchObject({ minLength: 1, pattern: '\\S' })
+    expect(essayGradingSchema.properties.recognitionWarnings.items.properties.message).toMatchObject({ minLength: 1, pattern: '\\S' })
+    expect(essayGradingSchema.properties.overallComment).toMatchObject({ minLength: 1, pattern: '\\S' })
+    expect(essayGradingSchema.properties.fullTextRevision.properties.correctedText).not.toHaveProperty('minLength')
+    expect(essayGradingSchema.properties.fullTextRevision.properties.logicIssues.items.properties.contextBefore).not.toHaveProperty('minLength')
+  })
+
   it('separates local legibility findings from global recognition warnings', () => {
     const imagePrompt = buildEssayGradingMessages({
       essayId: 'essay', task,

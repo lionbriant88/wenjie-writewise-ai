@@ -155,7 +155,7 @@ export function EssaySourcePanel({
                   if (!part.marker) return <span key={`${part.text}-${index}`}>{part.text}</span>
 
                   const marker = part.marker
-                  const isActive = marker.issueId === activeIssueId
+                  const isActive = activeIssueId !== undefined && activeIssueId !== null && marker.issueIds.includes(activeIssueId)
                   const markerTone = marker.source === 'logic'
                     ? isActive
                       ? 'bg-amber-100 text-amber-950 ring-1 ring-amber-200'

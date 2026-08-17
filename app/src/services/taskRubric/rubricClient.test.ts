@@ -76,6 +76,18 @@ describe('rubric client', () => {
     }).generate(request)).resolves.toMatchObject({ status: 'failed', error: { code: 'gateway_invalid_response' } })
   })
 
+  it('rejects a Provider-success rubric that would later fail grading preflight for missing writing requirements', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      requestId: request.requestId,
+      status: 'success',
+      rubric: { ...rubric, writingRequirements: [] },
+    }), { status: 200 }))
+
+    await expect(createRemoteRubricClient({ apiBase: 'http://gateway', fetchImpl }).generate(request)).resolves.toMatchObject({
+      status: 'failed', error: { code: 'gateway_invalid_response' },
+    })
+  })
+
   it('maps a safe Gateway failure code to local text without returning raw Gateway content', async () => {
     const rawGatewayMessage = 'provider response included sk-test-not-a-real-key and <html>upstream details</html>'
     const response = await createRemoteRubricClient({
