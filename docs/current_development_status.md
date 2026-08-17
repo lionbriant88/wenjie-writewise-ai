@@ -568,3 +568,11 @@ http://localhost:5173/tasks/task-1/class-review
 ## 2026-08-17：多模态批改 v2 原子部署要求
 
 网站与 Grading Gateway 现共享唯一的 `multimodal-grading-request-v2` / `grading-result-v2` 合同。该版本为破坏性升级，发布时必须原子部署网站和 Gateway，不支持新旧版本混跑；旧的 `POST /grading/grade` 已停用，首次图片批改与教师确认文本重批都使用 `POST /grading/grade-images`。
+
+## 2026-08-17：多模态策略 golden 证据加固
+
+- 四个合成用例改为逐用例独立断言；单个读取、Provider、规范化或断言失败不再污染其他成功用例。
+- 缺少本地 `KIMI_API_KEY` 时，CLI 输出四行匿名 `not_run_missing_local_credentials`、退出码为 2 且不调用 Provider；本次实际结果为 `not_run`，不是通过。
+- CLI 子进程测试直接捕获 stdout、stderr 和退出码，并验证缺密钥零外部调用及失败响应不泄露上游私有标记。
+- 已增加真实垂直契约测试：Provider 原始载荷经过 Gateway 规范化/策略、网站投影、领域适配器和问题卡片/原文标记消费者，覆盖语法、逻辑、局部字迹、复数关联、教师复核元数据、v2 全文修订及教师确认零图片重批。
+- 权威 fixture 为仓库内提交的 PNG；验证固定签名、尺寸、长度和 SHA-256，不加载系统字体，也不再宣称 SVG 跨机器重渲染字节一致。fixture 唯一可见标识符为合成 case ID，正文内容全部为合成内容。

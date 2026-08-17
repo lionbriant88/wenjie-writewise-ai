@@ -4,21 +4,15 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { GRADING_POLICY_VERSION } from '../src/multimodal/gradingPolicy.js'
 import { normalizeMultimodalResult } from '../src/multimodal/normalizeMultimodalResult.js'
+import type { MultimodalGradingResult } from '../src/multimodal/normalizeMultimodalResult.js'
 import type { ConfirmedTaskPackageV2 } from '../src/multimodal/types.js'
 import type { GatewayImageInput } from '../src/providers/multimodalProviderTypes.js'
 import type { MultimodalProvider } from '../src/providers/multimodalProviderTypes.js'
 import { getMultimodalProvider, parseKimiConfig } from '../src/providers/index.js'
 
-type PublicGoldenResult = {
-  issues: Array<{ type: string; evidenceCertainty: string }>
-  legibilityIssues: Array<{ defaultOutcome: string }>
-  reviewReasons: string[]
-  fullTextRevision?: { logicIssues: unknown[] }
-}
-
 export interface GoldenEvaluationResult {
   caseId: string
-  passed: boolean
+  status: 'pass' | 'fail' | 'not_run'
   model: string
   policyVersion: string
   failureCategory?: string
@@ -34,6 +28,26 @@ export interface GoldenEvaluationDependencies {
   now?: () => string
 }
 
+export interface GoldenPolicyResult {
+  status: MultimodalGradingResult['status']
+  transcript: MultimodalGradingResult['transcript']
+  dimensionScores: Array<Pick<MultimodalGradingResult['dimensionScores'][number], 'dimensionId' | 'score' | 'maxScore' | 'reason' | 'evidence'>>
+  issues: Array<Pick<MultimodalGradingResult['issues'][number], 'type' | 'severity' | 'originalText' | 'suggestion' | 'evidenceCertainty' | 'requiresTeacherReview'>>
+  legibilityIssues: Array<Pick<MultimodalGradingResult['legibilityIssues'][number], 'transcriptText' | 'possibleReadings' | 'pageNumber' | 'defaultOutcome'>>
+  recognitionWarnings: MultimodalGradingResult['recognitionWarnings']
+  reviewReasons: MultimodalGradingResult['reviewReasons']
+  sentenceRevisions: unknown[]
+  expressionUpgrades: unknown[]
+  overallComment: MultimodalGradingResult['overallComment']
+  fullTextRevision: {
+    correctedText: string
+    improvedText: string
+    sentencePairs: unknown[]
+    logicNotes: string[]
+    logicIssues: Array<Pick<MultimodalGradingResult['fullTextRevision']['logicIssues'][number], 'originalText'>>
+  }
+}
+
 const task: ConfirmedTaskPackageV2 = {
   taskId: 'synthetic-policy-evaluation',
   fullScore: 10,
@@ -47,9 +61,9 @@ const task: ConfirmedTaskPackageV2 = {
     constraints: ['This is synthetic evaluation material only.'],
     reviewWarnings: [],
     dimensions: [
-      { id: 'language', name: 'Language', weight: 50, description: 'Grammar and spelling.', deductionFocus: ['Grammar and clear spelling.'], sourceEvidence: [] },
+      { id: 'language', name: 'Language', weight: 55, description: 'Grammar and spelling.', deductionFocus: ['Grammar and clear spelling.'], sourceEvidence: [] },
       { id: 'relevance', name: 'Relevance', weight: 40, description: 'Relevant content and logic.', deductionFocus: ['Stay on topic.'], sourceEvidence: [] },
-      { id: 'legibility', name: 'Legibility', weight: 10, description: 'Meaningful handwriting ambiguity.', deductionFocus: ['Record only meaningful ambiguity.'], sourceEvidence: [] },
+      { id: 'legibility', name: 'Legibility', weight: 5, description: 'Meaningful handwriting ambiguity.', deductionFocus: ['Record only meaningful ambiguity.'], sourceEvidence: [] },
     ],
   },
 }
@@ -77,19 +91,123 @@ const allowedFailureCategories = new Set([
 ])
 const SAFE_TOKEN = /^[a-z0-9][a-z0-9._-]{0,63}$/
 
-export function evaluatePolicyChecks(results: Record<typeof cases[number]['check'], PublicGoldenResult>): Record<typeof cases[number]['check'], boolean> {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function records(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value) && value.every(isRecord) ? value : []
+}
+
+function strings(value: unknown): string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string') ? value : []
+}
+
+function exactTerm(value: unknown, term: string): boolean {
+  return typeof value === 'string' && new RegExp(`(^|[^A-Za-z0-9_])${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Za-z0-9_]|$)`, 'i').test(value)
+}
+
+function commonResult(value: unknown) {
+  if (!isRecord(value) || !isRecord(value.fullTextRevision)) return null
   return {
-    ambiguousWork: results.ambiguousWork.issues.every((issue) => issue.type !== 'spelling')
-      && results.ambiguousWork.legibilityIssues.length === 0
-      && !results.ambiguousWork.reviewReasons.includes('recognition_uncertain'),
-    clearEnviroment: results.clearEnviroment.issues.some((issue) => (
-      issue.type === 'spelling' && issue.evidenceCertainty === 'certain'
-    )),
-    ambiguousCant: results.ambiguousCant.legibilityIssues.some((issue) => (
-      issue.defaultOutcome === 'count_as_legibility_error'
-    )),
-    grammarAndLogic: results.grammarAndLogic.issues.some((issue) => issue.type === 'grammar')
-      && Boolean(results.grammarAndLogic.fullTextRevision?.logicIssues.length),
+    value,
+    dimensions: records(value.dimensionScores),
+    issues: records(value.issues),
+    legibilityIssues: records(value.legibilityIssues),
+    recognitionWarnings: strings(value.recognitionWarnings),
+    reviewReasons: strings(value.reviewReasons),
+    revisions: records(value.sentenceRevisions),
+    upgrades: records(value.expressionUpgrades),
+    fullText: value.fullTextRevision,
+    pairs: records(value.fullTextRevision.sentencePairs),
+    logicNotes: strings(value.fullTextRevision.logicNotes),
+    logicIssues: records(value.fullTextRevision.logicIssues),
+  }
+}
+
+function ambiguousWorkPasses(value: unknown): boolean {
+  const result = commonResult(value)
+  if (!result || result.value.status !== 'success' || result.value.transcript !== 'We work together after school.') return false
+  const noStructuredFindings = result.issues.length === 0 && result.legibilityIssues.length === 0
+    && result.revisions.length === 0 && result.pairs.length === 0 && result.upgrades.length === 0
+    && result.logicIssues.length === 0 && result.logicNotes.length === 0
+  const noWarnings = result.recognitionWarnings.length === 0 && result.reviewReasons.length === 0
+  const noDeduction = result.dimensions.length > 0 && result.dimensions.every(({ score, maxScore }) => score === maxScore)
+  const revisionsUnchanged = result.fullText.correctedText === result.value.transcript
+    && result.fullText.improvedText === result.value.transcript
+  const narratives = [
+    ...result.dimensions.flatMap(({ reason, evidence }) => [reason, evidence]),
+    result.value.overallComment,
+    ...result.logicNotes,
+  ]
+  return noStructuredFindings && noWarnings && noDeduction && revisionsUnchanged
+    && !narratives.some((text) => exactTerm(text, 'work') || exactTerm(text, 'walk'))
+}
+
+function clearEnviromentPasses(value: unknown): boolean {
+  const result = commonResult(value)
+  if (!result || result.value.status !== 'success' || result.issues.length !== 1) return false
+  const issue = result.issues[0]!
+  return issue.type === 'spelling'
+    && issue.severity === 'low'
+    && issue.originalText === 'enviroment'
+    && issue.suggestion === 'environment'
+    && issue.evidenceCertainty === 'certain'
+    && issue.requiresTeacherReview === false
+    && result.logicIssues.length === 0
+    && result.logicNotes.length === 0
+    && result.dimensions.filter(({ dimensionId }) => dimensionId !== 'language').every(({ score, maxScore }) => score === maxScore)
+    && result.legibilityIssues.length === 0
+    && result.recognitionWarnings.length === 0
+    && result.reviewReasons.length === 0
+}
+
+function ambiguousCantPasses(value: unknown): boolean {
+  const result = commonResult(value)
+  if (!result || result.value.status !== 'success' || typeof result.value.transcript !== 'string' || result.legibilityIssues.length !== 1) return false
+  const issue = result.legibilityIssues[0]!
+  const readings = strings(issue.possibleReadings)
+  const legibility = result.dimensions.find(({ dimensionId }) => dimensionId === 'legibility')
+  const noOverlap = result.issues.length === 0 && result.logicIssues.length === 0
+    && result.logicNotes.length === 0 && result.revisions.length === 0 && result.pairs.length === 0 && result.upgrades.length === 0
+  const unchanged = result.fullText.correctedText === result.value.transcript
+    && result.fullText.improvedText === result.value.transcript
+  return (issue.transcriptText === 'can' || issue.transcriptText === "can't")
+    && result.value.transcript.includes(issue.transcriptText)
+    && readings.length === 2 && new Set(readings).size === 2 && readings.includes('can') && readings.includes("can't")
+    && issue.defaultOutcome === 'count_as_legibility_error'
+    && issue.pageNumber === 1
+    && Boolean(legibility && typeof legibility.score === 'number' && typeof legibility.maxScore === 'number'
+      && legibility.score < legibility.maxScore && legibility.evidence === issue.transcriptText)
+    && result.dimensions.filter(({ dimensionId }) => dimensionId !== 'legibility').every(({ score, maxScore }) => score === maxScore)
+    && result.recognitionWarnings.length === 0 && result.reviewReasons.length === 0
+    && noOverlap && unchanged
+}
+
+function grammarAndLogicPasses(value: unknown): boolean {
+  const result = commonResult(value)
+  if (!result || result.value.status !== 'success') return false
+  const grammar = result.issues.some((issue) => issue.type === 'grammar'
+    && issue.evidenceCertainty === 'certain'
+    && issue.originalText === 'I suggest you joins the club.'
+    && issue.suggestion === 'I suggest you join the club.')
+  const logic = result.logicIssues.some((issue) => issue.originalText === 'The moon is made of green paper.')
+  return grammar && logic
+}
+
+function evaluatePolicyCheck(check: typeof cases[number]['check'], result: GoldenPolicyResult): boolean {
+  if (check === 'ambiguousWork') return ambiguousWorkPasses(result)
+  if (check === 'clearEnviroment') return clearEnviromentPasses(result)
+  if (check === 'ambiguousCant') return ambiguousCantPasses(result)
+  return grammarAndLogicPasses(result)
+}
+
+export function evaluatePolicyChecks(results: Record<typeof cases[number]['check'], GoldenPolicyResult>): Record<typeof cases[number]['check'], boolean> {
+  return {
+    ambiguousWork: evaluatePolicyCheck('ambiguousWork', results.ambiguousWork),
+    clearEnviroment: evaluatePolicyCheck('clearEnviroment', results.clearEnviroment),
+    ambiguousCant: evaluatePolicyCheck('ambiguousCant', results.ambiguousCant),
+    grammarAndLogic: evaluatePolicyCheck('grammarAndLogic', results.grammarAndLogic),
   }
 }
 
@@ -100,7 +218,7 @@ export function formatGoldenEvaluationLine(result: GoldenEvaluationResult): stri
   const category = result.failureCategory ? safeFailureCategory(result.failureCategory) : undefined
   return [
     caseId,
-    result.passed ? 'pass' : 'fail',
+    result.status,
     `model=${model}`,
     `policy=${policyVersion}`,
     ...(category ? [`category=${category}`] : []),
@@ -132,7 +250,7 @@ async function evaluateOne(
   item: typeof cases[number],
   model: string,
   dependencies: Required<Pick<GoldenEvaluationDependencies, 'createProvider' | 'readFixture' | 'normalize' | 'now'>>,
-): Promise<{ check: typeof item.check; result: PublicGoldenResult } | GoldenEvaluationResult> {
+): Promise<{ check: typeof item.check; result: GoldenPolicyResult } | GoldenEvaluationResult> {
   try {
     const buffer = await dependencies.readFixture(fixturePath(item.file))
     const provider = dependencies.createProvider()
@@ -152,11 +270,11 @@ async function evaluateOne(
       createdAt: dependencies.now(),
     })
     if (!normalized.ok) {
-      return { caseId: item.id, passed: false, model, policyVersion: GRADING_POLICY_VERSION, failureCategory: normalized.error.code }
+      return { caseId: item.id, status: 'fail', model, policyVersion: GRADING_POLICY_VERSION, failureCategory: normalized.error.code }
     }
     return { check: item.check, result: normalized.result }
   } catch (error) {
-    return { caseId: item.id, passed: false, model, policyVersion: GRADING_POLICY_VERSION, failureCategory: failureCategory(error) }
+    return { caseId: item.id, status: 'fail', model, policyVersion: GRADING_POLICY_VERSION, failureCategory: failureCategory(error) }
   }
 }
 
@@ -166,7 +284,7 @@ function emitAll(
   failureCategory: string,
 ): void {
   for (const item of cases) {
-    output(formatGoldenEvaluationLine({ caseId: item.id, passed: false, model, policyVersion: GRADING_POLICY_VERSION, failureCategory }))
+    output(formatGoldenEvaluationLine({ caseId: item.id, status: failureCategory === 'not_run_missing_local_credentials' ? 'not_run' : 'fail', model, policyVersion: GRADING_POLICY_VERSION, failureCategory }))
   }
 }
 
@@ -176,7 +294,7 @@ export async function runPolicyGoldenEvaluation(dependencies: GoldenEvaluationDe
   const key = env.KIMI_API_KEY?.trim()
   if (!key) {
     emitAll(output, 'unconfigured', 'not_run_missing_local_credentials')
-    return 0
+    return 2
   }
 
   let model: string
@@ -193,24 +311,24 @@ export async function runPolicyGoldenEvaluation(dependencies: GoldenEvaluationDe
     normalize: dependencies.normalize ?? normalizeMultimodalResult,
     now: dependencies.now ?? (() => new Date().toISOString()),
   }
-  const checks: Partial<Record<typeof cases[number]['check'], PublicGoldenResult>> = {}
-  const failures: GoldenEvaluationResult[] = []
+  const outcomes = new Map<typeof cases[number]['check'], { check: typeof cases[number]['check']; result: GoldenPolicyResult } | GoldenEvaluationResult>()
   for (const item of cases) {
     const outcome = await evaluateOne(item, model, evaluationDependencies)
-    if ('check' in outcome) checks[outcome.check] = outcome.result
-    else failures.push(outcome)
+    outcomes.set(item.check, outcome)
   }
 
-  const evaluated = Object.keys(checks).length === cases.length
-    ? evaluatePolicyChecks(checks as Record<typeof cases[number]['check'], PublicGoldenResult>)
-    : null
   let failed = false
   for (const item of cases) {
-    const failure = failures.find(({ caseId }) => caseId === item.id)
-    const passed = evaluated?.[item.check] ?? false
-    output(formatGoldenEvaluationLine(failure ?? {
+    const outcome = outcomes.get(item.check)!
+    if (!('check' in outcome)) {
+      output(formatGoldenEvaluationLine(outcome))
+      failed = true
+      continue
+    }
+    const passed = evaluatePolicyCheck(item.check, outcome.result)
+    output(formatGoldenEvaluationLine({
       caseId: item.id,
-      passed,
+      status: passed ? 'pass' : 'fail',
       model,
       policyVersion: GRADING_POLICY_VERSION,
       ...(!passed ? { failureCategory: 'assertion_failed' } : {}),
