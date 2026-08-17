@@ -57,7 +57,7 @@ function validPayload(): Record<string, unknown> {
     sentenceRevisions: [], expressionUpgrades: [],
     fullTextRevision: { correctedText: 'I have a pen.\nIt is blue.', improvedText: 'I have a blue pen.', sentencePairs: [], logicNotes: [{ quote: 'I has a pen.', note: 'The opening subject-verb agreement weakens clarity.' }], logicIssues: [] },
     legibilityIssues: [],
-    overallComment: 'A clear synthetic response.', reviewReasons: [],
+    overallComment: 'A clear synthetic response.',
   }
 }
 
@@ -558,7 +558,7 @@ describe('normalizeMultimodalResult', () => {
     expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
   })
 
-  it('does not retain provider review reasons after filtering uncertain spelling', () => {
+  it('rejects Provider-authored review reasons while deriving normalized reasons internally', () => {
     const payload = validPayload()
     payload.issues = [{
       issueKey: 'spelling-has', type: 'spelling', severity: 'low', originalText: 'has', suggestion: 'have',
@@ -573,7 +573,49 @@ describe('normalizeMultimodalResult', () => {
     payload.reviewReasons = ['Change has to have.']
 
     const normalized = normalizeMultimodalResult(payload, context)
-    expect(normalized).toMatchObject({ ok: true, result: { status: 'success', reviewReasons: [], issues: [] } })
+    expect(normalized).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
+  })
+
+  it.each([
+    ['recognition warning', (payload: Record<string, unknown>) => { payload.recognitionWarnings = [{ scope: 'global_unreadable', message: 'Synthetic warning.' }] }],
+    ['legibility item', (payload: Record<string, unknown>) => { payload.legibilityIssues = [{ issueKey: 'legibility-1', transcriptText: 'I has a pen.', possibleReadings: ['I has a pen.', 'I have a pen.'], pageNumber: 1, regionDescription: 'line 1', explanation: 'Synthetic.', defaultOutcome: 'count_as_legibility_error' }] }],
+    ['printed text not excluded', (payload: Record<string, unknown>) => { payload.printedTextExcluded = false }],
+    ['changed transcript', (payload: Record<string, unknown>) => { payload.transcript = 'MODEL-DIFFERENT' }],
+  ] as const)('rejects confirmed-text Provider invariant violation: %s', (_label, mutate) => {
+    const teacherText = validPayload().transcript as string
+    const payload = validPayload()
+    mutate(payload)
+    const normalized = normalizeMultimodalResult(payload, { ...context, confirmedTranscript: teacherText, pageCount: 0 })
+    expect(normalized).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
+    expect(JSON.stringify(normalized)).not.toMatch(/MODEL-DIFFERENT|Synthetic warning/)
+  })
+
+  it.each([
+    ['duplicate', ['grammar', 'grammar']],
+    ['empty', []],
+    ['oversized', Array.from({ length: 21 }, () => 'grammar')],
+  ] as const)('rejects %s raw changeTypes arrays', (_label, changeTypes) => {
+    const payload = validPayload()
+    payload.sentenceRevisions = [{
+      originalText: 'It are blue.', revisedText: 'It is blue.', note: 'Synthetic.',
+      relatedIssueKeys: ['grammar-blue'], changeTypes: [...changeTypes],
+    }]
+    expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
+  })
+
+  it('accepts an empty bounded relationship array when a revision has no source issue', () => {
+    const payload = validPayload()
+    payload.issues = []
+    payload.dimensionScores = (payload.dimensionScores as Array<Record<string, unknown>>).map((score) => ({
+      ...score,
+      score: score.dimensionId === 'content' ? 6 : score.dimensionId === 'language' ? 8.25 : 0.75,
+      relatedIssueKeys: [],
+    }))
+    payload.reportedTotalScore = 15
+    payload.sentenceRevisions = [{
+      originalText: 'It are blue.', revisedText: 'It is blue.', note: 'Synthetic.', relatedIssueKeys: [], changeTypes: ['grammar'],
+    }]
+    expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: true, result: { sentenceRevisions: [{ relatedIssueIds: [] }] } })
   })
 
   it('rejects a self-overlapping logic note quote', () => {

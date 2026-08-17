@@ -3,6 +3,7 @@ import { findTextMatch } from './textHighlight'
 
 export interface SourceIssueMarker {
   issueId: string
+  issueIds: string[]
   source: ReviewIssueCardItem['source']
   severity: ReviewIssueCardItem['severity']
   original: string
@@ -38,6 +39,7 @@ export function buildSourceIssueMarkers(sourceText: string, issues: ReviewIssueC
 
     const marker: SourceIssueMarker = {
       issueId: issue.id,
+      issueIds: [issue.id],
       source: issue.source,
       severity: issue.severity,
       original: issue.original,
@@ -48,9 +50,9 @@ export function buildSourceIssueMarkers(sourceText: string, issues: ReviewIssueC
     const rangeKey = `${marker.start}:${marker.end}`
     const current = markerByRange.get(rangeKey)
 
-    if (!current || shouldReplaceMarker(current, marker)) {
-      markerByRange.set(rangeKey, marker)
-    }
+    if (!current) markerByRange.set(rangeKey, marker)
+    else if (shouldReplaceMarker(current, marker)) markerByRange.set(rangeKey, { ...marker, issueIds: [...current.issueIds, issue.id] })
+    else markerByRange.set(rangeKey, { ...current, issueIds: [...current.issueIds, issue.id] })
   }
 
   return [...markerByRange.values()].sort((first, second) => first.start - second.start)

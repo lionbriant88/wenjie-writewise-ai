@@ -11,55 +11,6 @@ export function createRemoteGradingClient({
   fetchImpl = fetch,
 }: RemoteClientOptions): GradingClient {
   return {
-    async grade(request) {
-      if (!apiBase) {
-        return {
-          requestId: request.requestId,
-          status: 'failed',
-          error: {
-            code: 'gateway_unavailable',
-            message: '未配置批改服务地址，请使用 mock 回退。',
-            retryable: false,
-          },
-        }
-      }
-
-      let response: Response
-      try {
-        response = await fetchImpl(`${apiBase.replace(/\/$/, '')}/grading/grade`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Grading-Request-Id': request.requestId,
-          },
-          body: JSON.stringify(request),
-        })
-      } catch {
-        return {
-          requestId: request.requestId,
-          status: 'failed',
-          error: {
-            code: 'gateway_unavailable',
-            message: '批改服务暂时不可用，请重试或使用 mock 回退。',
-            retryable: true,
-          },
-        }
-      }
-
-      let body: unknown
-      try {
-        body = await response.json()
-      } catch {
-        return gatewayInvalidResponse(request.requestId)
-      }
-      return projectGradingClientResponse(body, {
-        httpOk: response.ok,
-        requestId: request.requestId,
-        essayId: request.essay.essayId,
-        inputMode: 'standard',
-        fullScore: request.task.fullScore,
-      })
-    },
     async gradeImages(request) {
       if (!apiBase) {
         return { requestId: request.requestId, status: 'failed', error: { code: 'gateway_unavailable', message: '未配置批改服务地址，请使用 mock 回退。', retryable: false } }
@@ -67,6 +18,7 @@ export function createRemoteGradingClient({
       const form = new FormData()
       const isConfirmedTextRegrade = request.confirmedTranscript !== undefined
       form.append('metadata', JSON.stringify({
+        requestVersion: request.requestVersion,
         requestId: request.requestId, essayId: request.essayId, pageIds: isConfirmedTextRegrade ? [] : request.pageIds, task: request.task,
         ...(request.confirmedTranscript !== undefined ? { confirmedTranscript: request.confirmedTranscript } : {}),
       }))
@@ -87,6 +39,7 @@ export function createRemoteGradingClient({
         essayId: request.essayId,
         requireMultimodal: true,
         inputMode: isConfirmedTextRegrade ? 'confirmed_text' : 'images',
+        ...(request.confirmedTranscript !== undefined ? { confirmedTranscript: request.confirmedTranscript } : {}),
         pageCount: request.pages.length,
         fullScore: request.task.fullScore,
       })

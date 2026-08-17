@@ -45,7 +45,7 @@ function invalid<T>(message = INVALID_RUBRIC_MESSAGE): ValidationResult<T> {
   return { ok: false, error: { code: 'provider_invalid_response', message } }
 }
 
-export function validateGeneratedRubric(value: unknown): ValidationResult<GeneratedRubricV1> {
+function validateRubric(value: unknown, trustMode: 'generated' | 'teacher_confirmed'): ValidationResult<GeneratedRubricV1> {
   if (!isRecord(value) || !hasOnlyKeys(value, [
     'taskName', 'materialSummary', 'writingRequirements', 'constraints', 'dimensions', 'reviewWarnings',
   ])) return invalid()
@@ -63,6 +63,7 @@ export function validateGeneratedRubric(value: unknown): ValidationResult<Genera
   if (!dimensions.every((dimension): dimension is GeneratedRubricDimensionV1 => dimension !== null)) return invalid()
   if (new Set(dimensions.map((dimension) => dimension.id)).size !== dimensions.length) return invalid()
   if (dimensions.filter((dimension) => dimension.id === LEGIBILITY_DIMENSION_ID).length !== 1) return invalid()
+  if (trustMode === 'generated' && dimensions.find((dimension) => dimension.id === LEGIBILITY_DIMENSION_ID)?.weight !== 5) return invalid()
   const totalWeight = dimensions.reduce((sum, dimension) => sum + dimension.weight, 0)
   const roundingAllowance = Number.EPSILON * Math.max(1, Math.abs(totalWeight), 100)
   if (Math.abs(totalWeight - 100) > TOTAL_WEIGHT_TOLERANCE + roundingAllowance) {
@@ -70,4 +71,12 @@ export function validateGeneratedRubric(value: unknown): ValidationResult<Genera
   }
 
   return { ok: true, value: { taskName, materialSummary, writingRequirements, constraints, dimensions, reviewWarnings } }
+}
+
+export function validateGeneratedRubric(value: unknown): ValidationResult<GeneratedRubricV1> {
+  return validateRubric(value, 'generated')
+}
+
+export function validateConfirmedRubric(value: unknown): ValidationResult<GeneratedRubricV1> {
+  return validateRubric(value, 'teacher_confirmed')
 }

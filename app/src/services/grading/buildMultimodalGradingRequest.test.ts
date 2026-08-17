@@ -9,7 +9,10 @@ const task: Task = {
   exceptionEssayCount: 0, createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z', generateClassReview: true,
   materialContext: { materialSummary: 'A short material.', writingRequirements: ['Respond clearly.'], constraints: [], reviewWarnings: [] },
   rubricDraft: { source: 'ai', status: 'confirmed', writingGoal: 'Respond.', offTopicCriteria: [], excellentFeatures: [], reviewTriggers: [],
-    dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant response.', deductionFocus: [], sourceEvidence: [] }] },
+    dimensions: [
+      { id: 'content', name: 'Content', weight: 95, description: 'Relevant response.', deductionFocus: [], sourceEvidence: [] },
+      { id: 'legibility', name: 'Legibility', weight: 5, description: 'Readable.', deductionFocus: [], sourceEvidence: [] },
+    ] },
 }
 
 function essay(file?: File): Essay {
@@ -19,7 +22,7 @@ function essay(file?: File): Essay {
 describe('buildMultimodalGradingRequest', () => {
   it('builds an ordered confirmed task package without OCR transcript', () => {
     const result = buildMultimodalGradingRequest(task, essay(new File(['image'], 'essay.png', { type: 'image/png' })), 'request-1')
-    expect(result).toMatchObject({ ok: true, request: { requestVersion: 'multimodal-grading-request-v2', requestId: 'request-1', essayId: 'essay-1', pageIds: ['page-1'], task: { taskId: task.id, fullScore: 15, materialSummary: 'A short material.', rubric: { taskName: 'Material writing', dimensions: [{ sourceEvidence: [] }] } } } })
+    expect(result).toMatchObject({ ok: true, request: { requestVersion: 'multimodal-grading-request-v2', requestId: 'request-1', essayId: 'essay-1', pageIds: ['page-1'], task: { taskId: task.id, fullScore: 15, materialSummary: 'A short material.', rubric: { taskName: 'Material writing', dimensions: [{ id: 'content', sourceEvidence: [] }, { id: 'legibility', weight: 5 }] } } } })
     if (result.ok) {
       expect(result.request.pages[0].file.name).toBe('essay.png')
       expect(result.request.confirmedTranscript).toBeUndefined()
@@ -94,6 +97,7 @@ describe('buildMultimodalGradingRequest', () => {
     ['trim-colliding dimensions', { task: { ...task, rubricDraft: { ...task.rubricDraft!, dimensions: [{ ...task.rubricDraft!.dimensions[0], id: 'content', weight: 50 }, { ...task.rubricDraft!.dimensions[0], id: ' content', weight: 50 }] } } }],
     ['eleven dimensions', { task: { ...task, rubricDraft: { ...task.rubricDraft!, dimensions: Array.from({ length: 11 }, (_, index) => ({ ...task.rubricDraft!.dimensions[0], id: `d${index}`, weight: 100 / 11 })) } } }],
     ['empty requirements', { task: { ...task, materialContext: { ...task.materialContext!, writingRequirements: [] } } }],
+    ['oversized constraint item', { task: { ...task, materialContext: { ...task.materialContext!, constraints: ['x'.repeat(5_001)] } } }],
     ['HEIC file', { essay: essay(new File(['x'], 'essay.heic', { type: 'image/heic' })) }],
     ['over 8 MiB', { essay: essay(new File([new Uint8Array(8 * 1024 * 1024 + 1)], 'essay.png', { type: 'image/png' })) }],
   ] as const)('rejects isolated strict boundary: %s', (_label, mutation) => {

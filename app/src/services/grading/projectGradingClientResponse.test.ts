@@ -5,7 +5,7 @@ const expected = { httpOk: true, requestId: 'request-1', essayId: 'essay-1' }
 
 function validSuccess(): Record<string, unknown> {
   return {
-    resultVersion: 'grading-result-v1',
+    resultVersion: 'grading-result-v2',
     requestId: 'request-1',
     essayId: 'essay-1',
     provider: 'remote',
@@ -169,7 +169,7 @@ describe('projectGradingClientResponse', () => {
     ['essay id', 'essayId', 'old-essay'],
     ['provider', 'provider', 'deepseek'],
     ['status', 'status', 'failed'],
-    ['result version', 'resultVersion', 'grading-result-v2'],
+    ['result version', 'resultVersion', 'grading-result-v1'],
   ] as const)('rejects a mismatched or unknown %s', (_label, field, value) => {
     const raw = validSuccess()
     raw[field] = value
@@ -258,6 +258,54 @@ describe('projectGradingClientResponse', () => {
     expect(projectGradingClientResponse(raw, { ...expected, fullScore: 15 }).status).toBe('success')
     raw.totalScore = 11
     expectInvalid(raw, { ...expected, fullScore: 15 })
+  })
+
+  it('accepts positive decimal rubric weights totaling 100 and exact 50,000-code-unit public text limits', () => {
+    const raw = validSuccess()
+    raw.totalScore = 15
+    raw.dimensionScores = [
+      { dimensionId: 'content', name: 'Content', score: 4.99, maxScore: 4.99, weight: 33.3, reason: 'Relevant.', evidence: 'Synthetic evidence.' },
+      { dimensionId: 'language', name: 'Language', score: 10.01, maxScore: 10.01, weight: 66.7, reason: 'Accurate.', evidence: 'Synthetic evidence.' },
+    ]
+    raw.overallComment = 'x'.repeat(50_000)
+    raw.transcript = 't'.repeat(50_000)
+    raw.printedTextExcluded = true
+    expect(projectGradingClientResponse(raw, { ...expected, requireMultimodal: true, fullScore: 15 })).toMatchObject({
+      status: 'success', overallComment: raw.overallComment, transcript: raw.transcript,
+    })
+
+    raw.overallComment = 'x'.repeat(50_001)
+    expectInvalid(raw, { ...expected, requireMultimodal: true, fullScore: 15 })
+    raw.overallComment = 'Allowed.'
+    raw.transcript = 't'.repeat(50_001)
+    expectInvalid(raw, { ...expected, requireMultimodal: true, fullScore: 15 })
+  })
+
+  it.each([
+    ['duplicate', ['grammar', 'grammar']],
+    ['empty', []],
+    ['oversized', Array.from({ length: 21 }, (_, index) => index === 0 ? 'grammar' : `unknown-${index}`)],
+  ] as const)('rejects %s changeTypes arrays', (_label, values) => {
+    const raw = validSuccess()
+    ;(raw.sentenceRevisions as Array<Record<string, unknown>>)[0].changeTypes = [...values]
+    expectInvalid(raw)
+  })
+
+  it('rejects duplicate public IDs rather than overwriting relationships', () => {
+    const raw = validSuccess()
+    const revision = (raw.sentenceRevisions as Array<Record<string, unknown>>)[0]
+    raw.sentenceRevisions = [revision, { ...revision }]
+    expectInvalid(raw)
+  })
+
+  it('accepts empty relationship arrays while keeping them bounded and unique', () => {
+    const raw = validSuccess()
+    raw.issues = []
+    ;(raw.sentenceRevisions as Array<Record<string, unknown>>)[0].relatedIssueIds = []
+    ;((raw.fullTextRevision as Record<string, unknown>).sentencePairs as Array<Record<string, unknown>>)[0].relatedIssueIds = []
+    expect(projectGradingClientResponse(raw, expected)).toMatchObject({
+      status: 'success', sentenceRevisions: [{ relatedIssueIds: [] }], fullTextRevision: { sentencePairs: [{ relatedIssueIds: [] }] },
+    })
   })
 
   it('drops unknown Kimi response fields while keeping failures free of raw upstream content', () => {

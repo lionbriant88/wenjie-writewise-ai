@@ -56,7 +56,6 @@ export class MockGradingProvider implements GradingProvider {
         logicIssues: [],
       },
       overallComment: 'Gateway mock 批改结果，请教师复核。',
-      reviewReasons: [],
     }
   }
 }

@@ -1,21 +1,16 @@
 import cors from 'cors'
 import express from 'express'
-import type { ErrorRequestHandler, Request } from 'express'
 import multer from 'multer'
 import { MAX_RUBRIC_IMAGE_BYTES, MAX_RUBRIC_PAGES, requestIdFromMultipartBody, validateRubricMultipart } from './multipartImages.js'
-import { normalizeGradingResult } from './normalizeGradingResult.js'
 import { normalizeMultimodalResult } from './multimodal/normalizeMultimodalResult.js'
-import { validateGeneratedRubric } from './multimodal/validateRubric.js'
-import { buildGradingPrompt } from './promptBuilder.js'
-import { getMultimodalProvider, getProvider } from './providers/index.js'
+import { validateConfirmedRubric, validateGeneratedRubric } from './multimodal/validateRubric.js'
+import { getMultimodalProvider } from './providers/index.js'
 import type { GatewayImageInput, MultimodalProvider } from './providers/multimodalProviderTypes.js'
-import { GradingProviderError, type GradingProvider } from './providers/providerTypes.js'
-import { validateGradingRequest } from './validateGradingRequest.js'
+import { GradingProviderError } from './providers/providerTypes.js'
 import type { ConfirmedTaskPackageV2 } from './multimodal/types.js'
 
 export interface CreateServerOptions {
   allowedOrigin?: string
-  provider?: GradingProvider
   multimodalProvider?: MultimodalProvider
   providerName?: string
   timeoutMs?: number
@@ -37,19 +32,6 @@ function errorRecord(error: unknown): Record<string, unknown> | null {
   return typeof error === 'object' && error !== null
     ? error as Record<string, unknown>
     : null
-}
-
-function parserErrorRequestId(request: Request) {
-  const value = request.get('X-Grading-Request-Id')?.trim()
-  return value && value.length <= 128 ? value : 'unavailable'
-}
-
-function requestIdFrom(value: unknown) {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return 'unavailable'
-  const requestId = (value as Record<string, unknown>).requestId
-  return typeof requestId === 'string' && requestId.trim() && requestId.trim().length <= 128
-    ? requestId.trim()
-    : 'unavailable'
 }
 
 function failure(
@@ -75,6 +57,7 @@ function rubricUploadFailure(requestId: string, error: unknown) {
 }
 
 interface ImageGradeMetadata {
+  requestVersion: 'multimodal-grading-request-v2'
   requestId: string
   essayId: string
   pageIds: string[]
@@ -92,15 +75,21 @@ function readConfirmedTranscript(value: unknown): string | null {
   return typeof value === 'string' && value.trim() && value.length <= 50_000 ? value : null
 }
 
+function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]) {
+  return Object.keys(value).every((key) => keys.includes(key))
+}
+
 function parseImageGradeMetadata(value: unknown): ImageGradeMetadata | null {
   if (typeof value !== 'string') return null
   let parsed: unknown
   try { parsed = JSON.parse(value) } catch { return null }
   const parsedRecord = errorRecord(parsed)
   if (!parsedRecord) return null
+  const hasConfirmedTranscript = Object.prototype.hasOwnProperty.call(parsedRecord, 'confirmedTranscript')
+  const allowedKeys = ['requestVersion', 'requestId', 'essayId', 'pageIds', 'task', ...(hasConfirmedTranscript ? ['confirmedTranscript'] : [])]
+  if (!hasOnlyKeys(parsedRecord, allowedKeys) || parsedRecord.requestVersion !== 'multimodal-grading-request-v2') return null
   const requestId = readMetadataString(parsedRecord.requestId, 128)
   const essayId = readMetadataString(parsedRecord.essayId, 128)
-  const hasConfirmedTranscript = Object.prototype.hasOwnProperty.call(parsedRecord, 'confirmedTranscript')
   const confirmedTranscript = hasConfirmedTranscript ? readConfirmedTranscript(parsedRecord.confirmedTranscript) : undefined
   if (hasConfirmedTranscript && confirmedTranscript === null) return null
   if (!requestId || !essayId || !Array.isArray(parsedRecord.pageIds) || parsedRecord.pageIds.length > MAX_RUBRIC_PAGES) return null
@@ -108,14 +97,20 @@ function parseImageGradeMetadata(value: unknown): ImageGradeMetadata | null {
   const pageIds = parsedRecord.pageIds.map((pageId: unknown) => readMetadataString(pageId, 128))
   const taskRecord = errorRecord(parsedRecord.task)
   if (!pageIds.every((pageId): pageId is string => pageId !== null) || new Set(pageIds).size !== pageIds.length || !taskRecord) return null
+  if (!hasOnlyKeys(taskRecord, ['taskId', 'fullScore', 'materialSummary', 'writingRequirements', 'constraints', 'rubric'])) return null
   const taskId = readMetadataString(taskRecord.taskId, 128)
   const fullScore = taskRecord.fullScore
-  const rubric = validateGeneratedRubric(taskRecord.rubric)
-  if (!taskId || typeof fullScore !== 'number' || !Number.isInteger(fullScore) || fullScore < 1 || fullScore > 100 || !rubric.ok) return null
+  const materialSummary = readMetadataString(taskRecord.materialSummary, 20_000)
+  const rubric = validateConfirmedRubric(taskRecord.rubric)
+  if (!taskId || !materialSummary || typeof fullScore !== 'number' || !Number.isInteger(fullScore) || fullScore < 1 || fullScore > 100 || !rubric.ok
+    || !Array.isArray(taskRecord.writingRequirements) || !Array.isArray(taskRecord.constraints)
+    || JSON.stringify(taskRecord.writingRequirements) !== JSON.stringify(rubric.value.writingRequirements)
+    || JSON.stringify(taskRecord.constraints) !== JSON.stringify(rubric.value.constraints)
+    || materialSummary !== rubric.value.materialSummary) return null
   return {
-    requestId, essayId, pageIds,
+    requestVersion: 'multimodal-grading-request-v2', requestId, essayId, pageIds,
     task: {
-      taskId, fullScore, materialSummary: rubric.value.materialSummary, writingRequirements: rubric.value.writingRequirements,
+      taskId, fullScore, materialSummary, writingRequirements: rubric.value.writingRequirements,
       constraints: rubric.value.constraints, rubric: rubric.value,
     },
     ...(typeof confirmedTranscript === 'string' ? { confirmedTranscript } : {}),
@@ -128,41 +123,12 @@ function imageGradeRequestId(value: unknown) {
   return typeof record.metadata === 'string' ? parseImageGradeMetadata(record.metadata)?.requestId ?? 'unavailable' : 'unavailable'
 }
 
-export const jsonParserErrorHandler: ErrorRequestHandler = (error, request, response, next) => {
-  const record = errorRecord(error)
-  const status = record?.status
-  const type = record?.type
-  const requestId = parserErrorRequestId(request)
-
-  if (status === 413 || type === 'entity.too.large') {
-    response.status(413).json({
-      requestId,
-      status: 'failed',
-      error: { code: 'request_too_large', message: '批改请求超过 256 KB 限制。', retryable: false },
-    })
-    return
-  }
-
-  if (error instanceof SyntaxError && status === 400 && record && 'body' in record) {
-    response.status(400).json({
-      requestId,
-      status: 'failed',
-      error: { code: 'invalid_request', message: '批改请求 JSON 无效。', retryable: false },
-    })
-    return
-  }
-
-  next(error)
-}
-
 export function createServer(options: CreateServerOptions = {}) {
   const app = express()
   app.use(cors({
     origin: options.allowedOrigin ?? 'http://127.0.0.1:5173',
     allowedHeaders: ['Content-Type', 'X-Grading-Request-Id'],
   }))
-  app.use(express.json({ limit: '256kb' }))
-  app.use(jsonParserErrorHandler)
   app.get('/health', (_request, response) => {
     response.json({ ok: true, service: 'grading-gateway' })
   })
@@ -188,8 +154,13 @@ export function createServer(options: CreateServerOptions = {}) {
     const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 60_000)
     try {
       const provider = options.multimodalProvider ?? getMultimodalProvider(options.providerName ?? 'mock')
-      const rubric = await provider.generateRubric({ ...validated.value, signal: controller.signal })
-      response.json({ requestId: validated.value.requestId, status: 'success', rubric })
+      const providerRubric = await provider.generateRubric({ ...validated.value, signal: controller.signal })
+      const rubric = validateGeneratedRubric(providerRubric)
+      if (!rubric.ok) {
+        response.status(503).json(failure(validated.value.requestId, rubric.error, true))
+        return
+      }
+      response.json({ requestId: validated.value.requestId, status: 'success', rubric: rubric.value })
     } catch (error) {
       const safe = controller.signal.aborted
         ? failure(validated.value.requestId, { code: 'provider_timeout', message: 'AI grading timed out.' }, true)
@@ -240,37 +211,6 @@ export function createServer(options: CreateServerOptions = {}) {
         : toSafeFailure(metadata.requestId, error)
       response.status(503).json(safe)
     } finally { clearTimeout(timeout) }
-  })
-  app.post('/grading/grade', async (request, response) => {
-    const validated = validateGradingRequest(request.body)
-    if (!validated.ok) {
-      response.status(400).json(failure(requestIdFrom(request.body), validated.error, false))
-      return
-    }
-
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 60_000)
-    try {
-      const provider = options.provider ?? getProvider(options.providerName ?? 'mock')
-      const prompt = buildGradingPrompt(validated.value)
-      const payload = await provider.grade({ request: validated.value, prompt, signal: controller.signal })
-      const normalized = normalizeGradingResult(payload, validated.value, {
-        provider: provider.publicName,
-        createdAt: (options.now ?? (() => new Date().toISOString()))(),
-      })
-      if (!normalized.ok) {
-        response.status(503).json(failure(validated.value.requestId, normalized.error, true))
-        return
-      }
-      response.json(normalized.result)
-    } catch (error) {
-      const safe = controller.signal.aborted
-        ? failure(validated.value.requestId, { code: 'provider_timeout', message: 'AI 批改超时。' }, true)
-        : toSafeFailure(validated.value.requestId, error)
-      response.status(503).json(safe)
-    } finally {
-      clearTimeout(timeout)
-    }
   })
   return app
 }

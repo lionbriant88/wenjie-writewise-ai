@@ -264,7 +264,7 @@ export interface GradingResult {
   overallComment: string
   teacherSuggestion?: string
   aiConfidence?: number
-  resultVersion?: 'grading-result-v1'
+  resultVersion?: 'grading-result-v2'
   source?: 'mock' | 'remote'
   reviewReasons?: string[]
   transcript?: string

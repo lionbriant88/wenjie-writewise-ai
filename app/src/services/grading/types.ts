@@ -133,7 +133,7 @@ export interface MultimodalGradingRequestV2 {
 }
 
 export interface AiGradingResultV1 {
-  resultVersion: 'grading-result-v1'
+  resultVersion: 'grading-result-v2'
   requestId: string
   essayId: string
   provider: GradingProviderName
@@ -212,6 +212,5 @@ export interface GradingFailureV1 {
 export type GradingClientResponse = AiGradingResultV1 | GradingFailureV1
 
 export interface GradingClient {
-  grade(request: GradingRequestV1): Promise<GradingClientResponse>
-  gradeImages?(request: MultimodalGradingRequestV2): Promise<GradingClientResponse>
+  gradeImages(request: MultimodalGradingRequestV2): Promise<GradingClientResponse>
 }

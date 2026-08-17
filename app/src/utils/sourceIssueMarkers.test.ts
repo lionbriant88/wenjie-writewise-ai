@@ -73,6 +73,7 @@ describe('sourceIssueMarkers', () => {
 
     expect(markers).toHaveLength(1)
     expect(markers[0].issueId).toBe('logic-high')
+    expect(markers[0].issueIds).toEqual(['logic-low', 'logic-high'])
     expect(duplicateIssues).toHaveLength(2)
   })
 

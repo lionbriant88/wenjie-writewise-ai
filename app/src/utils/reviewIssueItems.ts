@@ -71,6 +71,7 @@ export function buildReviewIssueItems({
       original: annotation.original,
       suggestion: revision?.revised ?? annotation.suggestion,
       explanation: revision?.note ?? annotation.explanation,
+      needsTeacherReview: annotation.needsTeacherReview,
     }
   })
 
@@ -114,6 +115,7 @@ export function buildReviewIssueItems({
         original: annotation.original,
         suggestion: revision?.revised ?? annotation.suggestion,
         explanation: revision?.note ?? annotation.explanation,
+        needsTeacherReview: annotation.needsTeacherReview,
       }
     })
 

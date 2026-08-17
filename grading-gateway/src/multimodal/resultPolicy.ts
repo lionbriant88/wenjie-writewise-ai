@@ -71,8 +71,7 @@ function explicitlyReferencesFilteredSpelling(
 }
 
 function revisionKeysAreKnown(revision: RawSentenceRevisionV1 | RawSentencePairV1, allIssueKeys: Set<string>): boolean {
-  return revision.relatedIssueKeys.length > 0
-    && hasUniqueKeys(revision.relatedIssueKeys)
+  return hasUniqueKeys(revision.relatedIssueKeys)
     && revision.relatedIssueKeys.every((key) => allIssueKeys.has(key))
 }
 

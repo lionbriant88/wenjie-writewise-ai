@@ -1,14 +1,14 @@
-export const RUBRIC_WEIGHT_DECIMALS = 0
 export const DIMENSION_SCORE_DECIMALS = 2
+export const RUBRIC_WEIGHT_TOTAL_TOLERANCE = 0.001
 
 export function isValidRubricWeight(weight: number) {
-  return Number.isInteger(weight) && weight >= 0 && weight <= 100
+  return Number.isFinite(weight) && weight > 0 && weight <= 100
 }
 
 export function hasValidRubricWeights(weights: number[]) {
   return weights.length > 0
     && weights.every(isValidRubricWeight)
-    && weights.reduce((sum, weight) => sum + weight, 0) === 100
+    && Math.abs(weights.reduce((sum, weight) => sum + weight, 0) - 100) <= RUBRIC_WEIGHT_TOTAL_TOLERANCE
 }
 
 export function roundScore2(value: number) {

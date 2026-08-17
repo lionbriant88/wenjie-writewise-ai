@@ -1,37 +1,37 @@
 import { describe, expect, it } from 'vitest'
-import type { AiGradingResultV1, GradingRequestV1 } from './types'
+import type { AiGradingResultV1, MultimodalGradingRequestV2 } from './types'
 import { adaptAiGradingResult } from './adaptAiGradingResult'
 
-const request: GradingRequestV1 = {
-  requestVersion: 'grading-request-v1',
+const request: MultimodalGradingRequestV2 = {
+  requestVersion: 'multimodal-grading-request-v2',
   requestId: 'request-1',
+  essayId: 'essay-1',
+  pageIds: [],
+  pages: [],
+  confirmedTranscript: 'Teacher-confirmed synthetic transcript.',
   task: {
     taskId: 'task-1',
-    writingGenre: 'practical_writing',
     fullScore: 15,
-    prompt: { writingGenre: 'practical_writing', taskRequirement: 'Write synthetic advice.' },
+    materialSummary: 'Write synthetic advice.',
+    writingRequirements: [],
+    constraints: [],
     rubric: {
-      status: 'confirmed',
-      writingGoal: 'Give advice.',
-      offTopicCriteria: [],
+      taskName: 'Synthetic task.',
+      materialSummary: 'Write synthetic advice.',
+      writingRequirements: [],
+      constraints: [],
       dimensions: [{
-        id: 'language', name: 'Language', weight: 100, description: 'Accuracy', deductionFocus: [],
+        id: 'language', name: 'Language', weight: 100, description: 'Accuracy', deductionFocus: [], sourceEvidence: [],
       }],
-      excellentFeatures: [],
-      reviewTriggers: [],
+      reviewWarnings: [],
     },
-  },
-  essay: {
-    essayId: 'essay-1',
-    confirmedTranscript: 'Teacher-confirmed synthetic transcript.',
-    ocrContext: { sourceKind: 'manual', hasKnownOcrRisk: false, riskCodes: [] },
   },
 }
 
 const aiResult: AiGradingResultV1 = {
-  resultVersion: 'grading-result-v1',
+  resultVersion: 'grading-result-v2',
   requestId: request.requestId,
-  essayId: request.essay.essayId,
+  essayId: request.essayId,
   provider: 'remote',
   status: 'success',
   totalScore: 12,
@@ -86,7 +86,7 @@ describe('adaptAiGradingResult', () => {
     expect(adapted).toMatchObject({
       id: 'essay-1-result',
       essayId: 'essay-1',
-      resultVersion: 'grading-result-v1',
+      resultVersion: 'grading-result-v2',
       source: 'remote',
       teacherAdjusted: false,
       totalScore: 12,

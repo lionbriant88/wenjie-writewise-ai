@@ -12,6 +12,7 @@ describe('buildReviewIssueItems', () => {
       explanation: 'suggest 后使用动词原形。',
       severity: 'high',
       evidenceCertainty: 'certain',
+      needsTeacherReview: true,
     },
   ]
 
@@ -63,6 +64,7 @@ describe('buildReviewIssueItems', () => {
         original: 'I suggest you joins the club.',
         suggestion: 'I suggest you join the club.',
         explanation: '修正 suggest 句型。',
+        needsTeacherReview: true,
       }),
     ])
   })
@@ -89,7 +91,7 @@ describe('buildReviewIssueItems', () => {
         ...annotations,
         {
           id: 'spell-1', type: 'spelling', original: 'enviroment', suggestion: 'environment',
-          explanation: 'Synthetic spelling correction.', severity: 'medium', evidenceCertainty: 'certain',
+          explanation: 'Synthetic spelling correction.', severity: 'medium', evidenceCertainty: 'certain', needsTeacherReview: true,
         },
         {
           id: 'spell-uncertain', type: 'spelling', original: 'cant', suggestion: "can't",
@@ -102,6 +104,7 @@ describe('buildReviewIssueItems', () => {
     })
 
     expect(items.map(({ id }) => id)).toEqual(['err-1', 'logic-1', 'legibility-1', 'spell-1'])
+    expect(items.find(({ id }) => id === 'spell-1')).toMatchObject({ needsTeacherReview: true })
     expect(items[2]).toMatchObject({
       source: 'legibility',
       categoryLabel: '卷面与可读性',

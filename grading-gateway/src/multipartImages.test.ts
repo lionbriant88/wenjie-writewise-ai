@@ -51,7 +51,10 @@ describe('rubric multipart image boundary', () => {
         return {
           taskName: 'Synthetic task', materialSummary: 'A synthetic task material summary.',
           writingRequirements: ['Write clearly.'], constraints: ['Use English.'],
-          dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Cover the task.', deductionFocus: ['Missing task coverage.'], sourceEvidence: ['Prompt heading.'] }],
+          dimensions: [
+            { id: 'content', name: 'Content', weight: 95, description: 'Cover the task.', deductionFocus: ['Missing task coverage.'], sourceEvidence: ['Prompt heading.'] },
+            { id: 'legibility', name: 'Legibility', weight: 5, description: 'Handwriting is legible.', deductionFocus: [], sourceEvidence: [] },
+          ],
           reviewWarnings: ['Verify source material.'],
         }
       },

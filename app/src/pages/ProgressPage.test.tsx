@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import { AppStateProvider } from '../context/AppStateContext'
 import { useAppState } from '../context/useAppState'
-import type { GradingClient, GradingRequestV1 } from '../services/grading/types'
+import type { GradingClient, MultimodalGradingRequestV2 } from '../services/grading/types'
 import { EssayResultPage } from './EssayResultPage'
 import { ExceptionsPage } from './ExceptionsPage'
 import { ProgressPage } from './ProgressPage'
@@ -45,7 +45,7 @@ function CrossTaskControls() {
     <div>
       <button type="button" onClick={() => enqueueImageEssays({
         submissionId: 'cross-task-current', taskId: 'task-3', className: 'Synthetic class',
-        essayGroups: [{ pages: [{ id: 'current-page', label: 'Current page', pageNumber: 1, quality: 'clear', accent: '#000' }] }],
+        essayGroups: [{ pages: [{ id: 'current-page', label: 'Current page', pageNumber: 1, quality: 'clear', accent: '#000', sourceFile: new File(['image'], 'current.png', { type: 'image/png' }) }] }],
       })}>添加当前任务待批改作文</button>
       <button type="button" onClick={() => { if (otherTaskEssay) void gradeEssay(otherTaskEssay.id) }}>启动另一任务批改</button>
     </div>
@@ -63,12 +63,12 @@ function renderCrossTaskProgress(gradingClient: GradingClient) {
   )
 }
 
-function failedClient(grade = vi.fn(async (request: GradingRequestV1) => ({
+function failedClient(grade = vi.fn(async (request: MultimodalGradingRequestV2) => ({
   requestId: request.requestId,
   status: 'failed' as const,
   error: { code: 'provider_timeout' as const, message: '安全超时提示。', retryable: true },
 }))) {
-  return { client: { grade } satisfies GradingClient, grade }
+  return { client: { gradeImages: grade } satisfies GradingClient, grade }
 }
 
 describe('ProgressPage', () => {
@@ -93,10 +93,10 @@ describe('ProgressPage', () => {
 
   it('shows a disabled running-row action and does not automatically retry', async () => {
     const user = userEvent.setup()
-    let resolve!: (value: Awaited<ReturnType<GradingClient['grade']>>) => void
-    const deferred = new Promise<Awaited<ReturnType<GradingClient['grade']>>>((done) => { resolve = done })
-    const grade = vi.fn((_request: GradingRequestV1) => deferred)
-    renderProgressFlow('task-2', { grade })
+    let resolve!: (value: Awaited<ReturnType<GradingClient['gradeImages']>>) => void
+    const deferred = new Promise<Awaited<ReturnType<GradingClient['gradeImages']>>>((done) => { resolve = done })
+    const grade = vi.fn((_request: MultimodalGradingRequestV2) => deferred)
+    renderProgressFlow('task-2', { gradeImages: grade })
     await user.click(screen.getByRole('button', { name: '开始批改' }))
     expect(await screen.findByRole('button', { name: '批改中' })).toBeDisabled()
     expect(screen.queryByRole('button', { name: '开始批改' })).not.toBeInTheDocument()
@@ -111,12 +111,12 @@ describe('ProgressPage', () => {
 
   it('disables failed-row retry actions while another essay in the task is running', async () => {
     const user = userEvent.setup()
-    let resolveSecond!: (value: Awaited<ReturnType<GradingClient['grade']>>) => void
-    const secondResponse = new Promise<Awaited<ReturnType<GradingClient['grade']>>>((done) => { resolveSecond = done })
-    const grade = vi.fn((request: GradingRequestV1) => grade.mock.calls.length === 1
+    let resolveSecond!: (value: Awaited<ReturnType<GradingClient['gradeImages']>>) => void
+    const secondResponse = new Promise<Awaited<ReturnType<GradingClient['gradeImages']>>>((done) => { resolveSecond = done })
+    const grade = vi.fn((request: MultimodalGradingRequestV2) => grade.mock.calls.length === 1
       ? Promise.resolve({ requestId: request.requestId, status: 'failed' as const, error: { code: 'provider_timeout' as const, message: '安全超时提示。', retryable: true } })
       : secondResponse)
-    renderProgressFlow('task-2', { grade })
+    renderProgressFlow('task-2', { gradeImages: grade })
     await user.click(screen.getByRole('button', { name: '开始批改' }))
     expect(await screen.findByRole('button', { name: '重试批改' })).toBeEnabled()
     await user.click(screen.getByRole('button', { name: '开始批改' }))
@@ -128,10 +128,10 @@ describe('ProgressPage', () => {
 
   it('hides current-task start actions while a different task request is in flight', async () => {
     const user = userEvent.setup()
-    let resolveOther!: (value: Awaited<ReturnType<GradingClient['grade']>>) => void
-    const deferred = new Promise<Awaited<ReturnType<GradingClient['grade']>>>((done) => { resolveOther = done })
-    const grade = vi.fn((_request: GradingRequestV1) => deferred)
-    renderCrossTaskProgress({ grade })
+    let resolveOther!: (value: Awaited<ReturnType<GradingClient['gradeImages']>>) => void
+    const deferred = new Promise<Awaited<ReturnType<GradingClient['gradeImages']>>>((done) => { resolveOther = done })
+    const grade = vi.fn((_request: MultimodalGradingRequestV2) => deferred)
+    renderCrossTaskProgress({ gradeImages: grade })
     await user.click(screen.getByRole('button', { name: '添加当前任务待批改作文' }))
     expect(screen.getByRole('button', { name: '开始批改' })).toBeEnabled()
     await user.click(screen.getByRole('button', { name: '启动另一任务批改' }))

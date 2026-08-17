@@ -54,7 +54,6 @@ function validPayload(): Record<string, unknown> {
     },
     overallComment: 'Synthetic overall comment.',
     modelSelfConfidence: 0.8,
-    reviewReasons: [],
     recognitionWarnings: [],
     legibilityIssues: [],
   }
@@ -110,7 +109,7 @@ describe('normalizeGradingResult', () => {
     expect(result).toMatchObject({ ok: true, result: { fullTextRevision: { improvedText: 'First synthetic line.\nSecond improved line.' } } })
   })
 
-  it('does not let filtered uncertain spelling bypass malformed data or provider review reasons', () => {
+  it('does not let filtered uncertain spelling bypass malformed data and rejects removed provider review reasons', () => {
     const malformed = validPayload()
     malformed.issues = [{ issueKey: 'spell-1', type: 'spelling', severity: 'low', originalText: 'Invented quote.', suggestion: 'Correct.', explanation: 'Synthetic.', evidenceCertainty: 'uncertain', requiresTeacherReview: false }]
     expectFailure(malformed)
@@ -124,7 +123,7 @@ describe('normalizeGradingResult', () => {
     silent.sentenceRevisions = [{ originalText: 'Second   synthetic line.', revisedText: 'Second corrected line.', note: 'Synthetic.', relatedIssueKeys: ['spell-1'], changeTypes: ['spelling'] }]
     ;(silent.fullTextRevision as Record<string, unknown>).sentencePairs = [{ originalText: 'Second   synthetic line.', correctedText: 'Second corrected line.', improvedText: 'Synthetic.', explanation: 'Synthetic.', requiresTeacherReview: false, relatedIssueKeys: ['spell-1'], changeTypes: ['spelling'] }]
     silent.reviewReasons = ['Provider narrative must not affect status.']
-    expect(normalizeGradingResult(silent, request, context)).toMatchObject({ ok: true, result: { status: 'success', reviewReasons: [], issues: [], sentenceRevisions: [] } })
+    expectFailure(silent)
   })
 
   it('requires the complete full-text revision object', () => {
@@ -157,7 +156,7 @@ describe('normalizeGradingResult', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error(result.error.message)
     expect(result.result).toMatchObject({
-      resultVersion: 'grading-result-v1', requestId: request.requestId, essayId: request.essay.essayId,
+      resultVersion: 'grading-result-v2', requestId: request.requestId, essayId: request.essay.essayId,
       provider: 'remote', status: 'success', totalScore: 12, maxScore: 15,
     })
     expect(result.result.dimensionScores.map(({ maxScore }) => maxScore)).toEqual([6, 9])

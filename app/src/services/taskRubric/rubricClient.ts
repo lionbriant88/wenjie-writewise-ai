@@ -160,8 +160,9 @@ export function createMockRubricClient(): RubricClient {
           writingRequirements: ['回应材料要求', '表达清晰完整'],
           constraints: [],
           dimensions: [
-            { id: 'content', name: '内容', weight: 60, description: '回应材料并完成写作任务。', deductionFocus: [], sourceEvidence: [] },
-            { id: 'language', name: '语言', weight: 40, description: '语言表达准确、连贯。', deductionFocus: [], sourceEvidence: [] },
+            { id: 'content', name: '内容', weight: 57, description: '回应材料并完成写作任务。', deductionFocus: [], sourceEvidence: [] },
+            { id: 'language', name: '语言', weight: 38, description: '语言表达准确、连贯。', deductionFocus: [], sourceEvidence: [] },
+            { id: 'legibility', name: '卷面与可读性', weight: 5, description: '只评价影响理解或评分的重要字迹歧义。', deductionFocus: ['重要字迹歧义'], sourceEvidence: [] },
           ],
           reviewWarnings: [],
         },

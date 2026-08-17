@@ -146,11 +146,10 @@ export interface ProviderGradingPayloadV1 {
   }
   overallComment: string
   modelSelfConfidence?: number
-  reviewReasons: string[]
 }
 
 export interface AiGradingResultV1 {
-  resultVersion: 'grading-result-v1'
+  resultVersion: 'grading-result-v2'
   requestId: string
   essayId: string
   provider: GradingProviderName

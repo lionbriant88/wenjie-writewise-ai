@@ -59,8 +59,8 @@ describe('essay grading prompt', () => {
       pages: [{ pageId: 'page-1', mimeType: 'image/png', buffer: Buffer.from('image') }],
     })[0].content)
 
-    expect(imagePrompt).toContain('可合理读成正确单词的字迹歧义必须保持静默：recognitionWarnings 和 reviewReasons 均为空')
-    expect(imagePrompt).toContain('只有全局、无法定位或学生正文/印刷文本边界的不确定性，才能写入 recognitionWarnings、recognition_uncertain review reason 或要求教师复核')
+    expect(imagePrompt).toContain('可合理读成正确单词的字迹歧义必须保持静默：recognitionWarnings 为空')
+    expect(imagePrompt).not.toContain('reviewReasons')
     expect(imagePrompt).toContain('global_unreadable')
     expect(imagePrompt).toContain('printed_boundary')
     expect(imagePrompt).toMatch(/局部.*legibilityIssues/u)
@@ -73,7 +73,7 @@ describe('essay grading prompt', () => {
       type: 'object', additionalProperties: false,
       required: expect.arrayContaining([
         'transcript', 'recognitionWarnings', 'printedTextExcluded', 'dimensionScores',
-        'issues', 'sentenceRevisions', 'expressionUpgrades', 'fullTextRevision', 'legibilityIssues', 'overallComment', 'reviewReasons',
+        'issues', 'sentenceRevisions', 'expressionUpgrades', 'fullTextRevision', 'legibilityIssues', 'overallComment',
       ]),
     })
   })
@@ -82,8 +82,9 @@ describe('essay grading prompt', () => {
     expect(essayGradingSchema.required).toEqual([
       'transcript', 'recognitionWarnings', 'printedTextExcluded', 'reportedTotalScore',
       'dimensionScores', 'issues', 'sentenceRevisions', 'expressionUpgrades',
-      'fullTextRevision', 'legibilityIssues', 'overallComment', 'reviewReasons',
+      'fullTextRevision', 'legibilityIssues', 'overallComment',
     ])
+    expect(essayGradingSchema.properties).not.toHaveProperty('reviewReasons')
     expect(essayGradingSchema.properties).not.toHaveProperty('transcriptionWarnings')
     expect(essayGradingSchema.additionalProperties).toBe(false)
     expect(essayGradingSchema.properties.recognitionWarnings).toMatchObject({ type: 'array', maxItems: 50 })
@@ -109,6 +110,7 @@ describe('essay grading prompt', () => {
     ])
     expect(essayGradingSchema.properties.sentenceRevisions.items.properties.changeTypes.items.enum)
       .toEqual(['grammar', 'spelling', 'word_choice', 'sentence_upgrade', 'coherence', 'logic_bridge', 'delete_suggestion', 'replace_sentence', 'reference_clarification'])
+    expect(essayGradingSchema.properties.sentenceRevisions.items.properties.changeTypes).toMatchObject({ minItems: 1, maxItems: 20, uniqueItems: true })
     expect(essayGradingSchema.properties.sentenceRevisions.items.additionalProperties).toBe(false)
     expect(essayGradingSchema.properties.fullTextRevision.properties.logicIssues.items.required)
       .toEqual([
@@ -132,6 +134,7 @@ describe('essay grading prompt', () => {
       'originalText', 'correctedText', 'improvedText', 'relatedIssueKeys', 'changeTypes', 'explanation', 'requiresTeacherReview',
     ])
     expect(essayGradingSchema.properties.fullTextRevision.properties.sentencePairs.items.additionalProperties).toBe(false)
+    expect(essayGradingSchema.properties.fullTextRevision.properties.sentencePairs.items.properties.changeTypes).toMatchObject({ minItems: 1, maxItems: 20, uniqueItems: true })
     expect(essayGradingSchema.properties.legibilityIssues).toMatchObject({ maxItems: 50 })
     expect(essayGradingSchema.properties.legibilityIssues.items).toMatchObject({
       additionalProperties: false,
@@ -142,7 +145,7 @@ describe('essay grading prompt', () => {
     expect(essayGradingSchema.properties.legibilityIssues.items.properties.defaultOutcome.enum).toEqual(['count_as_legibility_error'])
     expect(essayGradingSchema.properties.dimensionScores.items.required).toContain('relatedIssueKeys')
     expect(essayGradingSchema.properties.dimensionScores.items.properties.relatedIssueKeys).toMatchObject({
-      type: 'array', maxItems: 50, uniqueItems: true,
+      type: 'array', maxItems: 100, uniqueItems: true,
     })
   })
 

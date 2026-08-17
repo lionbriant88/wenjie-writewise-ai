@@ -1,9 +1,9 @@
 import type { GradingResult } from '../../types'
-import type { AiGradingResultV1, GradingRequestV1, MultimodalGradingRequestV2 } from './types'
+import type { AiGradingResultV1, MultimodalGradingRequestV2 } from './types'
 
 export function adaptAiGradingResult(
   result: AiGradingResultV1,
-  _request: GradingRequestV1 | MultimodalGradingRequestV2,
+  _request: MultimodalGradingRequestV2,
 ): GradingResult {
   return {
     id: `${result.essayId}-result`,

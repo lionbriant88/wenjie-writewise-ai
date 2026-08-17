@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { validateGeneratedRubric } from './validateRubric.js'
+import { validateConfirmedRubric, validateGeneratedRubric } from './validateRubric.js'
 
 function rubricWithSingleWeight(weight: number): Record<string, unknown> {
   return {
@@ -57,10 +57,13 @@ function validRubricWithTwoLegibilityDimensions(): Record<string, unknown> {
 }
 
 describe('validateGeneratedRubric', () => {
-  it('requires exactly one legibility dimension while permitting a teacher-edited positive weight', () => {
-    const result = validateGeneratedRubric(validRubricWithLegibility({ weight: 8 }))
+  it('requires generated legibility weight 5 but permits a teacher-edited positive decimal weight', () => {
+    const teacherEdited = validRubricWithLegibility({ weight: 8.5 })
+    ;(teacherEdited.dimensions as Array<Record<string, unknown>>)[0].weight = 91.5
 
-    expect(result.ok).toBe(true)
+    expect(validateGeneratedRubric(teacherEdited).ok).toBe(false)
+    expect(validateConfirmedRubric(teacherEdited).ok).toBe(true)
+    expect(validateGeneratedRubric(validRubricWithLegibility({ weight: 5 })).ok).toBe(true)
     expect(validateGeneratedRubric(validRubricWithoutLegibility()).ok).toBe(false)
     expect(validateGeneratedRubric(validRubricWithTwoLegibilityDimensions()).ok).toBe(false)
   })

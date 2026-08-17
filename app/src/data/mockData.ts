@@ -73,6 +73,7 @@ const essay = (
     pageCount,
     pageOrder: pages.map((essayPage) => essayPage.id),
     ocrText: mockEssayText,
+    transcriptSource: 'teacher_confirmed',
     ocrAudit,
     ocrConfidence,
     status,

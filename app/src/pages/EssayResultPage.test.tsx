@@ -103,8 +103,8 @@ describe('EssayResultPage teacher decision workflow', () => {
     const user = userEvent.setup()
     const localClient = createMockGradingClient()
     const gradingClient: GradingClient = {
-      grade: async (request) => {
-        const response = await localClient.grade(request)
+      gradeImages: async (request) => {
+        const response = await localClient.gradeImages(request)
         if (response.status === 'failed') return response
 
         return {
@@ -140,8 +140,8 @@ describe('EssayResultPage teacher decision workflow', () => {
     const user = userEvent.setup()
     const localClient = createMockGradingClient()
     const gradingClient: GradingClient = {
-      grade: async (request) => {
-        const response = await localClient.grade(request)
+      gradeImages: async (request) => {
+        const response = await localClient.gradeImages(request)
         if (response.status === 'failed') return response
         return {
           ...response,
@@ -168,7 +168,7 @@ describe('EssayResultPage teacher decision workflow', () => {
   it('labels browser-local recovery as mock fallback', async () => {
     const user = userEvent.setup()
     const gradingClient: GradingClient = {
-      grade: vi.fn(async (request) => ({
+      gradeImages: vi.fn(async (request) => ({
         requestId: request.requestId,
         status: 'failed' as const,
         error: { code: 'provider_timeout' as const, message: '安全失败。', retryable: true },

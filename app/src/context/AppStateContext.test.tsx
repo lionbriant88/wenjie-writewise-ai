@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { confirmOcrAudit, createPendingOcrAudit } from '../services/ocr/audit/transcriptAudit'
 import type { Essay } from '../types'
-import type { GradingClient, GradingRequestV1 } from '../services/grading/types'
+import type { GradingClient, MultimodalGradingRequestV2 } from '../services/grading/types'
 import { AppStateProvider } from './AppStateContext'
 import type { AppState } from './appStateContextValue'
 import { useAppState } from './useAppState'
@@ -20,6 +20,11 @@ const pendingAudit = createPendingOcrAudit({
   expectedPageIds: ['page-1'],
   assessedAt: '2026-07-12T02:55:00.000Z',
 })
+
+const generatedDimensions = [
+  { id: 'content', name: 'Content', weight: 95, description: 'Relevant.', deductionFocus: [], sourceEvidence: ['Material.'] },
+  { id: 'legibility', name: 'Legibility', weight: 5, description: 'Readable.', deductionFocus: [], sourceEvidence: [] },
+]
 
 function StateHarness() {
   const { essays, confirmMockOcrEssay, updateEssayOcrText } = useAppState()
@@ -88,13 +93,13 @@ describe('AppStateContext material-based task creation', () => {
     let resolve!: (value: Awaited<ReturnType<NonNullable<GradingClient['gradeImages']>>>) => void
     const deferred = new Promise<Awaited<ReturnType<NonNullable<GradingClient['gradeImages']>>>>((done) => { resolve = done })
     const gradeImages = vi.fn<NonNullable<GradingClient['gradeImages']>>((_request) => deferred)
-    render(<AppStateProvider gradingClient={{ grade: async (request) => resultFor(request), gradeImages }}><StateProbe /></AppStateProvider>)
+    render(<AppStateProvider gradingClient={{ gradeImages }}><StateProbe /></AppStateProvider>)
     let taskId = ''
     act(() => {
       taskId = latestState.createTask({
         taskName: 'Deferred image task', fullScore: 15,
         materialContext: { materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], reviewWarnings: [] },
-        rubricDraft: { source: 'ai', status: 'confirmed', writingGoal: 'Write.', offTopicCriteria: [], excellentFeatures: [], reviewTriggers: [], dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant.', deductionFocus: [], sourceEvidence: ['Material.'] }] },
+        rubricDraft: { source: 'ai', status: 'confirmed', writingGoal: 'Write.', offTopicCriteria: [], excellentFeatures: [], reviewTriggers: [], dimensions: generatedDimensions },
       })
       latestState.enqueueImageEssays({
         submissionId: 'deferred-image-1', taskId, className: 'Class',
@@ -113,7 +118,7 @@ describe('AppStateContext material-based task creation', () => {
 
     const request = gradeImages.mock.calls[0][0]
     resolve({
-      resultVersion: 'grading-result-v1', requestId: request.requestId, essayId: request.essayId, provider: 'mock', status: 'success', totalScore: 12, maxScore: 15,
+      resultVersion: 'grading-result-v2', requestId: request.requestId, essayId: request.essayId, provider: 'mock', status: 'success', totalScore: 12, maxScore: 15,
       dimensionScores: [], issues: [], sentenceRevisions: [], expressionUpgrades: [], legibilityIssues: [], overallComment: 'Done.', reviewReasons: [], createdAt: '2026-08-02T00:00:00.000Z',
       transcript: 'Kimi settled transcript.', recognitionWarnings: [], printedTextExcluded: true,
     })
@@ -125,9 +130,8 @@ describe('AppStateContext material-based task creation', () => {
 
   it('queues a material task with original files and grades it through the image client once', async () => {
     const gradingClient: GradingClient = {
-      grade: async (request) => resultFor(request, 'mock'),
       gradeImages: async (request) => ({
-        resultVersion: 'grading-result-v1', requestId: request.requestId, essayId: request.essayId, provider: 'mock', status: 'success',
+        resultVersion: 'grading-result-v2', requestId: request.requestId, essayId: request.essayId, provider: 'mock', status: 'success',
         totalScore: 12, maxScore: 15,
         dimensionScores: [{ dimensionId: 'content', name: 'Content', score: 12, maxScore: 15, weight: 100, reason: 'Dimension reason.', evidence: 'Dimension evidence.', requiresTeacherReview: false }],
         issues: [{ id: 'issue-1', type: 'grammar', severity: 'medium', originalText: 'bad', suggestion: 'better', explanation: 'Issue explanation.', evidenceCertainty: 'certain' as const, requiresTeacherReview: true }],
@@ -140,7 +144,7 @@ describe('AppStateContext material-based task creation', () => {
     }
     render(<AppStateProvider gradingClient={gradingClient}><StateProbe /></AppStateProvider>)
     let taskId = ''
-    act(() => { taskId = latestState.createTask({ taskName: 'Image task', fullScore: 15, materialContext: { materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], reviewWarnings: [] }, rubricDraft: { source: 'ai', status: 'confirmed', writingGoal: 'Write.', offTopicCriteria: [], excellentFeatures: [], reviewTriggers: [], dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant.', deductionFocus: [], sourceEvidence: ['Material.'] }] } }) })
+    act(() => { taskId = latestState.createTask({ taskName: 'Image task', fullScore: 15, materialContext: { materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], reviewWarnings: [] }, rubricDraft: { source: 'ai', status: 'confirmed', writingGoal: 'Write.', offTopicCriteria: [], excellentFeatures: [], reviewTriggers: [], dimensions: generatedDimensions } }) })
     const file = new File(['image'], 'handwriting.png', { type: 'image/png' })
     const submission = { submissionId: 'image-submission-1', taskId, className: '九年级 3 班', essayGroups: [{ pages: [{ id: 'page-1', label: file.name, pageNumber: 1, quality: 'clear' as const, accent: '#000', sourceFile: file }] }] }
     act(() => latestState.enqueueImageEssays(submission))
@@ -172,19 +176,19 @@ describe('AppStateContext material-based task creation', () => {
 
   it('removes a stale Kimi result only when the teacher saves a changed transcript and never grades automatically', async () => {
     const gradeImages = vi.fn(async (request: Parameters<NonNullable<GradingClient['gradeImages']>>[0]) => ({
-      resultVersion: 'grading-result-v1' as const, requestId: request.requestId, essayId: request.essayId, provider: 'mock' as const, status: 'success' as const,
+      resultVersion: 'grading-result-v2' as const, requestId: request.requestId, essayId: request.essayId, provider: 'mock' as const, status: 'success' as const,
       totalScore: 12, maxScore: 15,
       dimensionScores: [{ dimensionId: 'content', name: 'Content', score: 12, maxScore: 15, weight: 100, reason: 'Reason.', evidence: 'Evidence.', requiresTeacherReview: false }],
       issues: [], sentenceRevisions: [], expressionUpgrades: [], legibilityIssues: [], overallComment: 'Comment.', reviewReasons: [], createdAt: '2026-08-02T00:00:00.000Z',
       transcript: request.confirmedTranscript ?? 'Kimi transcript.', recognitionWarnings: [], printedTextExcluded: true,
     }))
-    render(<AppStateProvider gradingClient={{ grade: async (request) => resultFor(request), gradeImages }}><StateProbe /></AppStateProvider>)
+    render(<AppStateProvider gradingClient={{ gradeImages }}><StateProbe /></AppStateProvider>)
     let taskId = ''
     act(() => {
       taskId = latestState.createTask({
         taskName: 'Image task', fullScore: 15,
         materialContext: { materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], reviewWarnings: [] },
-        rubricDraft: { source: 'ai', status: 'confirmed', writingGoal: 'Write.', offTopicCriteria: [], excellentFeatures: [], reviewTriggers: [], dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Relevant.', deductionFocus: [], sourceEvidence: ['Material.'] }] },
+        rubricDraft: { source: 'ai', status: 'confirmed', writingGoal: 'Write.', offTopicCriteria: [], excellentFeatures: [], reviewTriggers: [], dimensions: generatedDimensions },
       })
       latestState.enqueueImageEssays({
         submissionId: 'invalidate-1', taskId, className: 'Class',
@@ -292,33 +296,29 @@ function StateProbe() {
   return null
 }
 
-function resultFor(request: GradingRequestV1, provider: 'mock' | 'remote' = 'remote') {
+function resultForImages(request: MultimodalGradingRequestV2, provider: 'mock' | 'remote' = 'remote') {
+  const transcript = request.confirmedTranscript ?? 'Synthetic image transcript.'
   const dimensionScores = request.task.rubric.dimensions.map((dimension) => ({
     dimensionId: dimension.id,
     name: dimension.name,
-    score: request.task.fullScore,
-    maxScore: request.task.fullScore,
+    score: dimension.weight * request.task.fullScore / 100,
+    maxScore: dimension.weight * request.task.fullScore / 100,
     weight: dimension.weight,
     reason: 'Synthetic reason.',
-    evidence: request.essay.confirmedTranscript,
+    evidence: transcript,
   }))
   return {
-    resultVersion: 'grading-result-v1' as const,
+    resultVersion: 'grading-result-v2' as const,
     requestId: request.requestId,
-    essayId: request.essay.essayId,
+    essayId: request.essayId,
     provider,
     status: 'success' as const,
     totalScore: request.task.fullScore,
     maxScore: request.task.fullScore,
     dimensionScores,
-    issues: [],
-    sentenceRevisions: [],
-    expressionUpgrades: [],
-    recognitionWarnings: [],
-    legibilityIssues: [],
-    overallComment: 'Synthetic result.',
-    reviewReasons: [],
-    createdAt: '2026-07-20T01:00:00.000Z',
+    issues: [], sentenceRevisions: [], expressionUpgrades: [], recognitionWarnings: [], legibilityIssues: [],
+    overallComment: 'Synthetic result.', reviewReasons: [], createdAt: '2026-08-16T00:00:00.000Z',
+    transcript, printedTextExcluded: true,
   }
 }
 
@@ -419,10 +419,52 @@ function renderGradingState(gradingClient: GradingClient) {
 }
 
 describe('AppStateContext grading lifecycle', () => {
+  it('uses gradeImages exclusively for initial images and legacy teacher-confirmed regrades', async () => {
+    let syntheticNow = 1_786_929_411_787
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => syntheticNow++)
+    const grade = vi.fn(async () => { throw new Error('generic grading path must remain inactive') })
+    const gradeImages = vi.fn(async (request: MultimodalGradingRequestV2) => resultForImages(request))
+    const client: GradingClient & { grade: typeof grade } = { grade, gradeImages }
+    renderGradingState(client)
+
+    let materialTaskId = ''
+    act(() => {
+      materialTaskId = latestState.createTask({
+        taskName: 'Image-only task', fullScore: 15,
+        materialContext: { materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], reviewWarnings: [] },
+        rubricDraft: { source: 'teacher', status: 'confirmed', writingGoal: 'Write.', offTopicCriteria: [], excellentFeatures: [], reviewTriggers: [], dimensions: [
+          { id: 'content', name: 'Content', weight: 95, description: 'Relevant.', deductionFocus: [], sourceEvidence: ['Material.'] },
+          { id: 'legibility', name: 'Legibility', weight: 5, description: 'Readable.', deductionFocus: [], sourceEvidence: [] },
+        ] },
+      })
+      latestState.enqueueImageEssays({
+        submissionId: 'single-path-image', taskId: materialTaskId, className: 'Class',
+        essayGroups: [{ pages: [{ id: 'page-1', label: 'essay.png', pageNumber: 1, quality: 'clear', accent: '#000', sourceFile: new File(['image'], 'essay.png', { type: 'image/png' }) }] }],
+      })
+    })
+    const imageEssay = latestState.essays.find((essay) => essay.taskId === materialTaskId)
+    if (!imageEssay) throw new Error('Image essay missing')
+    await act(async () => { await latestState.gradeEssay(imageEssay.id) })
+
+    const legacy = createConfirmedEssay()
+    await act(async () => { await latestState.gradeEssay(legacy.essayId) })
+    nowSpy.mockRestore()
+
+    expect(grade).not.toHaveBeenCalled()
+    expect(gradeImages).toHaveBeenCalledTimes(2)
+    expect(gradeImages.mock.calls[0][0]).toMatchObject({ pageIds: [imageEssay.pageOrder[0]], pages: [{ pageId: imageEssay.pageOrder[0] }] })
+    expect(gradeImages.mock.calls[1][0]).toMatchObject({
+      essayId: legacy.essayId,
+      confirmedTranscript: 'Teacher-confirmed synthetic transcript.',
+      pageIds: [],
+      pages: [],
+    })
+  })
+
   it('does not treat an unexpected legacy transcript as Kimi recognition data', async () => {
     const client: GradingClient = {
-      async grade(request) {
-        return { ...resultFor(request), transcript: 'Unexpected legacy transcript.', recognitionWarnings: [], printedTextExcluded: true }
+      async gradeImages(request) {
+        return { ...resultForImages(request), transcript: 'Unexpected legacy transcript.', recognitionWarnings: [], printedTextExcluded: true }
       },
     }
     renderGradingState(client)
@@ -431,11 +473,11 @@ describe('AppStateContext grading lifecycle', () => {
     expect(latestState.essays.find((essay) => essay.id === essayId)).toMatchObject({
       ocrText: 'Teacher-confirmed synthetic transcript.',
     })
-    expect(latestState.essays.find((essay) => essay.id === essayId)?.transcriptSource).toBeUndefined()
+    expect(latestState.essays.find((essay) => essay.id === essayId)?.transcriptSource).toBe('teacher_confirmed')
   })
 
   it('keeps a real AI result unreviewed until explicit confirmation', async () => {
-    const client: GradingClient = { async grade(request) { return resultFor(request) } }
+    const client: GradingClient = { async gradeImages(request) { return resultForImages(request) } }
     renderGradingState(client)
     const { taskId, essayId } = createConfirmedEssay()
 
@@ -454,11 +496,11 @@ describe('AppStateContext grading lifecycle', () => {
   })
 
   it('returns a failed attempt to pending without automatic retry', async () => {
-    const grade = vi.fn(async (request: GradingRequestV1) => ({
+    const grade = vi.fn(async (request: MultimodalGradingRequestV2) => ({
       requestId: request.requestId, status: 'failed' as const,
       error: { code: 'provider_timeout' as const, message: 'Timed out.', retryable: true },
     }))
-    renderGradingState({ grade })
+    renderGradingState({ gradeImages: grade })
     const { essayId } = createConfirmedEssay()
     await act(async () => { await latestState.gradeEssay(essayId) })
     expect(latestState.essays.find((essay) => essay.id === essayId)).toMatchObject({
@@ -469,10 +511,10 @@ describe('AppStateContext grading lifecycle', () => {
   })
 
   it('prevents duplicate clicks and gives an explicit retry a fresh request id', async () => {
-    let resolveFirst!: (value: ReturnType<typeof resultFor>) => void
-    const firstResponse = new Promise<ReturnType<typeof resultFor>>((resolve) => { resolveFirst = resolve })
+    let resolveFirst!: (value: ReturnType<typeof resultForImages>) => void
+    const firstResponse = new Promise<ReturnType<typeof resultForImages>>((resolve) => { resolveFirst = resolve })
     const requestIds: string[] = []
-    const grade = vi.fn((request: GradingRequestV1) => {
+    const grade = vi.fn((request: MultimodalGradingRequestV2) => {
       requestIds.push(request.requestId)
       if (requestIds.length === 1) return firstResponse
       return Promise.resolve({
@@ -480,7 +522,7 @@ describe('AppStateContext grading lifecycle', () => {
         error: { code: 'provider_timeout' as const, message: 'Timed out.', retryable: true },
       })
     })
-    renderGradingState({ grade })
+    renderGradingState({ gradeImages: grade })
     const { essayId } = createConfirmedEssay()
     let first!: Promise<void>
     let duplicate!: Promise<void>
@@ -490,17 +532,17 @@ describe('AppStateContext grading lifecycle', () => {
     })
     expect(grade).toHaveBeenCalledTimes(1)
     const request = grade.mock.calls[0][0]
-    resolveFirst(resultFor(request))
+    resolveFirst(resultForImages(request))
     await act(async () => { await Promise.all([first, duplicate]) })
 
     act(() => latestState.markEssayManual(essayId))
     expect(grade).toHaveBeenCalledTimes(1)
 
-    const failingGrade = vi.fn(async (nextRequest: GradingRequestV1) => ({
+    const failingGrade = vi.fn(async (nextRequest: MultimodalGradingRequestV2) => ({
       requestId: nextRequest.requestId, status: 'failed' as const,
       error: { code: 'provider_timeout' as const, message: 'Timed out.', retryable: true },
     }))
-    const secondView = renderGradingState({ grade: failingGrade })
+    const secondView = renderGradingState({ gradeImages: failingGrade })
     const second = createConfirmedEssay()
     await act(async () => { await latestState.gradeEssay(second.essayId) })
     await act(async () => { await latestState.retryGradeEssay(second.essayId) })
@@ -510,10 +552,10 @@ describe('AppStateContext grading lifecycle', () => {
   })
 
   it('prevents a second essay from starting while any grading request is in flight', async () => {
-    let resolveFirst!: (value: ReturnType<typeof resultFor>) => void
-    const firstResponse = new Promise<ReturnType<typeof resultFor>>((resolve) => { resolveFirst = resolve })
-    const grade = vi.fn((request: GradingRequestV1) => firstResponse.then(() => resultFor(request)))
-    renderGradingState({ grade })
+    let resolveFirst!: (value: ReturnType<typeof resultForImages>) => void
+    const firstResponse = new Promise<ReturnType<typeof resultForImages>>((resolve) => { resolveFirst = resolve })
+    const grade = vi.fn((request: MultimodalGradingRequestV2) => firstResponse.then(() => resultForImages(request)))
+    renderGradingState({ gradeImages: grade })
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-08-02T01:00:00.000Z'))
     const first = createConfirmedEssay()
@@ -529,14 +571,14 @@ describe('AppStateContext grading lifecycle', () => {
     })
 
     expect(grade).toHaveBeenCalledTimes(1)
-    resolveFirst(resultFor(grade.mock.calls[0][0]))
+    resolveFirst(resultForImages(grade.mock.calls[0][0]))
     await act(async () => { await Promise.all([firstRun, blockedRun]) })
     expect(latestState.essays.find((essay) => essay.id === second.essayId)?.status).toBe('pending_grading')
   })
 
   it('does not call the client for an invalid request and uses local mock only on fallback', async () => {
     const grade = vi.fn()
-    renderGradingState({ grade })
+    renderGradingState({ gradeImages: grade })
     const invalidEssayId = createInvalidRequestEssay()
     await act(async () => { await latestState.gradeEssay(invalidEssayId) })
     expect(grade).not.toHaveBeenCalled()
@@ -548,7 +590,7 @@ describe('AppStateContext grading lifecycle', () => {
   })
 
   it('editing does not confirm and confirmation is ignored outside grading_ready', async () => {
-    renderGradingState({ async grade(request) { return resultFor(request) } })
+    renderGradingState({ async gradeImages(request) { return resultForImages(request) } })
     const { essayId } = createConfirmedEssay()
     act(() => latestState.confirmGradingResult(essayId))
     expect(latestState.essays.find((essay) => essay.id === essayId)?.status).toBe('pending_grading')
@@ -561,10 +603,10 @@ describe('AppStateContext grading lifecycle', () => {
   })
 
   it.each(['success', 'failure'] as const)('ignores a late %s after manual handling', async (kind) => {
-    let resolve!: (value: Awaited<ReturnType<GradingClient['grade']>>) => void
-    const deferred = new Promise<Awaited<ReturnType<GradingClient['grade']>>>((done) => { resolve = done })
-    const grade = vi.fn((_request: GradingRequestV1) => deferred)
-    renderGradingState({ grade })
+    let resolve!: (value: Awaited<ReturnType<GradingClient['gradeImages']>>) => void
+    const deferred = new Promise<Awaited<ReturnType<GradingClient['gradeImages']>>>((done) => { resolve = done })
+    const grade = vi.fn((_request: MultimodalGradingRequestV2) => deferred)
+    renderGradingState({ gradeImages: grade })
     const { taskId, essayId } = createConfirmedEssay()
     let pending!: Promise<void>
     act(() => { pending = latestState.gradeEssay(essayId) })
@@ -572,7 +614,7 @@ describe('AppStateContext grading lifecycle', () => {
     const countsAfterManual = latestState.tasks.find((task) => task.id === taskId)?.completedEssayCount
     const request = grade.mock.calls[0][0]
     resolve(kind === 'success'
-      ? resultFor(request)
+      ? resultForImages(request)
       : {
           requestId: request.requestId, status: 'failed',
           error: { code: 'provider_timeout', message: 'Timed out.', retryable: true },
@@ -586,11 +628,11 @@ describe('AppStateContext grading lifecycle', () => {
   })
 
   it('resets added in-memory grading data on provider remount', () => {
-    const view = renderGradingState({ async grade(request) { return resultFor(request) } })
+    const view = renderGradingState({ async gradeImages(request) { return resultForImages(request) } })
     const { taskId } = createConfirmedEssay()
     expect(latestState.tasks.some((task) => task.id === taskId)).toBe(true)
     view.unmount()
-    renderGradingState({ async grade(request) { return resultFor(request) } })
+    renderGradingState({ async gradeImages(request) { return resultForImages(request) } })
     expect(latestState.tasks.some((task) => task.id === taskId)).toBe(false)
   })
 })

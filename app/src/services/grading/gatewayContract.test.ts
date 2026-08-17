@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import { normalizeMultimodalResult } from '../../../../grading-gateway/src/multimodal/normalizeMultimodalResult'
-import { normalizeGradingResult } from '../../../../grading-gateway/src/normalizeGradingResult'
 import { projectGradingClientResponse } from './projectGradingClientResponse'
 
 const task = { taskId: 'task-contract', fullScore: 15, materialSummary: 'Synthetic task.', writingRequirements: ['Write.'], constraints: [], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic task.', writingRequirements: ['Write.'], constraints: [], reviewWarnings: [], dimensions: [{ id: 'language', name: 'Language', weight: 95, description: 'Accuracy.', deductionFocus: [], sourceEvidence: [] }, { id: 'legibility', name: 'Legibility', weight: 5, description: 'Readable.', deductionFocus: [], sourceEvidence: [] }] } }
@@ -25,7 +24,7 @@ describe('Gateway-to-website public grading contract', () => {
         sentencePairs: [{ originalText: 'First synthetic sentence.', correctedText: 'First corrected sentence.', improvedText: 'First corrected sentence.', relatedIssueKeys: ['grammar-first', 'word-second'], changeTypes: ['grammar', 'word_choice'], explanation: 'Synthetic pair.', requiresTeacherReview: false }],
         logicNotes: [], logicIssues: [],
       },
-      legibilityIssues: [], overallComment: 'Synthetic overall comment.', reviewReasons: [],
+      legibilityIssues: [], overallComment: 'Synthetic overall comment.',
     }, context)
     expect(normalized.ok).toBe(true)
     if (!normalized.ok) return
@@ -38,28 +37,5 @@ describe('Gateway-to-website public grading contract', () => {
     expect(projected.sentenceRevisions[0]).toMatchObject({ relatedIssueIds: ['essay-contract-issue-1', 'essay-contract-issue-2'], changeTypes: ['grammar', 'word_choice'] })
     expect(projected.fullTextRevision?.sentencePairs[0]).toMatchObject({ relatedIssueIds: ['essay-contract-issue-1', 'essay-contract-issue-2'], changeTypes: ['grammar', 'word_choice'] })
     expect(projected.expressionUpgrades).toEqual([expect.objectContaining({ originalText: 'Second synthetic sentence.' })])
-  })
-
-  it('projects the actual ordinary grading normalizer result', () => {
-    const request = { requestVersion: 'grading-request-v1' as const, requestId: 'request-generic', task: { taskId: 'task-generic', writingGenre: 'practical_writing' as const, fullScore: 15, prompt: { writingGenre: 'practical_writing' as const, taskRequirement: 'Synthetic.' }, rubric: { status: 'confirmed' as const, writingGoal: 'Synthetic.', offTopicCriteria: [], dimensions: [{ id: 'language', name: 'Language', weight: 100, description: 'Accuracy.', deductionFocus: [] }], excellentFeatures: [], reviewTriggers: [] } }, essay: { essayId: 'essay-generic', confirmedTranscript: 'A synthetic sentence.', ocrContext: { sourceKind: 'manual' as const, hasKnownOcrRisk: false, riskCodes: [] } } }
-    const normalized = normalizeGradingResult({
-      reportedTotalScore: 12,
-      dimensionScores: [{ dimensionId: 'language', score: 11.6, reason: 'Synthetic.', evidence: 'A synthetic sentence.', relatedIssueKeys: ['grammar-1'] }],
-      recognitionWarnings: [], legibilityIssues: [],
-      issues: [{ issueKey: 'grammar-1', type: 'grammar', severity: 'low', originalText: 'A synthetic sentence.', suggestion: 'A corrected sentence.', explanation: 'Synthetic.', evidenceCertainty: 'certain', requiresTeacherReview: false }],
-      sentenceRevisions: [{ originalText: 'A synthetic sentence.', revisedText: 'A corrected sentence.', note: 'Synthetic.', relatedIssueKeys: ['grammar-1'], changeTypes: ['grammar'] }],
-      expressionUpgrades: [],
-      fullTextRevision: {
-        correctedText: 'Provider aggregate.', improvedText: 'A corrected sentence.',
-        sentencePairs: [{ originalText: 'A synthetic sentence.', correctedText: 'A corrected sentence.', improvedText: 'A corrected sentence.', relatedIssueKeys: ['grammar-1'], changeTypes: ['grammar'], explanation: 'Synthetic.', requiresTeacherReview: false }],
-        logicNotes: [],
-        logicIssues: [{ issueKey: 'logic-1', originalText: 'A synthetic sentence.', contextBefore: '', contextAfter: '', subType: 'unclear_logic', severity: 'low', diagnosis: 'Synthetic logic.', suggestedAction: 'add_bridge_sentence', conservativeSuggestion: 'Synthetic conservative.', polishedSuggestion: 'Synthetic polished.', requiresTeacherReview: true }],
-      },
-      overallComment: 'Synthetic.', reviewReasons: [],
-    }, request, { provider: 'remote', createdAt: '2026-08-15T00:00:00.000Z' })
-    expect(normalized.ok).toBe(true)
-    if (!normalized.ok) return
-    expect(normalized.result.fullTextRevision?.logicIssues[0]).not.toHaveProperty('issueKey')
-    expect(projectGradingClientResponse(normalized.result, { httpOk: true, requestId: request.requestId, essayId: request.essay.essayId, inputMode: 'standard', fullScore: 15 })).toMatchObject({ status: 'success', totalScore: 12, recognitionWarnings: [], legibilityIssues: [], fullTextRevision: { logicIssues: [{ id: 'essay-generic-logic-1' }] } })
   })
 })

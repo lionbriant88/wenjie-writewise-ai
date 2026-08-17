@@ -8,15 +8,17 @@ import {
 } from './scoringRules'
 
 describe('shared grading score rules', () => {
-  it('accepts integer weights only and requires an exact total of 100', () => {
-    expect(isValidRubricWeight(0)).toBe(true)
+  it('accepts finite positive decimal weights totaling 100 within tolerance', () => {
+    expect(isValidRubricWeight(0)).toBe(false)
     expect(isValidRubricWeight(100)).toBe(true)
-    expect(isValidRubricWeight(33.3)).toBe(false)
+    expect(isValidRubricWeight(33.3)).toBe(true)
     expect(isValidRubricWeight(-1)).toBe(false)
     expect(isValidRubricWeight(101)).toBe(false)
     expect(hasValidRubricWeights([40, 35, 25])).toBe(true)
     expect(hasValidRubricWeights([40, 35, 24])).toBe(false)
-    expect(hasValidRubricWeights([50.5, 49.5])).toBe(false)
+    expect(hasValidRubricWeights([50.5, 49.5])).toBe(true)
+    expect(hasValidRubricWeights([33.3, 66.701])).toBe(true)
+    expect(hasValidRubricWeights([33.3, 66.702])).toBe(false)
   })
 
   it('rounds dimension scores and maximums to two decimals', () => {

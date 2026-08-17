@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { mockClassInsights, mockEssays, mockGradingResults, mockTasks } from '../data/mockData'
 import { confirmOcrAudit } from '../services/ocr/audit/transcriptAudit'
 import { adaptAiGradingResult } from '../services/grading/adaptAiGradingResult'
-import { buildGradingRequest } from '../services/grading/buildGradingRequest'
 import { buildMultimodalGradingRequest } from '../services/grading/buildMultimodalGradingRequest'
 import { createConfiguredGradingClient } from '../services/grading/gradingClient'
 import { createMockGradingClient } from '../services/grading/mockGradingClient'
@@ -155,6 +154,7 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
         pageCount: essayPages.length,
         pageOrder: essayPages.map((page) => page.id),
         ocrText: group.ocrText,
+        transcriptSource: 'teacher_confirmed',
         ocrAudit: group.ocrAudit,
         ocrConfidence: 0.88,
         status: 'pending_grading',
@@ -236,7 +236,6 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
   const runGrading = useCallback(async (
     essayId: string,
     client: GradingClient,
-    transcriptPolicy: 'confirmed_only' | 'allow_legacy_mock',
   ) => {
     if (gradingInFlightRef.current.size > 0) return
     const targetEssay = essaysRef.current.find((essay) => essay.id === essayId)
@@ -246,9 +245,7 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
 
     gradingSequenceRef.current += 1
     const requestId = `grading-${essayId}-${gradingSequenceRef.current}-${crypto.randomUUID?.() ?? Date.now()}`
-    const built = task.materialContext
-      ? buildMultimodalGradingRequest(task, targetEssay, requestId)
-      : buildGradingRequest(task, targetEssay, requestId, transcriptPolicy)
+    const built = buildMultimodalGradingRequest(task, targetEssay, requestId)
     if (!built.ok) {
       const completedAt = new Date().toISOString()
       commitEssayTransition(
@@ -264,11 +261,7 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
     gradingInFlightRef.current.set(essayId, requestId)
     setIsGradingInFlight(true)
     try {
-      const response = 'requestVersion' in built.request && built.request.requestVersion === 'multimodal-grading-request-v2'
-        ? client.gradeImages
-          ? await client.gradeImages(built.request)
-          : { requestId, status: 'failed' as const, error: { code: 'gateway_unavailable' as const, message: '批改服务暂时不可用，请重试。', retryable: true } }
-        : await client.grade(built.request)
+      const response = await client.gradeImages(built.request)
       if (response.status === 'failed') {
         const completedAt = new Date().toISOString()
         commitEssayTransition(
@@ -280,11 +273,9 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
       const adapted = adaptAiGradingResult(response, built.request)
       const settled = settleGradingSuccess(
         essaysRef.current, essayId, requestId, adapted.id, response,
-        'requestVersion' in built.request && built.request.requestVersion === 'multimodal-grading-request-v2'
-          ? built.request.confirmedTranscript !== undefined
-            ? { transcriptSource: 'teacher_confirmed', confirmedTranscript: built.request.confirmedTranscript }
-            : { transcriptSource: 'kimi_vision' }
-          : {},
+        built.request.confirmedTranscript !== undefined
+          ? { transcriptSource: 'teacher_confirmed', confirmedTranscript: built.request.confirmedTranscript }
+          : { transcriptSource: 'kimi_vision' },
       )
       if (!commitEssayTransition(settled, response.createdAt)) return
       setGradingResults((current) => [adapted, ...current.filter((item) => item.essayId !== essayId)])
@@ -312,15 +303,15 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
   }, [commitEssayTransition])
 
   const gradeEssay = useCallback(
-    (essayId: string) => runGrading(essayId, gradingClientRef.current!, 'confirmed_only'),
+    (essayId: string) => runGrading(essayId, gradingClientRef.current!),
     [runGrading],
   )
   const retryGradeEssay = useCallback(
-    (essayId: string) => runGrading(essayId, gradingClientRef.current!, 'confirmed_only'),
+    (essayId: string) => runGrading(essayId, gradingClientRef.current!),
     [runGrading],
   )
   const fallbackToMockGrading = useCallback(
-    (essayId: string) => runGrading(essayId, localMockGradingClient, 'allow_legacy_mock'),
+    (essayId: string) => runGrading(essayId, localMockGradingClient),
     [runGrading],
   )
   const confirmGradingResult = useCallback((essayId: string) => {

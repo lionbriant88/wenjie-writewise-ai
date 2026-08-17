@@ -564,3 +564,7 @@ http://localhost:5173/tasks/task-1/class-review
 | **合计** | **16 个外部 HTTP 请求** | **其中 13 个 completion 请求：8 成功、5 超时；另有 3 个模型目录查询** |
 
 该台账说明本轮没有完成“教师确认文本重批成功”的完整 happy path。最新代码已进一步把浏览器到 Gateway 也改为零图片重批，但为控制费用，本轮不再追加真实调用；须在 K3 权限可用后重新验证。
+
+## 2026-08-17：多模态批改 v2 原子部署要求
+
+网站与 Grading Gateway 现共享唯一的 `multimodal-grading-request-v2` / `grading-result-v2` 合同。该版本为破坏性升级，发布时必须原子部署网站和 Gateway，不支持新旧版本混跑；旧的 `POST /grading/grade` 已停用，首次图片批改与教师确认文本重批都使用 `POST /grading/grade-images`。

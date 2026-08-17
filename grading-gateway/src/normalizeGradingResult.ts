@@ -72,7 +72,7 @@ function parsePolicyInput(payload: Record<string, unknown>, transcript: string):
     if (!issueKey || !type || !issueTypes.has(type) || !severity || !severities.has(severity) || !originalText || !suggestion || !explanation || !evidenceCertainty || !evidenceCertainties.has(evidenceCertainty) || typeof value.requiresTeacherReview !== 'boolean') return null
     issues.push({ issueKey, type: type as RawMultimodalIssueV1['type'], severity: severity as RawMultimodalIssueV1['severity'], originalText, suggestion, explanation, evidenceCertainty: evidenceCertainty as RawMultimodalIssueV1['evidenceCertainty'], requiresTeacherReview: value.requiresTeacherReview })
   }
-  const parseLinks = (value: Record<string, unknown>) => { const relatedIssueKeys = Array.isArray(value.relatedIssueKeys) ? value.relatedIssueKeys : null; const changes = Array.isArray(value.changeTypes) ? value.changeTypes : null; return relatedIssueKeys && relatedIssueKeys.length > 0 && relatedIssueKeys.every((key) => typeof key === 'string' && key.trim()) && changes && changes.length > 0 && changes.every((change) => typeof change === 'string' && changeTypes.has(change as GradingChangeType)) && new Set(relatedIssueKeys).size === relatedIssueKeys.length ? { relatedIssueKeys: relatedIssueKeys as string[], changeTypes: changes as GradingChangeType[] } : null }
+  const parseLinks = (value: Record<string, unknown>) => { const relatedIssueKeys = Array.isArray(value.relatedIssueKeys) ? value.relatedIssueKeys : null; const changes = Array.isArray(value.changeTypes) ? value.changeTypes : null; return relatedIssueKeys && relatedIssueKeys.length <= 100 && relatedIssueKeys.every((key) => typeof key === 'string' && key.trim()) && changes && changes.length > 0 && changes.length <= 20 && changes.every((change) => typeof change === 'string' && changeTypes.has(change as GradingChangeType)) && new Set(relatedIssueKeys).size === relatedIssueKeys.length && new Set(changes).size === changes.length ? { relatedIssueKeys: relatedIssueKeys as string[], changeTypes: changes as GradingChangeType[] } : null }
   const sentenceRevisions: RawSentenceRevisionV1[] = []
   for (const value of payload.sentenceRevisions) { if (!isRecord(value)) return null; const originalText = quote(value.originalText), revisedText = text(value.revisedText), note = text(value.note), links = parseLinks(value); if (!originalText || !revisedText || !note || !links) return null; sentenceRevisions.push({ originalText, revisedText, note, ...links }) }
   const sentencePairs: RawSentencePairV1[] = []
@@ -107,14 +107,14 @@ interface PolicyProjectionInput {
   reviewReasons: string[]
 }
 
-function safeText(value: unknown): value is string { return typeof value === 'string' && value.trim().length > 0 }
+function safeText(value: unknown): value is string { return typeof value === 'string' && value.trim().length > 0 && value.length <= 50_000 }
 
 function policyProjectionInputIsSafe(input: PolicyProjectionInput): boolean {
   const { request, policy, dimensionScores, totalScore } = input
   if (!Number.isInteger(request.task.fullScore) || request.task.fullScore < 1 || request.task.fullScore > 100 || !safeText(request.essay.confirmedTranscript) || !safeText(policy.overallComment) || !safeText(policy.correctedText) || !safeText(policy.improvedText)) return false
-  if (!Number.isInteger(totalScore) || totalScore < 0 || totalScore > request.task.fullScore || !Array.isArray(input.reviewReasons) || !input.reviewReasons.every(safeText)) return false
+  if (!Number.isInteger(totalScore) || totalScore < 0 || totalScore > request.task.fullScore || !Array.isArray(input.reviewReasons) || input.reviewReasons.length > 100 || !input.reviewReasons.every(safeText)) return false
   if (input.reportedTotalScore !== undefined && (typeof input.reportedTotalScore !== 'number' || !Number.isFinite(input.reportedTotalScore))) return false
-  if (dimensionScores.length !== request.task.rubric.dimensions.length) return false
+  if (dimensionScores.length !== request.task.rubric.dimensions.length || dimensionScores.length > 10) return false
   for (const [index, dimension] of request.task.rubric.dimensions.entries()) {
     const score = dimensionScores[index]
     const maxScore = calculateDimensionMaxScore(request.task.fullScore, dimension.weight)
@@ -122,10 +122,10 @@ function policyProjectionInputIsSafe(input: PolicyProjectionInput): boolean {
   }
   if (calculateTotalScore(dimensionScores.map(({ score }) => score), request.task.fullScore) !== totalScore) return false
   const issueKeys = policy.issues.map(({ issueKey }) => issueKey)
-  if (!issueKeys.every(safeText) || new Set(issueKeys).size !== issueKeys.length) return false
+  if (policy.issues.length > 100 || policy.sentenceRevisions.length > 100 || policy.sentencePairs.length > 100 || policy.expressionUpgrades.length > 100 || policy.logicNotes.length > 100 || policy.logicIssues.length > 50 || !issueKeys.every(safeText) || new Set(issueKeys).size !== issueKeys.length) return false
   const knownKeys = new Set(issueKeys)
   const linkedItems = [...policy.sentenceRevisions, ...policy.sentencePairs]
-  if (linkedItems.some(({ relatedIssueKeys, changeTypes }) => relatedIssueKeys.length === 0 || new Set(relatedIssueKeys).size !== relatedIssueKeys.length || !relatedIssueKeys.every((key) => knownKeys.has(key)) || changeTypes.length === 0)) return false
+  if (linkedItems.some(({ relatedIssueKeys, changeTypes: changes }) => new Set(relatedIssueKeys).size !== relatedIssueKeys.length || relatedIssueKeys.length > 100 || !relatedIssueKeys.every((key) => knownKeys.has(key)) || changes.length === 0 || changes.length > 20 || new Set(changes).size !== changes.length || !changes.every((change) => changeTypes.has(change)))) return false
   return true
 }
 
@@ -154,7 +154,7 @@ export function normalizeGradingResultFromPolicyOutcome(input: PolicyProjectionI
   const logicIssues = policy.logicIssues.map((issue, index) => ({ id: `${request.essay.essayId}-logic-${index + 1}`, originalText: issue.originalText, contextBefore: issue.contextBefore, contextAfter: issue.contextAfter, subType: issue.subType, severity: issue.severity, diagnosis: issue.diagnosis, suggestedAction: issue.suggestedAction, conservativeSuggestion: issue.conservativeSuggestion, polishedSuggestion: issue.polishedSuggestion, requiresTeacherReview: issue.requiresTeacherReview }))
   const reviewReasons = new Set(input.reviewReasons)
   if (typeof input.reportedTotalScore === 'number' && input.reportedTotalScore !== totalScore) reviewReasons.add('AI 自报总分与产品重算总分不一致。')
-  return { resultVersion: 'grading-result-v1', requestId: request.requestId, essayId: request.essay.essayId, provider: context.provider, status: reviewReasons.size ? 'partial' : 'success', totalScore, maxScore: request.task.fullScore, dimensionScores, issues, sentenceRevisions, expressionUpgrades: policy.expressionUpgrades.map((item, index) => ({ ...item, id: `${request.essay.essayId}-upgrade-${index + 1}` })), fullTextRevision: { originalText: request.essay.confirmedTranscript, correctedText: policy.correctedText, improvedText: policy.improvedText, sentencePairs, logicNotes: policy.logicNotes, logicIssues }, recognitionWarnings: [], legibilityIssues: [], overallComment: policy.overallComment, reviewReasons: [...reviewReasons], createdAt: context.createdAt }
+  return { resultVersion: 'grading-result-v2', requestId: request.requestId, essayId: request.essay.essayId, provider: context.provider, status: reviewReasons.size ? 'partial' : 'success', totalScore, maxScore: request.task.fullScore, dimensionScores, issues, sentenceRevisions, expressionUpgrades: policy.expressionUpgrades.map((item, index) => ({ ...item, id: `${request.essay.essayId}-upgrade-${index + 1}` })), fullTextRevision: { originalText: request.essay.confirmedTranscript, correctedText: policy.correctedText, improvedText: policy.improvedText, sentencePairs, logicNotes: policy.logicNotes, logicIssues }, recognitionWarnings: [], legibilityIssues: [], overallComment: policy.overallComment, reviewReasons: [...reviewReasons], createdAt: context.createdAt }
 }
 
 function invalidResponse(): NormalizationResult {
@@ -173,7 +173,7 @@ export function normalizeGradingResult(
   request: GradingRequestV1,
   context: NormalizationContext,
 ): NormalizationResult {
-  if (!isRecord(payload) || !Array.isArray(payload.dimensionScores) || payload.dimensionScores.length !== request.task.rubric.dimensions.length) return invalidResponse()
+  if (!isRecord(payload) || 'reviewReasons' in payload || !Array.isArray(payload.dimensionScores) || payload.dimensionScores.length !== request.task.rubric.dimensions.length) return invalidResponse()
   const reviewReasons = new Set<string>()
   const rubricIds = new Set(request.task.rubric.dimensions.map(({ id }) => id))
   const seenDimensionIds = new Set<string>()
@@ -229,8 +229,7 @@ export function normalizeGradingResult(
     if (payload.reportedTotalScore !== totalScore) reviewReasons.add('AI 自报总分与产品重算总分不一致。')
   }
 
-  const providerReviewReasons = requiredStringArray(payload.reviewReasons)
-  if (providerReviewReasons === null || !Array.isArray(payload.recognitionWarnings) || payload.recognitionWarnings.length !== 0) return invalidResponse()
+  if (!Array.isArray(payload.recognitionWarnings) || payload.recognitionWarnings.length !== 0) return invalidResponse()
   const rawPolicy = parsePolicyInput(payload, request.essay.confirmedTranscript)
   const expressionUpgrades = parseExpressionUpgrades(payload.expressionUpgrades, request.essay.confirmedTranscript)
   if (!rawPolicy || !expressionUpgrades) return invalidResponse()
@@ -243,250 +242,4 @@ export function normalizeGradingResult(
   if (typeof payload.modelSelfConfidence === 'number' && Number.isFinite(payload.modelSelfConfidence) && payload.modelSelfConfidence >= 0 && payload.modelSelfConfidence <= 1) result.modelSelfConfidence = payload.modelSelfConfidence
   return { ok: true, result }
 
-  /* Legacy projection retained only as migration reference; generic results return above from the shared policy output.
-  const rawIssues = payload.issues
-  if (!Array.isArray(rawIssues)) return invalidResponse()
-  const issues: AiGradingResultV1['issues'] = []
-  const policyIssues: RawMultimodalIssueV1[] = []
-  const policyRevisions: RawSentenceRevisionV1[] = []
-  const policyPairs: RawSentencePairV1[] = []
-  const policyLogicIssues: RawLogicIssueV1[] = []
-  const issueIdByKey = new Map<string, string>()
-  const filteredSpellingKeys = new Set<string>()
-  rawIssues.forEach((item, index) => {
-    if (!isRecord(item)) {
-      reviewReasons.add('部分问题项结构无效，已移除。')
-      return
-    }
-    const type = text(item.type)
-    const severity = text(item.severity)
-    const originalText = text(item.originalText)
-    const suggestion = text(item.suggestion)
-    const explanation = text(item.explanation)
-    const issueKey = text(item.issueKey)
-    const evidenceCertainty = text(item.evidenceCertainty)
-    const requiresTeacherReview = item.requiresTeacherReview
-    if (
-      !type || !issueTypes.has(type) || !severity || !severities.has(severity)
-      || !issueKey || issueIdByKey.has(issueKey) || !originalText || !suggestion || !explanation || !evidenceCertainty || !evidenceCertainties.has(evidenceCertainty) || typeof requiresTeacherReview !== 'boolean'
-    ) {
-      reviewReasons.add('部分问题项结构无效，已移除。')
-      return
-    }
-    const matched = matchTranscriptQuote(request.essay.confirmedTranscript, originalText)
-    if (!matched) {
-      reviewReasons.add('部分问题原句无法在确认文本中定位，已移除。')
-      return
-    }
-    policyIssues.push({ issueKey, type: type as RawMultimodalIssueV1['type'], severity: severity as RawMultimodalIssueV1['severity'], originalText: matched, suggestion, explanation, evidenceCertainty: evidenceCertainty as RawMultimodalIssueV1['evidenceCertainty'], requiresTeacherReview })
-    if (type === 'spelling' && (evidenceCertainty !== 'certain' || requiresTeacherReview)) {
-      filteredSpellingKeys.add(issueKey)
-      return
-    }
-    const id = `${request.essay.essayId}-issue-${index + 1}`
-    issueIdByKey.set(issueKey, id)
-    issues.push({
-      id,
-      type: type as AiGradingResultV1['issues'][number]['type'],
-      severity: severity as AiGradingResultV1['issues'][number]['severity'],
-      originalText: matched,
-      suggestion,
-      explanation,
-      evidenceCertainty: evidenceCertainty as AiGradingResultV1['issues'][number]['evidenceCertainty'],
-      requiresTeacherReview,
-    })
-  })
-
-  const rawRevisions = payload.sentenceRevisions
-  if (!Array.isArray(rawRevisions)) return invalidResponse()
-  if (rawRevisions.some((item) => !isRecord(item) || !Array.isArray(item.changeTypes) || item.changeTypes.length === 0)) return invalidResponse()
-  const sentenceRevisions: AiGradingResultV1['sentenceRevisions'] = []
-  rawRevisions.forEach((item, index) => {
-    if (!isRecord(item)) {
-      reviewReasons.add('部分句子修改结构无效，已移除。')
-      return
-    }
-    const originalText = text(item.originalText)
-    const revisedText = text(item.revisedText)
-    const note = text(item.note)
-    const relatedIssueKeys = Array.isArray(item.relatedIssueKeys) ? item.relatedIssueKeys : null
-    const rawChangeTypes = Array.isArray(item.changeTypes) ? item.changeTypes : null
-    if (relatedIssueKeys?.length && relatedIssueKeys.every((key) => typeof key === 'string' && filteredSpellingKeys.has(key))) return
-    const relatedIssueIds = relatedIssueKeys?.every((key) => typeof key === 'string' && issueIdByKey.has(key)) && new Set(relatedIssueKeys).size === relatedIssueKeys.length
-      ? relatedIssueKeys.map((key) => issueIdByKey.get(key)!)
-      : null
-    const projectedChangeTypes = rawChangeTypes?.every((entry) => typeof entry === 'string' && changeTypes.has(entry as GradingChangeType))
-      ? rawChangeTypes as GradingChangeType[]
-      : null
-    const matched = originalText ? matchTranscriptQuote(request.essay.confirmedTranscript, originalText) : null
-    if (!matched || !revisedText || !note || !relatedIssueIds?.length || !projectedChangeTypes?.length) {
-      reviewReasons.add('部分句子修改缺少有效原句或修改稿，已移除。')
-      return
-    }
-    sentenceRevisions.push({
-      id: `${request.essay.essayId}-revision-${index + 1}`,
-      relatedIssueIds,
-      originalText: matched,
-      revisedText,
-      note,
-      changeTypes: projectedChangeTypes,
-    })
-    policyRevisions.push({ originalText: matched, revisedText, note, relatedIssueKeys: [...relatedIssueKeys!], changeTypes: [...projectedChangeTypes] })
-  })
-
-  const rawUpgrades = payload.expressionUpgrades
-  if (!Array.isArray(rawUpgrades)) return invalidResponse()
-  const expressionUpgrades: AiGradingResultV1['expressionUpgrades'] = []
-  rawUpgrades.forEach((item, index) => {
-    if (!isRecord(item)) {
-      reviewReasons.add('部分表达升级结构无效，已移除。')
-      return
-    }
-    const originalText = text(item.originalText)
-    const upgradedText = text(item.upgradedText)
-    const note = text(item.note)
-    const matched = originalText ? matchTranscriptQuote(request.essay.confirmedTranscript, originalText) : null
-    if (!matched || !upgradedText || !note) {
-      reviewReasons.add('部分表达升级无法安全定位，已移除。')
-      return
-    }
-    expressionUpgrades.push({
-      id: `${request.essay.essayId}-upgrade-${index + 1}`,
-      originalText: matched,
-      upgradedText,
-      note,
-    })
-  })
-
-  let fullTextRevision: AiGradingResultV1['fullTextRevision']
-  if (isRecord(payload.fullTextRevision)) {
-    const providedCorrected = text(payload.fullTextRevision.correctedText)
-    if (!providedCorrected) {
-      reviewReasons.add('全文纠错稿缺失。')
-    } else {
-      const candidateImproved = text(payload.fullTextRevision.improvedText)
-      if (!candidateImproved) return invalidResponse()
-      const improvedText = candidateImproved
-      const rawPairs = payload.fullTextRevision.sentencePairs
-      const rawLogicNotes = logicNotesOrEmpty(payload.fullTextRevision.logicNotes)
-      if (!improvedText || !Array.isArray(rawPairs) || rawLogicNotes === null) return invalidResponse()
-      if (rawPairs.some((item) => !isRecord(item) || !Array.isArray(item.changeTypes) || item.changeTypes.length === 0)) return invalidResponse()
-      const sentencePairs: NonNullable<AiGradingResultV1['fullTextRevision']>['sentencePairs'] = []
-      rawPairs.forEach((item, index) => {
-        if (!isRecord(item)) {
-          reviewReasons.add('部分全文对照项结构无效，已移除。')
-          return
-        }
-        const originalText = text(item.originalText)
-        const pairCorrected = text(item.correctedText)
-        const pairImproved = text(item.improvedText)
-        const explanation = text(item.explanation)
-        const requiresTeacherReview = item.requiresTeacherReview
-        const matched = originalText ? matchTranscriptQuote(request.essay.confirmedTranscript, originalText) : null
-        const rawChangeTypes = Array.isArray(item.changeTypes) ? item.changeTypes : null
-        const relatedIssueKeys = Array.isArray(item.relatedIssueKeys) ? item.relatedIssueKeys : null
-        if (relatedIssueKeys?.length && relatedIssueKeys.every((key) => typeof key === 'string' && filteredSpellingKeys.has(key))) return
-        const relatedIssueIds = relatedIssueKeys?.every((key) => typeof key === 'string' && issueIdByKey.has(key)) && new Set(relatedIssueKeys).size === relatedIssueKeys.length
-          ? relatedIssueKeys.map((key) => issueIdByKey.get(key)!)
-          : null
-        const projectedChangeTypes = rawChangeTypes?.filter(
-          (entry): entry is GradingChangeType => typeof entry === 'string' && changeTypes.has(entry as GradingChangeType),
-        )
-        if (
-          !matched || !pairCorrected || !pairImproved || !explanation
-          || typeof requiresTeacherReview !== 'boolean' || !rawChangeTypes || rawChangeTypes.length === 0
-          || projectedChangeTypes?.length !== rawChangeTypes.length || !relatedIssueIds?.length
-        ) {
-          reviewReasons.add('部分全文对照项无法安全使用，已移除。')
-          return
-        }
-        sentencePairs.push({
-          id: `${request.essay.essayId}-pair-${index + 1}`,
-          originalText: matched,
-          correctedText: pairCorrected,
-          improvedText: pairImproved,
-          relatedIssueIds,
-          changeTypes: projectedChangeTypes,
-          explanation,
-          requiresTeacherReview,
-        })
-        policyPairs.push({ originalText: matched, correctedText: pairCorrected, improvedText: pairImproved, relatedIssueKeys: [...relatedIssueKeys!], changeTypes: [...projectedChangeTypes], explanation, requiresTeacherReview })
-      })
-      const rawLogicIssues = Array.isArray(payload.fullTextRevision.logicIssues) ? payload.fullTextRevision.logicIssues : null
-      if (!rawLogicIssues) return invalidResponse()
-      const logicIssues = rawLogicIssues.map((item, index): NonNullable<AiGradingResultV1['fullTextRevision']>['logicIssues'][number] | null => {
-        if (!isRecord(item)) return null
-        const issueKey = text(item.issueKey), originalText = text(item.originalText), diagnosis = text(item.diagnosis), conservativeSuggestion = text(item.conservativeSuggestion), polishedSuggestion = text(item.polishedSuggestion), subType = text(item.subType), suggestedAction = text(item.suggestedAction)
-        const originalStart = originalText ? uniqueQuoteIndex(request.essay.confirmedTranscript, originalText) : null
-        const beforeStart = typeof item.contextBefore === 'string' && item.contextBefore ? uniqueQuoteIndex(request.essay.confirmedTranscript, item.contextBefore) : null
-        const afterStart = typeof item.contextAfter === 'string' && item.contextAfter ? uniqueQuoteIndex(request.essay.confirmedTranscript, item.contextAfter) : null
-        if (!issueKey || !originalText || originalStart === null || typeof item.contextBefore !== 'string' || typeof item.contextAfter !== 'string' || (item.contextBefore && (beforeStart === null || beforeStart + item.contextBefore.length > originalStart)) || (item.contextAfter && (afterStart === null || afterStart < originalStart + originalText.length)) || !subType || !logicSubTypes.has(subType) || !diagnosis || !suggestedAction || !logicSuggestedActions.has(suggestedAction) || !conservativeSuggestion || !polishedSuggestion || !severities.has(String(item.severity)) || typeof item.requiresTeacherReview !== 'boolean') return null
-        policyLogicIssues.push({ issueKey, originalText, contextBefore: item.contextBefore, contextAfter: item.contextAfter, subType: subType as RawLogicIssueV1['subType'], severity: item.severity as RawLogicIssueV1['severity'], diagnosis, suggestedAction: suggestedAction as RawLogicIssueV1['suggestedAction'], conservativeSuggestion, polishedSuggestion, requiresTeacherReview: item.requiresTeacherReview })
-        return { id: `${request.essay.essayId}-logic-${index + 1}`, originalText, contextBefore: item.contextBefore, contextAfter: item.contextAfter, subType: subType as NonNullable<AiGradingResultV1['fullTextRevision']>['logicIssues'][number]['subType'], severity: item.severity as 'low' | 'medium' | 'high', diagnosis, suggestedAction: suggestedAction as NonNullable<AiGradingResultV1['fullTextRevision']>['logicIssues'][number]['suggestedAction'], conservativeSuggestion, polishedSuggestion, requiresTeacherReview: item.requiresTeacherReview }
-      })
-      if (logicIssues.some((item) => item === null)) return invalidResponse()
-      const resolvedLogicIssues = logicIssues as NonNullable<AiGradingResultV1['fullTextRevision']>['logicIssues']
-      const correctedText = rebuildCorrectedText(request.essay.confirmedTranscript, sentencePairs.map(({ originalText, correctedText: pairCorrected }) => ({ originalText, correctedText: pairCorrected })))
-      if (correctedText === null) return invalidResponse()
-      fullTextRevision = {
-        originalText: request.essay.confirmedTranscript,
-        correctedText,
-        improvedText,
-        sentencePairs,
-        logicNotes: rawLogicNotes.flatMap(({ quote, note }) => {
-          if (matchTranscriptQuote(request.essay.confirmedTranscript, quote)) return [note]
-          reviewReasons.add('部分逻辑诊断原文引文无法定位，已移除。')
-          return []
-        }),
-        logicIssues: resolvedLogicIssues,
-      }
-    }
-  } else {
-    reviewReasons.add('全文修改稿缺失。')
-  }
-
-  let overallComment = text(payload.overallComment)
-  if (!overallComment) {
-    overallComment = 'AI 总评缺失，请教师补充。'
-    reviewReasons.add('AI 总评缺失。')
-  }
-  const providerReviewReasons = requiredStringArray(payload.reviewReasons)
-  if (providerReviewReasons === null) return invalidResponse()
-  const recognitionWarnings = requiredStringArray(payload.recognitionWarnings)
-  if (recognitionWarnings === null || recognitionWarnings.length > 0 || !Array.isArray(payload.legibilityIssues) || payload.legibilityIssues.length > 0) return invalidResponse()
-  const policy = applyResultPolicy({ issues: policyIssues, sentenceRevisions: policyRevisions, sentencePairs: policyPairs, logicIssues: policyLogicIssues, legibilityIssues: [], dimensionReasons: dimensionScores.map(({ reason }) => reason), overallComment, logicNotes: fullTextRevision?.logicNotes ?? [], logicNoteRecords: [] }, request.essay.confirmedTranscript)
-  if (!policy) return invalidResponse()
-  providerReviewReasons.forEach((reason) => reviewReasons.add(reason))
-
-  const confidence = typeof payload.modelSelfConfidence === 'number'
-    && Number.isFinite(payload.modelSelfConfidence)
-    && payload.modelSelfConfidence >= 0
-    && payload.modelSelfConfidence <= 1
-    ? payload.modelSelfConfidence
-    : undefined
-  const normalizedReviewReasons = [...reviewReasons]
-  return {
-    ok: true,
-    result: {
-      resultVersion: 'grading-result-v1',
-      requestId: request.requestId,
-      essayId: request.essay.essayId,
-      provider: context.provider,
-      status: normalizedReviewReasons.length > 0 ? 'partial' : 'success',
-      totalScore,
-      maxScore: request.task.fullScore,
-      dimensionScores,
-      issues,
-      sentenceRevisions,
-      expressionUpgrades,
-      recognitionWarnings,
-      ...(fullTextRevision ? { fullTextRevision } : {}),
-      legibilityIssues: [],
-      overallComment,
-      ...(confidence === undefined ? {} : { modelSelfConfidence: confidence }),
-      reviewReasons: normalizedReviewReasons,
-      createdAt: context.createdAt,
-    },
-  }
-*/
 }

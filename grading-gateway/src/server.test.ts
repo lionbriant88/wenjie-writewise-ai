@@ -1,28 +1,8 @@
 import request from 'supertest'
 import { describe, expect, it } from 'vitest'
 import { createServer } from './server.js'
-import type { GradingRequestV1 } from './types.js'
-import { GradingProviderError, type GradingProvider } from './providers/providerTypes.js'
+import { GradingProviderError } from './providers/providerTypes.js'
 import type { MultimodalProvider } from './providers/multimodalProviderTypes.js'
-
-function validRequest(): GradingRequestV1 {
-  return {
-    requestVersion: 'grading-request-v1', requestId: 'request-route',
-    task: {
-      taskId: 'task-route', writingGenre: 'practical_writing', fullScore: 15,
-      prompt: { writingGenre: 'practical_writing', taskRequirement: 'Synthetic.' },
-      rubric: {
-        status: 'confirmed', writingGoal: 'Synthetic.', offTopicCriteria: [],
-        dimensions: [{ id: 'all', name: 'All', weight: 100, description: 'All', deductionFocus: [] }],
-        excellentFeatures: [], reviewTriggers: [],
-      },
-    },
-    essay: {
-      essayId: 'essay-route', confirmedTranscript: 'Synthetic route transcript.',
-      ocrContext: { sourceKind: 'manual', hasKnownOcrRisk: false, riskCodes: [] },
-    },
-  }
-}
 
 function imageRubricDimensions() {
   return [
@@ -40,18 +20,45 @@ function strictMultimodalPayload(transcript: string) {
     ],
     issues: [], sentenceRevisions: [], expressionUpgrades: [],
     fullTextRevision: { correctedText: transcript, improvedText: 'Improved synthetic version.', sentencePairs: [], logicNotes: [], logicIssues: [] },
-    legibilityIssues: [], overallComment: 'Synthetic.', reviewReasons: [],
+    legibilityIssues: [], overallComment: 'Synthetic.',
   }
 }
 
 describe('grading gateway server boundary', () => {
+  it('requires exact v2 multipart metadata and rejects missing, v1, or unexpected fields before Provider use', async () => {
+    let calls = 0
+    const provider: MultimodalProvider = {
+      async generateRubric() { throw new Error('not used') },
+      async gradeEssay(input) { calls += 1; return strictMultimodalPayload(input.confirmedTranscript ?? '') },
+    }
+    const base = {
+      requestVersion: 'multimodal-grading-request-v2', requestId: 'versioned-request', essayId: 'versioned-essay',
+      pageIds: [], confirmedTranscript: 'Teacher-confirmed synthetic text.',
+      task: { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } },
+    }
+    await request(createServer({ multimodalProvider: provider }))
+      .post('/grading/grade-images').field('metadata', JSON.stringify(base)).expect(200)
+
+    const invalidMetadata = [
+      (({ requestVersion: _version, ...metadata }) => metadata)(base),
+      { ...base, requestVersion: 'multimodal-grading-request-v1' },
+      { ...base, unexpected: 'PRIVATE-METADATA-MARKER' },
+    ]
+    for (const metadata of invalidMetadata) {
+      const response = await request(createServer({ multimodalProvider: provider }))
+        .post('/grading/grade-images').field('metadata', JSON.stringify(metadata)).expect(400)
+      expect(JSON.stringify(response.body)).not.toContain('PRIVATE-METADATA-MARKER')
+    }
+    expect(calls).toBe(1)
+  })
+
   it('accepts a confirmed task metadata payload above the rubric upload field limit', async () => {
     const provider: MultimodalProvider = {
       async generateRubric() { throw new Error('not used') },
       async gradeEssay() { return strictMultimodalPayload('Student text.') },
     }
     const materialSummary = `Synthetic ${'x'.repeat(17 * 1024)}`
-    const metadata = { requestId: 'large-metadata', essayId: 'large-essay', pageIds: ['essay-1'], task: { taskId: 'large-task', fullScore: 15, rubric: { taskName: 'Synthetic task', materialSummary, writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } } }
+    const metadata = { requestVersion: 'multimodal-grading-request-v2', requestId: 'large-metadata', essayId: 'large-essay', pageIds: ['essay-1'], task: { taskId: 'large-task', fullScore: 15, materialSummary, writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary, writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } } }
     await request(createServer({ multimodalProvider: provider }))
       .post('/grading/grade-images').field('metadata', JSON.stringify(metadata))
       .attach('pages', Buffer.from('essay-page'), { filename: 'essay.png', contentType: 'image/png' }).expect(200)
@@ -77,7 +84,7 @@ describe('grading gateway server boundary', () => {
       },
     }
     const metadata = {
-      requestId: 'image-request', essayId: 'image-essay', pageIds: ['essay-2', 'essay-1'],
+      requestVersion: 'multimodal-grading-request-v2', requestId: 'image-request', essayId: 'image-essay', pageIds: ['essay-2', 'essay-1'],
       task: {
         taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'],
         rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] },
@@ -98,7 +105,7 @@ describe('grading gateway server boundary', () => {
   it('forwards teacher-confirmed text once and rejects a different model transcript without exposing either text', async () => {
     const teacherText = 'Teacher corrected transcript.'
     const metadata = {
-      requestId: 'confirmed-image-request', essayId: 'confirmed-image-essay', pageIds: [], confirmedTranscript: teacherText,
+      requestVersion: 'multimodal-grading-request-v2', requestId: 'confirmed-image-request', essayId: 'confirmed-image-essay', pageIds: [], confirmedTranscript: teacherText,
       task: { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } },
     }
     const calls: Parameters<MultimodalProvider['gradeEssay']>[] = []
@@ -130,7 +137,7 @@ describe('grading gateway server boundary', () => {
       async gradeEssay() { calls += 1; throw new Error('must not run') },
     }
     const metadata = {
-      requestId: 'confirmed-with-image', essayId: 'confirmed-essay', pageIds: [], confirmedTranscript: 'Teacher-confirmed text.',
+      requestVersion: 'multimodal-grading-request-v2', requestId: 'confirmed-with-image', essayId: 'confirmed-essay', pageIds: [], confirmedTranscript: 'Teacher-confirmed text.',
       task: { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } },
     }
     await request(createServer({ multimodalProvider: provider }))
@@ -154,12 +161,12 @@ describe('grading gateway server boundary', () => {
     const task = { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } }
     const app = createServer({ multimodalProvider: provider })
     await request(app).post('/grading/grade-images')
-      .field('metadata', JSON.stringify({ requestId: 'boundary-50k', essayId: 'boundary-essay', pageIds: [], task, confirmedTranscript: exactly50k })).expect(200)
+      .field('metadata', JSON.stringify({ requestVersion: 'multimodal-grading-request-v2', requestId: 'boundary-50k', essayId: 'boundary-essay', pageIds: [], task, confirmedTranscript: exactly50k })).expect(200)
     expect(calls).toBe(1)
 
     const marker = 'PRIVATE-TOO-LONG-'
     const response = await request(app).post('/grading/grade-images')
-      .field('metadata', JSON.stringify({ requestId: 'boundary-50k-plus', essayId: 'boundary-essay', pageIds: [], task, confirmedTranscript: `${marker}${'x'.repeat(50_001 - marker.length)}` })).expect(400)
+      .field('metadata', JSON.stringify({ requestVersion: 'multimodal-grading-request-v2', requestId: 'boundary-50k-plus', essayId: 'boundary-essay', pageIds: [], task, confirmedTranscript: `${marker}${'x'.repeat(50_001 - marker.length)}` })).expect(400)
     expect(response.body).toMatchObject({ requestId: 'unavailable', status: 'failed', error: { code: 'invalid_request', retryable: false } })
     expect(JSON.stringify(response.body)).not.toContain(marker)
     expect(calls).toBe(1)
@@ -171,7 +178,7 @@ describe('grading gateway server boundary', () => {
       async generateRubric() { throw new Error('not used') },
       async gradeEssay() { calls += 1; throw new GradingProviderError('provider_unavailable', 'safe failure', true) },
     }
-    const metadata = { requestId: 'image-failure', essayId: 'essay-failure', pageIds: ['essay-1'], task: { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } } }
+    const metadata = { requestVersion: 'multimodal-grading-request-v2', requestId: 'image-failure', essayId: 'essay-failure', pageIds: ['essay-1'], task: { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } } }
     const response = await request(createServer({ multimodalProvider: provider }))
       .post('/grading/grade-images').field('metadata', JSON.stringify(metadata))
       .attach('pages', Buffer.from('PRIVATE-ESSAY'), { filename: 'essay.png', contentType: 'image/png' }).expect(503)
@@ -240,15 +247,45 @@ describe('grading gateway server boundary', () => {
     expect(response.body).not.toHaveProperty('rubric')
   })
 
+  it('fails closed when an injected rubric provider returns a generated rubric without the exact 5% legibility dimension', async () => {
+    const provider: MultimodalProvider = {
+      async generateRubric() {
+        return {
+          taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write clearly.'], constraints: [],
+          dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Cover the task.', deductionFocus: [], sourceEvidence: [] }],
+          reviewWarnings: [],
+        }
+      },
+      async gradeEssay() { throw new Error('not used') },
+    }
+    const response = await request(createServer({ multimodalProvider: provider }))
+      .post('/tasks/rubric')
+      .field('requestId', 'rubric-invalid-generated')
+      .field('fullScore', '15')
+      .field('pageIds', JSON.stringify(['material-1']))
+      .attach('pages', Buffer.from('synthetic-image'), { filename: 'material.png', contentType: 'image/png' })
+      .expect(503)
+
+    expect(response.body).toMatchObject({ requestId: 'rubric-invalid-generated', status: 'failed', error: { code: 'provider_invalid_response', retryable: true } })
+    expect(response.body).not.toHaveProperty('rubric')
+  })
+
   it('returns a minimal health response', async () => {
     const response = await request(createServer()).get('/health').expect(200)
     expect(response.body).toEqual({ ok: true, service: 'grading-gateway' })
     expect(JSON.stringify(response.body)).not.toMatch(/deepseek|model|key/i)
   })
 
+  it('does not expose the deprecated generic grading policy bypass', async () => {
+    await request(createServer({ providerName: 'kimi' }))
+      .post('/grading/grade')
+      .send({ requestId: 'deprecated-request' })
+      .expect(404)
+  })
+
   it('allows the configured local origin and trace header in preflight', async () => {
     const response = await request(createServer({ allowedOrigin: 'http://127.0.0.1:5173' }))
-      .options('/grading/grade')
+      .options('/grading/grade-images')
       .set('Origin', 'http://127.0.0.1:5173')
       .set('Access-Control-Request-Method', 'POST')
       .set('Access-Control-Request-Headers', 'content-type,x-grading-request-id')
@@ -258,111 +295,4 @@ describe('grading gateway server boundary', () => {
     expect(response.headers['access-control-allow-headers']).toContain('X-Grading-Request-Id')
   })
 
-  it('returns redacted JSON for malformed JSON', async () => {
-    const response = await request(createServer())
-      .post('/grading/grade')
-      .set('Content-Type', 'application/json')
-      .set('X-Grading-Request-Id', 'malformed-request')
-      .send('{"essay":{"confirmedTranscript":"PRIVATE-MARKER"}')
-      .expect(400)
-      .expect('Content-Type', /json/)
-
-    expect(response.body).toEqual({
-      requestId: 'malformed-request',
-      status: 'failed',
-      error: { code: 'invalid_request', message: '批改请求 JSON 无效。', retryable: false },
-    })
-    expect(JSON.stringify(response.body)).not.toMatch(/PRIVATE-MARKER|SyntaxError|<html|stack/i)
-  })
-
-  it('returns redacted JSON for a body larger than 256 KB', async () => {
-    const oversizedBody = JSON.stringify({
-      requestVersion: 'grading-request-v1',
-      requestId: 'oversized-request',
-      essay: { confirmedTranscript: `PRIVATE-MARKER-${'x'.repeat(257 * 1024)}` },
-    })
-    const response = await request(createServer())
-      .post('/grading/grade')
-      .set('Content-Type', 'application/json')
-      .set('X-Grading-Request-Id', 'oversized-request')
-      .send(oversizedBody)
-      .expect(413)
-      .expect('Content-Type', /json/)
-
-    expect(response.body).toEqual({
-      requestId: 'oversized-request',
-      status: 'failed',
-      error: { code: 'request_too_large', message: '批改请求超过 256 KB 限制。', retryable: false },
-    })
-    expect(JSON.stringify(response.body)).not.toMatch(/PRIVATE-MARKER|entity\.too\.large|<html|stack/i)
-  })
-
-  it('uses an unavailable trace id when the parser header is missing or invalid', async () => {
-    const response = await request(createServer())
-      .post('/grading/grade')
-      .set('Content-Type', 'application/json')
-      .set('X-Grading-Request-Id', 'x'.repeat(129))
-      .send('{')
-      .expect(400)
-    expect(response.body.requestId).toBe('unavailable')
-  })
-
-  it('runs a valid request through the Gateway mock and production normalizer', async () => {
-    const response = await request(createServer({ providerName: 'mock', now: () => '2026-07-20T00:00:00.000Z' }))
-      .post('/grading/grade')
-      .send(validRequest())
-      .expect(200)
-    expect(response.body).toMatchObject({
-      resultVersion: 'grading-result-v1', requestId: 'request-route', essayId: 'essay-route',
-      provider: 'mock', status: 'success', totalScore: 12, maxScore: 15,
-    })
-    expect(JSON.stringify(response.body)).not.toMatch(/deepseek|model|stack|SECRET|rawOnly/i)
-  })
-
-  it('returns a bound redacted 400 for invalid requests', async () => {
-    const body = { ...validRequest(), studentName: 'PRIVATE-MARKER' }
-    const response = await request(createServer())
-      .post('/grading/grade')
-      .send(body)
-      .expect(400)
-    expect(response.body).toMatchObject({
-      requestId: body.requestId, status: 'failed', error: { code: 'invalid_request', retryable: false },
-    })
-    expect(JSON.stringify(response.body)).not.toMatch(/PRIVATE-MARKER|stack|<html/i)
-  })
-
-  it('maps a controlled Provider failure without leaking request data', async () => {
-    const response = await request(createServer({ providerName: 'mock_failure' }))
-      .post('/grading/grade')
-      .send(validRequest())
-      .expect(503)
-    expect(response.body).toEqual({
-      requestId: 'request-route', status: 'failed',
-      error: { code: 'provider_unavailable', message: 'AI 批改服务暂时不可用。', retryable: true },
-    })
-    expect(JSON.stringify(response.body)).not.toContain(validRequest().essay.confirmedTranscript)
-  })
-
-  it('maps an injected Provider error and an invalid Provider payload safely', async () => {
-    const throwing: GradingProvider = {
-      publicName: 'remote',
-      async grade() {
-        throw new GradingProviderError('provider_rate_limited', 'AI 服务请求过于频繁。', true)
-      },
-    }
-    const thrown = await request(createServer({ provider: throwing })).post('/grading/grade').send(validRequest()).expect(503)
-    expect(thrown.body.error).toEqual({
-      code: 'provider_rate_limited', message: 'AI 服务请求过于频繁。', retryable: true,
-    })
-
-    const invalid: GradingProvider = {
-      publicName: 'remote',
-      async grade() { return { rawOnly: 'SECRET' } },
-    }
-    const normalized = await request(createServer({ provider: invalid })).post('/grading/grade').send(validRequest()).expect(503)
-    expect(normalized.body).toMatchObject({
-      requestId: 'request-route', status: 'failed', error: { code: 'provider_invalid_response', retryable: true },
-    })
-    expect(JSON.stringify(normalized.body)).not.toMatch(/SECRET|rawOnly/)
-  })
 })
