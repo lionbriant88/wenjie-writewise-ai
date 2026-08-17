@@ -15,7 +15,7 @@
 
 | 范围 | 命令 | 最终结果 |
 | --- | --- | --- |
-| Grading Gateway | `Set-Location grading-gateway; npm.cmd test` | 20 个测试文件、353 个用例通过 |
+| Grading Gateway | `Set-Location grading-gateway; npm.cmd test` | 20 个测试文件、373 个用例通过 |
 | Grading Gateway | `Set-Location grading-gateway; npm.cmd run typecheck` | 通过 |
 | Grading Gateway | `Set-Location grading-gateway; npm.cmd run verify:shared-scoring-runtime` | 通过（`shared scoring runtime ok`） |
 | 网站 | `Set-Location app; npm.cmd test` | 45 个测试文件、289 个用例通过 |

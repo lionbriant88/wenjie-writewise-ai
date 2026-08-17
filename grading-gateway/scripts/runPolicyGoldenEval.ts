@@ -107,9 +107,9 @@ function exactTerm(value: unknown, term: string): boolean {
   return typeof value === 'string' && new RegExp(`(^|[^A-Za-z0-9_])${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Za-z0-9_]|$)`, 'i').test(value)
 }
 
-function containsAmbiguityNarrative(value: unknown): boolean {
+function containsNegativeReadabilityOrAmbiguityNarrative(value: unknown): boolean {
   if (typeof value !== 'string') return false
-  return /\b(?:ambiguous|ambiguity|uncertain|uncertainty|unresolved|indeterminate|illegible|indistinct)\b|\b(?:multiple|alternative|possible)\s+(?:reading|readings|interpretation|interpretations)\b|\b(?:hard|difficult)\s+to\s+read\b|歧义|不确定|无法确认|字迹不清|难以辨认|可能读作/iu.test(value)
+  return /\b(?:ambiguous|ambiguity|uncertain|uncertainty|unresolved|indeterminate|unclear|illegible|indistinct)\b|\bnot\s+(?:fully\s+)?legible\b|\b(?:multiple|alternative|possible)\s+(?:reading|readings|interpretation|interpretations)\b|\b(?:hard|difficult)\s+to\s+read\b|\b(?:cannot|can\s+not|unable\s+to)\s+(?:be\s+)?read\b|歧义|不确定|无法确认|字迹不清|难以辨认|可能读作/iu.test(value)
 }
 
 function exactStrings(value: unknown, expected: string[]): boolean {
@@ -151,36 +151,52 @@ function ambiguousWorkPasses(value: unknown): boolean {
     ...result.logicNotes,
   ]
   return noStructuredFindings && noWarnings && noDeduction && revisionsUnchanged
-    && !narratives.some((text) => exactTerm(text, 'work') || exactTerm(text, 'walk') || containsAmbiguityNarrative(text))
+    && !narratives.some((text) => exactTerm(text, 'work') || exactTerm(text, 'walk') || containsNegativeReadabilityOrAmbiguityNarrative(text))
 }
 
-function isExactA02Revision(value: Record<string, unknown>, issueId: unknown): boolean {
-  return value.originalText === 'enviroment'
-    && value.revisedText === 'environment'
-    && exactStrings(value.relatedIssueIds, [String(issueId)])
+function isGroundedExactA02SpellingEdit(originalText: unknown, revisedText: unknown, transcript: unknown): boolean {
+  if (typeof originalText !== 'string' || typeof revisedText !== 'string' || typeof transcript !== 'string') return false
+  const target = 'enviroment'
+  const targetOffset = originalText.indexOf(target)
+  if (targetOffset < 0 || originalText.indexOf(target, targetOffset + target.length) >= 0) return false
+  const rangeOffset = transcript.indexOf(originalText)
+  if (rangeOffset < 0 || transcript.indexOf(originalText, rangeOffset + originalText.length) >= 0) return false
+  return revisedText === `${originalText.slice(0, targetOffset)}environment${originalText.slice(targetOffset + target.length)}`
+}
+
+function isExactA02Revision(value: Record<string, unknown>, issueId: unknown, transcript: unknown): boolean {
+  return typeof issueId === 'string'
+    && isGroundedExactA02SpellingEdit(value.originalText, value.revisedText, transcript)
+    && exactStrings(value.relatedIssueIds, [issueId])
     && exactStrings(value.changeTypes, ['spelling'])
 }
 
-function isExactA02Pair(value: Record<string, unknown>, issueId: unknown): boolean {
-  return value.originalText === 'enviroment'
-    && value.correctedText === 'environment'
-    && value.improvedText === 'environment'
-    && exactStrings(value.relatedIssueIds, [String(issueId)])
+function isExactA02Pair(value: Record<string, unknown>, issueId: unknown, transcript: unknown): boolean {
+  return typeof issueId === 'string'
+    && isGroundedExactA02SpellingEdit(value.originalText, value.correctedText, transcript)
+    && isGroundedExactA02SpellingEdit(value.originalText, value.improvedText, transcript)
+    && exactStrings(value.relatedIssueIds, [issueId])
     && exactStrings(value.changeTypes, ['spelling'])
     && value.requiresTeacherReview === false
 }
 
+function rebuildExactA02Aggregate(transcript: unknown, pair: Record<string, unknown> | undefined): unknown {
+  if (!pair) return transcript
+  if (typeof transcript !== 'string' || typeof pair.originalText !== 'string' || typeof pair.correctedText !== 'string') return null
+  const offset = transcript.indexOf(pair.originalText)
+  if (offset < 0) return null
+  return `${transcript.slice(0, offset)}${pair.correctedText}${transcript.slice(offset + pair.originalText.length)}`
+}
+
 function clearEnviromentPasses(value: unknown): boolean {
   const result = commonResult(value)
-  if (!result || result.value.status !== 'success' || result.issues.length !== 1) return false
+  if (!result || result.value.status !== 'success' || result.value.transcript !== 'We should protect the enviroment.' || result.issues.length !== 1) return false
   const issue = result.issues[0]!
   const exactRevisionOnly = result.revisions.length <= 1
-    && result.revisions.every((revision) => isExactA02Revision(revision, issue.id))
+    && result.revisions.every((revision) => isExactA02Revision(revision, issue.id, result.value.transcript))
   const exactPairOnly = result.pairs.length <= 1
-    && result.pairs.every((pair) => isExactA02Pair(pair, issue.id))
-  const expectedAggregate = result.pairs.length === 1
-    ? 'We should protect the environment.'
-    : 'We should protect the enviroment.'
+    && result.pairs.every((pair) => isExactA02Pair(pair, issue.id, result.value.transcript))
+  const expectedAggregate = rebuildExactA02Aggregate(result.value.transcript, result.pairs[0])
   return issue.type === 'spelling'
     && issue.severity === 'low'
     && issue.originalText === 'enviroment'

@@ -86,3 +86,28 @@ The lockfile refresh reported two existing dependency advisories (one moderate a
 - A02 still requires exactly one low, certain, non-review spelling issue. Every accepted revision/pair is uniquely bounded to the same issue, exact original/correction, and spelling-only change type; expression upgrades and all unrelated aggregate edits are rejected.
 - The active status summary now records canonical committed-PNG verification and direct CLI stdout/stderr/exit capture as complete, while preserving the true `not_run_missing_local_credentials`, exit-2, zero-call result.
 - No transcript, image data, raw response, environment, credential, private marker, or absolute local path was added to evaluator output or this report.
+
+## Review round 2: narrative semantics and grounded spelling spans
+
+### RED
+
+- Command: `Set-Location grading-gateway; npm.cmd test -- --run scripts/runPolicyGoldenEval.test.ts`
+- Output: 1 file ran, 95 tests; 4 failed and 91 passed. The failures were exactly A01 `unclear handwriting in score reason`, `not legible in score evidence`, `cannot be read in overall comment`, and A02 `allows the exact A02 spelling substitution over the grounded sentence span`. The three A01 mutations received `true` instead of `false`; the valid sentence-span case received `false` instead of `true`.
+- Self-review RED command: `Set-Location grading-gateway; npm.cmd test -- --run scripts/runPolicyGoldenEval.test.ts` after adding the canonical-transcript mutation.
+- Self-review RED output: 1 file ran, 97 tests; exactly `fails A02 on different transcript` failed and 96 passed. The drifted transcript received `true` instead of `false`.
+
+### GREEN and required verification
+
+- `Set-Location grading-gateway; npm.cmd test -- scripts/runPolicyGoldenEval.test.ts scripts/verifyPolicyGoldenFixtures.test.ts`: 2 files passed; 104 tests passed.
+- `Set-Location grading-gateway; npm.cmd test`: 20 files passed; 373 tests passed.
+- `Set-Location grading-gateway; npm.cmd run typecheck`: exit 0.
+- `Set-Location grading-gateway; npm.cmd run verify:shared-scoring-runtime`: exit 0; `shared scoring runtime ok`.
+- `Set-Location grading-gateway; npm.cmd run verify:grading-policy-fixtures`: exit 0 with no output.
+- Direct evaluator: key absent; four allowlisted `not_run_missing_local_credentials` lines; captured evaluator exit 2; zero external Provider calls. No real Provider evaluation ran.
+
+### Review round 2 self-review
+
+- A01 rejects explicit negative ambiguity and readability phrases including ambiguous/uncertain/unclear, illegible/not legible, hard/difficult/cannot read, and possible/multiple readings across score reason, evidence, overall comment, and logic notes. Positive clear-handwriting feedback remains accepted.
+- A02 accepts isolated-word and unique grounded sentence-span forms only when the range contains exactly one target and the sole edit is the exact spelling correction. Extra insertion, deletion, rewrite, target occurrence, issue link, change type, expression upgrade, wrong correction, unrelated range, pair rewrite, or aggregate edit fails.
+- A01 retains no-deduction/no-structured-output/unchanged-aggregate defenses; A02 retains the exact canonical transcript, its single certain low-priority issue, and all non-language/no-warning/no-review defenses.
+- Evaluator output and this report disclose no image data, raw response, environment, credential, private marker, or absolute local path.

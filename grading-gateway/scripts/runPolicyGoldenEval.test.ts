@@ -113,6 +113,14 @@ describe('policy golden predicates', () => {
     ['generic ambiguity in score reason', (value: ReturnType<typeof cleanResult>) => { value.dimensionScores[0]!.reason = 'The handwriting remains ambiguous.' }],
     ['generic uncertainty in score evidence', (value: ReturnType<typeof cleanResult>) => { value.dimensionScores[0]!.evidence = 'The letters remain uncertain.' }],
     ['generic alternate-reading trace in overall comment', (value: ReturnType<typeof cleanResult>) => { value.overallComment = 'There are multiple possible readings.' }],
+    ['unclear handwriting in score reason', (value: ReturnType<typeof cleanResult>) => { value.dimensionScores[0]!.reason = 'The handwriting is unclear.' }],
+    ['not legible in score evidence', (value: ReturnType<typeof cleanResult>) => { value.dimensionScores[0]!.evidence = 'This part is not legible.' }],
+    ['illegible writing in overall comment', (value: ReturnType<typeof cleanResult>) => { value.overallComment = 'The writing is illegible.' }],
+    ['hard to read in score reason', (value: ReturnType<typeof cleanResult>) => { value.dimensionScores[1]!.reason = 'The handwriting is hard to read.' }],
+    ['difficult to read in score evidence', (value: ReturnType<typeof cleanResult>) => { value.dimensionScores[1]!.evidence = 'The sentence is difficult to read.' }],
+    ['cannot be read in overall comment', (value: ReturnType<typeof cleanResult>) => { value.overallComment = 'The handwriting cannot be read confidently.' }],
+    ['possible reading in score reason', (value: ReturnType<typeof cleanResult>) => { value.dimensionScores[2]!.reason = 'There is a possible reading.' }],
+    ['unclear handwriting in logic note', (value: ReturnType<typeof cleanResult>) => { value.fullTextRevision.logicNotes.push('The handwriting is unclear.') }],
   ])('fails A01 on %s', (_label, mutate) => {
     const results = passingResults(); mutate(results.ambiguousWork)
     expect(evaluatePolicyChecks(results).ambiguousWork).toBe(false)
@@ -126,7 +134,14 @@ describe('policy golden predicates', () => {
     expect(evaluatePolicyChecks(results).ambiguousWork).toBe(true)
   })
 
+  it('allows an explicitly positive A01 handwriting statement', () => {
+    const results = passingResults()
+    results.ambiguousWork.overallComment = 'The handwriting is clear and the response is focused.'
+    expect(evaluatePolicyChecks(results).ambiguousWork).toBe(true)
+  })
+
   it.each([
+    ['different transcript', (value: ReturnType<typeof passingResults>['clearEnviroment']) => { value.transcript = 'We must protect the enviroment.'; value.fullTextRevision.correctedText = value.transcript; value.fullTextRevision.improvedText = value.transcript }],
     ['wrong quote', (value: ReturnType<typeof passingResults>['clearEnviroment']) => { value.issues[0]!.originalText = 'protect' }],
     ['wrong suggestion', (value: ReturnType<typeof passingResults>['clearEnviroment']) => { value.issues[0]!.suggestion = 'environmental' }],
     ['uncertain evidence', (value: ReturnType<typeof passingResults>['clearEnviroment']) => { value.issues[0]!.evidenceCertainty = 'uncertain' }],
@@ -156,6 +171,30 @@ describe('policy golden predicates', () => {
     results.clearEnviroment.fullTextRevision.correctedText = 'We should protect the environment.'
     results.clearEnviroment.fullTextRevision.improvedText = 'We should protect the environment.'
     expect(evaluatePolicyChecks(results).clearEnviroment).toBe(true)
+  })
+
+  it('allows the exact A02 spelling substitution over the grounded sentence span', () => {
+    const results = passingResults()
+    results.clearEnviroment.sentenceRevisions = [{ id: 'a02-revision', relatedIssueIds: ['a02-spelling'], originalText: 'We should protect the enviroment.', revisedText: 'We should protect the environment.', note: 'Correct the spelling.', changeTypes: ['spelling'] }]
+    results.clearEnviroment.fullTextRevision.sentencePairs = [{ id: 'a02-pair', originalText: 'We should protect the enviroment.', correctedText: 'We should protect the environment.', improvedText: 'We should protect the environment.', relatedIssueIds: ['a02-spelling'], changeTypes: ['spelling'], explanation: 'Correct the spelling.', requiresTeacherReview: false }]
+    results.clearEnviroment.fullTextRevision.correctedText = 'We should protect the environment.'
+    results.clearEnviroment.fullTextRevision.improvedText = 'We should protect the environment.'
+    expect(evaluatePolicyChecks(results).clearEnviroment).toBe(true)
+  })
+
+  it.each([
+    ['extra insertion', (value: ReturnType<typeof passingResults>['clearEnviroment']) => { value.sentenceRevisions = [{ id: 'a02-revision', relatedIssueIds: ['a02-spelling'], originalText: 'We should protect the enviroment.', revisedText: 'We really should protect the environment.', note: 'Rewrite.', changeTypes: ['spelling'] }] }],
+    ['extra deletion', (value: ReturnType<typeof passingResults>['clearEnviroment']) => { value.sentenceRevisions = [{ id: 'a02-revision', relatedIssueIds: ['a02-spelling'], originalText: 'We should protect the enviroment.', revisedText: 'We protect the environment.', note: 'Rewrite.', changeTypes: ['spelling'] }] }],
+    ['extra rewrite', (value: ReturnType<typeof passingResults>['clearEnviroment']) => { value.sentenceRevisions = [{ id: 'a02-revision', relatedIssueIds: ['a02-spelling'], originalText: 'We should protect the enviroment.', revisedText: 'We ought to preserve the environment.', note: 'Rewrite.', changeTypes: ['spelling'] }] }],
+    ['multiple target occurrences', (value: ReturnType<typeof passingResults>['clearEnviroment']) => { value.sentenceRevisions = [{ id: 'a02-revision', relatedIssueIds: ['a02-spelling'], originalText: 'enviroment enviroment', revisedText: 'environment environment', note: 'Correct spelling.', changeTypes: ['spelling'] }] }],
+    ['wrong sentence-span suggestion', (value: ReturnType<typeof passingResults>['clearEnviroment']) => { value.sentenceRevisions = [{ id: 'a02-revision', relatedIssueIds: ['a02-spelling'], originalText: 'We should protect the enviroment.', revisedText: 'We should protect the environmental.', note: 'Wrong correction.', changeTypes: ['spelling'] }] }],
+    ['extra change type', (value: ReturnType<typeof passingResults>['clearEnviroment']) => { value.sentenceRevisions = [{ id: 'a02-revision', relatedIssueIds: ['a02-spelling'], originalText: 'We should protect the enviroment.', revisedText: 'We should protect the environment.', note: 'Correct spelling.', changeTypes: ['spelling', 'word_choice'] }] }],
+    ['extra issue link', (value: ReturnType<typeof passingResults>['clearEnviroment']) => { value.sentenceRevisions = [{ id: 'a02-revision', relatedIssueIds: ['a02-spelling', 'a02-other'], originalText: 'We should protect the enviroment.', revisedText: 'We should protect the environment.', note: 'Correct spelling.', changeTypes: ['spelling'] }] }],
+    ['pair improved rewrite', (value: ReturnType<typeof passingResults>['clearEnviroment']) => { value.fullTextRevision.sentencePairs = [{ id: 'a02-pair', originalText: 'We should protect the enviroment.', correctedText: 'We should protect the environment.', improvedText: 'We must safeguard the environment.', relatedIssueIds: ['a02-spelling'], changeTypes: ['spelling'], explanation: 'Rewrite.', requiresTeacherReview: false }]; value.fullTextRevision.correctedText = 'We should protect the environment.'; value.fullTextRevision.improvedText = 'We must safeguard the environment.' }],
+    ['pair with unrelated aggregate', (value: ReturnType<typeof passingResults>['clearEnviroment']) => { value.fullTextRevision.sentencePairs = [{ id: 'a02-pair', originalText: 'We should protect the enviroment.', correctedText: 'We should protect the environment.', improvedText: 'We should protect the environment.', relatedIssueIds: ['a02-spelling'], changeTypes: ['spelling'], explanation: 'Correct spelling.', requiresTeacherReview: false }]; value.fullTextRevision.correctedText = 'We must protect the environment.'; value.fullTextRevision.improvedText = 'We must protect the environment.' }],
+  ])('fails A02 sentence-span output on %s', (_label, mutate) => {
+    const results = passingResults(); mutate(results.clearEnviroment)
+    expect(evaluatePolicyChecks(results).clearEnviroment).toBe(false)
   })
 
   it.each([
