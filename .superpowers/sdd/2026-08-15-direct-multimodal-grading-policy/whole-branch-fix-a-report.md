@@ -120,6 +120,36 @@ Gateway typecheck: tsc --noEmit passed
 Shared scoring runtime: shared scoring runtime ok
 ```
 
+Exact command evidence:
+
+```text
+RED  (exit 1): npm test -- src/multimodal/resultPolicy.test.ts
+  Test Files  1 failed (1)
+  Tests  1 failed | 34 passed (35)
+  Failing assertion: bare `wark` overall comment returned a policy outcome instead of null.
+
+GREEN (exit 0): npm test -- src/multimodal/resultPolicy.test.ts
+  Test Files  1 passed (1)
+  Tests  35 passed (35)
+
+Focused (exit 0): npm test -- src/multimodal/normalizeMultimodalResult.test.ts src/normalizeGradingResult.test.ts src/multimodal/gradingPrompt.test.ts src/promptBuilder.test.ts src/multimodal/transcriptRange.test.ts src/multimodal/resultPolicy.test.ts
+  Test Files  6 passed (6)
+  Tests  140 passed (140)
+
+Full (exit 0): npm test
+  Test Files  20 passed (20)
+  Tests  266 passed (266)
+
+Typecheck (exit 0): npm run typecheck
+  tsc --noEmit
+
+Shared runtime (exit 0): npm run verify:shared-scoring-runtime
+  shared scoring runtime ok
+
+Diff check (exit 0): git diff --check
+  No whitespace errors (Git emitted only CRLF conversion notices).
+```
+
 ### Self-review
 
 - The existing `containsTerm` helper still enforces word/token boundaries, so `work` does not match an embedded substring such as `workbook`.
