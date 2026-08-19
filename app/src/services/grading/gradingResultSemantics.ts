@@ -7,6 +7,10 @@ export const GRADING_REVIEW_REASONS = {
   scoreMismatch: 'AI 自报总分与产品重算总分不一致。',
   recognitionUncertain: 'recognition_uncertain',
   printedTextExclusionUncertain: 'printed_text_exclusion_uncertain',
+  logicNoteGroundingOmitted: '部分逻辑建议因无法定位到原文已自动省略。',
+  expressionUpgradeGroundingOmitted: '部分表达优化因无法定位到原文已自动省略。',
+  dimensionRelationAdjusted: '维度分数与问题关联不一致，已按有利于学生的原则修正。',
+  dimensionEvidenceRegrounded: '部分维度证据未能逐字定位，已改用可定位的原文证据。',
 } as const
 
 export function isWellFormedUnicode(value: string): boolean {

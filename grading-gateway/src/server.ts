@@ -8,8 +8,10 @@ import { normalizeMultimodalResult } from './multimodal/normalizeMultimodalResul
 import { validateConfirmedRubric, validateGeneratedRubric } from './multimodal/validateRubric.js'
 import { getMultimodalProvider } from './providers/index.js'
 import type { GatewayImageInput, MultimodalProvider } from './providers/multimodalProviderTypes.js'
-import { GradingProviderError } from './providers/providerTypes.js'
+import { GradingProviderError, type ProviderErrorCode } from './providers/providerTypes.js'
 import type { ConfirmedTaskPackageV2 } from './multimodal/types.js'
+import { emitSafeGradingDiagnostic } from './safeDiagnostics.js'
+import type { SafeGradingDiagnosticSink } from './safeDiagnostics.js'
 
 export interface CreateServerOptions {
   allowedOrigin?: string
@@ -17,6 +19,7 @@ export interface CreateServerOptions {
   providerName?: string
   timeoutMs?: number
   now?: () => string
+  onDiagnostic?: SafeGradingDiagnosticSink
 }
 
 const rubricUpload = multer({
@@ -44,8 +47,24 @@ function failure(
   return { requestId, status: 'failed' as const, error: { code: error.code, message: error.message, retryable } }
 }
 
+const PROVIDER_SAFE_MESSAGES: Record<ProviderErrorCode, string> = {
+  unsupported_genre: '当前任务类型暂不支持。',
+  provider_not_configured: 'AI 批改服务尚未配置。',
+  provider_request_rejected: 'AI 批改请求未被服务接受。',
+  provider_auth_failed: 'AI 批改服务认证失败。',
+  provider_balance_unavailable: 'AI 批改服务额度暂不可用。',
+  provider_rate_limited: 'AI 批改服务繁忙，请稍后重试。',
+  provider_timeout: 'AI 批改服务响应超时，请重试。',
+  provider_unavailable: 'AI 批改服务暂时不可用。',
+  provider_content_filtered: '当前内容暂时无法处理。',
+  provider_unexpected_tool_call: 'AI 批改服务返回了无法使用的结果。',
+  provider_invalid_response: 'AI 批改服务返回了无法使用的结果。',
+}
+
 function toSafeFailure(requestId: string, error: unknown) {
-  if (error instanceof GradingProviderError) return failure(requestId, error, error.retryable)
+  if (error instanceof GradingProviderError) {
+    return failure(requestId, { code: error.code, message: PROVIDER_SAFE_MESSAGES[error.code] }, error.retryable)
+  }
   return failure(requestId, { code: 'provider_unavailable', message: 'AI 批改服务暂时不可用。' }, true)
 }
 
@@ -159,6 +178,7 @@ export function createServer(options: CreateServerOptions = {}) {
       const providerRubric = await provider.generateRubric({ ...validated.value, signal: controller.signal })
       const rubric = validateGeneratedRubric(providerRubric)
       if (!rubric.ok) {
+        emitSafeGradingDiagnostic(options.onDiagnostic, { stage: 'normalization', diagnosticCode: 'rubric_validation' })
         response.status(503).json(failure(validated.value.requestId, rubric.error, true))
         return
       }
@@ -167,6 +187,14 @@ export function createServer(options: CreateServerOptions = {}) {
       const safe = controller.signal.aborted
         ? failure(validated.value.requestId, { code: 'provider_timeout', message: 'AI grading timed out.' }, true)
         : toSafeFailure(validated.value.requestId, error)
+      emitSafeGradingDiagnostic(options.onDiagnostic, {
+        stage: 'provider',
+        diagnosticCode: controller.signal.aborted
+          ? 'provider_timeout'
+          : error instanceof GradingProviderError
+            ? error.diagnosticCode ?? error.code
+            : 'provider_unavailable',
+      })
       response.status(503).json(safe)
     } finally {
       clearTimeout(timeout)
@@ -209,12 +237,24 @@ export function createServer(options: CreateServerOptions = {}) {
       const provider = options.multimodalProvider ?? getMultimodalProvider(options.providerName ?? 'mock')
       const payload = await provider.gradeEssay({ requestId: metadata.requestId, task: metadata.task, essayId: metadata.essayId, pages, confirmedTranscript: metadata.confirmedTranscript, signal: controller.signal })
       const normalized = normalizeMultimodalResult(payload, { requestId: metadata.requestId, essayId: metadata.essayId, task: metadata.task, provider: 'remote', pageCount: pages.length, confirmedTranscript: metadata.confirmedTranscript, createdAt: (options.now ?? (() => new Date().toISOString()))() })
-      if (!normalized.ok) { response.status(503).json(failure(metadata.requestId, normalized.error, true)); return }
+      if (!normalized.ok) {
+        emitSafeGradingDiagnostic(options.onDiagnostic, { stage: 'normalization', diagnosticCode: normalized.error.diagnosticCode })
+        response.status(503).json(failure(metadata.requestId, normalized.error, true))
+        return
+      }
       response.json(normalized.result)
     } catch (error) {
       const safe = controller.signal.aborted
         ? failure(metadata.requestId, { code: 'provider_timeout', message: 'AI grading timed out.' }, true)
         : toSafeFailure(metadata.requestId, error)
+      emitSafeGradingDiagnostic(options.onDiagnostic, {
+        stage: 'provider',
+        diagnosticCode: controller.signal.aborted
+          ? 'provider_timeout'
+          : error instanceof GradingProviderError
+            ? error.diagnosticCode ?? error.code
+            : 'provider_unavailable',
+      })
       response.status(503).json(safe)
     } finally { clearTimeout(timeout) }
   })

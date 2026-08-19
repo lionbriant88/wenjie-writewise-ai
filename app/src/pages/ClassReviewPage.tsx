@@ -123,16 +123,11 @@ export function ClassReviewPage() {
     { label: '最低分', value: formatScore(stats.lowestScore) },
   ]
 
-  if (!insight) {
-    return (
-      <AppLayout task={task} title="班级总览" currentStep="class-review">
-        <EmptyState title="暂无班级总览材料" description="该任务尚未生成班级总览数据。" />
-      </AppLayout>
-    )
-  }
-
-  const hasIssueInsights =
-    insight.grammarErrors.length > 0 || insight.spellingErrors.length > 0 || insight.typicalSentences.length > 0
+  const grammarErrors = insight?.grammarErrors ?? []
+  const spellingErrors = insight?.spellingErrors ?? []
+  const typicalSentences = insight?.typicalSentences ?? []
+  const rewriteExercises = insight?.rewriteExercises ?? []
+  const hasIssueInsights = grammarErrors.length > 0 || spellingErrors.length > 0 || typicalSentences.length > 0
 
   return (
     <AppLayout
@@ -198,9 +193,9 @@ export function ClassReviewPage() {
         {activeTab === 'issues' ? (
           hasIssueInsights ? (
             <div className="grid gap-4 xl:grid-cols-3">
-              <CompactInsightGroup title="高频语法错误" items={insight.grammarErrors} />
-              <CompactInsightGroup title="高频拼写错误" items={insight.spellingErrors} />
-              <CompactInsightGroup title="典型问题句" items={insight.typicalSentences} />
+              <CompactInsightGroup title="高频语法错误" items={grammarErrors} />
+              <CompactInsightGroup title="高频拼写错误" items={spellingErrors} />
+              <CompactInsightGroup title="典型问题句" items={typicalSentences} />
             </div>
           ) : (
             <EmptyTabState title="当前暂无高频问题。" />
@@ -208,8 +203,8 @@ export function ClassReviewPage() {
         ) : null}
 
         {activeTab === 'exercises' ? (
-          insight.rewriteExercises.length > 0 ? (
-            <CompactInsightGroup title="可上课改写练习" items={insight.rewriteExercises} />
+          rewriteExercises.length > 0 ? (
+            <CompactInsightGroup title="可上课改写练习" items={rewriteExercises} />
           ) : (
             <EmptyTabState title="当前暂无可上课改写练习。" />
           )

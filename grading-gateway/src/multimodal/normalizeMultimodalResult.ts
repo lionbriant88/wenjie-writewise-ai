@@ -3,7 +3,7 @@ import { calculateDimensionMaxScore, calculateTotalScore, roundScore2 } from '..
 import type { AiGradingResultV1, GradingRequestV1, GradingProviderName } from '../types.js'
 import { validateConfirmedRubric } from './validateRubric.js'
 import { applyResultPolicy } from './resultPolicy.js'
-import type { ResultPolicyInput } from './resultPolicy.js'
+import type { ResultPolicyInput, ResultPolicyRejectionReason } from './resultPolicy.js'
 import { exactUniqueTranscriptRange } from './transcriptRange.js'
 import type { ConfirmedTaskPackageV2 } from './types.js'
 import type { RawDimensionScoreV1, RawExpressionUpgradeV1, RawLegibilityIssueV1, RawLogicIssueV1, RawMultimodalIssueV1, RawRecognitionWarningV1, RawSentencePairV1, RawSentenceRevisionV1 } from './types.js'
@@ -12,12 +12,37 @@ import { PROVIDER_RESULT_KEYS as KEYS, PROVIDER_RESULT_LIMITS as LIMITS, hasExac
 import { GRADING_REVIEW_REASONS, hasDistinctNormalizedText } from '../../../app/src/services/grading/gradingResultSemantics.js'
 
 export interface MultimodalGradingResult extends AiGradingResultV1 { transcript: string; recognitionWarnings: string[]; printedTextExcluded: boolean }
-export type MultimodalNormalizationResult = { ok: true; result: MultimodalGradingResult } | { ok: false; error: { code: 'provider_invalid_response'; message: string; retryable: true } }
+export type MultimodalNormalizationDiagnosticCode =
+  | 'result_shape'
+  | 'transcript'
+  | 'recognition_warnings'
+  | 'printed_text_excluded'
+  | 'confirmed_transcript_invariants'
+  | 'task_context'
+  | 'issues'
+  | 'sentence_revisions'
+  | 'expression_upgrades'
+  | 'full_text_revision'
+  | 'sentence_pairs'
+  | 'logic_notes'
+  | 'logic_issues'
+  | 'legibility_issues'
+  | 'dimension_scores'
+  | 'full_text_fields'
+  | 'logic_note_grounding'
+  | 'logic_issue_context'
+  | 'legibility_page_scope'
+  | 'dimension_set'
+  | 'dimension_fields'
+  | 'reported_total'
+  | `result_policy_${ResultPolicyRejectionReason | 'unknown'}`
+  | 'result_projection'
+export type MultimodalNormalizationResult = { ok: true; result: MultimodalGradingResult } | { ok: false; error: { code: 'provider_invalid_response'; message: string; retryable: true; diagnosticCode: MultimodalNormalizationDiagnosticCode } }
 export interface MultimodalNormalizationContext { requestId: string; essayId: string; task: ConfirmedTaskPackageV2; provider: GradingProviderName; createdAt: string; pageCount: number; confirmedTranscript?: string }
 
 const INVALID_MESSAGE = 'AI grading result cannot be used safely.'
 const CHANGE_TYPES = new Set(['grammar', 'spelling', 'word_choice', 'sentence_upgrade', 'coherence', 'logic_bridge', 'delete_suggestion', 'replace_sentence', 'reference_clarification'])
-function invalid(): MultimodalNormalizationResult { return { ok: false, error: { code: 'provider_invalid_response', message: INVALID_MESSAGE, retryable: true } } }
+function invalid(diagnosticCode: MultimodalNormalizationDiagnosticCode): MultimodalNormalizationResult { return { ok: false, error: { code: 'provider_invalid_response', message: INVALID_MESSAGE, retryable: true, diagnosticCode } } }
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) }
 function text(value: unknown, maxLength: number = LIMITS.publicText): string | null { if (typeof value !== 'string' || value.length > maxLength) return null; const trimmed = value.trim(); return trimmed || null }
 function quote(value: unknown, maxLength: number = LIMITS.publicText): string | null { return typeof value === 'string' && value.length > 0 && value.length <= maxLength ? value : null }
@@ -133,16 +158,21 @@ function requestFor(context: MultimodalNormalizationContext, transcript: string)
   return { requestVersion: 'grading-request-v1', requestId: context.requestId, task: { taskId: context.task.taskId, writingGenre: 'practical_writing', fullScore: context.task.fullScore, prompt: { writingGenre: 'practical_writing', taskRequirement: context.task.materialSummary }, rubric: { status: 'confirmed', writingGoal: context.task.materialSummary, offTopicCriteria: [], dimensions: rubric.value.dimensions.map(({ id, name, weight, description, deductionFocus }) => ({ id, name, weight, description, deductionFocus })), excellentFeatures: [], reviewTriggers: [] } }, essay: { essayId: context.essayId, confirmedTranscript: transcript, ocrContext: { sourceKind: 'manual', hasKnownOcrRisk: false, riskCodes: [] } } }
 }
 
-function parseExpressionUpgrades(value: unknown, transcript: string): RawExpressionUpgradeV1[] | null {
+function parseExpressionUpgrades(value: unknown, transcript: string): { items: RawExpressionUpgradeV1[]; omittedUngrounded: boolean } | null {
   if (!Array.isArray(value) || value.length > LIMITS.upgrades) return null
   const upgrades: RawExpressionUpgradeV1[] = []
+  let omittedUngrounded = false
   for (const item of value) {
     if (!isRecord(item) || !hasExactProviderKeys(item, KEYS.expressionUpgrade)) return null
     const originalText = quote(item.originalText), upgradedText = text(item.upgradedText), note = text(item.note)
-    if (!originalText || !exactUniqueTranscriptRange(transcript, originalText) || !upgradedText || !note) return null
+    if (!originalText || !upgradedText || !note) return null
+    if (!exactUniqueTranscriptRange(transcript, originalText)) {
+      omittedUngrounded = true
+      continue
+    }
     upgrades.push({ originalText, upgradedText, note })
   }
-  return upgrades
+  return { items: upgrades, omittedUngrounded }
 }
 
 
@@ -164,51 +194,93 @@ function rawScoresAreBounded(value: unknown, context: MultimodalNormalizationCon
 }
 
 export function normalizeMultimodalResult(payload: unknown, context: MultimodalNormalizationContext): MultimodalNormalizationResult {
-  if (!isRecord(payload) || !hasExactProviderKeys(payload, KEYS.result)) return invalid()
+  if (!isRecord(payload) || !hasExactProviderKeys(payload, KEYS.result)) return invalid('result_shape')
   const transcript = context.confirmedTranscript !== undefined
     ? typeof payload.transcript === 'string' && payload.transcript === context.confirmedTranscript
       ? context.confirmedTranscript
       : null
     : quote(payload.transcript, LIMITS.publicText)
   const recognitionWarnings = parseRecognitionWarnings(payload.recognitionWarnings)
-  if (!transcript || !recognitionWarnings || typeof payload.printedTextExcluded !== 'boolean') return invalid()
-  if (context.confirmedTranscript !== undefined && (recognitionWarnings.length > 0 || payload.printedTextExcluded !== true)) return invalid()
+  if (!transcript) return invalid(context.confirmedTranscript === undefined ? 'transcript' : 'confirmed_transcript_invariants')
+  if (!recognitionWarnings) return invalid('recognition_warnings')
+  if (typeof payload.printedTextExcluded !== 'boolean') return invalid('printed_text_excluded')
+  if (context.confirmedTranscript !== undefined && (recognitionWarnings.length > 0 || payload.printedTextExcluded !== true)) return invalid('confirmed_transcript_invariants')
   const request = requestFor(context, transcript)
   const issues = parseRawIssues(payload.issues)
   const revisions = parseRawSentenceRevisions(payload.sentenceRevisions)
-  const upgrades = parseExpressionUpgrades(payload.expressionUpgrades, transcript)
+  const parsedUpgrades = parseExpressionUpgrades(payload.expressionUpgrades, transcript)
   const fullTextRevisionRecord = isRecord(payload.fullTextRevision) && hasExactProviderKeys(payload.fullTextRevision, KEYS.fullTextRevision) ? payload.fullTextRevision : null
   const pairs = fullTextRevisionRecord ? parseRawSentencePairs(fullTextRevisionRecord.sentencePairs) : null
   const logicNotes = fullTextRevisionRecord ? parseLogicNotes(fullTextRevisionRecord.logicNotes) : null
   const logicIssues = fullTextRevisionRecord ? parseRawLogicIssues(fullTextRevisionRecord.logicIssues) : null
   const legibilityIssues = parseRawLegibilityIssues(payload.legibilityIssues)
   const overallComment = text(payload.overallComment) ?? ''
-  if (!request || !issues || !revisions || !upgrades || !pairs || !logicNotes || !logicIssues || !legibilityIssues || !rawScoresAreBounded(payload.dimensionScores, context) || !fullTextRevisionRecord || rawContext(fullTextRevisionRecord.correctedText) === null || rawContext(fullTextRevisionRecord.improvedText) === null || logicNotes.some(({ quote }) => !exactUniqueTranscriptRange(transcript, quote)) || logicIssues.some((issue) => !hasOrderedLogicContext(transcript, issue))) return invalid()
-  if ((context.confirmedTranscript !== undefined && legibilityIssues.length > 0) || (context.confirmedTranscript === undefined && legibilityIssues.some(({ pageNumber }) => pageNumber > context.pageCount))) return invalid()
+  if (!request) return invalid('task_context')
+  if (!issues) return invalid('issues')
+  if (!revisions) return invalid('sentence_revisions')
+  if (!parsedUpgrades) return invalid('expression_upgrades')
+  const upgrades = parsedUpgrades.items
+  if (!fullTextRevisionRecord) return invalid('full_text_revision')
+  if (!pairs) return invalid('sentence_pairs')
+  if (!logicNotes) return invalid('logic_notes')
+  if (!logicIssues) return invalid('logic_issues')
+  if (!legibilityIssues) return invalid('legibility_issues')
+  if (!rawScoresAreBounded(payload.dimensionScores, context)) return invalid('dimension_scores')
+  if (rawContext(fullTextRevisionRecord.correctedText) === null || rawContext(fullTextRevisionRecord.improvedText) === null) return invalid('full_text_fields')
+  const groundedLogicNotes = logicNotes.filter(({ quote }) => exactUniqueTranscriptRange(transcript, quote) !== null)
+  const omittedUngroundedLogicNotes = groundedLogicNotes.length !== logicNotes.length
+  if (logicIssues.some((issue) => !hasOrderedLogicContext(transcript, issue))) return invalid('logic_issue_context')
+  if ((context.confirmedTranscript !== undefined && legibilityIssues.length > 0) || (context.confirmedTranscript === undefined && legibilityIssues.some(({ pageNumber }) => pageNumber > context.pageCount))) return invalid('legibility_page_scope')
   const rawScores = new Map((payload.dimensionScores as Array<Record<string, unknown>>).map((score) => [score.dimensionId, score]))
-  if (rawScores.size !== request.task.rubric.dimensions.length || request.task.rubric.dimensions.some((dimension) => !rawScores.has(dimension.id))) return invalid()
+  if (rawScores.size !== request.task.rubric.dimensions.length || request.task.rubric.dimensions.some((dimension) => !rawScores.has(dimension.id))) return invalid('dimension_set')
+  const issueEvidenceByKey = new Map<string, string>([
+    ...issues.map((issue): [string, string] => [issue.issueKey, issue.originalText]),
+    ...logicIssues.map((issue): [string, string] => [issue.issueKey, issue.originalText]),
+    ...legibilityIssues.map((issue): [string, string] => [issue.issueKey, issue.transcriptText]),
+  ])
   const rawDimensionScores: RawDimensionScoreV1[] = []
+  let dimensionRelationAdjusted = false
+  let dimensionEvidenceRegrounded = false
   const dimensionScoreCandidates = request.task.rubric.dimensions.map((dimension) => {
     const score = rawScores.get(dimension.id)
     const reason = score ? text(score.reason) : null
-    const evidence = score ? quote(score.evidence, LIMITS.publicText) : null
-    const relatedIssueKeys = score ? textArray(score.relatedIssueKeys, LIMITS.relationships, LIMITS.relationshipKey) : null
+    let evidence = score ? quote(score.evidence, LIMITS.publicText) : null
+    let relatedIssueKeys = score ? textArray(score.relatedIssueKeys, LIMITS.relationships, LIMITS.relationshipKey) : null
     if (!score || typeof score.score !== 'number' || !reason || !evidence || !relatedIssueKeys || new Set(relatedIssueKeys).size !== relatedIssueKeys.length) return null
-    const roundedScore = roundScore2(score.score)
     const maxScore = calculateDimensionMaxScore(request.task.fullScore, dimension.weight)
+    let roundedScore = roundScore2(score.score)
+    if (roundedScore === maxScore && relatedIssueKeys.length > 0) {
+      relatedIssueKeys = []
+      dimensionRelationAdjusted = true
+    }
+    if (!exactUniqueTranscriptRange(transcript, evidence)) {
+      const fallbackEvidence = relatedIssueKeys
+        .map((key) => issueEvidenceByKey.get(key))
+        .find((candidate): candidate is string => Boolean(candidate && exactUniqueTranscriptRange(transcript, candidate)))
+        ?? (roundedScore === maxScore && relatedIssueKeys.length === 0 ? transcript : undefined)
+      if (fallbackEvidence) {
+        evidence = fallbackEvidence
+        dimensionEvidenceRegrounded = true
+      }
+    }
     rawDimensionScores.push({ dimensionId: dimension.id, score: roundedScore, maxScore, reason, evidence, relatedIssueKeys })
     return { dimensionId: dimension.id, name: dimension.name, score: roundedScore, maxScore, weight: dimension.weight, reason, evidence }
   })
-  if (dimensionScoreCandidates.some((item) => item === null)) return invalid()
+  if (dimensionScoreCandidates.some((item) => item === null)) return invalid('dimension_fields')
   const dimensionScores = dimensionScoreCandidates as AiGradingResultV1['dimensionScores']
   const totalScore = calculateTotalScore(dimensionScores.map(({ score }) => score), request.task.fullScore)
-  if (typeof payload.reportedTotalScore !== 'number' || !Number.isFinite(payload.reportedTotalScore)) return invalid()
-  const policyInput: ResultPolicyInput = { issues, sentenceRevisions: revisions, sentencePairs: pairs, expressionUpgrades: upgrades, logicIssues, legibilityIssues, dimensionScores: rawDimensionScores, recognitionWarnings, overallComment, logicNotes: logicNotes.map(({ note }) => note), logicNoteRecords: logicNotes }
-  const policy = applyResultPolicy(policyInput, transcript)
-  if (!policy) return invalid()
+  if (typeof payload.reportedTotalScore !== 'number' || !Number.isFinite(payload.reportedTotalScore)) return invalid('reported_total')
+  const policyInput: ResultPolicyInput = { issues, sentenceRevisions: revisions, sentencePairs: pairs, expressionUpgrades: upgrades, logicIssues, legibilityIssues, dimensionScores: rawDimensionScores, recognitionWarnings, overallComment, logicNotes: groundedLogicNotes.map(({ note }) => note), logicNoteRecords: groundedLogicNotes }
+  let policyRejectionReason: ResultPolicyRejectionReason | undefined
+  const policy = applyResultPolicy(policyInput, transcript, (reason) => { policyRejectionReason = reason })
+  if (!policy) return invalid(`result_policy_${policyRejectionReason ?? 'unknown'}`)
   const normalized = normalizeGradingResultFromPolicyOutcome({ request, context: { provider: context.provider, createdAt: context.createdAt }, policy, dimensionScores, totalScore, reportedTotalScore: payload.reportedTotalScore, reviewReasons: [] })
-  if (!normalized) return invalid()
+  if (!normalized) return invalid('result_projection')
   const reviewReasons = new Set(normalized.reviewReasons)
+  if (omittedUngroundedLogicNotes) reviewReasons.add(GRADING_REVIEW_REASONS.logicNoteGroundingOmitted)
+  if (parsedUpgrades.omittedUngrounded) reviewReasons.add(GRADING_REVIEW_REASONS.expressionUpgradeGroundingOmitted)
+  if (dimensionRelationAdjusted) reviewReasons.add(GRADING_REVIEW_REASONS.dimensionRelationAdjusted)
+  if (dimensionEvidenceRegrounded) reviewReasons.add(GRADING_REVIEW_REASONS.dimensionEvidenceRegrounded)
   if (recognitionWarnings.length) reviewReasons.add(GRADING_REVIEW_REASONS.recognitionUncertain)
   if (!payload.printedTextExcluded) reviewReasons.add(GRADING_REVIEW_REASONS.printedTextExclusionUncertain)
   const normalizedLegibilityIssues: LegibilityIssueV1[] = legibilityIssues.map(({ issueKey: _issueKey, ...issue }, index) => ({ id: `${context.essayId}-legibility-${index + 1}`, ...issue }))

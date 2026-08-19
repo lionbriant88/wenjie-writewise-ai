@@ -23,6 +23,10 @@ const ALLOWED_REVIEW_REASONS = new Set<string>([
   GRADING_REVIEW_REASONS.scoreMismatch,
   GRADING_REVIEW_REASONS.recognitionUncertain,
   GRADING_REVIEW_REASONS.printedTextExclusionUncertain,
+  GRADING_REVIEW_REASONS.logicNoteGroundingOmitted,
+  GRADING_REVIEW_REASONS.expressionUpgradeGroundingOmitted,
+  GRADING_REVIEW_REASONS.dimensionRelationAdjusted,
+  GRADING_REVIEW_REASONS.dimensionEvidenceRegrounded,
 ])
 
 function allQuotesAreGrounded(transcript: string, quotes: readonly string[]): boolean {

@@ -1,8 +1,10 @@
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useEffect, useRef } from 'react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { AppStateProvider } from '../context/AppStateContext'
+import { useAppState } from '../context/useAppState'
 import { EssayResultPage } from './EssayResultPage'
 import { ClassReviewPage } from './ClassReviewPage'
 
@@ -13,6 +15,31 @@ function renderClassReviewPage(initialPath = '/tasks/task-1/class-review') {
         <Routes>
           <Route path="/tasks/:taskId/class-review" element={<ClassReviewPage />} />
           <Route path="/tasks/:taskId/essays/:essayId" element={<EssayResultPage />} />
+        </Routes>
+      </MemoryRouter>
+    </AppStateProvider>,
+  )
+}
+
+function NoInsightTaskSetup() {
+  const { createTask, addClassReviewMaterial } = useAppState()
+  const initialized = useRef(false)
+  useEffect(() => {
+    if (initialized.current) return
+    initialized.current = true
+    const taskId = createTask({ taskName: '真实验收任务', fullScore: 15, className: '真实验收班', generateClassReview: true })
+    addClassReviewMaterial({ taskId, essayId: 'essay-real', essayLabel: '作文 3', type: 'logic_issue', categoryLabel: '因果关系缺失', original: 'First, you can organize your studies.', diagnosis: '理由交代不足。' })
+  }, [addClassReviewMaterial, createTask])
+  return null
+}
+
+function renderClassReviewPageWithoutInsight() {
+  render(
+    <AppStateProvider>
+      <NoInsightTaskSetup />
+      <MemoryRouter initialEntries={['/tasks/task-1234567890/class-review']}>
+        <Routes>
+          <Route path="/tasks/:taskId/class-review" element={<ClassReviewPage />} />
         </Routes>
       </MemoryRouter>
     </AppStateProvider>,
@@ -32,6 +59,19 @@ function getIssueCardButton(name: RegExp) {
 }
 
 describe('ClassReviewPage', () => {
+  it('shows real task statistics and selected materials without requiring mock class insights', async () => {
+    const dateNow = vi.spyOn(Date, 'now').mockReturnValue(1234567890)
+    const user = userEvent.setup()
+    renderClassReviewPageWithoutInsight()
+
+    expect(await screen.findByRole('tab', { name: '概览' })).toBeInTheDocument()
+    expect(screen.queryByText('暂无班级总览材料')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: '教师精选素材' }))
+    expect(screen.getByText('First, you can organize your studies.')).toBeInTheDocument()
+    expect(screen.getByText('理由交代不足。')).toBeInTheDocument()
+    dateNow.mockRestore()
+  })
+
   it('shows overview by default and switches between class review tabs', async () => {
     const user = userEvent.setup()
     renderClassReviewPage()

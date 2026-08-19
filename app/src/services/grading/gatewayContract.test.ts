@@ -94,7 +94,7 @@ describe('Gateway-to-website public grading contract', () => {
     const normalized = normalizeMultimodalResult({
       transcript: 'First synthetic sentence. Second synthetic sentence.', recognitionWarnings: [], printedTextExcluded: true, reportedTotalScore: 12,
       dimensionScores: [
-        { dimensionId: 'language', score: 11.6, reason: 'Synthetic reason.', evidence: 'First synthetic sentence.', relatedIssueKeys: ['grammar-first', 'word-second'] },
+        { dimensionId: 'language', score: 11.6, reason: 'Synthetic reason.', evidence: 'Invented paraphrase.', relatedIssueKeys: ['grammar-first', 'word-second'] },
         { dimensionId: 'legibility', score: 0.75, reason: 'Synthetic readable text.', evidence: 'First synthetic sentence.', relatedIssueKeys: [] },
       ],
       issues: [
@@ -112,8 +112,15 @@ describe('Gateway-to-website public grading contract', () => {
     }, context)
     expect(normalized.ok).toBe(true)
     if (!normalized.ok) return
+    expect(normalized.result).toMatchObject({
+      status: 'partial',
+      dimensionScores: expect.arrayContaining([expect.objectContaining({ dimensionId: 'language', score: 11.6, evidence: 'First synthetic sentence.' })]),
+      reviewReasons: expect.arrayContaining([
+        '部分维度证据未能逐字定位，已改用可定位的原文证据。',
+      ]),
+    })
     const projected = projectGradingClientResponse(normalized.result, { httpOk: true, requestId: context.requestId, essayId: context.essayId, requireMultimodal: true, inputMode: 'images', pageCount: 1, fullScore: 15, task })
-    expect(projected.status).toBe('success')
+    expect(projected.status).toBe('partial')
     if (projected.status === 'failed') return
     expect(projected.recognitionWarnings).toEqual([])
     expect(projected.legibilityIssues).toEqual([])

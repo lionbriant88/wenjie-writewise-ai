@@ -45,7 +45,7 @@ describe('createKimiTransport', () => {
 
   it('posts Kimi K3 JSON-schema messages with Base64 image parts only', async () => {
     const fetchImpl = responseFetch(200, JSON.stringify({
-      choices: [{ message: { content: '{"taskName":"Synthetic"}', reasoning_content: 'do not parse this' } }],
+      choices: [{ finish_reason: 'stop', message: { content: '{"taskName":"Synthetic"}', reasoning_content: 'do not parse this' } }],
     }))
     const log = vi.spyOn(console, 'log')
     const transport = createKimiTransport({
@@ -80,6 +80,18 @@ describe('createKimiTransport', () => {
     expect(body).not.toMatch(/temperature|top_p|thinking|max_tokens|reasoning_content/i)
     expect(log).not.toHaveBeenCalled()
     log.mockRestore()
+  })
+
+  it.each([
+    ['a single JSON markdown fence', '```json\n{"taskName":"Synthetic"}\n```'],
+    ['a leading byte-order mark', '\ufeff{"taskName":"Synthetic"}'],
+  ])('accepts %s before applying the strict result normalizer', async (_caseName, content) => {
+    const transport = createKimiTransport({
+      ...maxReasoningOptions,
+      fetchImpl: responseFetch(200, JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content } }] })),
+    })
+
+    await expect(transport.complete(input)).resolves.toEqual({ taskName: 'Synthetic' })
   })
 
   it.each([
@@ -119,22 +131,32 @@ describe('createKimiTransport', () => {
       .rejects.toMatchObject({ code: 'provider_timeout', retryable: true })
   })
 
-  it('rejects non-JSON, empty choices, tool calls, and malformed message content', async () => {
-    const cases = [
-      '<html>SECRET</html>',
-      JSON.stringify({ choices: [] }),
-      JSON.stringify({ choices: [{ message: { content: '{"taskName":"Synthetic"}', tool_calls: [{}] } }] }),
-      JSON.stringify({ choices: [{ message: { content: '{' } }] }),
-      JSON.stringify({ choices: [{ message: { content: '' } }] }),
-      JSON.stringify({ choices: [{ message: { content: { taskName: 'not a string' } } }] }),
-    ]
-
-    for (const body of cases) {
+  it.each([
+    ['response_json', '<html>SECRET upstream body</html>'],
+    ['completion_envelope', JSON.stringify({ choices: [] })],
+    ['completion_tool_calls', JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { content: '{"taskName":"Synthetic"}', tool_calls: [{ secret: 'SECRET tool' }] } }] })],
+    ['completion_finish_reason', JSON.stringify({ choices: [{ finish_reason: 'content_filter', message: { content: '{"taskName":"Synthetic"}' } }] })],
+    ['completion_finish_reason', JSON.stringify({ choices: [{ finish_reason: 'unknown', message: { content: '{"taskName":"Synthetic"}' } }] })],
+    ['completion_finish_reason', JSON.stringify({ choices: [{ message: { content: '{"taskName":"Synthetic"}' } }] })],
+    ['completion_content_json_incomplete', JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: '{SECRET truncated json' } }] })],
+    ['completion_content_json_malformed', JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: '{"taskName": SECRET}' } }] })],
+    ['completion_content', JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: '' } }] })],
+    ['completion_content', JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: { secret: 'SECRET non-string content' } } }] })],
+    ['completion_truncated', JSON.stringify({ choices: [{ finish_reason: 'length', message: { content: '{SECRET truncated json' } }], usage: { completion_tokens: 16384 } })],
+  ] as const)('rejects malformed Kimi output with safe diagnostic %s', async (diagnosticCode, body) => {
       const transport = createKimiTransport({
         apiKey: 'test-only-not-a-real-key', apiBase: 'https://example.invalid/v1', model: 'kimi-k3',
         reasoningEffort: 'high', maxCompletionTokens: 8192, fetchImpl: responseFetch(200, body),
       })
-      await expect(transport.complete(input)).rejects.toMatchObject({ code: 'provider_invalid_response', retryable: true })
-    }
+      let caught: unknown
+      try {
+        await transport.complete(input)
+      } catch (error) {
+        caught = error
+      }
+
+      expect(caught).toMatchObject({ code: 'provider_invalid_response', retryable: true, diagnosticCode })
+      const serialized = JSON.stringify(caught)
+      expect(serialized).not.toMatch(/SECRET|test-only-not-a-real-key|SGVsbG8/)
   })
 })

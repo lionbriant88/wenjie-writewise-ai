@@ -114,6 +114,30 @@ function logicIssueWithNarrative(
 }
 
 describe('applyResultPolicy', () => {
+  it.each([
+    ['warning', (payload: ResultPolicyInput) => { payload.recognitionWarnings = [{ scope: 'local', message: 'PRIVATE-STUDENT-TEXT' } as never] }],
+    ['keys', (payload: ResultPolicyInput) => { payload.issues.push({ ...payload.issues[0], type: 'word_choice' }) }],
+    ['grounding_issue', (payload: ResultPolicyInput) => { payload.issues[0].originalText = 'PRIVATE-STUDENT-TEXT' }],
+    ['grounding_logic_original', (payload: ResultPolicyInput) => { payload.logicIssues = [logicIssueWithNarrative('originalText')] }],
+    ['grounding_logic_before', (payload: ResultPolicyInput) => { payload.logicIssues = [logicIssueWithNarrative('contextBefore')] }],
+    ['grounding_logic_after', (payload: ResultPolicyInput) => { payload.logicIssues = [logicIssueWithNarrative('contextAfter')] }],
+    ['grounding_legibility', (payload: ResultPolicyInput) => { payload.legibilityIssues = [{ issueKey: 'legibility-private', transcriptText: 'PRIVATE-STUDENT-TEXT', possibleReadings: ['one', 'two'], pageNumber: 1, regionDescription: 'Synthetic.', explanation: 'Synthetic.', defaultOutcome: 'count_as_legibility_error' }] }],
+    ['grounding_upgrade', (payload: ResultPolicyInput) => { payload.expressionUpgrades = [{ originalText: 'PRIVATE-STUDENT-TEXT', upgradedText: 'Synthetic.', note: 'Synthetic.' }] }],
+    ['grounding_logic_note', (payload: ResultPolicyInput) => { payload.logicNoteRecords = [{ quote: 'PRIVATE-STUDENT-TEXT', note: 'Synthetic.' }] }],
+    ['revision', (payload: ResultPolicyInput) => { payload.sentencePairs = []; payload.sentenceRevisions[0].relatedIssueKeys = ['missing-issue'] }],
+    ['dimension_relation', (payload: ResultPolicyInput) => { payload.dimensionScores[0].relatedIssueKeys = [] }],
+    ['dimension_evidence_linked', (payload: ResultPolicyInput) => { payload.dimensionScores[0].evidence = 'PRIVATE-STUDENT-TEXT' }],
+    ['narrative', (payload: ResultPolicyInput) => { const uncertain = payloadWithUncertainSpelling(); Object.assign(payload, uncertain, { overallComment: 'Change joins to join.' }) }],
+  ] as const)('reports the privacy-safe %s rejection reason without echoing Provider data', (expectedReason, mutate) => {
+    const payload = payloadWithGrammarIssue()
+    mutate(payload)
+    const reasons: string[] = []
+
+    expect(applyResultPolicy(payload, transcript, (reason) => reasons.push(reason))).toBeNull()
+    expect(reasons).toEqual([expectedReason])
+    expect(JSON.stringify(reasons)).not.toMatch(/PRIVATE-STUDENT-TEXT|joins|missing-issue/)
+  })
+
   it('silently removes uncertain spelling and every linked change', () => {
     expect(applyResultPolicy(payloadWithUncertainSpelling(), transcript)).toMatchObject({
       issues: [], sentenceRevisions: [], sentencePairs: [], reviewReasons: [], correctedText: transcript,
@@ -128,6 +152,18 @@ describe('applyResultPolicy', () => {
 
   it('does not filter grammar under the spelling rule', () => {
     expect(applyResultPolicy(payloadWithGrammarIssue(), transcript)?.issues[0].type).toBe('grammar')
+  })
+
+  it('suppresses a spelling issue whose quote overlaps a retained grammar issue', () => {
+    const payload = payloadWithGrammarIssue()
+    payload.issues.push({
+      issueKey: 'spelling-joins', type: 'spelling', severity: 'low', originalText: 'joins',
+      suggestion: 'join', explanation: 'Synthetic duplicate.', evidenceCertainty: 'certain', requiresTeacherReview: false,
+    })
+
+    expect(applyResultPolicy(payload, transcript)?.issues).toEqual([
+      expect.objectContaining({ issueKey: 'grammar-joins', type: 'grammar' }),
+    ])
   })
 
   it('rejects a recognition warning scope outside the global provider-only contract', () => {

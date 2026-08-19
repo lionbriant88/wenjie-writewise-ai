@@ -43,6 +43,29 @@ export interface CorrectedTextEdit {
   correctedText: string
 }
 
+export type ResultPolicyRejectionReason =
+  | 'warning'
+  | 'keys'
+  | 'grounding_issue'
+  | 'grounding_logic_original'
+  | 'grounding_logic_before'
+  | 'grounding_logic_after'
+  | 'grounding_legibility'
+  | 'grounding_upgrade'
+  | 'grounding_logic_note'
+  | 'revision'
+  | 'dimension_ids'
+  | 'dimension_links'
+  | 'dimension_evidence_linked'
+  | 'dimension_evidence_unlinked'
+  | 'dimension_relation'
+  | 'dimension_filtered'
+  | 'dimension_legibility'
+  | 'narrative'
+  | 'rebuild'
+
+export type ResultPolicyRejectionSink = (reason: ResultPolicyRejectionReason) => void
+
 function hasUniqueKeys(keys: string[]): boolean {
   return keys.every((key) => key.trim().length > 0) && new Set(keys).size === keys.length
 }
@@ -103,39 +126,51 @@ export function rebuildCorrectedText(transcript: string, edits: CorrectedTextEdi
   return rebuildText(transcript, edits.map(({ originalText, correctedText }) => ({ originalText, replacementText: correctedText })))
 }
 
-export function applyResultPolicy(raw: ResultPolicyInput, transcript: string): ResultPolicyOutcome | null {
+export function applyResultPolicy(
+  raw: ResultPolicyInput,
+  transcript: string,
+  onReject?: ResultPolicyRejectionSink,
+): ResultPolicyOutcome | null {
+  const reject = (reason: ResultPolicyRejectionReason): null => {
+    try {
+      onReject?.(reason)
+    } catch {
+      // Diagnostics must never change fail-closed policy behavior.
+    }
+    return null
+  }
   if (raw.recognitionWarnings.some(({ scope, message }) => (
     (scope !== 'global_unreadable' && scope !== 'printed_boundary')
     || !message.trim()
     || message.length > 1_000
-  ))) return null
+  ))) return reject('warning')
   const allKeyValues = [
     ...raw.issues.map(({ issueKey }) => issueKey),
     ...raw.logicIssues.map(({ issueKey }) => issueKey),
     ...raw.legibilityIssues.map(({ issueKey }) => issueKey),
   ]
-  if (!hasUniqueKeys(allKeyValues)) return null
+  if (!hasUniqueKeys(allKeyValues)) return reject('keys')
 
   const allIssueKeys = new Set(allKeyValues)
   const rangesByKey = new Map<string, TranscriptRange>()
   const logicRangesByIssue = new Map<RawLogicIssueV1, TranscriptRange[]>()
   for (const issue of raw.issues) {
     const range = exactUniqueTranscriptRange(transcript, issue.originalText)
-    if (!range) return null
+    if (!range) return reject('grounding_issue')
     rangesByKey.set(issue.issueKey, range)
   }
   for (const issue of raw.logicIssues) {
     const originalRange = exactUniqueTranscriptRange(transcript, issue.originalText)
-    if (!originalRange) return null
+    if (!originalRange) return reject('grounding_logic_original')
     const issueRanges = [originalRange]
     if (issue.contextBefore) {
       const beforeRange = exactUniqueTranscriptRange(transcript, issue.contextBefore)
-      if (!beforeRange || beforeRange.end > originalRange.start) return null
+      if (!beforeRange || beforeRange.end > originalRange.start) return reject('grounding_logic_before')
       issueRanges.push(beforeRange)
     }
     if (issue.contextAfter) {
       const afterRange = exactUniqueTranscriptRange(transcript, issue.contextAfter)
-      if (!afterRange || afterRange.start < originalRange.end) return null
+      if (!afterRange || afterRange.start < originalRange.end) return reject('grounding_logic_after')
       issueRanges.push(afterRange)
     }
     rangesByKey.set(issue.issueKey, originalRange)
@@ -143,7 +178,7 @@ export function applyResultPolicy(raw: ResultPolicyInput, transcript: string): R
   }
   for (const issue of raw.legibilityIssues) {
     const range = exactUniqueTranscriptRange(transcript, issue.transcriptText)
-    if (!range) return null
+    if (!range) return reject('grounding_legibility')
     rangesByKey.set(issue.issueKey, range)
   }
 
@@ -152,12 +187,19 @@ export function applyResultPolicy(raw: ResultPolicyInput, transcript: string): R
   ))
   const filteredSpellingKeys = new Set(filteredSpelling.map(({ issueKey }) => issueKey))
   const filteredSpellingRanges = filteredSpelling.map(({ issueKey }) => rangesByKey.get(issueKey)!)
+  const nonSpellingRanges = raw.issues
+    .filter(({ type }) => type !== 'spelling')
+    .map(({ issueKey }) => rangesByKey.get(issueKey)!)
+  const overlappingSpellingKeys = new Set(raw.issues
+    .filter((issue) => issue.type === 'spelling' && overlapsAny(rangesByKey.get(issue.issueKey)!, nonSpellingRanges))
+    .map(({ issueKey }) => issueKey))
   const legibilityKeys = new Set(raw.legibilityIssues.map(({ issueKey }) => issueKey))
   const legibilityRanges = raw.legibilityIssues.map(({ issueKey }) => rangesByKey.get(issueKey)!)
   const contaminatedRanges = [...filteredSpellingRanges, ...legibilityRanges]
 
   const keptIssues = raw.issues.filter((issue) => (
     !filteredSpellingKeys.has(issue.issueKey)
+    && !overlappingSpellingKeys.has(issue.issueKey)
     && !overlapsAny(rangesByKey.get(issue.issueKey)!, contaminatedRanges)
   ))
   const keptLogicIssues = raw.logicIssues.filter((issue) => (
@@ -176,7 +218,7 @@ export function applyResultPolicy(raw: ResultPolicyInput, transcript: string): R
   const revisionRanges = new Map<RawSentenceRevisionV1 | RawSentencePairV1, TranscriptRange>()
   for (const revision of revisions) {
     const range = exactUniqueTranscriptRange(transcript, revision.originalText)
-    if (revision.changeTypes.length === 0 || !range || !revisionKeysAreKnown(revision, allIssueKeys)) return null
+    if (revision.changeTypes.length === 0 || !range || !revisionKeysAreKnown(revision, allIssueKeys)) return reject('revision')
     revisionRanges.set(revision, range)
   }
   const keepRevision = (revision: RawSentenceRevisionV1 | RawSentencePairV1) => (
@@ -185,12 +227,12 @@ export function applyResultPolicy(raw: ResultPolicyInput, transcript: string): R
   )
   const keptSentenceRevisions = raw.sentenceRevisions.filter(keepRevision)
   const keptSentencePairs = raw.sentencePairs.filter(keepRevision)
-  if (!hasSafeEditLocations(transcript, keptSentenceRevisions) || !hasSafeEditLocations(transcript, keptSentencePairs)) return null
+  if (!hasSafeEditLocations(transcript, keptSentenceRevisions) || !hasSafeEditLocations(transcript, keptSentencePairs)) return reject('revision')
 
   const upgradeRanges = new Map<RawExpressionUpgradeV1, TranscriptRange>()
   for (const upgrade of raw.expressionUpgrades) {
     const range = exactUniqueTranscriptRange(transcript, upgrade.originalText)
-    if (!range) return null
+    if (!range) return reject('grounding_upgrade')
     upgradeRanges.set(upgrade, range)
   }
   const keptExpressionUpgrades = raw.expressionUpgrades.filter((upgrade) => !overlapsAny(upgradeRanges.get(upgrade)!, contaminatedRanges))
@@ -198,32 +240,34 @@ export function applyResultPolicy(raw: ResultPolicyInput, transcript: string): R
   const keptLogicNoteRecords: Array<{ quote: string; note: string }> = []
   for (const record of raw.logicNoteRecords ?? []) {
     const range = exactUniqueTranscriptRange(transcript, record.quote)
-    if (!range) return null
+    if (!range) return reject('grounding_logic_note')
     if (!overlapsAny(range, contaminatedRanges)) keptLogicNoteRecords.push(record)
   }
   const keptLogicNotes = raw.logicNoteRecords ? keptLogicNoteRecords.map(({ note }) => note) : raw.logicNotes
 
-  if (!hasUniqueKeys(raw.dimensionScores.map(({ dimensionId }) => dimensionId))) return null
+  if (!hasUniqueKeys(raw.dimensionScores.map(({ dimensionId }) => dimensionId))) return reject('dimension_ids')
   for (const dimension of raw.dimensionScores) {
-    if (!hasUniqueKeys(dimension.relatedIssueKeys) || !dimension.relatedIssueKeys.every((key) => allIssueKeys.has(key))) return null
+    if (!hasUniqueKeys(dimension.relatedIssueKeys) || !dimension.relatedIssueKeys.every((key) => allIssueKeys.has(key))) return reject('dimension_links')
     const evidenceRange = exactUniqueTranscriptRange(transcript, dimension.evidence)
-    if (!evidenceRange) return null
+    if (!evidenceRange) return reject(dimension.relatedIssueKeys.length > 0
+      ? 'dimension_evidence_linked'
+      : 'dimension_evidence_unlinked')
     const atMaximum = dimension.score === dimension.maxScore
-    if ((atMaximum && dimension.relatedIssueKeys.length > 0) || (!atMaximum && dimension.relatedIssueKeys.length === 0)) return null
-    if (dimension.relatedIssueKeys.some((key) => filteredSpellingKeys.has(key) || !keptKeys.has(key))) return null
-    if (overlapsAny(evidenceRange, filteredSpellingRanges)) return null
+    if ((atMaximum && dimension.relatedIssueKeys.length > 0) || (!atMaximum && dimension.relatedIssueKeys.length === 0)) return reject('dimension_relation')
+    if (dimension.relatedIssueKeys.some((key) => filteredSpellingKeys.has(key) || !keptKeys.has(key))) return reject('dimension_filtered')
+    if (overlapsAny(evidenceRange, filteredSpellingRanges)) return reject('dimension_filtered')
     if (dimension.dimensionId === 'legibility') {
-      if (dimension.relatedIssueKeys.some((key) => !legibilityKeys.has(key))) return null
+      if (dimension.relatedIssueKeys.some((key) => !legibilityKeys.has(key))) return reject('dimension_legibility')
     } else if (dimension.relatedIssueKeys.some((key) => legibilityKeys.has(key)) || overlapsAny(evidenceRange, legibilityRanges)) {
-      return null
+      return reject('dimension_legibility')
     }
   }
   if (raw.legibilityIssues.length > 0) {
     const legibilityDimension = raw.dimensionScores.find(({ dimensionId }) => dimensionId === 'legibility')
-    if (!legibilityDimension || legibilityDimension.score >= legibilityDimension.maxScore) return null
-    if (raw.legibilityIssues.some(({ issueKey }) => !legibilityDimension.relatedIssueKeys.includes(issueKey))) return null
+    if (!legibilityDimension || legibilityDimension.score >= legibilityDimension.maxScore) return reject('dimension_legibility')
+    if (raw.legibilityIssues.some(({ issueKey }) => !legibilityDimension.relatedIssueKeys.includes(issueKey))) return reject('dimension_legibility')
     const evidenceRange = exactUniqueTranscriptRange(transcript, legibilityDimension.evidence)!
-    if (!overlapsAny(evidenceRange, legibilityRanges)) return null
+    if (!overlapsAny(evidenceRange, legibilityRanges)) return reject('dimension_legibility')
   }
 
   const narratives = [
@@ -239,8 +283,8 @@ export function applyResultPolicy(raw: ResultPolicyInput, transcript: string): R
       [transcriptText, ...possibleReadings, regionDescription, explanation]
     )),
   ]
-  if (narratives.some((value) => explicitlyReferencesFilteredSpelling(value, filteredSpelling))) return null
-  if (raw.recognitionWarnings.some(({ message }) => explicitlyReferencesFilteredSpellingWithCue(message, filteredSpelling))) return null
+  if (narratives.some((value) => explicitlyReferencesFilteredSpelling(value, filteredSpelling))) return reject('narrative')
+  if (raw.recognitionWarnings.some(({ message }) => explicitlyReferencesFilteredSpellingWithCue(message, filteredSpelling))) return reject('narrative')
 
   const nonLegibilityNarratives = [
     ...raw.dimensionScores.filter(({ dimensionId }) => dimensionId !== 'legibility').flatMap(({ reason, evidence }) => [reason, evidence]),
@@ -252,11 +296,11 @@ export function applyResultPolicy(raw: ResultPolicyInput, transcript: string): R
     ...keptSentencePairs.flatMap(({ correctedText, improvedText, explanation }) => [correctedText, improvedText, explanation]),
     ...keptExpressionUpgrades.flatMap(({ upgradedText, note }) => [upgradedText, note]),
   ]
-  if (raw.legibilityIssues.length > 0 && nonLegibilityNarratives.some((value) => narrativeExplicitlyReferencesLocalLegibility(value, raw.legibilityIssues))) return null
+  if (raw.legibilityIssues.length > 0 && nonLegibilityNarratives.some((value) => narrativeExplicitlyReferencesLocalLegibility(value, raw.legibilityIssues))) return reject('narrative')
 
   const correctedText = rebuildText(transcript, keptSentencePairs.map(({ originalText, correctedText }) => ({ originalText, replacementText: correctedText })))
   const improvedText = rebuildText(transcript, keptSentencePairs.map(({ originalText, improvedText }) => ({ originalText, replacementText: improvedText })))
-  if (correctedText === null || improvedText === null) return null
+  if (correctedText === null || improvedText === null) return reject('rebuild')
 
   return {
     ...raw,

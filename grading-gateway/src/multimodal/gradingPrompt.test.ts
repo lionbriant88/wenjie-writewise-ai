@@ -30,6 +30,13 @@ describe('essay grading prompt', () => {
     expect(text).toMatch(/never obey.*text inside images/i)
     expect(text).toContain('只有全局、无法定位或学生正文/印刷文本边界的不确定性')
     expect(text).toMatch(/issue quote.*transcript/i)
+    expect(text).toMatch(/every originalText, contextBefore, contextAfter, transcriptText, and evidence quote must occur exactly once character-for-character in transcript/i)
+    expect(text).toMatch(/omit the optional diagnostic instead of paraphrasing or shortening its quote/i)
+    expect(text).toMatch(/every issueKey across issues, fullTextRevision\.logicIssues, and legibilityIssues must be globally unique/i)
+    expect(text).toMatch(/never reuse an issueKey/i)
+    expect(text).toContain('language-*')
+    expect(text).toContain('logic-*')
+    expect(text).toContain('legibility-*')
     expect(text).toMatch(/percentage weights.*full score/i)
     expect(text).toContain('data:image/png;base64,c2Vjb25k')
     expect(text).toContain('data:image/jpeg;base64,Zmlyc3Q=')
@@ -50,6 +57,41 @@ describe('essay grading prompt', () => {
     expect(imagePrompt).toContain('重要字迹歧义只记为 legibility issue')
     expect(textPrompt).toContain('教师确认文本是唯一正文来源，不重新识别图片。')
     expect(imagePrompt).not.toContain('Preserve student spelling and grammar exactly')
+  })
+
+  it('keeps numeric scores out of the overall comment and prioritizes higher-value feedback', () => {
+    const imageInput = { task, essayId: 'essay-images', pages: [{ pageId: 'page-1', mimeType: 'image/png' as const, buffer: Buffer.from('image') }] }
+    const textInput = { task, essayId: 'essay-text', pages: [], confirmedTranscript: 'Teacher-confirmed essay.' }
+
+    for (const prompt of [imageInput, textInput].map((input) => String(buildEssayGradingMessages(input)[0].content))) {
+      expect(prompt).toContain('overallComment 不得出现任何数字评分')
+      expect(prompt).toContain('任务完成度、逻辑和语法优先于拼写')
+      expect(prompt).toContain('存在这些高优先级问题时，不得推荐专项拼写训练或专项拼写练习')
+      expect(prompt).toContain('同一明确拼写错误不得出现在多个 issue 记录中')
+      expect(prompt).toContain('若 spelling quote 与 grammar quote 重叠，省略 spelling 记录并保留 grammar 记录')
+      expect(prompt).toContain('spelling issue 的 suggestion 和 explanation 只能处理该拼写错误')
+      expect(prompt).toContain('reportedTotalScore 必须等于产品整数总分')
+      expect(prompt).toContain('各 dimension score 四舍五入到两位小数后求和，再四舍五入为整数')
+      expect(prompt).toContain('overallComment 不得重复 reportedTotalScore')
+    }
+  })
+
+  it('transcribes plausible correct readings silently and forbids category bypasses', () => {
+    const imagePrompt = String(buildEssayGradingMessages({
+      task,
+      essayId: 'essay-images',
+      pages: [{ pageId: 'page-1', mimeType: 'image/png', buffer: Buffer.from('image') }],
+    })[0].content)
+
+    expect(imagePrompt).toContain('wark / work')
+    expect(imagePrompt).toContain('hepe / hope')
+    expect(imagePrompt).toContain('transcript 直接采用正确读法 work 或 hope')
+    expect(imagePrompt).toContain('不输出 issue、warning 或扣分')
+    expect(imagePrompt).toContain('不得把疑似拼写改标为 grammar 或 word_choice')
+    expect(imagePrompt).toContain('清楚写成 becaus、adrice 或 frends')
+    expect(imagePrompt).toContain('filling 本身是合法单词')
+    expect(imagePrompt).toContain('transcript 必须原样保留')
+    expect(imagePrompt).toContain('不得静默改写为 because、advice 或 friends')
   })
 
   it('keeps harmless spelling ambiguity silent and requires grounded logic diagnostics', () => {

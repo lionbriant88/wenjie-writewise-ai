@@ -605,6 +605,18 @@ describe('projectGradingClientResponse', () => {
     scoreMismatch.reviewReasons = ['AI 自报总分与产品重算总分不一致。']
     expect(projectGradingClientResponse(scoreMismatch, semanticExpected)).toMatchObject({ status: 'partial' })
 
+    for (const reason of [
+      '部分逻辑建议因无法定位到原文已自动省略。',
+      '部分表达优化因无法定位到原文已自动省略。',
+      '维度分数与问题关联不一致，已按有利于学生的原则修正。',
+      '部分维度证据未能逐字定位，已改用可定位的原文证据。',
+    ]) {
+      const safelyDegraded = validSemanticSuccess()
+      safelyDegraded.status = 'partial'
+      safelyDegraded.reviewReasons = [reason]
+      expect(projectGradingClientResponse(safelyDegraded, semanticExpected)).toMatchObject({ status: 'partial' })
+    }
+
     for (const mutate of [
       (raw: Record<string, unknown>) => { raw.recognitionWarnings = ['Warning.'] },
       (raw: Record<string, unknown>) => { raw.printedTextExcluded = false },

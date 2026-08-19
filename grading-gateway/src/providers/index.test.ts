@@ -52,12 +52,12 @@ describe('getProvider', () => {
     expect(parseKimiConfig({ KIMI_REASONING_EFFORT: 'max' }).reasoningEffort).toBe('max')
   })
 
-  it('defaults to the official K3 managed endpoint and model identifier', () => {
+  it('defaults to the verified China Kimi K3 production configuration', () => {
     expect(parseKimiConfig({})).toEqual({
-      apiBase: 'https://api.kimi.com/coding/v1',
-      model: 'k3',
-      reasoningEffort: 'max',
-      maxCompletionTokens: 8192,
+      apiBase: 'https://api.moonshot.cn/v1',
+      model: 'kimi-k3',
+      reasoningEffort: 'low',
+      maxCompletionTokens: 16_384,
     })
   })
 
@@ -65,11 +65,11 @@ describe('getProvider', () => {
     expect(() => parseKimiConfig({ KIMI_REASONING_EFFORT: 'medium' })).toThrow(GradingProviderError)
   })
 
-  it('validates the Gateway timeout with a 60-second fallback', () => {
-    expect(parseGradingTimeoutMs(undefined)).toBe(60_000)
+  it('validates the Gateway timeout with a six-minute production fallback', () => {
+    expect(parseGradingTimeoutMs(undefined)).toBe(360_000)
     expect(parseGradingTimeoutMs('1500')).toBe(1500)
-    expect(parseGradingTimeoutMs('0')).toBe(60_000)
-    expect(parseGradingTimeoutMs('1.5')).toBe(60_000)
-    expect(parseGradingTimeoutMs('invalid')).toBe(60_000)
+    expect(parseGradingTimeoutMs('0')).toBe(360_000)
+    expect(parseGradingTimeoutMs('1.5')).toBe(360_000)
+    expect(parseGradingTimeoutMs('invalid')).toBe(360_000)
   })
 })

@@ -1,4 +1,4 @@
-import { GradingProviderError } from './providerTypes.js'
+import { GradingProviderError, type ProviderDiagnosticCode } from './providerTypes.js'
 
 export type KimiContentPart =
   | { type: 'text'; text: string }
@@ -33,8 +33,8 @@ function unavailableError() {
   return new GradingProviderError('provider_unavailable', '真实 AI 服务暂时不可用。', true)
 }
 
-function invalidResponseError() {
-  return new GradingProviderError('provider_invalid_response', '真实 AI 返回了无法解析的响应。', true)
+function invalidResponseError(diagnosticCode: ProviderDiagnosticCode) {
+  return new GradingProviderError('provider_invalid_response', '真实 AI 返回了无法解析的响应。', true, diagnosticCode)
 }
 
 function mapKimiHttpStatus(status: number) {
@@ -50,18 +50,39 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function unwrapJsonContent(content: string) {
+  const trimmed = content.trim().replace(/^\uFEFF/, '').trim()
+  const fenced = /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/i.exec(trimmed)
+  return (fenced?.[1] ?? trimmed).trim()
+}
+
+function invalidJsonDiagnostic(content: string): ProviderDiagnosticCode {
+  const first = content[0]
+  const last = content.at(-1)
+  if ((first === '{' && last !== '}') || (first === '[' && last !== ']')) {
+    return 'completion_content_json_incomplete'
+  }
+  return 'completion_content_json_malformed'
+}
+
 function parseKimiCompletion(value: unknown): unknown {
-  if (!isRecord(value) || !Array.isArray(value.choices) || value.choices.length === 0) throw invalidResponseError()
+  if (!isRecord(value) || !Array.isArray(value.choices) || value.choices.length === 0) throw invalidResponseError('completion_envelope')
   const choice = value.choices[0]
-  if (!isRecord(choice) || choice.finish_reason === 'tool_calls' || !isRecord(choice.message)) throw invalidResponseError()
+  if (!isRecord(choice) || !isRecord(choice.message)) throw invalidResponseError('completion_envelope')
+  if (choice.finish_reason === 'length') throw invalidResponseError('completion_truncated')
+  if (choice.finish_reason === 'tool_calls') throw invalidResponseError('completion_tool_calls')
+  if (choice.finish_reason !== 'stop') throw invalidResponseError('completion_finish_reason')
   const message = choice.message
   if ((Array.isArray(message.tool_calls) && message.tool_calls.length > 0) || typeof message.content !== 'string' || !message.content.trim()) {
-    throw invalidResponseError()
+    throw invalidResponseError(Array.isArray(message.tool_calls) && message.tool_calls.length > 0
+      ? 'completion_tool_calls'
+      : 'completion_content')
   }
+  const jsonContent = unwrapJsonContent(message.content)
   try {
-    return JSON.parse(message.content) as unknown
+    return JSON.parse(jsonContent) as unknown
   } catch {
-    throw invalidResponseError()
+    throw invalidResponseError(invalidJsonDiagnostic(jsonContent))
   }
 }
 
@@ -103,7 +124,7 @@ export function createKimiTransport(options: KimiTransportOptions): KimiTranspor
       try {
         payload = await response.json()
       } catch {
-        throw invalidResponseError()
+        throw invalidResponseError('response_json')
       }
       return parseKimiCompletion(payload)
     },

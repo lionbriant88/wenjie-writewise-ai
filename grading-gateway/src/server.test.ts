@@ -123,9 +123,16 @@ describe('grading gateway server boundary', () => {
       async generateRubric() { throw new Error('not used') },
       async gradeEssay() { mismatchCalls += 1; return strictMultimodalPayload('MODEL-DIFFERENT') },
     }
-    const response = await request(createServer({ multimodalProvider: differentProvider }))
+    const diagnostics: unknown[] = []
+    const response = await request(createServer({
+      multimodalProvider: differentProvider,
+      onDiagnostic: (diagnostic: unknown) => diagnostics.push(diagnostic),
+    }))
       .post('/grading/grade-images').field('metadata', JSON.stringify(metadata)).expect(503)
     expect(response.body).toMatchObject({ status: 'failed', error: { code: 'provider_invalid_response' } })
+    expect(response.body.error).not.toHaveProperty('diagnosticCode')
+    expect(diagnostics).toEqual([{ stage: 'normalization', diagnosticCode: 'confirmed_transcript_invariants' }])
+    expect(JSON.stringify(diagnostics)).not.toMatch(/Teacher corrected transcript|MODEL-DIFFERENT/)
     expect(JSON.stringify(response.body)).not.toMatch(/Teacher corrected transcript|MODEL-DIFFERENT/)
     expect(mismatchCalls).toBe(1)
   })
@@ -213,6 +220,35 @@ describe('grading gateway server boundary', () => {
     expect(JSON.stringify(response.body)).not.toContain('PRIVATE-ESSAY')
     expect(calls).toBe(1)
   })
+
+  it('emits a provider-stage parse diagnostic without adding internal fields to the HTTP response', async () => {
+    const diagnostics: unknown[] = []
+    const provider: MultimodalProvider = {
+      async generateRubric() { throw new Error('not used') },
+      async gradeEssay() {
+        throw new GradingProviderError(
+          'provider_invalid_response',
+          'PRIVATE-PROVIDER-ERROR-MESSAGE',
+          true,
+          'completion_content_json_malformed',
+        )
+      },
+    }
+    const metadata = { requestVersion: 'multimodal-grading-request-v2', requestId: 'provider-diagnostic', essayId: 'provider-diagnostic-essay', pageIds: ['essay-1'], task: { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } } }
+
+    const response = await request(createServer({
+      multimodalProvider: provider,
+      onDiagnostic: (diagnostic: unknown) => diagnostics.push(diagnostic),
+    }))
+      .post('/grading/grade-images').field('metadata', JSON.stringify(metadata))
+      .attach('pages', Buffer.from('PRIVATE-ESSAY'), { filename: 'private-name.png', contentType: 'image/png' }).expect(503)
+
+    expect(response.body).toMatchObject({ status: 'failed', error: { code: 'provider_invalid_response' } })
+    expect(response.body.error).not.toHaveProperty('diagnosticCode')
+    expect(JSON.stringify(response.body)).not.toMatch(/PRIVATE|ERROR-MESSAGE/)
+    expect(diagnostics).toEqual([{ stage: 'provider', diagnosticCode: 'completion_content_json_malformed' }])
+    expect(JSON.stringify(diagnostics)).not.toMatch(/PRIVATE|private-name|ERROR-MESSAGE/)
+  })
   it('sends ordered rubric page data to the injected multimodal provider', async () => {
     const generatedRubric = {
       taskName: 'Synthetic task', materialSummary: 'A synthetic task material summary.',
@@ -275,6 +311,7 @@ describe('grading gateway server boundary', () => {
   })
 
   it('fails closed when an injected rubric provider returns a generated rubric without the exact 5% legibility dimension', async () => {
+    const diagnostics: unknown[] = []
     const provider: MultimodalProvider = {
       async generateRubric() {
         return {
@@ -285,7 +322,10 @@ describe('grading gateway server boundary', () => {
       },
       async gradeEssay() { throw new Error('not used') },
     }
-    const response = await request(createServer({ multimodalProvider: provider }))
+    const response = await request(createServer({
+      multimodalProvider: provider,
+      onDiagnostic: (diagnostic: unknown) => diagnostics.push(diagnostic),
+    }))
       .post('/tasks/rubric')
       .field('requestId', 'rubric-invalid-generated')
       .field('fullScore', '15')
@@ -295,6 +335,7 @@ describe('grading gateway server boundary', () => {
 
     expect(response.body).toMatchObject({ requestId: 'rubric-invalid-generated', status: 'failed', error: { code: 'provider_invalid_response', retryable: true } })
     expect(response.body).not.toHaveProperty('rubric')
+    expect(diagnostics).toEqual([{ stage: 'normalization', diagnosticCode: 'rubric_validation' }])
   })
 
   it('returns a minimal health response', async () => {
@@ -320,6 +361,29 @@ describe('grading gateway server boundary', () => {
     expect(response.headers['access-control-allow-origin']).toBe('http://127.0.0.1:5173')
     expect(response.headers['access-control-allow-headers']).toContain('Content-Type')
     expect(response.headers['access-control-allow-headers']).toContain('X-Grading-Request-Id')
+  })
+
+  it('creates a sanitized stderr diagnostic sink only for the exact opt-in flag', async () => {
+    const diagnosticsModule = await import('./safeDiagnostics.js') as Record<string, unknown>
+    const createSink = diagnosticsModule.createSafeDiagnosticStderrSink
+    expect(createSink).toBeTypeOf('function')
+    if (typeof createSink !== 'function') return
+    const lines: string[] = []
+    const write = (line: string) => lines.push(line)
+    const factory = createSink as (flag: string | undefined, output: (line: string) => void) => ((diagnostic: { stage: 'provider' | 'normalization'; diagnosticCode: string }) => void) | undefined
+
+    expect(factory(undefined, write)).toBeUndefined()
+    expect(factory('true', write)).toBeUndefined()
+    const sink = factory('1', write)
+    expect(sink).toBeTypeOf('function')
+    sink?.({ stage: 'normalization', diagnosticCode: 'result_policy' })
+    sink?.({ stage: 'provider', diagnosticCode: 'PRIVATE PROVIDER MESSAGE' })
+
+    expect(lines).toEqual([
+      '{"event":"grading_safe_diagnostic","stage":"normalization","diagnosticCode":"result_policy"}',
+      '{"event":"grading_safe_diagnostic","stage":"provider","diagnosticCode":"diagnostic_unavailable"}',
+    ])
+    expect(lines.join('\n')).not.toMatch(/PRIVATE|MESSAGE/)
   })
 
 })

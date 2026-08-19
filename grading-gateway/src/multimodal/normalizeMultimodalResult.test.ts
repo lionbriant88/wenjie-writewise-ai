@@ -126,6 +126,22 @@ function payloadWithCantAmbiguity(): Record<string, unknown> {
 
 describe('normalizeMultimodalResult', () => {
   it.each([
+    ['result_shape', (payload: Record<string, unknown>) => { payload.unexpected = 'PRIVATE-STUDENT-TEXT' }],
+    ['dimension_fields', (payload: Record<string, unknown>) => { ;(payload.dimensionScores as Array<Record<string, unknown>>)[0].evidence = null }],
+  ] as const)('returns the safe internal diagnostic code %s without echoing Provider data', (diagnosticCode, mutate) => {
+    const payload = validPayload()
+    mutate(payload)
+
+    const normalized = normalizeMultimodalResult(payload, context)
+
+    expect(normalized).toMatchObject({
+      ok: false,
+      error: { code: 'provider_invalid_response', diagnosticCode },
+    })
+    expect(JSON.stringify(normalized)).not.toMatch(/PRIVATE-STUDENT-TEXT|I has a pen|It are blue/)
+  })
+
+  it.each([
     ['dimension score', () => validPayload(), (payload: Record<string, unknown>) => { ;(payload.dimensionScores as Array<Record<string, unknown>>)[0].extra = true }],
     ['issue', () => validPayload(), (payload: Record<string, unknown>) => { ;(payload.issues as Array<Record<string, unknown>>)[0].extra = true }],
     ['sentence revision', () => { const payload = validPayload(); payload.sentenceRevisions = [{ originalText: 'It are blue.', revisedText: 'It is blue.', note: 'Synthetic.', relatedIssueKeys: ['grammar-blue'], changeTypes: ['grammar'] }]; return payload }, (payload: Record<string, unknown>) => { ;(payload.sentenceRevisions as Array<Record<string, unknown>>)[0].extra = true }],
@@ -186,7 +202,6 @@ describe('normalizeMultimodalResult', () => {
       (payload: Record<string, unknown>) => { ;(payload.sentenceRevisions as Array<Record<string, unknown>>)[0].originalText = 'It  are blue.' },
       (payload: Record<string, unknown>) => { ;((payload.fullTextRevision as Record<string, unknown>).sentencePairs as Array<Record<string, unknown>>)[0].originalText = 'It  are blue.' },
       (payload: Record<string, unknown>) => { ;(payload.fullTextRevision as Record<string, unknown>).logicIssues = [{ issueKey: 'logic', originalText: 'It  are blue.', contextBefore: 'I has a pen.', contextAfter: '', subType: 'unclear_logic', severity: 'low', diagnosis: 'Synthetic.', suggestedAction: 'add_bridge_sentence', conservativeSuggestion: 'Synthetic.', polishedSuggestion: 'Synthetic.', requiresTeacherReview: false }] },
-      (payload: Record<string, unknown>) => { ;((payload.fullTextRevision as Record<string, unknown>).logicNotes as Array<Record<string, unknown>>)[0].quote = 'I  has a pen.' },
       (payload: Record<string, unknown>) => { payload.legibilityIssues = [{ issueKey: 'legibility', transcriptText: 'It  are blue.', possibleReadings: ['It are blue.', 'It is blue.'], pageNumber: 1, regionDescription: 'line', explanation: 'Synthetic.', defaultOutcome: 'count_as_legibility_error' }] },
     ]) { const payload = validPayload(); payload.sentenceRevisions = [{ originalText: 'It are blue.', revisedText: 'It is blue.', note: 'Synthetic.', relatedIssueKeys: ['grammar-blue'], changeTypes: ['grammar'] }]; (payload.fullTextRevision as Record<string, unknown>).sentencePairs = [{ originalText: 'It are blue.', correctedText: 'It is blue.', improvedText: 'It is blue.', relatedIssueKeys: ['grammar-blue'], changeTypes: ['grammar'], explanation: 'Synthetic.', requiresTeacherReview: false }]; mutate(payload); expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: false }) }
   })
@@ -197,16 +212,77 @@ describe('normalizeMultimodalResult', () => {
     const mismatch = validPayload(); mismatch.reportedTotalScore = 14; expect(normalizeMultimodalResult(mismatch, context)).toMatchObject({ ok: true, result: { status: 'partial', reviewReasons: expect.arrayContaining(['AI 自报总分与产品重算总分不一致。']) } })
   })
 
-  it('rejects whitespace-only dimension evidence before shared public projection', () => {
+  it('does not deduct a dimension without a linked, locatable issue', () => {
     const payload = validPayload()
-    ;(payload.dimensionScores as Array<Record<string, unknown>>)[0].evidence = '   '
-    expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: false })
+    ;(payload.dimensionScores as Array<Record<string, unknown>>)[0].relatedIssueKeys = []
+
+    const normalized = normalizeMultimodalResult(payload, context)
+
+    expect(normalized).toMatchObject({
+      ok: false,
+      error: { diagnosticCode: 'result_policy_dimension_relation' },
+    })
   })
 
-  it('keeps expression-upgrade quotes exact and rejects collapsed or duplicate source text', () => {
+  it('regrounds dimension evidence only from an already-linked exact issue quote', () => {
+    const payload = validPayload()
+    ;(payload.dimensionScores as Array<Record<string, unknown>>)[1].evidence = 'Invented paraphrase.'
+
+    const normalized = normalizeMultimodalResult(payload, context)
+
+    expect(normalized).toMatchObject({
+      ok: true,
+      result: {
+        status: 'partial',
+        dimensionScores: expect.arrayContaining([expect.objectContaining({ dimensionId: 'language', evidence: 'It are blue.' })]),
+        reviewReasons: expect.arrayContaining(['部分维度证据未能逐字定位，已改用可定位的原文证据。']),
+      },
+    })
+  })
+
+  it('regrounds whitespace-only dimension evidence from its linked issue', () => {
+    const payload = validPayload()
+    ;(payload.dimensionScores as Array<Record<string, unknown>>)[0].evidence = '   '
+    expect(normalizeMultimodalResult(payload, context)).toMatchObject({
+      ok: true,
+      result: { status: 'partial', dimensionScores: expect.arrayContaining([expect.objectContaining({ dimensionId: 'content', evidence: 'It are blue.' })]) },
+    })
+  })
+
+  it('keeps grammar and suppresses overlapping spelling without allowing a hidden linked deduction', () => {
+    const payload = validPayload()
+    ;(payload.issues as Array<Record<string, unknown>>).push({
+      issueKey: 'spelling-blue', type: 'spelling', severity: 'low', originalText: 'It are blue.',
+      suggestion: 'It is blue.', explanation: 'Synthetic duplicate.', evidenceCertainty: 'certain', requiresTeacherReview: false,
+    })
+
+    expect(normalizeMultimodalResult(payload, context)).toMatchObject({
+      ok: true,
+      result: { issues: [expect.objectContaining({ type: 'grammar' })] },
+    })
+
+    const linked = structuredClone(payload)
+    ;(linked.dimensionScores as Array<Record<string, unknown>>)[1].relatedIssueKeys = ['grammar-blue', 'spelling-blue']
+    expect(normalizeMultimodalResult(linked, context)).toMatchObject({
+      ok: false,
+      error: { diagnosticCode: 'result_policy_dimension_filtered' },
+    })
+  })
+
+  it('keeps only expression upgrades whose exact quote is uniquely grounded', () => {
     const collapsed = validPayload()
-    collapsed.expressionUpgrades = [{ originalText: 'I  has a pen.', upgradedText: 'I have a pen.', note: 'Synthetic.' }]
-    expect(normalizeMultimodalResult(collapsed, context)).toMatchObject({ ok: false })
+    collapsed.expressionUpgrades = [
+      { originalText: 'I has a pen.', upgradedText: 'I have a pen.', note: 'Grounded.' },
+      { originalText: 'I  has a pen.', upgradedText: 'I have a pen.', note: 'Ungrounded.' },
+    ]
+    expect(normalizeMultimodalResult(collapsed, context)).toMatchObject({
+      ok: true,
+      result: {
+        status: 'partial',
+        expressionUpgrades: [{ originalText: 'I has a pen.' }],
+        reviewReasons: expect.arrayContaining(['部分表达优化因无法定位到原文已自动省略。']),
+      },
+    })
 
     const duplicate = validPayload()
     duplicate.transcript = 'Repeated source. Repeated source.'
@@ -607,13 +683,16 @@ describe('normalizeMultimodalResult', () => {
   it.each([
     ['ungrounded', 'Invented evidence.'],
     ['whitespace-folded', 'I  has a pen.'],
-  ])('rejects %s dimension evidence', (_label, evidence) => {
+  ])('regrounds %s dimension evidence from its linked issue', (_label, evidence) => {
     const payload = validPayload()
     ;(payload.dimensionScores as Array<Record<string, unknown>>)[0].evidence = evidence
-    expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
+    expect(normalizeMultimodalResult(payload, context)).toMatchObject({
+      ok: true,
+      result: { status: 'partial', dimensionScores: expect.arrayContaining([expect.objectContaining({ dimensionId: 'content', evidence: 'It are blue.' })]) },
+    })
   })
 
-  it('rejects non-unique dimension evidence', () => {
+  it('uses the exact full transcript for non-unique evidence on maximum-score dimensions', () => {
     const payload = validPayload()
     payload.transcript = 'Repeated evidence. Repeated evidence.'
     payload.issues = []
@@ -624,7 +703,13 @@ describe('normalizeMultimodalResult', () => {
     ]
     payload.reportedTotalScore = 15
     payload.fullTextRevision = { correctedText: payload.transcript, improvedText: payload.transcript, sentencePairs: [], logicNotes: [], logicIssues: [] }
-    expect(normalizeMultimodalResult(payload, context)).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
+    expect(normalizeMultimodalResult(payload, context)).toMatchObject({
+      ok: true,
+      result: {
+        status: 'partial',
+        dimensionScores: expect.arrayContaining([expect.objectContaining({ evidence: 'Repeated evidence. Repeated evidence.' })]),
+      },
+    })
   })
 
   it('rejects Provider-authored review reasons while deriving normalized reasons internally', () => {
@@ -736,20 +821,33 @@ describe('normalizeMultimodalResult', () => {
     expect(normalized).toMatchObject({ ok: true, result: { fullTextRevision: { logicNotes: [] } } })
   })
 
-  it('rejects an ungrounded logic diagnostic instead of guessing its source', () => {
+  it('omits an ungrounded logic note without guessing its source or discarding the safe result', () => {
     const payload = validPayload()
-    ;((payload.fullTextRevision as Record<string, unknown>).logicNotes as Array<Record<string, unknown>>)[0].quote = 'Invented logic quote.'
+    ;(payload.fullTextRevision as Record<string, unknown>).logicNotes = [
+      { quote: 'I has a pen.', note: 'Grounded logic note.' },
+      { quote: 'Invented logic quote.', note: 'Ungrounded logic note.' },
+    ]
     const normalized = normalizeMultimodalResult(payload, context)
 
-    expect(normalized).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
+    expect(normalized).toMatchObject({
+      ok: true,
+      result: {
+        status: 'partial',
+        fullTextRevision: { logicNotes: ['Grounded logic note.'] },
+        reviewReasons: expect.arrayContaining(['部分逻辑建议因无法定位到原文已自动省略。']),
+      },
+    })
   })
 
-  it('rejects ungrounded dimension evidence even when printed-text exclusion is uncertain', () => {
+  it('regrounds dimension evidence while preserving printed-text exclusion review', () => {
     const payload = validPayload()
     payload.printedTextExcluded = false
     ;(payload.dimensionScores as Array<Record<string, unknown>>)[0].evidence = 'Printed heading.'
     const normalized = normalizeMultimodalResult(payload, context)
-    expect(normalized).toMatchObject({ ok: false, error: { code: 'provider_invalid_response' } })
+    expect(normalized).toMatchObject({
+      ok: true,
+      result: { status: 'partial', reviewReasons: expect.arrayContaining(['printed_text_exclusion_uncertain', '部分维度证据未能逐字定位，已改用可定位的原文证据。']) },
+    })
   })
 
   it('rejects ungrounded citations instead of retaining unsafe projections', () => {

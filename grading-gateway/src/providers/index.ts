@@ -30,25 +30,25 @@ export function parseKimiConfig(env: KimiEnvironment): {
   reasoningEffort: KimiReasoningEffort
   maxCompletionTokens: number
 } {
-  const reasoningEffort = env.KIMI_REASONING_EFFORT?.trim() || 'max'
+  const reasoningEffort = env.KIMI_REASONING_EFFORT?.trim() || 'low'
   if (reasoningEffort !== 'low' && reasoningEffort !== 'high' && reasoningEffort !== 'max') throw kimiConfigurationError()
 
   const maxCompletionTokens = env.KIMI_MAX_COMPLETION_TOKENS === undefined || env.KIMI_MAX_COMPLETION_TOKENS.trim() === ''
-    ? 8192
+    ? 16_384
     : Number(env.KIMI_MAX_COMPLETION_TOKENS)
   if (!Number.isInteger(maxCompletionTokens) || maxCompletionTokens <= 0) throw kimiConfigurationError()
   return {
-    apiBase: env.KIMI_API_BASE?.trim() || 'https://api.kimi.com/coding/v1',
-    model: env.KIMI_MODEL?.trim() || 'k3',
+    apiBase: env.KIMI_API_BASE?.trim() || 'https://api.moonshot.cn/v1',
+    model: env.KIMI_MODEL?.trim() || 'kimi-k3',
     reasoningEffort,
     maxCompletionTokens,
   }
 }
 
 export function parseGradingTimeoutMs(value: string | undefined) {
-  if (value === undefined || value.trim() === '') return 60_000
+  if (value === undefined || value.trim() === '') return 360_000
   const parsed = Number(value)
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : 60_000
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 360_000
 }
 
 export function getProvider(name: string | undefined): GradingProvider {

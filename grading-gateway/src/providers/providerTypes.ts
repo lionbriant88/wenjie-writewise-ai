@@ -14,11 +14,22 @@ export type ProviderErrorCode =
   | 'provider_unexpected_tool_call'
   | 'provider_invalid_response'
 
+export type ProviderDiagnosticCode =
+  | 'response_json'
+  | 'completion_envelope'
+  | 'completion_tool_calls'
+  | 'completion_content'
+  | 'completion_content_json_incomplete'
+  | 'completion_content_json_malformed'
+  | 'completion_finish_reason'
+  | 'completion_truncated'
+
 export class GradingProviderError extends Error {
   constructor(
     readonly code: ProviderErrorCode,
     message: string,
     readonly retryable: boolean,
+    readonly diagnosticCode?: ProviderDiagnosticCode,
   ) {
     super(message)
     this.name = 'GradingProviderError'
