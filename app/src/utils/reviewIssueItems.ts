@@ -21,6 +21,11 @@ export interface ReviewIssueCardItem {
   suggestedActionLabel?: string
   conservativeSuggestion?: string
   needsTeacherReview?: boolean
+  pageReference?: {
+    kind: 'page-description'
+    pageNumber: number
+    regionDescription: string
+  }
 }
 
 interface BuildReviewIssueItemsInput {
@@ -100,6 +105,11 @@ export function buildReviewIssueItems({
     suggestedActionLabel: '字迹不清导致语义无法确认',
     suggestion: `系统默认按错误处理；可能读法：${issue.possibleReadings.join(' / ')}`,
     conservativeSuggestion: `系统默认按错误处理；可能读法：${issue.possibleReadings.join(' / ')}`,
+    pageReference: {
+      kind: 'page-description',
+      pageNumber: issue.pageNumber,
+      regionDescription: issue.regionDescription,
+    },
   }))
 
   const highCertaintySpellingItems = annotations

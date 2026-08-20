@@ -113,6 +113,13 @@ describe('buildReviewIssueItems', () => {
       diagnosis: 'The handwriting does not establish the intended word.',
       suggestion: "系统默认按错误处理；可能读法：cant / can't",
       severity: 'medium',
+      pageReference: {
+        kind: 'page-description',
+        pageNumber: 1,
+        regionDescription: 'Synthetic final line.',
+      },
     })
+    expect(items[0]).not.toHaveProperty('pageReference')
+    expect(items[1]).not.toHaveProperty('pageReference')
   })
 })

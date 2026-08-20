@@ -285,6 +285,9 @@ export function EssayResultPage() {
           <OriginalPaperWorkspace
             essay={essay}
             taskId={task.id}
+            reviewIssues={reviewIssueItems}
+            activeIssueId={activeIssueId}
+            onIssueSelect={setActiveIssueId}
             previousEssayId={previousEssayId}
             nextEssayId={nextEssayId}
             onBackToGrading={() => setWorkspaceMode('grading')}

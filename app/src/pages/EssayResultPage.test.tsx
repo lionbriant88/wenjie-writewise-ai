@@ -508,7 +508,10 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(getWorkspaceModeButton('paper')).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByTestId('paper-workspace')).toBeInTheDocument()
     expect(screen.getByTestId('paper-image-stage')).toBeInTheDocument()
-    expect(screen.getByText('后续接入图像定位信息后，将在此处展示原卷批阅能力。')).toBeInTheDocument()
+    expect(screen.getByText('当前页暂无可显示的原卷图片')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '原卷批注' })).toBeInTheDocument()
+    expect(screen.getAllByText('未精确定位').length).toBeGreaterThan(0)
+    expect(screen.queryByText(/后续接入/)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '返回批改工作台' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '返回批改进度' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '上一篇' })).toBeInTheDocument()
@@ -532,6 +535,9 @@ describe('EssayResultPage teacher decision workflow', () => {
 
     await user.click(getWorkspaceModeButton('paper'))
     expect(view.container.querySelector('[data-issue-source="language"]')).toBeNull()
+    const paperIssue = screen.getByRole('button', { name: /语言批注：I suggest you joins the club\./ })
+    await user.click(paperIssue)
+    expect(paperIssue).toHaveAttribute('aria-pressed', 'true')
 
     await user.click(screen.getByRole('button', { name: '返回批改工作台' }))
 
@@ -542,7 +548,7 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(view.container.querySelector('[data-issue-source="logic"]')).not.toBeNull()
 
     await user.click(screen.getByRole('tab', { name: '问题批改' }))
-    await user.click(getIssueCardButton(/I suggest you joins the club\./))
+    expect(getIssueCardButton(/I suggest you joins the club\./)).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByText('已定位')).toBeInTheDocument()
 
     await user.click(getSourceModeButton('edit'))
