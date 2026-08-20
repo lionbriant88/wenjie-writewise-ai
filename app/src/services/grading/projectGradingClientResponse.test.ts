@@ -608,8 +608,11 @@ describe('projectGradingClientResponse', () => {
     for (const reason of [
       '部分逻辑建议因无法定位到原文已自动省略。',
       '部分表达优化因无法定位到原文已自动省略。',
+      '部分表达优化因依据不完整已自动省略。',
       '维度分数与问题关联不一致，已按有利于学生的原则修正。',
       '部分维度证据未能逐字定位，已改用可定位的原文证据。',
+      '部分维度评分依据不完整，建议教师复核。',
+      '部分辅助批改内容不完整，建议教师复核。',
     ]) {
       const safelyDegraded = validSemanticSuccess()
       safelyDegraded.status = 'partial'

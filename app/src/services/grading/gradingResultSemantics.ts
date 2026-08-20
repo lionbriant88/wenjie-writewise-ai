@@ -9,8 +9,11 @@ export const GRADING_REVIEW_REASONS = {
   printedTextExclusionUncertain: 'printed_text_exclusion_uncertain',
   logicNoteGroundingOmitted: '部分逻辑建议因无法定位到原文已自动省略。',
   expressionUpgradeGroundingOmitted: '部分表达优化因无法定位到原文已自动省略。',
+  expressionUpgradeInvalidOmitted: '部分表达优化因依据不完整已自动省略。',
   dimensionRelationAdjusted: '维度分数与问题关联不一致，已按有利于学生的原则修正。',
   dimensionEvidenceRegrounded: '部分维度证据未能逐字定位，已改用可定位的原文证据。',
+  dimensionDeductionNeedsReview: '部分维度评分依据不完整，建议教师复核。',
+  auxiliaryFeedbackOmitted: '部分辅助批改内容不完整，建议教师复核。',
 } as const
 
 export function isWellFormedUnicode(value: string): boolean {

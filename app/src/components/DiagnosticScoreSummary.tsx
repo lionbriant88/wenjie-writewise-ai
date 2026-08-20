@@ -20,6 +20,7 @@ interface DiagnosticScoreSummaryProps {
   dimensions: ScoreDimension[]
   fullScore: number
   issues: ErrorAnnotation[]
+  hasLegibilityIssue?: boolean
   onDimensionScoreChange: (dimensionId: string, score: number) => void
 }
 
@@ -27,10 +28,11 @@ export function DiagnosticScoreSummary({
   dimensions,
   fullScore,
   issues,
+  hasLegibilityIssue = false,
   onDimensionScoreChange,
 }: DiagnosticScoreSummaryProps) {
   const safeFullScore = fullScore ?? 15
-  const totalScore = calculateTotalScore(dimensions, safeFullScore)
+  const totalScore = calculateTotalScore(dimensions, safeFullScore, hasLegibilityIssue)
   const gradeBand = getGradeBand(totalScore, safeFullScore)
   const mainDeductions = getMainDeductionDimensions(dimensions)
   const reviewRecommendation = getReviewRecommendation({ totalScore, issues, fullScore: safeFullScore })
@@ -89,6 +91,11 @@ export function DiagnosticScoreSummary({
                     {isMainDeduction ? (
                       <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[11px] font-semibold text-rose-700">
                         主要扣分
+                      </span>
+                    ) : null}
+                    {dimension.needsTeacherReview ? (
+                      <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800">
+                        建议教师复核
                       </span>
                     ) : null}
                   </span>

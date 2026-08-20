@@ -25,8 +25,11 @@ const ALLOWED_REVIEW_REASONS = new Set<string>([
   GRADING_REVIEW_REASONS.printedTextExclusionUncertain,
   GRADING_REVIEW_REASONS.logicNoteGroundingOmitted,
   GRADING_REVIEW_REASONS.expressionUpgradeGroundingOmitted,
+  GRADING_REVIEW_REASONS.expressionUpgradeInvalidOmitted,
   GRADING_REVIEW_REASONS.dimensionRelationAdjusted,
   GRADING_REVIEW_REASONS.dimensionEvidenceRegrounded,
+  GRADING_REVIEW_REASONS.dimensionDeductionNeedsReview,
+  GRADING_REVIEW_REASONS.auxiliaryFeedbackOmitted,
 ])
 
 function allQuotesAreGrounded(transcript: string, quotes: readonly string[]): boolean {
@@ -112,8 +115,14 @@ export function validateGradingResultSemantics(
     const legibilityDimension = result.dimensionScores.find(({ dimensionId }) => dimensionId === 'legibility')
     if (!legibilityDimension || legibilityDimension.score >= legibilityDimension.maxScore) return false
     if (!rangesOverlapAny(transcript, [legibilityDimension.evidence], legibilityQuotes)) return false
+    const isScoreOnlyEvidenceFallback = (dimension: AiGradingResultV1['dimensionScores'][number]) => (
+      dimension.requiresTeacherReview === true && dimension.evidence === transcript
+    )
     const nonLegibilityQuotes = [
-      ...result.dimensionScores.filter(({ dimensionId }) => dimensionId !== 'legibility').map(({ evidence }) => evidence),
+      ...result.dimensionScores
+        .filter(({ dimensionId }) => dimensionId !== 'legibility')
+        .filter((dimension) => !isScoreOnlyEvidenceFallback(dimension))
+        .map(({ evidence }) => evidence),
       ...result.issues.map(({ originalText }) => originalText),
       ...result.sentenceRevisions.map(({ originalText }) => originalText),
       ...result.expressionUpgrades.map(({ originalText }) => originalText),
@@ -124,7 +133,10 @@ export function validateGradingResultSemantics(
     ]
     if (rangesOverlapAny(transcript, nonLegibilityQuotes, legibilityQuotes)) return false
     const nonLegibilityNarratives = [
-      ...result.dimensionScores.filter(({ dimensionId }) => dimensionId !== 'legibility').flatMap(({ reason, evidence }) => [reason, evidence]),
+      ...result.dimensionScores.filter(({ dimensionId }) => dimensionId !== 'legibility').flatMap((dimension) => [
+        dimension.reason,
+        ...(isScoreOnlyEvidenceFallback(dimension) ? [] : [dimension.evidence]),
+      ]),
       result.overallComment,
       ...result.issues.flatMap(({ suggestion, explanation }) => [suggestion, explanation]),
       ...fullRevision.logicNotes,

@@ -114,6 +114,19 @@ function logicIssueWithNarrative(
 }
 
 describe('applyResultPolicy', () => {
+  it('accepts an unlinked deduction only when the normalizer explicitly marks it for teacher review', () => {
+    const payload = payloadWithGrammarIssue()
+    payload.dimensionScores[0] = {
+      ...payload.dimensionScores[0],
+      relatedIssueKeys: [],
+      requiresTeacherReview: true,
+    }
+
+    expect(applyResultPolicy(payload, transcript)).toMatchObject({
+      dimensionScores: [expect.objectContaining({ score: 0.5, relatedIssueKeys: [], requiresTeacherReview: true })],
+    })
+  })
+
   it.each([
     ['warning', (payload: ResultPolicyInput) => { payload.recognitionWarnings = [{ scope: 'local', message: 'PRIVATE-STUDENT-TEXT' } as never] }],
     ['keys', (payload: ResultPolicyInput) => { payload.issues.push({ ...payload.issues[0], type: 'word_choice' }) }],
@@ -262,11 +275,11 @@ describe('applyResultPolicy', () => {
     expect(applyResultPolicy(payload, transcript)).toBeNull()
   })
 
-  it('rejects a bare filtered original in a projectable overall comment (regression: original-plus-cue narrative gate)', () => {
+  it('keeps a bare filtered original when the overall comment has no correction cue', () => {
     const payload = payloadWithUncertainSpelling()
     payload.issues[0] = { ...payload.issues[0], originalText: 'wark', suggestion: 'work' }
     payload.overallComment = 'wark'
-    expect(applyResultPolicy(payload, 'I suggest you joins the club. wark')).toBeNull()
+    expect(applyResultPolicy(payload, 'I suggest you joins the club. wark')).toMatchObject({ overallComment: 'wark' })
   })
 
   it('rejects an explicit filtered spelling correction', () => {
@@ -338,12 +351,24 @@ describe('applyResultPolicy', () => {
     expect(applyResultPolicy(payload, 'A wark appears beside blur.')).toBeNull()
   })
 
-  it('rejects an ordinary evaluation that repeats the filtered original token', () => {
+  it('keeps an ordinary evaluation that repeats the filtered original token', () => {
     const payload = payloadWithUncertainSpelling()
     payload.issues[0] = { ...payload.issues[0], originalText: 'club', suggestion: 'clue' }
     payload.dimensionScores = [{ dimensionId: 'language', score: 1, maxScore: 1, reason: 'Reviewed.', evidence: 'I suggest', relatedIssueKeys: [] }]
     payload.overallComment = 'The club response addresses the task.'
-    expect(applyResultPolicy(payload, transcript)).toBeNull()
+    expect(applyResultPolicy(payload, transcript)).toMatchObject({ overallComment: 'The club response addresses the task.' })
+  })
+
+  it('does not let a suggestion equal to word act as its own correction cue', () => {
+    const payload = payloadWithUncertainSpelling()
+    payload.issues[0] = { ...payload.issues[0], originalText: 'work', suggestion: 'word' }
+    payload.dimensionScores = [{ dimensionId: 'language', score: 1, maxScore: 1, reason: 'Reviewed.', evidence: 'I suggest', relatedIssueKeys: [] }]
+    payload.overallComment = 'This word is vivid.'
+    const withWork = `${transcript} Your work is clear.`
+    expect(applyResultPolicy(payload, withWork)).toMatchObject({ overallComment: 'This word is vivid.' })
+
+    payload.overallComment = 'Replace work with word.'
+    expect(applyResultPolicy(payload, withWork)).toBeNull()
   })
 
   it('rejects filtered spelling leaked through a retained language issue narrative', () => {

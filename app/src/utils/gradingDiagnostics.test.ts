@@ -72,6 +72,19 @@ describe('grading diagnostics', () => {
     expect(calculateTotalScore([{ ...dimensions[0], score: -2 }], 15)).toBe(0)
   })
 
+  it.each([
+    [9, 8.55, 0.45, 8],
+    [10, 9.5, 0.5, 9],
+  ] as const)('keeps a mandatory legibility deduction visible at fullScore=%i', (fullScore, languageMax, legibilityMax, expectedTotal) => {
+    const scoreDimensions: ScoreDimension[] = [
+      { id: 'language', name: 'Language', score: languageMax, maxScore: languageMax, weight: 95, reason: 'Accurate.', evidence: 'Synthetic.' },
+      { id: 'legibility', name: 'Legibility', score: 0, maxScore: legibilityMax, weight: 5, reason: 'One mark is unclear.', evidence: 'Synthetic.' },
+    ]
+
+    expect(calculateTotalScore(scoreDimensions, fullScore, true)).toBe(expectedTotal)
+    expect(calculateTotalScore(scoreDimensions, fullScore, false)).toBe(fullScore)
+  })
+
   it('formats total score separately from dimension score', () => {
     expect(formatTotalScore(13.1)).toBe('13')
     expect(formatTotalScore(13.6)).toBe('14')

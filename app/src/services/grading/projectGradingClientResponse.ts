@@ -1,6 +1,6 @@
 import type { FullTextChangeType } from '../../types/index.js'
 import { hasDistinctNormalizedText } from './gradingResultSemantics.js'
-import { calculateDimensionMaxScore, calculateTotalScore, hasValidRubricWeights } from './scoringRules.js'
+import { calculateDimensionMaxScore, calculateTotalScore, capTotalScoreForVisibleLegibilityDeduction, hasValidRubricWeights } from './scoringRules.js'
 import { validateGradingResultSemantics } from './validateGradingResultSemantics.js'
 import type { AiGradingResultV1, ConfirmedTaskPackageV2, GradingClientResponse, GradingErrorCode, GradingFailureV1 } from './types.js'
 
@@ -31,7 +31,12 @@ function projectSuccess(value: unknown, expected: ExpectedGradingResponse): AiGr
   if (!isRecord(value) || !hasExactKeys(value, ['resultVersion', 'requestId', 'essayId', 'provider', 'status', 'totalScore', 'maxScore', 'dimensionScores', 'issues', 'sentenceRevisions', 'expressionUpgrades', 'fullTextRevision', 'recognitionWarnings', 'legibilityIssues', 'overallComment', 'reviewReasons', 'createdAt'], ['modelSelfConfidence', 'transcript', 'printedTextExcluded'])) return null
   const requestId = readString(value.requestId, 200), essayId = readString(value.essayId, 200), provider = readString(value.provider, 32), status = readString(value.status, 16), totalScore = readFiniteNumber(value.totalScore), maxScore = readFiniteNumber(value.maxScore), dimensionScores = projectArray(value.dimensionScores, projectDimensionScore, 10), issues = projectArray(value.issues, projectIssue, 100), sentenceRevisions = projectArray(value.sentenceRevisions, projectSentenceRevision, 100), expressionUpgrades = projectArray(value.expressionUpgrades, projectExpressionUpgrade, 100), recognitionWarnings = readStringArray(value.recognitionWarnings, 50, 1_000), legibilityIssues = projectArray(value.legibilityIssues, projectLegibilityIssue, 50), overallComment = readString(value.overallComment, 50_000), reviewReasons = readStringArray(value.reviewReasons, 100, 50_000), createdAt = readString(value.createdAt, 100)
   if (value.resultVersion !== 'grading-result-v2' || requestId !== expected.requestId || essayId !== expected.essayId || !provider || !providers.has(provider) || !status || !successStatuses.has(status) || totalScore === null || maxScore === null || totalScore < 0 || maxScore < 0 || totalScore > maxScore || !dimensionScores || !issues || !sentenceRevisions || !expressionUpgrades || !recognitionWarnings || !legibilityIssues || !overallComment || !reviewReasons || !createdAt || !Number.isFinite(Date.parse(createdAt))) return null
-  if (!hasValidRubricWeights(dimensionScores.map(({ weight }) => weight)) || (expected.fullScore !== undefined && maxScore !== expected.fullScore) || dimensionScores.some((item) => item.maxScore !== calculateDimensionMaxScore(maxScore, item.weight)) || calculateTotalScore(dimensionScores.map(({ score }) => score), maxScore) !== totalScore) return null
+  const roundedTotalScore = calculateTotalScore(dimensionScores.map(({ score }) => score), maxScore)
+  const legibilityDimension = dimensionScores.find(({ dimensionId }) => dimensionId === 'legibility')
+  const expectedTotalScore = legibilityDimension
+    ? capTotalScoreForVisibleLegibilityDeduction(roundedTotalScore, maxScore, legibilityDimension.score, legibilityDimension.maxScore, legibilityIssues.length > 0)
+    : roundedTotalScore
+  if (!hasValidRubricWeights(dimensionScores.map(({ weight }) => weight)) || (expected.fullScore !== undefined && maxScore !== expected.fullScore) || dimensionScores.some((item) => item.maxScore !== calculateDimensionMaxScore(maxScore, item.weight)) || expectedTotalScore !== totalScore) return null
   const issueIds = new Set(issues.map(({ id }) => id))
   if (issueIds.size !== issues.length || !hasUniqueIds(sentenceRevisions) || !hasUniqueIds(expressionUpgrades) || !hasUniqueIds(legibilityIssues) || new Set(dimensionScores.map(({ dimensionId }) => dimensionId)).size !== dimensionScores.length) return null
   const fullTextRevision = projectFullTextRevision(value.fullTextRevision); if (!fullTextRevision || !hasUniqueIds(fullTextRevision.sentencePairs) || !hasUniqueIds(fullTextRevision.logicIssues)) return null

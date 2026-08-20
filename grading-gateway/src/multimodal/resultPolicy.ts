@@ -74,19 +74,16 @@ function overlapsAny(range: TranscriptRange, blocked: TranscriptRange[]): boolea
   return blocked.some((candidate) => transcriptRangesOverlap(range, candidate))
 }
 
-const FILTERED_REFERENCE_CUES = /\b(?:ambiguous|ambiguity|change|changed|correct|corrected|correction|form|handwriting|illegible|instead|legibility|misspell|misspelled|read|readable|readability|reading|replace|replaced|should|spell|spelling|uncertain|unclear|unreadable|word|written)\b|改为|拼写|应为|字迹|辨认|可读|难辨|不清/iu
+const FILTERED_REFERENCE_CUES = /\b(?:ambiguous|ambiguity|change|changed|choose|correct|corrected|correction|error|handwriting|handwritten|illegible|incorrect|instead|legibility|misspell|misspelled|prefer|readability|replace|replaced|should|spell|spelling|typo|uncertain|unclear|unreadable|use|wrong)\b|\bread\s+as\b|(?:-|=)>|→|改为|采用|使用|选择|拼写|应为|字迹|辨认|可读|难辨|不清|错误|有误/iu
 
-function explicitlyReferencesFilteredSpelling(
+export function explicitlyReferencesFilteredSpelling(
   value: string,
   filtered: RawMultimodalIssueV1[],
 ): boolean {
-  return filtered.some(({ originalText, suggestion }) => {
-    const mentionsOriginal = containsBoundedTerm(value, originalText)
-    return mentionsOriginal || (containsBoundedTerm(value, suggestion) && FILTERED_REFERENCE_CUES.test(value))
-  })
+  return explicitlyReferencesFilteredSpellingWithCue(value, filtered)
 }
 
-function explicitlyReferencesFilteredSpellingWithCue(
+export function explicitlyReferencesFilteredSpellingWithCue(
   value: string,
   filtered: RawMultimodalIssueV1[],
 ): boolean {
@@ -253,12 +250,20 @@ export function applyResultPolicy(
       ? 'dimension_evidence_linked'
       : 'dimension_evidence_unlinked')
     const atMaximum = dimension.score === dimension.maxScore
-    if ((atMaximum && dimension.relatedIssueKeys.length > 0) || (!atMaximum && dimension.relatedIssueKeys.length === 0)) return reject('dimension_relation')
+    const usesReviewFallbackEvidence = dimension.requiresTeacherReview === true
+      && dimension.relatedIssueKeys.length === 0
+      && dimension.evidence === transcript
+    const usesSpellingPolicyFallbackEvidence = dimension.spellingPolicyAdjusted === true
+      && atMaximum
+      && dimension.relatedIssueKeys.length === 0
+      && dimension.evidence === transcript
+    if ((atMaximum && dimension.relatedIssueKeys.length > 0)
+      || (!atMaximum && dimension.relatedIssueKeys.length === 0 && dimension.requiresTeacherReview !== true)) return reject('dimension_relation')
     if (dimension.relatedIssueKeys.some((key) => filteredSpellingKeys.has(key) || !keptKeys.has(key))) return reject('dimension_filtered')
-    if (overlapsAny(evidenceRange, filteredSpellingRanges)) return reject('dimension_filtered')
+    if (overlapsAny(evidenceRange, filteredSpellingRanges) && !usesReviewFallbackEvidence && !usesSpellingPolicyFallbackEvidence) return reject('dimension_filtered')
     if (dimension.dimensionId === 'legibility') {
       if (dimension.relatedIssueKeys.some((key) => !legibilityKeys.has(key))) return reject('dimension_legibility')
-    } else if (dimension.relatedIssueKeys.some((key) => legibilityKeys.has(key)) || overlapsAny(evidenceRange, legibilityRanges)) {
+    } else if (dimension.relatedIssueKeys.some((key) => legibilityKeys.has(key)) || (overlapsAny(evidenceRange, legibilityRanges) && !usesReviewFallbackEvidence)) {
       return reject('dimension_legibility')
     }
   }
@@ -271,7 +276,10 @@ export function applyResultPolicy(
   }
 
   const narratives = [
-    ...raw.dimensionScores.flatMap(({ reason, evidence }) => [reason, evidence]),
+    ...raw.dimensionScores.flatMap((dimension) => [
+      dimension.reason,
+      ...((dimension.requiresTeacherReview === true || dimension.spellingPolicyAdjusted === true) && dimension.relatedIssueKeys.length === 0 && dimension.evidence === transcript ? [] : [dimension.evidence]),
+    ]),
     raw.overallComment,
     ...keptIssues.flatMap(({ suggestion, explanation }) => [suggestion, explanation]),
     ...keptLogicNotes,
@@ -283,11 +291,30 @@ export function applyResultPolicy(
       [transcriptText, ...possibleReadings, regionDescription, explanation]
     )),
   ]
+  const narrativeGroups = [
+    ...raw.dimensionScores.map((dimension) => [
+      dimension.reason,
+      ...((dimension.requiresTeacherReview === true || dimension.spellingPolicyAdjusted === true) && dimension.relatedIssueKeys.length === 0 && dimension.evidence === transcript ? [] : [dimension.evidence]),
+    ]),
+    [raw.overallComment],
+    ...keptIssues.map(({ suggestion, explanation }) => [suggestion, explanation]),
+    ...(raw.logicNoteRecords
+      ? keptLogicNoteRecords.map(({ quote, note }) => [quote, note])
+      : keptLogicNotes.map((note) => [note])),
+    ...keptLogicIssues.map((issue) => [issue.diagnosis, issue.conservativeSuggestion, issue.polishedSuggestion]),
+    ...keptSentenceRevisions.map(({ revisedText, note }) => [revisedText, note]),
+    ...keptSentencePairs.map(({ correctedText, improvedText, explanation }) => [correctedText, improvedText, explanation]),
+    ...keptExpressionUpgrades.map(({ upgradedText, note }) => [upgradedText, note]),
+  ]
+  if (narrativeGroups.some((group) => explicitlyReferencesFilteredSpelling(group.join('\n'), filteredSpelling))) return reject('narrative')
   if (narratives.some((value) => explicitlyReferencesFilteredSpelling(value, filteredSpelling))) return reject('narrative')
   if (raw.recognitionWarnings.some(({ message }) => explicitlyReferencesFilteredSpellingWithCue(message, filteredSpelling))) return reject('narrative')
 
   const nonLegibilityNarratives = [
-    ...raw.dimensionScores.filter(({ dimensionId }) => dimensionId !== 'legibility').flatMap(({ reason, evidence }) => [reason, evidence]),
+    ...raw.dimensionScores.filter(({ dimensionId }) => dimensionId !== 'legibility').flatMap((dimension) => [
+      dimension.reason,
+      ...((dimension.requiresTeacherReview === true || dimension.spellingPolicyAdjusted === true) && dimension.relatedIssueKeys.length === 0 && dimension.evidence === transcript ? [] : [dimension.evidence]),
+    ]),
     raw.overallComment,
     ...keptIssues.flatMap(({ suggestion, explanation }) => [suggestion, explanation]),
     ...keptLogicNotes,

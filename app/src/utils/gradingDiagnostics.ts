@@ -1,4 +1,8 @@
 import type { ErrorAnnotation, ScoreDimension } from '../types'
+import {
+  calculateTotalScore as calculateSharedTotalScore,
+  capTotalScoreForVisibleLegibilityDeduction,
+} from '../services/grading/scoringRules'
 
 export interface GradeBand {
   label: '优秀' | '良好' | '合格' | '待提升' | '基础薄弱'
@@ -37,10 +41,18 @@ export function clampDimensionScore(value: number, maxScore: number) {
   return Math.min(rounded, maxScore)
 }
 
-export function calculateTotalScore(dimensions: ScoreDimension[], fullScore = 15) {
-  const rawTotal = dimensions.reduce((sum, dimension) => sum + dimension.score, 0)
-  const roundedTotal = Math.round(rawTotal)
-  return Math.min(Math.max(roundedTotal, 0), fullScore)
+export function calculateTotalScore(dimensions: ScoreDimension[], fullScore = 15, hasLegibilityIssue = false) {
+  const roundedTotal = calculateSharedTotalScore(dimensions.map(({ score }) => score), fullScore)
+  const legibilityDimension = dimensions.find(({ id }) => id === 'legibility')
+  return legibilityDimension
+    ? capTotalScoreForVisibleLegibilityDeduction(
+        roundedTotal,
+        fullScore,
+        legibilityDimension.score,
+        legibilityDimension.maxScore,
+        hasLegibilityIssue,
+      )
+    : roundedTotal
 }
 
 export function formatTotalScore(score: number) {

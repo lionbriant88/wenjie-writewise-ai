@@ -1,8 +1,9 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import { AppStateProvider } from '../context/AppStateContext'
+import { mockGradingResults, mockTasks } from '../data/mockData'
 import { createMockGradingClient } from '../services/grading/mockGradingClient'
 import type { GradingClient } from '../services/grading/types'
 import { ClassReviewPage } from './ClassReviewPage'
@@ -221,6 +222,21 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.queryByRole('button', { name: '确认本篇批改' })).not.toBeInTheDocument()
   })
 
+  it('keeps a low-confidence review notice visible after the result is confirmed', () => {
+    render(
+      <GradingReviewBanner
+        essayStatus="completed"
+        hasResult
+        reviewReasons={['部分维度评分依据不完整，建议教师复核。']}
+        onConfirm={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('建议教师复核')).toBeInTheDocument()
+    expect(screen.getByText('部分维度评分依据不完整，建议教师复核。')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '确认本篇批改' })).not.toBeInTheDocument()
+  })
+
   it('shows a compact diagnostic summary with editable dimension scores', () => {
     renderEssayDetail()
 
@@ -255,6 +271,44 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.getByText('良好')).toBeInTheDocument()
     expect(screen.getByText('分数已更新')).toBeInTheDocument()
     expect(screen.getAllByText('已由教师调整').length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('keeps a 9-point mandatory legibility deduction visible before and after a teacher score edit', () => {
+    const task = mockTasks.find(({ id }) => id === 'task-1')!
+    const result = mockGradingResults.find(({ essayId }) => essayId === 'task-1-essay-1')!
+    const originalFullScore = task.fullScore
+    const originalTotalScore = result.totalScore
+    const originalDimensions = result.dimensionScores
+    const originalLegibilityIssues = result.legibilityIssues
+    task.fullScore = 9
+    result.totalScore = 8
+    result.dimensionScores = [
+      { id: 'language', name: 'Language', score: 8.55, maxScore: 8.55, weight: 95, reason: 'Accurate.', evidence: 'Synthetic.' },
+      { id: 'legibility', name: 'Legibility', score: 0, maxScore: 0.45, weight: 5, reason: 'One mark is unclear.', evidence: 'Synthetic.' },
+    ]
+    result.legibilityIssues = [{
+      id: 'legibility-visible', transcriptText: 'mock', possibleReadings: ['mock', 'mark'], pageNumber: 1,
+      regionDescription: 'Synthetic region.', explanation: 'Synthetic ambiguity.', defaultOutcome: 'count_as_legibility_error',
+    }]
+
+    try {
+      renderEssayDetail()
+      const header = screen.getByRole('region', { name: '顶部批改操作' })
+      const summary = screen.getByRole('heading', { name: '诊断摘要' }).closest('section')!
+      expect(within(header).getByText(/总分/)).toHaveTextContent('总分 8 / 9')
+      expect(within(summary).getByText('8')).toBeInTheDocument()
+
+      fireEvent.change(screen.getByRole('spinbutton', { name: /Language/ }), { target: { value: '8.5' } })
+
+      expect(screen.getByText('分数已更新')).toBeInTheDocument()
+      expect(within(header).getByText(/总分/)).toHaveTextContent('总分 8 / 9')
+      expect(within(summary).getByText('8')).toBeInTheDocument()
+    } finally {
+      task.fullScore = originalFullScore
+      result.totalScore = originalTotalScore
+      result.dimensionScores = originalDimensions
+      result.legibilityIssues = originalLegibilityIssues
+    }
   })
 
   it('clamps invalid dimension score values without rounding valid max scores upward', () => {

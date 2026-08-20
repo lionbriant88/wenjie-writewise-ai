@@ -39,27 +39,36 @@ export function GradingReviewBanner({
   reviewReasons: string[]
   onConfirm: () => void
 }) {
-  if (essayStatus !== 'grading_ready') return null
+  const isPendingConfirmation = essayStatus === 'grading_ready'
+  if (!isPendingConfirmation && reviewReasons.length === 0) return null
 
   return (
-    <section aria-label="教师确认批改结果" className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+    <section aria-label={isPendingConfirmation ? '教师确认批改结果' : '建议教师复核'} className="rounded-lg border border-amber-200 bg-amber-50 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold text-amber-950">AI 批改已完成，尚待教师确认。</p>
-          <p className="mt-1 text-xs leading-5 text-amber-800">请核对评分、问题定位和改写建议后再确认。</p>
+          <p className="text-sm font-semibold text-amber-950">
+            {reviewReasons.length > 0 ? '建议教师复核' : 'AI 批改已完成，尚待教师确认。'}
+          </p>
+          <p className="mt-1 text-xs leading-5 text-amber-800">
+            {reviewReasons.length > 0
+              ? 'AI 已给出完整评分；以下依据置信度较低，请教师重点核对。'
+              : '请核对评分、问题定位和改写建议后再确认。'}
+          </p>
         </div>
-        <button
-          type="button"
-          disabled={!hasResult}
-          onClick={onConfirm}
-          className="tech-focus rounded-lg bg-amber-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-800 disabled:cursor-not-allowed disabled:bg-amber-300"
-        >
-          确认本篇批改
-        </button>
+        {isPendingConfirmation ? (
+          <button
+            type="button"
+            disabled={!hasResult}
+            onClick={onConfirm}
+            className="tech-focus rounded-lg bg-amber-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-800 disabled:cursor-not-allowed disabled:bg-amber-300"
+          >
+            确认本篇批改
+          </button>
+        ) : null}
       </div>
       {reviewReasons.length > 0 ? (
         <div className="mt-3 border-t border-amber-200 pt-3">
-          <p className="text-xs font-semibold text-amber-950">教师复核项</p>
+          <p className="text-xs font-semibold text-amber-950">低置信度依据</p>
           <ul className="mt-1 list-disc space-y-1 pl-5 text-xs leading-5 text-amber-900">
             {reviewReasons.map((reason) => <li key={reason}>{reason}</li>)}
           </ul>
@@ -221,7 +230,8 @@ export function EssayResultPage() {
   }
 
   const fullScore = task.fullScore ?? 15
-  const totalScore = calculateTotalScore(result.dimensionScores, fullScore)
+  const hasLegibilityIssue = (result.legibilityIssues?.length ?? 0) > 0
+  const totalScore = calculateTotalScore(result.dimensionScores, fullScore, hasLegibilityIssue)
   const reviewIssueItems = buildReviewIssueItems({
     annotations: result.errorAnnotations,
     revisions: result.sentenceRevisions,
@@ -384,6 +394,7 @@ export function EssayResultPage() {
                 dimensions={result.dimensionScores}
                 fullScore={fullScore}
                 issues={result.errorAnnotations}
+                hasLegibilityIssue={hasLegibilityIssue}
                 onDimensionScoreChange={(dimensionId, nextScore) => {
                   const nextDimensions = result.dimensionScores.map((dimension) =>
                     dimension.id === dimensionId
@@ -393,7 +404,7 @@ export function EssayResultPage() {
 
                   updateGradingResult(essay.id, {
                     dimensionScores: nextDimensions,
-                    totalScore: calculateTotalScore(nextDimensions, fullScore),
+                    totalScore: calculateTotalScore(nextDimensions, fullScore, hasLegibilityIssue),
                   })
                   showSaveNotice('分数已更新')
                 }}

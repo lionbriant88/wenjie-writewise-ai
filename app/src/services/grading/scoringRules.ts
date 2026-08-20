@@ -23,3 +23,18 @@ export function calculateTotalScore(scores: number[], fullScore: number) {
   const rounded = Math.round(scores.map(roundScore2).reduce((sum, score) => sum + score, 0))
   return Math.min(Math.max(rounded, 0), fullScore)
 }
+
+export function capTotalScoreForVisibleLegibilityDeduction(
+  totalScore: number,
+  fullScore: number,
+  legibilityScore: number,
+  legibilityMaxScore: number,
+  hasLegibilityIssue: boolean,
+) {
+  return hasLegibilityIssue
+    && legibilityMaxScore > 0
+    && legibilityScore < legibilityMaxScore
+    && totalScore === fullScore
+    ? Math.max(0, fullScore - 1)
+    : totalScore
+}

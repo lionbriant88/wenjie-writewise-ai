@@ -114,6 +114,9 @@ export interface RawDimensionScoreV1 {
   reason: string
   evidence: string
   relatedIssueKeys: string[]
+  requiresTeacherReview?: boolean
+  /** Internal normalizer marker for a score restored by the conservative spelling policy. */
+  spellingPolicyAdjusted?: boolean
 }
 
 export type RawRecognitionWarningScopeV1 = 'global_unreadable' | 'printed_boundary'

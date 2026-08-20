@@ -1,6 +1,7 @@
 import {
   calculateDimensionMaxScore,
   calculateTotalScore,
+  capTotalScoreForVisibleLegibilityDeduction,
   roundScore2,
 } from '../../app/src/services/grading/scoringRules.js'
 import { GRADING_REVIEW_REASONS } from '../../app/src/services/grading/gradingResultSemantics.js'
@@ -121,7 +122,18 @@ function policyProjectionInputIsSafe(input: PolicyProjectionInput): boolean {
     const maxScore = calculateDimensionMaxScore(request.task.fullScore, dimension.weight)
     if (!score || score.dimensionId !== dimension.id || score.weight !== dimension.weight || score.maxScore !== maxScore || !Number.isFinite(score.score) || score.score < 0 || score.score > maxScore || !safeText(score.reason) || !safeText(score.evidence)) return false
   }
-  if (calculateTotalScore(dimensionScores.map(({ score }) => score), request.task.fullScore) !== totalScore) return false
+  const roundedTotalScore = calculateTotalScore(dimensionScores.map(({ score }) => score), request.task.fullScore)
+  const legibilityDimension = dimensionScores.find(({ dimensionId }) => dimensionId === 'legibility')
+  const expectedTotalScore = legibilityDimension
+    ? capTotalScoreForVisibleLegibilityDeduction(
+      roundedTotalScore,
+      request.task.fullScore,
+      legibilityDimension.score,
+      legibilityDimension.maxScore,
+      policy.legibilityIssues.length > 0,
+    )
+    : roundedTotalScore
+  if (expectedTotalScore !== totalScore) return false
   const issueKeys = policy.issues.map(({ issueKey }) => issueKey)
   const logicIssueKeys = policy.logicIssues.map(({ issueKey }) => issueKey)
   const allIssueKeys = [...issueKeys, ...logicIssueKeys]
