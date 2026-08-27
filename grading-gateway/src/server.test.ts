@@ -384,6 +384,53 @@ describe('grading gateway server boundary', () => {
     expect(calls).toBe(1)
   })
 
+  it('enforces the material-context hard deadline when the Provider ignores abort and later resolves', async () => {
+    let calls = 0
+    let observedSignal: AbortSignal | undefined
+    let providerSettled = false
+    const diagnostics: unknown[] = []
+    const provider = fakeMultimodalProvider({
+      async generateMaterialContext(input) {
+        calls += 1
+        observedSignal = input.signal
+        return new Promise<TaskMaterialContextV1>((resolve) => {
+          setTimeout(() => {
+            providerSettled = true
+            resolve(materialContextFixture())
+          }, 50)
+        })
+      },
+    })
+    const response = await request(createServer({
+      multimodalProvider: provider,
+      timeoutMs: 5,
+      onDiagnostic: (diagnostic: unknown) => diagnostics.push(diagnostic),
+    }))
+      .post('/tasks/material-context')
+      .field('requestId', 'context-hard-deadline')
+      .field('fullScore', '15')
+      .field('writingRequirement', 'Teacher requirement.')
+      .field('materialManifest', JSON.stringify([{ id: 'text-1', kind: 'text', textIndex: 0 }]))
+      .field('textMaterials', JSON.stringify([{ displayName: 'prompt.docx', text: 'Synthetic source text.' }]))
+      .expect(503)
+
+    expect(response.body).toMatchObject({
+      requestId: 'context-hard-deadline', status: 'failed',
+      error: { code: 'provider_timeout', retryable: true },
+    })
+    expect(response.body).not.toHaveProperty('materialContext')
+    expect(calls).toBe(1)
+    expect(observedSignal?.aborted).toBe(true)
+    expect(providerSettled).toBe(false)
+    const responseSnapshot = JSON.stringify(response.body)
+
+    await new Promise((resolve) => setTimeout(resolve, 70))
+
+    expect(providerSettled).toBe(true)
+    expect(JSON.stringify(response.body)).toBe(responseSnapshot)
+    expect(diagnostics).toEqual([{ stage: 'provider', diagnosticCode: 'provider_timeout' }])
+  })
+
   it('maps material-context authentication errors without exposing Provider or material content', async () => {
     let calls = 0
     const diagnostics: unknown[] = []
@@ -496,6 +543,52 @@ describe('grading gateway server boundary', () => {
       error: { code: 'provider_timeout', retryable: true },
     })
     expect(response.body).not.toHaveProperty('rubric')
+  })
+
+  it('enforces the rubric hard deadline when the Provider ignores abort and later resolves', async () => {
+    let calls = 0
+    let observedSignal: AbortSignal | undefined
+    let providerSettled = false
+    const diagnostics: unknown[] = []
+    const provider = fakeMultimodalProvider({
+      async generateRubric(input) {
+        calls += 1
+        observedSignal = input.signal
+        return new Promise((resolve) => {
+          setTimeout(() => {
+            providerSettled = true
+            resolve(generatedRubricFixture())
+          }, 50)
+        })
+      },
+    })
+    const response = await request(createServer({
+      multimodalProvider: provider,
+      timeoutMs: 5,
+      onDiagnostic: (diagnostic: unknown) => diagnostics.push(diagnostic),
+    }))
+      .post('/tasks/rubric')
+      .field('requestId', 'rubric-hard-deadline')
+      .field('fullScore', '15')
+      .field('materialManifest', JSON.stringify([{ id: 'text-1', kind: 'text', textIndex: 0 }]))
+      .field('textMaterials', JSON.stringify([{ displayName: 'prompt.docx', text: 'Synthetic source text.' }]))
+      .expect(503)
+
+    expect(response.body).toMatchObject({
+      requestId: 'rubric-hard-deadline', status: 'failed',
+      error: { code: 'provider_timeout', retryable: true },
+    })
+    expect(response.body).not.toHaveProperty('rubric')
+    expect(calls).toBe(1)
+    expect(observedSignal?.aborted).toBe(true)
+    expect(providerSettled).toBe(false)
+    const responseSnapshot = JSON.stringify(response.body)
+
+    await new Promise((resolve) => setTimeout(resolve, 70))
+
+    expect(providerSettled).toBe(true)
+    expect(JSON.stringify(response.body)).toBe(responseSnapshot)
+    expect(diagnostics).toEqual([{ stage: 'provider', diagnosticCode: 'provider_timeout' }])
   })
 
   it('fails closed when an injected rubric provider returns a generated rubric without the exact 5% legibility dimension', async () => {

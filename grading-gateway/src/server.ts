@@ -112,6 +112,26 @@ function taskMaterialUploadBoundary(request: Request, response: Response, next: 
   })
 }
 
+async function runTaskProviderWithDeadline<T>(
+  controller: AbortController,
+  timeoutMs: number,
+  runProvider: () => Promise<T>,
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort()
+      reject(new Error('Task route provider deadline exceeded.'))
+    }, timeoutMs)
+  })
+  const providerResult = Promise.resolve().then(runProvider)
+  try {
+    return await Promise.race([providerResult, deadline])
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout)
+  }
+}
+
 interface ImageGradeMetadata {
   requestVersion: 'multimodal-grading-request-v2'
   requestId: string
@@ -203,16 +223,19 @@ export function createServer(options: CreateServerOptions = {}) {
     }
 
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 60_000)
     try {
       const provider = options.multimodalProvider ?? getMultimodalProvider(options.providerName ?? 'mock')
-      const providerContext = await provider.generateMaterialContext({
-        requestId: validated.value.requestId,
-        fullScore: validated.value.fullScore,
-        writingRequirement,
-        materials: validated.value.materials,
-        signal: controller.signal,
-      })
+      const providerContext = await runTaskProviderWithDeadline(
+        controller,
+        options.timeoutMs ?? 60_000,
+        () => provider.generateMaterialContext({
+          requestId: validated.value.requestId,
+          fullScore: validated.value.fullScore,
+          writingRequirement,
+          materials: validated.value.materials,
+          signal: controller.signal,
+        }),
+      )
       const context = validateTaskMaterialContext(providerContext)
       if (!context.ok) {
         emitSafeGradingDiagnostic(options.onDiagnostic, { stage: 'normalization', diagnosticCode: 'material_context_validation' })
@@ -233,8 +256,6 @@ export function createServer(options: CreateServerOptions = {}) {
             : 'provider_unavailable',
       })
       response.status(503).json(safe)
-    } finally {
-      clearTimeout(timeout)
     }
   })
 
@@ -248,10 +269,13 @@ export function createServer(options: CreateServerOptions = {}) {
     }
 
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 60_000)
     try {
       const provider = options.multimodalProvider ?? getMultimodalProvider(options.providerName ?? 'mock')
-      const providerRubric = await provider.generateRubric({ ...validated.value, signal: controller.signal })
+      const providerRubric = await runTaskProviderWithDeadline(
+        controller,
+        options.timeoutMs ?? 60_000,
+        () => provider.generateRubric({ ...validated.value, signal: controller.signal }),
+      )
       const rubric = validateGeneratedRubric(providerRubric)
       if (!rubric.ok) {
         emitSafeGradingDiagnostic(options.onDiagnostic, { stage: 'normalization', diagnosticCode: 'rubric_validation' })
@@ -272,8 +296,6 @@ export function createServer(options: CreateServerOptions = {}) {
             : 'provider_unavailable',
       })
       response.status(503).json(safe)
-    } finally {
-      clearTimeout(timeout)
     }
   })
   app.post('/grading/grade-images', (request, response, next) => {
