@@ -83,16 +83,13 @@ describe('task rubric form', () => {
     expect(validate(dimensions)).toMatchObject({ valid: false, errors: { dimensions: expect.any(String) } })
   })
 
-  it.each([
-    ['under the tolerance', 99.998],
-    ['over the tolerance', 100.002],
-  ])('rejects totals %s', (_label, total) => {
+  it.each([99.998999, 100.001001])('rejects decimal totals just outside the tolerance: %s', (total) => {
     const dimensions = validDimensions()
     dimensions[0] = { ...dimensions[0]!, weight: total - 60 }
     expect(validate(dimensions)).toMatchObject({ valid: false, totalWeight: total, errors: { dimensions: expect.any(String) } })
   })
 
-  it.each([99.9995, 100.0005])('accepts decimal totals within the tolerance: %s', (total) => {
+  it.each([99.999, 99.9995, 100.0005, 100.001])('accepts decimal totals at or within the tolerance: %s', (total) => {
     const dimensions = validDimensions()
     dimensions[0] = { ...dimensions[0]!, weight: total - 60 }
     expect(validate(dimensions)).toMatchObject({ valid: true, totalWeight: total })

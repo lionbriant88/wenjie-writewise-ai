@@ -105,7 +105,8 @@ export function validateRubricForm({ fullScore, writingRequirement, dimensions }
   }
 
   const totalWeight = dimensions.reduce((total, { weight }) => total + weight, 0)
-  const differenceFromHundred = Math.abs(totalWeight - 100)
+  // Keep the inclusive 0.001 rule stable at decimal boundaries without altering user-entered weights.
+  const differenceFromHundred = Number(Math.abs(totalWeight - 100).toFixed(12))
   if (!Number.isFinite(totalWeight) || differenceFromHundred > TOTAL_WEIGHT_TOLERANCE) {
     errors.dimensions = '评分维度权重合计必须为 100%。'
   }
