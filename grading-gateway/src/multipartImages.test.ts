@@ -119,6 +119,7 @@ describe('rubric multipart image boundary', () => {
 
   it('accepts exactly 8 MB and ten images when the provider is configured', async () => {
     const provider = {
+      async generateMaterialContext() { throw new Error('not used') },
       async generateRubric() {
         return {
           taskName: 'Synthetic task', materialSummary: 'A synthetic task material summary.',

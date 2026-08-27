@@ -1,4 +1,5 @@
-import type { ConfirmedTaskPackageV2, GeneratedRubricV1 } from '../multimodal/types.js'
+import type { GatewayTaskMaterial } from '../multipartTaskMaterials.js'
+import type { ConfirmedTaskPackageV2, GeneratedRubricV1, TaskMaterialContextV1 } from '../multimodal/types.js'
 
 export interface GatewayImageInput {
   pageId: string
@@ -6,12 +7,29 @@ export interface GatewayImageInput {
   buffer: Buffer
 }
 
-export interface GenerateRubricProviderInput {
+export interface TaskMaterialProviderInput {
+  requestId: string
+  fullScore: number
+  materials: GatewayTaskMaterial[]
+  signal: AbortSignal
+}
+
+export interface GenerateMaterialContextProviderInput extends TaskMaterialProviderInput {
+  writingRequirement: string
+}
+
+export interface GenerateRubricProviderInput extends TaskMaterialProviderInput {
+  writingRequirement?: string
+}
+
+interface LegacyImageRubricProviderInput {
   requestId: string
   fullScore: number
   pages: GatewayImageInput[]
   signal: AbortSignal
 }
+
+export type GenerateRubricProviderRequest = GenerateRubricProviderInput | LegacyImageRubricProviderInput
 
 export interface GradeEssayProviderInput {
   requestId: string
@@ -24,6 +42,7 @@ export interface GradeEssayProviderInput {
 }
 
 export interface MultimodalProvider {
-  generateRubric(input: GenerateRubricProviderInput): Promise<GeneratedRubricV1>
+  generateMaterialContext(input: GenerateMaterialContextProviderInput): Promise<TaskMaterialContextV1>
+  generateRubric(input: GenerateRubricProviderRequest): Promise<GeneratedRubricV1>
   gradeEssay(input: GradeEssayProviderInput): Promise<unknown>
 }

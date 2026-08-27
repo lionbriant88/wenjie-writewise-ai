@@ -28,6 +28,7 @@ describe('grading gateway server boundary', () => {
   it('requires exact v2 multipart metadata and rejects missing, v1, or unexpected fields before Provider use', async () => {
     let calls = 0
     const provider: MultimodalProvider = {
+      async generateMaterialContext() { throw new Error('not used') },
       async generateRubric() { throw new Error('not used') },
       async gradeEssay(input) { calls += 1; return strictMultimodalPayload(input.confirmedTranscript ?? '') },
     }
@@ -54,6 +55,7 @@ describe('grading gateway server boundary', () => {
 
   it('accepts a confirmed task metadata payload above the rubric upload field limit', async () => {
     const provider: MultimodalProvider = {
+      async generateMaterialContext() { throw new Error('not used') },
       async generateRubric() { throw new Error('not used') },
       async gradeEssay() { return strictMultimodalPayload('Student text.') },
     }
@@ -75,6 +77,7 @@ describe('grading gateway server boundary', () => {
   it('grades uploaded essay images once with stable metadata IDs and returns the normalized transcript', async () => {
     const calls: Parameters<MultimodalProvider['gradeEssay']>[] = []
     const provider: MultimodalProvider = {
+      async generateMaterialContext() { throw new Error('not used') },
       async generateRubric() { throw new Error('not used') },
       async gradeEssay(input) {
         calls.push([input])
@@ -110,6 +113,7 @@ describe('grading gateway server boundary', () => {
     }
     const calls: Parameters<MultimodalProvider['gradeEssay']>[] = []
     const matchingProvider: MultimodalProvider = {
+      async generateMaterialContext() { throw new Error('not used') },
       async generateRubric() { throw new Error('not used') },
       async gradeEssay(input) { calls.push([input]); return strictMultimodalPayload(teacherText) },
     }
@@ -120,6 +124,7 @@ describe('grading gateway server boundary', () => {
 
     let mismatchCalls = 0
     const differentProvider: MultimodalProvider = {
+      async generateMaterialContext() { throw new Error('not used') },
       async generateRubric() { throw new Error('not used') },
       async gradeEssay() { mismatchCalls += 1; return strictMultimodalPayload('MODEL-DIFFERENT') },
     }
@@ -140,6 +145,7 @@ describe('grading gateway server boundary', () => {
   it('rejects image files attached to a teacher-confirmed text regrade', async () => {
     let calls = 0
     const provider: MultimodalProvider = {
+      async generateMaterialContext() { throw new Error('not used') },
       async generateRubric() { throw new Error('not used') },
       async gradeEssay() { calls += 1; throw new Error('must not run') },
     }
@@ -158,6 +164,7 @@ describe('grading gateway server boundary', () => {
     expect(exactly50k).toHaveLength(50_000)
     let calls = 0
     const provider: MultimodalProvider = {
+      async generateMaterialContext() { throw new Error('not used') },
       async generateRubric() { throw new Error('not used') },
       async gradeEssay(input) {
         calls += 1
@@ -182,6 +189,7 @@ describe('grading gateway server boundary', () => {
   it('rejects either lone surrogate before Provider use while accepting a valid astral pair', async () => {
     let calls = 0
     const provider: MultimodalProvider = {
+      async generateMaterialContext() { throw new Error('not used') },
       async generateRubric() { throw new Error('not used') },
       async gradeEssay(input) {
         calls += 1
@@ -209,6 +217,7 @@ describe('grading gateway server boundary', () => {
   it('isolates image grading failures without retrying or exposing the raw essay', async () => {
     let calls = 0
     const provider: MultimodalProvider = {
+      async generateMaterialContext() { throw new Error('not used') },
       async generateRubric() { throw new Error('not used') },
       async gradeEssay() { calls += 1; throw new GradingProviderError('provider_unavailable', 'safe failure', true) },
     }
@@ -224,6 +233,7 @@ describe('grading gateway server boundary', () => {
   it('emits a provider-stage parse diagnostic without adding internal fields to the HTTP response', async () => {
     const diagnostics: unknown[] = []
     const provider: MultimodalProvider = {
+      async generateMaterialContext() { throw new Error('not used') },
       async generateRubric() { throw new Error('not used') },
       async gradeEssay() {
         throw new GradingProviderError(
@@ -261,6 +271,7 @@ describe('grading gateway server boundary', () => {
     }
     const calls: Parameters<MultimodalProvider['generateRubric']>[] = []
     const provider: MultimodalProvider = {
+      async generateMaterialContext() { throw new Error('not used') },
       async generateRubric(input) { calls.push([input]); return generatedRubric },
       async gradeEssay() { throw new Error('not used') },
     }
@@ -287,6 +298,7 @@ describe('grading gateway server boundary', () => {
 
   it('maps a rubric provider timeout without returning partial task state', async () => {
     const provider: MultimodalProvider = {
+      async generateMaterialContext() { throw new Error('not used') },
       async generateRubric(input) {
         await new Promise<void>((_resolve, reject) => {
           input.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
@@ -313,6 +325,7 @@ describe('grading gateway server boundary', () => {
   it('fails closed when an injected rubric provider returns a generated rubric without the exact 5% legibility dimension', async () => {
     const diagnostics: unknown[] = []
     const provider: MultimodalProvider = {
+      async generateMaterialContext() { throw new Error('not used') },
       async generateRubric() {
         return {
           taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write clearly.'], constraints: [],
