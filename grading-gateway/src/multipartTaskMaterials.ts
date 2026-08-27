@@ -11,6 +11,7 @@ const SUPPORTED_IMAGE_TYPES = new Set<ImageMimeType>([
   'image/webp',
 ])
 const BODY_KEYS = ['requestId', 'fullScore', 'writingRequirement', 'materialManifest', 'textMaterials'] as const
+const REQUIRED_BODY_KEYS = ['requestId', 'fullScore', 'materialManifest', 'textMaterials'] as const
 const INVALID_REQUEST_MESSAGE = 'Task material request is invalid.'
 const REQUEST_TOO_LARGE_MESSAGE = 'Task material upload exceeds the allowed limit.'
 
@@ -67,6 +68,11 @@ interface TextMaterialEntry {
   text: string
 }
 
+interface ValidatedImageFile {
+  mimeType: ImageMimeType
+  buffer: Buffer
+}
+
 function invalid(): TaskMaterialMultipartValidationResult {
   return { ok: false, error: { code: 'invalid_request', message: INVALID_REQUEST_MESSAGE } }
 }
@@ -79,13 +85,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function isAllowedBodyRecord(value: unknown): value is Record<string, unknown> {
+  if (!isRecord(value)) return false
+  const prototype = Object.getPrototypeOf(value) as unknown
+  return prototype === Object.prototype || prototype === null
+}
+
 function hasExactlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   const actualKeys = Object.keys(value)
   return actualKeys.length === keys.length && actualKeys.every((key) => keys.includes(key))
 }
 
 function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  return Object.keys(value).every((key) => keys.includes(key))
+  return Reflect.ownKeys(value).every((key) => typeof key === 'string' && keys.includes(key))
 }
 
 function readTrimmedString(value: unknown, maxLength: number): string | null {
@@ -162,14 +174,18 @@ export function validateTaskMaterialMultipart(
   files: readonly globalThis.Express.Multer.File[] | undefined,
   mode: WritingRequirementMode,
 ): TaskMaterialMultipartValidationResult {
-  if (!isRecord(body) || !hasOnlyKeys(body, BODY_KEYS)) return invalid()
+  if (
+    !isAllowedBodyRecord(body)
+    || !hasOnlyKeys(body, BODY_KEYS)
+    || REQUIRED_BODY_KEYS.some((key) => !Object.hasOwn(body, key))
+  ) return invalid()
 
   const requestId = readTrimmedString(body.requestId, 128)
   const fullScore = readFullScore(body.fullScore)
   if (!requestId || fullScore === null) return invalid()
 
   let writingRequirement: string | undefined
-  if (body.writingRequirement !== undefined) {
+  if (Object.hasOwn(body, 'writingRequirement')) {
     if (typeof body.writingRequirement !== 'string') return invalid()
     const trimmedRequirement = body.writingRequirement.trim()
     if (trimmedRequirement.length > MAX_WRITING_REQUIREMENT_CHARACTERS) return tooLarge()
@@ -182,12 +198,25 @@ export function validateTaskMaterialMultipart(
   if (manifest === 'too_large' || textMaterials === 'too_large') return tooLarge()
   if (!manifest || !textMaterials) return invalid()
 
-  const imageFiles = files ?? []
-  if (imageFiles.length > MAX_TASK_MATERIAL_UNITS) return tooLarge()
-  if (imageFiles.some((file) => file.size > MAX_TASK_MATERIAL_IMAGE_BYTES || file.buffer.length > MAX_TASK_MATERIAL_IMAGE_BYTES)) {
-    return tooLarge()
+  if (files !== undefined && !Array.isArray(files)) return invalid()
+  const rawImageFiles: readonly unknown[] = files ?? []
+  if (rawImageFiles.length > MAX_TASK_MATERIAL_UNITS) return tooLarge()
+  const imageFiles: ValidatedImageFile[] = []
+  for (let index = 0; index < rawImageFiles.length; index += 1) {
+    if (!Object.hasOwn(rawImageFiles, index)) return invalid()
+    const file = rawImageFiles[index]
+    if (!isRecord(file) || typeof file.mimetype !== 'string' || !SUPPORTED_IMAGE_TYPES.has(file.mimetype as ImageMimeType)) {
+      return invalid()
+    }
+    if (
+      !Buffer.isBuffer(file.buffer)
+      || !Number.isSafeInteger(file.size)
+      || (file.size as number) < 0
+      || file.size !== file.buffer.length
+    ) return invalid()
+    if ((file.size as number) > MAX_TASK_MATERIAL_IMAGE_BYTES) return tooLarge()
+    imageFiles.push({ mimeType: file.mimetype as ImageMimeType, buffer: file.buffer })
   }
-  if (imageFiles.some((file) => !SUPPORTED_IMAGE_TYPES.has(file.mimetype as ImageMimeType))) return invalid()
 
   const imageIndices = manifest
     .filter((entry): entry is ImageManifestEntry => entry.kind === 'image')
@@ -205,7 +234,7 @@ export function validateTaskMaterialMultipart(
       return {
         kind: 'image',
         unitId: entry.id,
-        mimeType: file.mimetype as ImageMimeType,
+        mimeType: file.mimeType,
         buffer: file.buffer,
       }
     }

@@ -66,7 +66,7 @@ describe('validateTaskMaterialContext', () => {
     ['zero writing requirements', { writingRequirements: [] }],
     ['51 writing requirements', { writingRequirements: Array.from({ length: 51 }, () => 'Requirement') }],
     ['blank writing requirement', { writingRequirements: [' '] }],
-    ['5,001-character writing requirement', { writingRequirements: ['r'.repeat(5_001)] }],
+    ['10,001-character writing requirement', { writingRequirements: ['r'.repeat(10_001)] }],
     ['51 constraints', { constraints: Array.from({ length: 51 }, () => 'Constraint') }],
     ['blank constraint', { constraints: [' '] }],
     ['5,001-character constraint', { constraints: ['c'.repeat(5_001)] }],
@@ -83,7 +83,7 @@ describe('validateTaskMaterialContext', () => {
   it('accepts every inclusive size and item-count boundary', () => {
     const result = validateTaskMaterialContext({
       materialSummary: 's'.repeat(20_000),
-      writingRequirements: Array.from({ length: 50 }, () => 'r'.repeat(5_000)),
+      writingRequirements: Array.from({ length: 50 }, () => 'r'.repeat(10_000)),
       constraints: Array.from({ length: 50 }, () => 'c'.repeat(5_000)),
       reviewWarnings: Array.from({ length: 50 }, () => 'w'.repeat(5_000)),
     })
@@ -102,7 +102,7 @@ describe('validateTaskMaterialContext', () => {
           type: 'array',
           minItems: 1,
           maxItems: 50,
-          items: { type: 'string', minLength: 1, maxLength: 5_000, pattern: '\\S' },
+          items: { type: 'string', minLength: 1, maxLength: 10_000, pattern: '\\S' },
         },
         constraints: {
           type: 'array',
@@ -118,6 +118,60 @@ describe('validateTaskMaterialContext', () => {
         },
       },
     })
+  })
+
+  it('rejects raw strings whose maximum-length content has surrounding whitespace', () => {
+    expect(taskMaterialContextSchema.properties.materialSummary.maxLength).toBe(20_000)
+    expect(taskMaterialContextSchema.properties.writingRequirements.items.maxLength).toBe(10_000)
+    expect(taskMaterialContextSchema.properties.constraints.items.maxLength).toBe(5_000)
+    expect(taskMaterialContextSchema.properties.reviewWarnings.items.maxLength).toBe(5_000)
+
+    expect(validateTaskMaterialContext(validContext({
+      materialSummary: ` ${'s'.repeat(20_000)} `,
+    })).ok).toBe(false)
+    expect(validateTaskMaterialContext(validContext({
+      writingRequirements: [` ${'r'.repeat(10_000)} `],
+    })).ok).toBe(false)
+    expect(validateTaskMaterialContext(validContext({
+      constraints: [` ${'c'.repeat(5_000)} `],
+    })).ok).toBe(false)
+    expect(validateTaskMaterialContext(validContext({
+      reviewWarnings: [` ${'w'.repeat(5_000)} `],
+    })).ok).toBe(false)
+  })
+
+  it('accepts and trims whitespace when every raw string remains within its schema maximum', () => {
+    const result = validateTaskMaterialContext({
+      materialSummary: ` ${'s'.repeat(19_998)} `,
+      writingRequirements: [` ${'r'.repeat(9_998)} `],
+      constraints: [` ${'c'.repeat(4_998)} `],
+      reviewWarnings: [` ${'w'.repeat(4_998)} `],
+    })
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.value.materialSummary).toHaveLength(19_998)
+      expect(result.value.writingRequirements[0]).toHaveLength(9_998)
+      expect(result.value.constraints[0]).toHaveLength(4_998)
+      expect(result.value.reviewWarnings[0]).toHaveLength(4_998)
+      expect(result.value.materialSummary.startsWith(' ')).toBe(false)
+      expect(result.value.writingRequirements[0]?.startsWith(' ')).toBe(false)
+    }
+  })
+
+  it('uses JSON Schema Unicode code-point length semantics at every raw maximum', () => {
+    const accepted = validateTaskMaterialContext({
+      materialSummary: '😀'.repeat(20_000),
+      writingRequirements: ['😀'.repeat(10_000)],
+      constraints: ['😀'.repeat(5_000)],
+      reviewWarnings: ['😀'.repeat(5_000)],
+    })
+    const rejected = validateTaskMaterialContext(validContext({
+      writingRequirements: ['😀'.repeat(10_001)],
+    }))
+
+    expect(accepted.ok).toBe(true)
+    expect(rejected.ok).toBe(false)
   })
 })
 
@@ -146,6 +200,8 @@ describe('prioritizeTeacherWritingRequirement', () => {
     })
     expect(context).toEqual(snapshot)
     expect(result).not.toBe(context)
+    expect(result.constraints).not.toBe(context.constraints)
+    expect(result.reviewWarnings).not.toBe(context.reviewWarnings)
   })
 
   it('does not add a blank teacher item and still removes exact inferred duplicates', () => {
@@ -183,5 +239,36 @@ describe('prioritizeTeacherWritingRequirement', () => {
     expect(result.constraints).toEqual(['Constraint'])
     expect(result.reviewWarnings).toEqual(['Warning'])
     expect(context.writingRequirements).toHaveLength(50)
+  })
+
+  it.each([5_001, 10_000])('preserves a %s-character teacher requirement in a valid context', (length) => {
+    const context: TaskMaterialContextV1 = {
+      materialSummary: 'Summary',
+      writingRequirements: ['Inferred requirement.'],
+      constraints: [],
+      reviewWarnings: [],
+    }
+    const teacherRequirement = 't'.repeat(length)
+
+    const prioritized = prioritizeTeacherWritingRequirement(context, teacherRequirement)
+
+    expect(prioritized.writingRequirements[0]).toBe(teacherRequirement)
+    expect(validateTaskMaterialContext(prioritized).ok).toBe(true)
+  })
+
+  it('does not truncate a 10,001-character teacher requirement and lets validation reject it', () => {
+    const context: TaskMaterialContextV1 = {
+      materialSummary: 'Summary',
+      writingRequirements: ['Inferred requirement.'],
+      constraints: [],
+      reviewWarnings: [],
+    }
+    const teacherRequirement = 't'.repeat(10_001)
+
+    const prioritized = prioritizeTeacherWritingRequirement(context, teacherRequirement)
+
+    expect(prioritized.writingRequirements[0]).toBe(teacherRequirement)
+    expect(prioritized.writingRequirements[0]).toHaveLength(10_001)
+    expect(validateTaskMaterialContext(prioritized).ok).toBe(false)
   })
 })

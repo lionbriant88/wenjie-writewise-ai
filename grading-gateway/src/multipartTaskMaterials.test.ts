@@ -40,6 +40,22 @@ function validBody(overrides: Record<string, unknown> = {}): Record<string, unkn
   }
 }
 
+function imageOnlyBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return validBody({
+    materialManifest: JSON.stringify([{ id: 'u-1', kind: 'image', imageIndex: 0 }]),
+    textMaterials: '[]',
+    ...overrides,
+  })
+}
+
+function textOnlyBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return validBody({
+    materialManifest: JSON.stringify([{ id: 'u-1', kind: 'text', textIndex: 0 }]),
+    textMaterials: JSON.stringify([{ displayName: 'prompt.docx', text: 'Prompt body.' }]),
+    ...overrides,
+  })
+}
+
 const validFiles = [uploadFile('image/png'), uploadFile('image/jpeg')]
 
 function errorText(result: ReturnType<typeof validateTaskMaterialMultipart>): string {
@@ -123,6 +139,61 @@ describe('validateTaskMaterialMultipart', () => {
 
     expect(result).toMatchObject({ ok: false, error: { code: 'invalid_request' } })
     expect(errorText(result)).not.toMatch(/PRIVATE-BODY|Write an email|正文内容|prompt\.docx/)
+  })
+
+  it('rejects required fields inherited from a custom prototype', () => {
+    const inheritedBody = Object.create(validBody()) as Record<string, unknown>
+
+    const result = validateTaskMaterialMultipart(inheritedBody, validFiles, 'required')
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'invalid_request' } })
+  })
+
+  it('rejects a custom polluted prototype even when every required field is own', () => {
+    const body = Object.assign(
+      Object.create({ privateMaterial: 'PRIVATE-PROTOTYPE' }) as Record<string, unknown>,
+      validBody(),
+    )
+
+    const result = validateTaskMaterialMultipart(body, validFiles, 'required')
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'invalid_request' } })
+    expect(errorText(result)).not.toContain('PRIVATE-PROTOTYPE')
+  })
+
+  it('does not let Object.prototype pollution supply a missing required scalar', () => {
+    const body = validBody()
+    delete body.requestId
+    const previous = Object.getOwnPropertyDescriptor(Object.prototype, 'requestId')
+    Object.defineProperty(Object.prototype, 'requestId', {
+      configurable: true,
+      value: 'PRIVATE-POLLUTED-REQUEST',
+    })
+
+    try {
+      const result = validateTaskMaterialMultipart(body, validFiles, 'required')
+      expect(result).toMatchObject({ ok: false, error: { code: 'invalid_request' } })
+      expect(errorText(result)).not.toContain('PRIVATE-POLLUTED-REQUEST')
+    } finally {
+      if (previous) Object.defineProperty(Object.prototype, 'requestId', previous)
+      else delete (Object.prototype as Record<string, unknown>).requestId
+    }
+  })
+
+  it('accepts a complete null-prototype body', () => {
+    const body = Object.assign(Object.create(null) as Record<string, unknown>, validBody())
+
+    expect(validateTaskMaterialMultipart(body, validFiles, 'required').ok).toBe(true)
+  })
+
+  it('rejects an explicit JSON __proto__ own field without exposing it', () => {
+    const serialized = JSON.stringify(validBody())
+    const body = JSON.parse(`${serialized.slice(0, -1)},"__proto__":"PRIVATE-EXPLICIT-PROTO"}`) as unknown
+
+    const result = validateTaskMaterialMultipart(body, validFiles, 'required')
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'invalid_request' } })
+    expect(errorText(result)).not.toContain('PRIVATE-EXPLICIT-PROTO')
   })
 
   it.each([
@@ -216,6 +287,34 @@ describe('validateTaskMaterialMultipart', () => {
     }), [uploadFile(mimetype)], 'required')
 
     expect(result).toMatchObject({ ok: false, error: { code: 'invalid_request' } })
+  })
+
+  it('accepts undefined files for a text-only material request', () => {
+    expect(validateTaskMaterialMultipart(textOnlyBody(), undefined, 'required').ok).toBe(true)
+  })
+
+  it.each([
+    ['null files container', null],
+    ['non-array files container', { length: 1 }],
+    ['undefined file element', [undefined]],
+    ['null file element', [null]],
+    ['sparse files array', Array(1)],
+    ['file missing buffer', [{ mimetype: 'image/png', size: 1 }]],
+    ['file with non-Buffer bytes', [{ mimetype: 'image/png', size: 13, buffer: 'PRIVATE-BYTES' }]],
+    ['file with NaN size', [{ mimetype: 'image/png', size: Number.NaN, buffer: Buffer.from('x') }]],
+    ['file with negative size', [{ mimetype: 'image/png', size: -1, buffer: Buffer.from('x') }]],
+    ['file with fractional size', [{ mimetype: 'image/png', size: 1.5, buffer: Buffer.from('x') }]],
+    ['file with unsafe integer size', [{ mimetype: 'image/png', size: Number.MAX_SAFE_INTEGER + 1, buffer: Buffer.from('x') }]],
+    ['file whose size disagrees with its buffer', [{ mimetype: 'image/png', size: 2, buffer: Buffer.from('x') }]],
+  ] as const)('returns invalid_request instead of throwing for %s', (_label, files) => {
+    const result = validateTaskMaterialMultipart(
+      imageOnlyBody(),
+      files as unknown as readonly globalThis.Express.Multer.File[],
+      'required',
+    )
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'invalid_request' } })
+    expect(errorText(result)).not.toMatch(/PRIVATE-BYTES|prompt\.docx|Prompt body/)
   })
 
   it('accepts an 8 MiB image and rejects the next byte without exposing bytes', () => {

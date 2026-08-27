@@ -167,6 +167,7 @@ describe('validateGeneratedRubric', () => {
     ['too many constraints', { constraints: Array.from({ length: 51 }, () => 'Constraint') }],
     ['blank review warning', { reviewWarnings: ['   '] }],
     ['oversized material summary', { materialSummary: 's'.repeat(20_001) }],
+    ['oversized writing requirement', { writingRequirements: ['r'.repeat(10_001)] }],
   ] as const)('rejects the same invalid context boundary as the shared validator: %s', (_label, overrides) => {
     const rubric = validRubricWithLegibility({ weight: 5 })
     Object.assign(rubric, overrides)
@@ -179,6 +180,16 @@ describe('validateGeneratedRubric', () => {
 
     expect(validateTaskMaterialContext(context).ok).toBe(false)
     expect(validateGeneratedRubric(rubric).ok).toBe(false)
+  })
+
+  it('preserves the GeneratedRubricV1 wire shape with a 10,000-character writing requirement', () => {
+    const rubric = validRubricWithLegibility({ weight: 5 })
+    rubric.writingRequirements = ['r'.repeat(10_000)]
+
+    const result = validateGeneratedRubric(rubric)
+
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.value.writingRequirements[0]).toHaveLength(10_000)
   })
 
   it.each([
