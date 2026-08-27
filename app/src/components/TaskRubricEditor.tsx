@@ -65,7 +65,7 @@ function createDimensionRowIdentities(dimensions: readonly RubricDimension[]): s
 
     const occurrence = occurrences.get(canonicalId) ?? 0
     occurrences.set(canonicalId, occurrence + 1)
-    return `invalid:${canonicalId || 'empty'}:${occurrence}`
+    return JSON.stringify(['invalid', canonicalId, occurrence])
   })
 }
 

@@ -194,6 +194,34 @@ describe('TaskRubricEditor', () => {
     })
   })
 
+  it('does not conflate a blank ID with duplicated real empty IDs', async () => {
+    const user = userEvent.setup()
+    const dimensions = createDefaultRubricDimensions()
+    dimensions[0] = { ...dimensions[0]!, id: '   ' }
+    dimensions[1] = { ...dimensions[1]!, id: 'empty' }
+    dimensions[2] = { ...dimensions[2]!, id: ' empty ' }
+    const errors: RubricValidity['errors'] = {
+      dimensions: '评分维度包含无效 ID。',
+      dimensionItems: [
+        { id: '维度 ID 不能为空。' },
+        { id: '维度 ID 不能重复。' },
+        { id: '维度 ID 不能重复。' },
+        {},
+      ],
+    }
+    const onDimensionsChange = vi.fn()
+    renderEditor({ dimensions, validity: validity(100, errors), onDimensionsChange })
+
+    await user.click(screen.getByRole('button', { name: '编辑语言质量' }))
+    expect(screen.getByRole('textbox', { name: '维度名称：语言质量' })).toBeVisible()
+    expect(screen.queryByRole('textbox', { name: '维度名称：内容与任务完成' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: '维度名称：结构与连贯' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '删除语言质量' }))
+    const emitted = onDimensionsChange.mock.calls.at(-1)?.[0] as RubricDimension[]
+    expect(emitted.map(({ name }) => name)).toEqual(['内容与任务完成', '结构与连贯', '卷面与可读性'])
+  })
+
   it('keeps a valid unique row expanded when ordinary fields change', async () => {
     const user = userEvent.setup()
     const dimensions = createDefaultRubricDimensions()
