@@ -2,6 +2,8 @@ import type { OcrTranscriptAudit } from '../services/ocr/audit/types'
 
 export type TaskStatus = 'draft' | 'processing' | 'ready' | 'needs_review'
 
+export type TaskMaterialProcessingStatus = 'none' | 'ready' | 'failed'
+
 export type EssayStatus =
   | 'pending_ocr'
   | 'ocr_running'
@@ -28,6 +30,7 @@ export interface Task {
   promptInfo?: TaskPromptInfo
   rubricDraft?: TaskRubricDraft
   materialContext?: TaskMaterialContext
+  materialProcessingStatus?: TaskMaterialProcessingStatus
   status: TaskStatus
   totalEssayCount: number
   completedEssayCount: number
@@ -330,5 +333,6 @@ export interface CreateTaskInput {
   promptInfo?: TaskPromptInfo
   rubricDraft?: TaskRubricDraft
   materialContext?: TaskMaterialContext
+  materialProcessingStatus?: TaskMaterialProcessingStatus
   generateClassReview?: boolean
 }
