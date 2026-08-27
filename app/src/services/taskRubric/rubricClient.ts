@@ -1,6 +1,9 @@
+import { createTaskMaterialFormData } from '../taskMaterial/materialFormData'
+import type { TaskMaterialRequestBase } from '../taskMaterial/types'
 import type {
   GeneratedRubricDimension,
   GeneratedTaskRubric,
+  LegacyRubricClientRequest,
   RubricClient,
   RubricClientFailure,
   RubricClientRequest,
@@ -13,6 +16,8 @@ interface RemoteRubricClientOptions {
   apiBase?: string
   fetchImpl?: typeof fetch
 }
+
+const TOTAL_WEIGHT_TOLERANCE = 0.001
 
 const safeFailureCodes = new Set<RubricFailureCode>([
   'invalid_request', 'request_too_large', 'provider_not_configured', 'provider_request_rejected',
@@ -61,55 +66,82 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function readString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value : null
+function hasExactlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const actualKeys = Object.keys(value)
+  return actualKeys.length === keys.length && actualKeys.every((key) => keys.includes(key))
 }
 
-function readStringArray(value: unknown): string[] | null {
-  if (!Array.isArray(value)) return null
-  const values = value.map(readString)
+function readString(value: unknown, maxLength: number): string | null {
+  if (typeof value !== 'string' || Array.from(value).length > maxLength) return null
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
+
+function readStringArray(value: unknown, maxItems: number, maxItemLength: number): string[] | null {
+  if (!Array.isArray(value) || value.length > maxItems) return null
+  const values = value.map((item) => readString(item, maxItemLength))
   return values.every((item): item is string => item !== null) ? values : null
 }
 
 function projectDimension(value: unknown): GeneratedRubricDimension | null {
-  if (!isRecord(value)) return null
-  const id = readString(value.id)
-  const name = readString(value.name)
-  const description = readString(value.description)
+  if (!isRecord(value) || !hasExactlyKeys(value, [
+    'id', 'name', 'weight', 'description', 'deductionFocus', 'sourceEvidence',
+  ])) return null
+  const id = readString(value.id, 128)
+  const name = readString(value.name, 256)
+  const description = readString(value.description, 2_000)
   const weight = typeof value.weight === 'number' && Number.isFinite(value.weight) ? value.weight : null
-  const deductionFocus = readStringArray(value.deductionFocus)
-  const sourceEvidence = readStringArray(value.sourceEvidence)
+  const deductionFocus = readStringArray(value.deductionFocus, 50, 1_000)
+  const sourceEvidence = readStringArray(value.sourceEvidence, 50, 5_000)
   if (!id || !name || !description || weight === null || weight <= 0 || !deductionFocus || !sourceEvidence) return null
   return { id, name, weight, description, deductionFocus, sourceEvidence }
 }
 
 function projectRubric(value: unknown): GeneratedTaskRubric | null {
-  if (!isRecord(value)) return null
-  const taskName = readString(value.taskName)
-  const materialSummary = readString(value.materialSummary)
-  const writingRequirements = readStringArray(value.writingRequirements)
-  const constraints = readStringArray(value.constraints)
-  const reviewWarnings = readStringArray(value.reviewWarnings)
-  if (!Array.isArray(value.dimensions)) return null
+  if (!isRecord(value) || !hasExactlyKeys(value, [
+    'taskName', 'materialSummary', 'writingRequirements', 'constraints', 'dimensions', 'reviewWarnings',
+  ])) return null
+  const taskName = readString(value.taskName, 2_000)
+  const materialSummary = readString(value.materialSummary, 20_000)
+  const writingRequirements = readStringArray(value.writingRequirements, 50, 10_000)
+  const constraints = readStringArray(value.constraints, 50, 5_000)
+  const reviewWarnings = readStringArray(value.reviewWarnings, 50, 5_000)
+  if (!Array.isArray(value.dimensions) || value.dimensions.length < 1 || value.dimensions.length > 10) return null
   const dimensions = value.dimensions.map(projectDimension)
   if (
-    !taskName || !materialSummary || !writingRequirements || writingRequirements.length < 1 || !constraints || !reviewWarnings
+    !taskName || !materialSummary || !writingRequirements || writingRequirements.length < 1
+    || !constraints || !reviewWarnings
     || !dimensions.every((item): item is GeneratedRubricDimension => item !== null)
-    || dimensions.length === 0
-    || Math.abs(dimensions.reduce((total, dimension) => total + dimension.weight, 0) - 100) > 0.001
+    || new Set(dimensions.map(({ id }) => id)).size !== dimensions.length
+    || dimensions.filter(({ id }) => id === 'legibility').length !== 1
+    || dimensions.find(({ id }) => id === 'legibility')?.weight !== 5
   ) return null
+  const totalWeight = dimensions.reduce((total, dimension) => total + dimension.weight, 0)
+  const roundingAllowance = Number.EPSILON * Math.max(1, Math.abs(totalWeight), 100)
+  if (Math.abs(totalWeight - 100) > TOTAL_WEIGHT_TOLERANCE + roundingAllowance) return null
   return { taskName, materialSummary, writingRequirements, constraints, dimensions, reviewWarnings }
 }
 
 function projectResponse(value: unknown, requestId: string, httpOk: boolean): RubricClientResponse {
-  if (!isRecord(value) || value.requestId !== requestId) return gatewayFailure(requestId, 'gateway_invalid_response', true)
-  if (httpOk && value.status === 'success') {
-    const rubric = projectRubric(value.rubric)
-    return rubric ? { requestId, status: 'success', rubric } : gatewayFailure(requestId, 'gateway_invalid_response', true)
+  if (!isRecord(value) || value.requestId !== requestId) {
+    return gatewayFailure(requestId, 'gateway_invalid_response', true)
   }
-  if (!httpOk && value.status === 'failed' && isRecord(value.error)) {
-    const code = readString(value.error.code)
-    if (code && safeFailureCodes.has(code as RubricFailureCode) && typeof value.error.retryable === 'boolean') {
+  if (httpOk && value.status === 'success' && hasExactlyKeys(value, [
+    'requestId', 'status', 'rubric',
+  ])) {
+    const rubric = projectRubric(value.rubric)
+    return rubric
+      ? { requestId, status: 'success', rubric }
+      : gatewayFailure(requestId, 'gateway_invalid_response', true)
+  }
+  if (!httpOk && value.status === 'failed' && hasExactlyKeys(value, [
+    'requestId', 'status', 'error',
+  ]) && isRecord(value.error) && hasExactlyKeys(value.error, [
+    'code', 'message', 'retryable',
+  ])) {
+    const code = readString(value.error.code, 128)
+    const message = readString(value.error.message, 2_000)
+    if (code && message && safeFailureCodes.has(code as RubricFailureCode) && typeof value.error.retryable === 'boolean') {
       const safeCode = code as RubricFailureCode
       return {
         requestId,
@@ -121,22 +153,37 @@ function projectResponse(value: unknown, requestId: string, httpOk: boolean): Ru
   return gatewayFailure(requestId, 'gateway_invalid_response', true)
 }
 
+function isLegacyRequest(request: RubricClientRequest): request is LegacyRubricClientRequest {
+  return 'pages' in request
+}
+
+function toTaskMaterialRequest(request: RubricClientRequest): TaskMaterialRequestBase {
+  if (!isLegacyRequest(request)) return request
+  return {
+    requestId: request.requestId,
+    fullScore: request.fullScore,
+    writingRequirement: '',
+    materials: request.pages.map((page) => ({ id: page.id, kind: 'image' as const, file: page.file })),
+  }
+}
+
 export function createRemoteRubricClient({ apiBase, fetchImpl = fetch }: RemoteRubricClientOptions): RubricClient {
   return {
-    async generate(request: RubricClientRequest) {
+    async generate(request) {
       if (!apiBase) return gatewayFailure(request.requestId, 'gateway_unavailable', false)
-      const formData = new FormData()
-      formData.append('requestId', request.requestId)
-      formData.append('fullScore', String(request.fullScore))
-      formData.append('pageIds', JSON.stringify(request.pages.map((page) => page.id)))
-      request.pages.forEach((page) => formData.append('pages', page.file))
+      const taskMaterialRequest = toTaskMaterialRequest(request)
 
       let response: Response
       try {
-        response = await fetchImpl(`${apiBase.replace(/\/$/, '')}/tasks/rubric`, { method: 'POST', body: formData })
+        response = await fetchImpl(`${apiBase.replace(/\/$/, '')}/tasks/rubric`, {
+          method: 'POST',
+          body: createTaskMaterialFormData(taskMaterialRequest),
+          signal: taskMaterialRequest.signal,
+        })
       } catch {
         return gatewayFailure(request.requestId, 'gateway_unavailable', true)
       }
+
       let body: unknown
       try {
         body = await response.json()

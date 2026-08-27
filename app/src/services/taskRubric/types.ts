@@ -1,3 +1,5 @@
+import type { TaskMaterialRequestBase } from '../taskMaterial/types'
+
 export interface GeneratedRubricDimension {
   id: string
   name: string
@@ -21,11 +23,14 @@ export interface RubricClientPage {
   file: File
 }
 
-export interface RubricClientRequest {
+/** @deprecated Delete after CreateTaskPage migrates to TaskMaterialRequestBase in Task 10. */
+export interface LegacyRubricClientRequest {
   requestId: string
   fullScore: number
   pages: RubricClientPage[]
 }
+
+export type RubricClientRequest = TaskMaterialRequestBase | LegacyRubricClientRequest
 
 export type RubricFailureCode =
   | 'invalid_request'

@@ -33,6 +33,20 @@ export interface TextMaterialUnit extends TextMaterialUnitDraft {
 
 export type MaterialUnit = ImageMaterialUnit | TextMaterialUnit
 
+export type TaskMaterialRequestUnit =
+  | { id: string; kind: 'image'; file: File }
+  | { id: string; kind: 'text'; displayName: string; text: string }
+
+export interface TaskMaterialRequestBase {
+  requestId: string
+  fullScore: number
+  writingRequirement: string
+  materials: readonly TaskMaterialRequestUnit[]
+  signal?: AbortSignal
+}
+
+export type MaterialContextClientRequest = TaskMaterialRequestBase
+
 export type MaterialNormalizationErrorCode =
   | 'unsupported_type'
   | 'legacy_doc_unsupported'
