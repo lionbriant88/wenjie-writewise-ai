@@ -7,13 +7,16 @@ export interface GeneratedRubricDimensionV1 {
   sourceEvidence: string[]
 }
 
-export interface GeneratedRubricV1 {
-  taskName: string
+export interface TaskMaterialContextV1 {
   materialSummary: string
   writingRequirements: string[]
   constraints: string[]
-  dimensions: GeneratedRubricDimensionV1[]
   reviewWarnings: string[]
+}
+
+export interface GeneratedRubricV1 extends TaskMaterialContextV1 {
+  taskName: string
+  dimensions: GeneratedRubricDimensionV1[]
 }
 
 export interface ConfirmedTaskPackageV2 {

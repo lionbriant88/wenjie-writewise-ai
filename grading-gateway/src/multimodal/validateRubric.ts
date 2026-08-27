@@ -1,6 +1,7 @@
 import type { ValidationResult } from '../types.js'
 import type { GeneratedRubricDimensionV1, GeneratedRubricV1 } from './types.js'
 import { LEGIBILITY_DIMENSION_ID } from './gradingPolicy.js'
+import { validateTaskMaterialContext } from './materialContextContract.js'
 
 const INVALID_RUBRIC_MESSAGE = '璇勫垎鏍囧噯鏃犳晥銆?'
 const INVALID_WEIGHT_TOTAL_MESSAGE = '璇勫垎鏍囧噯鏉冮噸蹇呴』鍚堣 100%銆?'
@@ -51,11 +52,13 @@ function validateRubric(value: unknown, trustMode: 'generated' | 'teacher_confir
   ])) return invalid()
 
   const taskName = readString(value.taskName, 2_000)
-  const materialSummary = readString(value.materialSummary, 20_000)
-  const writingRequirements = readStringArray(value.writingRequirements, 50, 5_000)
-  const constraints = readStringArray(value.constraints, 50, 5_000)
-  const reviewWarnings = readStringArray(value.reviewWarnings, 50, 5_000)
-  if (!taskName || !materialSummary || !writingRequirements || writingRequirements.length < 1 || !constraints || !reviewWarnings || !Array.isArray(value.dimensions) || value.dimensions.length < 1 || value.dimensions.length > 10) {
+  const context = validateTaskMaterialContext({
+    materialSummary: value.materialSummary,
+    writingRequirements: value.writingRequirements,
+    constraints: value.constraints,
+    reviewWarnings: value.reviewWarnings,
+  })
+  if (!taskName || !context.ok || !Array.isArray(value.dimensions) || value.dimensions.length < 1 || value.dimensions.length > 10) {
     return invalid()
   }
 
@@ -70,7 +73,7 @@ function validateRubric(value: unknown, trustMode: 'generated' | 'teacher_confir
     return invalid(INVALID_WEIGHT_TOTAL_MESSAGE)
   }
 
-  return { ok: true, value: { taskName, materialSummary, writingRequirements, constraints, dimensions, reviewWarnings } }
+  return { ok: true, value: { taskName, ...context.value, dimensions } }
 }
 
 export function validateGeneratedRubric(value: unknown): ValidationResult<GeneratedRubricV1> {

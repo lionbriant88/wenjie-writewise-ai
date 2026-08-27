@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { validateTaskMaterialContext } from './materialContextContract.js'
 import { validateConfirmedRubric, validateGeneratedRubric } from './validateRubric.js'
 
 function rubricWithSingleWeight(weight: number): Record<string, unknown> {
@@ -131,6 +132,53 @@ describe('validateGeneratedRubric', () => {
     const validated = validateGeneratedRubric(rubric)
     expect(validated).toMatchObject({ ok: true, value: { taskName: 'A school writing task' } })
     if (validated.ok) expect(validated.value.dimensions).toContainEqual(expect.objectContaining({ name: 'Content' }))
+  })
+
+  it('uses the strict task material context contract for all four context fields', () => {
+    const rubric = validRubricWithLegibility({ weight: 5 })
+    rubric.materialSummary = '  Summary from material.  '
+    rubric.writingRequirements = ['  Teacher requirement.  ']
+    rubric.constraints = ['  Use English.  ']
+    rubric.reviewWarnings = ['  Verify an unclear detail.  ']
+    const context = {
+      materialSummary: rubric.materialSummary,
+      writingRequirements: rubric.writingRequirements,
+      constraints: rubric.constraints,
+      reviewWarnings: rubric.reviewWarnings,
+    }
+
+    const contextResult = validateTaskMaterialContext(context)
+    const rubricResult = validateGeneratedRubric(rubric)
+
+    expect(contextResult.ok).toBe(true)
+    expect(rubricResult.ok).toBe(true)
+    if (contextResult.ok && rubricResult.ok) {
+      expect({
+        materialSummary: rubricResult.value.materialSummary,
+        writingRequirements: rubricResult.value.writingRequirements,
+        constraints: rubricResult.value.constraints,
+        reviewWarnings: rubricResult.value.reviewWarnings,
+      }).toEqual(contextResult.value)
+    }
+  })
+
+  it.each([
+    ['empty writing requirements', { writingRequirements: [] }],
+    ['too many constraints', { constraints: Array.from({ length: 51 }, () => 'Constraint') }],
+    ['blank review warning', { reviewWarnings: ['   '] }],
+    ['oversized material summary', { materialSummary: 's'.repeat(20_001) }],
+  ] as const)('rejects the same invalid context boundary as the shared validator: %s', (_label, overrides) => {
+    const rubric = validRubricWithLegibility({ weight: 5 })
+    Object.assign(rubric, overrides)
+    const context = {
+      materialSummary: rubric.materialSummary,
+      writingRequirements: rubric.writingRequirements,
+      constraints: rubric.constraints,
+      reviewWarnings: rubric.reviewWarnings,
+    }
+
+    expect(validateTaskMaterialContext(context).ok).toBe(false)
+    expect(validateGeneratedRubric(rubric).ok).toBe(false)
   })
 
   it.each([
