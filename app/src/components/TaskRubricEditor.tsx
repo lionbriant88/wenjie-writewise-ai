@@ -1,5 +1,5 @@
 import { ChevronDown, Plus, Sparkles, Trash2 } from 'lucide-react'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import {
   createOrdinaryRubricDimension,
   LEGIBILITY_DIMENSION_ID,
@@ -35,8 +35,12 @@ function cloneDimensions(dimensions: readonly RubricDimension[]): RubricDimensio
   return dimensions.map(cloneDimension)
 }
 
+function canonicalDimensionId(id: string): string {
+  return id.trim()
+}
+
 function createAvailableOrdinaryId(dimensions: readonly RubricDimension[]): string {
-  const existingIds = new Set(dimensions.map(({ id }) => id))
+  const existingIds = new Set(dimensions.map(({ id }) => canonicalDimensionId(id)))
   let candidate: string
 
   do {
@@ -47,13 +51,38 @@ function createAvailableOrdinaryId(dimensions: readonly RubricDimension[]): stri
   return candidate
 }
 
-function formatPercentage(value: number): string {
-  if (!Number.isFinite(value)) return '无效数值'
+function createDimensionRowIdentities(dimensions: readonly RubricDimension[]): string[] {
+  const canonicalCounts = new Map<string, number>()
+  dimensions.forEach(({ id }) => {
+    const canonicalId = canonicalDimensionId(id)
+    canonicalCounts.set(canonicalId, (canonicalCounts.get(canonicalId) ?? 0) + 1)
+  })
+
+  const occurrences = new Map<string, number>()
+  return dimensions.map(({ id }) => {
+    const canonicalId = canonicalDimensionId(id)
+    if (canonicalId && canonicalCounts.get(canonicalId) === 1) return `stable:${canonicalId}`
+
+    const occurrence = occurrences.get(canonicalId) ?? 0
+    occurrences.set(canonicalId, occurrence + 1)
+    return `invalid:${canonicalId || 'empty'}:${occurrence}`
+  })
+}
+
+function formatFiniteNumber(value: number): string | null {
+  if (!Number.isFinite(value)) return null
+  if (value > 0 && value < 0.000000000001) return '<0.000000000001'
+  if (value < 0 && value > -0.000000000001) return '>-0.000000000001'
 
   return new Intl.NumberFormat('zh-CN', {
     useGrouping: false,
-    maximumFractionDigits: 6,
+    maximumFractionDigits: 12,
   }).format(value)
+}
+
+function formatWeight(value: number): string {
+  const formatted = formatFiniteNumber(value)
+  return formatted === null ? '无效权重' : `${formatted}%`
 }
 
 function totalWeightText(validity: RubricValidity): string {
@@ -62,14 +91,14 @@ function totalWeightText(validity: RubricValidity): string {
     return '当前合计无效，请检查各维度权重'
   }
 
-  const total = formatPercentage(totalWeight)
+  const total = formatFiniteNumber(totalWeight)!
   if (differenceFromHundred === 0) return `当前合计 ${total}%，权重合计正确`
   if (differenceFromHundred <= TOTAL_WEIGHT_TOLERANCE) {
     return `当前合计 ${total}%，在 0.001% 容差内视为 100%`
   }
-  if (totalWeight < 100) return `当前合计 ${total}%，还需 ${formatPercentage(100 - totalWeight)}%`
+  if (totalWeight < 100) return `当前合计 ${total}%，还需 ${formatFiniteNumber(100 - totalWeight)}%`
 
-  return `当前合计 ${total}%，超出 ${formatPercentage(totalWeight - 100)}%`
+  return `当前合计 ${total}%，超出 ${formatFiniteNumber(totalWeight - 100)}%`
 }
 
 function appendDescribedBy(...ids: Array<string | undefined>): string | undefined {
@@ -89,9 +118,15 @@ export function TaskRubricEditor({
   onDimensionsChange,
   onRequestAi,
 }: TaskRubricEditorProps) {
+  const reactInstanceId = useId()
+  const instanceId = `task-rubric-editor-${reactInstanceId}`
+  const domId = (suffix: string) => `${instanceId}-${suffix}`
+  const headingId = domId('title')
+  const writingRequirementId = domId('writing-requirement')
   const [expandedDimensionIds, setExpandedDimensionIds] = useState<Set<string>>(() => new Set())
-  const writingRequirementErrorId = validity.errors.writingRequirement ? 'rubric-writing-requirement-error' : undefined
-  const dimensionsErrorId = validity.errors.dimensions ? 'rubric-dimensions-error' : undefined
+  const rowIdentities = createDimensionRowIdentities(dimensions)
+  const writingRequirementErrorId = validity.errors.writingRequirement ? domId('writing-requirement-error') : undefined
+  const dimensionsErrorId = validity.errors.dimensions ? domId('dimensions-error') : undefined
 
   const toggleDimension = (id: string) => {
     setExpandedDimensionIds((current) => {
@@ -114,19 +149,19 @@ export function TaskRubricEditor({
     onDimensionsChange(next)
   }
 
-  const deleteDimension = (id: string) => {
-    if (id === LEGIBILITY_DIMENSION_ID) return
-    onDimensionsChange(cloneDimensions(dimensions.filter((dimension) => dimension.id !== id)))
+  const deleteDimension = (index: number) => {
+    if (canonicalDimensionId(dimensions[index]?.id ?? '') === LEGIBILITY_DIMENSION_ID) return
+    onDimensionsChange(cloneDimensions(dimensions.filter((_, rowIndex) => rowIndex !== index)))
   }
 
   const aiIsGenerating = aiState === 'generating'
   const aiStatusMessage = aiMessage || (aiIsGenerating ? '正在根据材料生成评分标准…' : aiState === 'failed' ? '评分标准生成失败，请稍后重试。' : '')
 
   return (
-    <section aria-labelledby="task-rubric-editor-title" className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+    <section aria-labelledby={headingId} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 id="task-rubric-editor-title" className="text-lg font-semibold text-slate-950">评分标准</h2>
+          <h2 id={headingId} className="text-lg font-semibold text-slate-950">评分标准</h2>
           <p className="mt-1 text-sm leading-6 text-slate-600">填写写作要求，并按需调整评分维度与权重。</p>
         </div>
         <button
@@ -151,9 +186,9 @@ export function TaskRubricEditor({
       ) : null}
 
       <div className="mt-6">
-        <label htmlFor="rubric-writing-requirement" className="text-sm font-semibold text-slate-900">写作要求</label>
+        <label htmlFor={writingRequirementId} className="text-sm font-semibold text-slate-900">写作要求</label>
         <textarea
-          id="rubric-writing-requirement"
+          id={writingRequirementId}
           value={writingRequirement}
           disabled={disabled}
           aria-invalid={Boolean(validity.errors.writingRequirement)}
@@ -185,17 +220,21 @@ export function TaskRubricEditor({
 
         <div className="mt-4 space-y-3">
           {dimensions.map((dimension, index) => {
-            const expanded = expandedDimensionIds.has(dimension.id)
+            const rowIdentity = rowIdentities[index]!
+            const expanded = expandedDimensionIds.has(rowIdentity)
             const itemErrors = validity.errors.dimensionItems[index] ?? {}
-            const itemDomId = `rubric-dimension-${index}`
-            const idErrorId = itemErrors.id ? `${itemDomId}-id-error` : undefined
+            const itemErrorMessages = [itemErrors.id, itemErrors.name, itemErrors.description, itemErrors.weight]
+              .filter((message): message is string => Boolean(message))
+            const hasItemErrors = itemErrorMessages.length > 0
+            const itemDomId = domId(`dimension-${index}`)
+            const rowErrorSummaryId = hasItemErrors ? `${itemDomId}-error-summary` : undefined
             const nameErrorId = itemErrors.name ? `${itemDomId}-name-error` : undefined
             const descriptionErrorId = itemErrors.description ? `${itemDomId}-description-error` : undefined
             const weightErrorId = itemErrors.weight ? `${itemDomId}-weight-error` : undefined
             const displayName = dimension.name || `第 ${index + 1} 个维度`
 
             return (
-              <div key={dimension.id} className="rounded-lg border border-slate-200 bg-slate-50/60">
+              <div key={rowIdentity} className="rounded-lg border border-slate-200 bg-slate-50/60">
                 <div className="flex min-w-0 items-center gap-2 p-3 sm:gap-3 sm:p-4">
                   <button
                     type="button"
@@ -203,25 +242,25 @@ export function TaskRubricEditor({
                     aria-label={`编辑${displayName}`}
                     aria-expanded={expanded}
                     aria-controls={`${itemDomId}-details`}
-                    aria-invalid={Boolean(itemErrors.id)}
-                    aria-describedby={idErrorId}
-                    onClick={() => toggleDimension(dimension.id)}
+                    aria-invalid={hasItemErrors}
+                    aria-describedby={rowErrorSummaryId}
+                    onClick={() => toggleDimension(rowIdentity)}
                     className="tech-focus flex min-w-0 flex-1 items-center justify-between gap-3 rounded-md text-left disabled:cursor-not-allowed"
                   >
                     <span className="min-w-0 truncate text-sm font-semibold text-slate-900">{displayName}</span>
                     <span className="flex shrink-0 items-center gap-2">
                       <span className="rounded-full bg-blue-50 px-2.5 py-1 text-sm font-semibold tabular-nums text-blue-700">
-                        {formatPercentage(dimension.weight)}%
+                        {formatWeight(dimension.weight)}
                       </span>
                       <ChevronDown aria-hidden="true" className={`h-4 w-4 text-slate-500 transition ${expanded ? 'rotate-180' : ''}`} />
                     </span>
                   </button>
-                  {dimension.id !== LEGIBILITY_DIMENSION_ID ? (
+                  {canonicalDimensionId(dimension.id) !== LEGIBILITY_DIMENSION_ID ? (
                     <button
                       type="button"
                       disabled={disabled}
                       aria-label={`删除${displayName}`}
-                      onClick={() => deleteDimension(dimension.id)}
+                      onClick={() => deleteDimension(index)}
                       className="tech-focus inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <Trash2 aria-hidden="true" className="h-4 w-4" />
@@ -229,9 +268,16 @@ export function TaskRubricEditor({
                   ) : null}
                 </div>
 
-                {idErrorId ? <p id={idErrorId} className="px-4 pb-3 text-sm text-rose-700">{itemErrors.id}</p> : null}
-                {expanded ? (
-                  <div id={`${itemDomId}-details`} className="grid gap-4 border-t border-slate-200 bg-white p-3 sm:p-4">
+                {rowErrorSummaryId ? (
+                  <p id={rowErrorSummaryId} className="px-4 pb-3 text-sm text-rose-700">
+                    请修正此维度：{itemErrorMessages.join('；')}
+                  </p>
+                ) : null}
+                <div
+                  id={`${itemDomId}-details`}
+                  hidden={!expanded}
+                  className="grid gap-4 border-t border-slate-200 bg-white p-3 sm:p-4"
+                >
                     <div>
                       <label htmlFor={`${itemDomId}-name`} className="text-sm font-medium text-slate-800">维度名称：{displayName}</label>
                       <input
@@ -281,8 +327,7 @@ export function TaskRubricEditor({
                       </div>
                       {weightErrorId ? <p id={weightErrorId} className="mt-1 text-sm text-rose-700">{itemErrors.weight}</p> : null}
                     </div>
-                  </div>
-                ) : null}
+                </div>
               </div>
             )
           })}
