@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import { AppStateProvider } from '../context/AppStateContext'
 import { useAppState } from '../context/useAppState'
+import { createMockGradingClient } from '../services/grading/mockGradingClient'
 import type { GradingClient, MultimodalGradingRequestV2 } from '../services/grading/types'
 import { EssayResultPage } from './EssayResultPage'
 import { ExceptionsPage } from './ExceptionsPage'
@@ -84,10 +85,10 @@ describe('ProgressPage', () => {
 
   it('starts only the next pending essay and exposes its ready result for teacher review', async () => {
     const user = userEvent.setup()
-    renderProgressFlow()
+    renderProgressFlow('task-2', createMockGradingClient())
     await user.click(screen.getByRole('button', { name: '开始批改' }))
-    expect((await screen.findAllByText('待教师确认')).length).toBeGreaterThan(0)
-    expect(screen.getByRole('link', { name: '查看并确认' })).toBeInTheDocument()
+    const reviewLink = await screen.findByRole('link', { name: '查看并确认' })
+    expect(reviewLink.parentElement).toHaveTextContent('建议重点复核')
     expect(screen.queryByRole('button', { name: /批量/ })).not.toBeInTheDocument()
   })
 
@@ -187,11 +188,14 @@ describe('ProgressPage', () => {
 
   it('takes a directly queued image upload into the progress page', async () => {
     const user = userEvent.setup()
+    vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn(() => 'blob:progress-upload'), revokeObjectURL: vi.fn() })
     renderUploadFlow()
-    await user.click(screen.getByRole('button', { name: '添加模拟图片' }))
-    await user.clear(screen.getByLabelText('班级'))
-    await user.type(screen.getByLabelText('班级'), '九年级 3 班')
-    await user.click(screen.getByRole('button', { name: '确认分组并进入批改' }))
+    await user.click(screen.getByRole('button', { name: '为学生1添加作文' }))
+    await user.upload(
+      screen.getByLabelText('上传相册图片'),
+      new File(['image'], 'student-1.png', { type: 'image/png' }),
+    )
+    await user.click(screen.getByRole('button', { name: '提交作文并进入批改' }))
     expect(screen.getByRole('heading', { name: '批改进度' })).toBeInTheDocument()
     expect(screen.getAllByText('待批改').length).toBeGreaterThan(0)
   })

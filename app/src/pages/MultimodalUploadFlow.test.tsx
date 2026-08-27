@@ -64,24 +64,6 @@ function renderMaterialFlow() {
   )
 }
 
-function uploadInput(container: HTMLElement) {
-  const input = container.querySelector<HTMLInputElement>('input[type="file"]')
-  if (!input) throw new Error('Image upload input was not rendered')
-  return input
-}
-
-function classInput(container: HTMLElement) {
-  const input = container.querySelector<HTMLInputElement>('#upload-class-name')
-  if (!input) throw new Error('Class input was not rendered')
-  return input
-}
-
-function confirmButton(input: HTMLInputElement) {
-  const button = input.parentElement?.querySelector<HTMLButtonElement>('button')
-  if (!button) throw new Error('Queue confirmation button was not rendered')
-  return button
-}
-
 describe('material task direct image upload flow', () => {
   afterEach(() => {
     capturedState = undefined
@@ -93,21 +75,18 @@ describe('material task direct image upload flow', () => {
     const user = userEvent.setup()
     vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn((file: File) => `blob:${file.name}`), revokeObjectURL: vi.fn() })
     const { container } = renderMaterialFlow()
-    await waitFor(() => expect(container.querySelector('#upload-class-name')).not.toBeNull())
+    await screen.findByRole('button', { name: '为学生1添加作文' })
 
     expect(document.body.textContent).not.toMatch(/OCR/i)
     const fileA = new File(['page-a'], 'first-page.png', { type: 'image/png' })
     const fileB = new File(['page-b'], 'second-page.png', { type: 'image/png' })
-    await user.upload(uploadInput(container), [fileA, fileB])
-    const groupingModes = container.querySelectorAll<HTMLButtonElement>('button[aria-pressed]')
-    await user.click(groupingModes[1])
-    const className = classInput(container)
-    await user.type(className, 'Class A')
-    await user.dblClick(confirmButton(className))
+    await user.click(screen.getByRole('button', { name: '为学生1添加作文' }))
+    await user.upload(screen.getByLabelText('上传相册图片'), [fileA, fileB])
+    await user.dblClick(screen.getByRole('button', { name: '提交作文并进入批改' }))
 
     await screen.findByRole('heading', { name: /批改进度/ })
     expect(container.querySelector('#upload-class-name')).toBeNull()
-    expect(screen.queryByRole('button', { name: /确认分组并进入批改/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /提交作文并进入批改/ })).not.toBeInTheDocument()
 
     const materialTask = capturedState?.tasks.find((task) => task.taskName === 'Material task')
     await waitFor(() => expect(capturedState?.essays.filter((essay) => essay.taskId === materialTask?.id)).toHaveLength(1))
@@ -116,34 +95,24 @@ describe('material task direct image upload flow', () => {
     expect(queued?.pages).toHaveLength(2)
     expect(queued?.pages[0].sourceFile).toBe(fileA)
     expect(queued?.pages[1].sourceFile).toBe(fileB)
+    expect(queued?.essayNumber).toBe('学生1')
     expect(queued?.pageOrder).toEqual(queued?.pages.map((page) => page.id))
     expect(document.body.textContent).not.toMatch(/OCR/i)
   })
 
-  it('blocks a mixed group of eleven otherwise valid image pages before it changes route or queues essays', async () => {
+  it('blocks eleven otherwise valid image pages for one student before it changes route or queues essays', async () => {
     const user = userEvent.setup()
     vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn((file: File) => `blob:${file.name}`), revokeObjectURL: vi.fn() })
-    const { container } = renderMaterialFlow()
-    await waitFor(() => expect(container.querySelector('#upload-class-name')).not.toBeNull())
+    renderMaterialFlow()
+    await screen.findByRole('button', { name: '为学生1添加作文' })
 
     const pages = Array.from({ length: 11 }, (_, index) => new File([`page-${index}`], `page-${index}.png`, { type: 'image/png' }))
-    await user.upload(uploadInput(container), pages)
-    const groupingModes = container.querySelectorAll<HTMLButtonElement>('button[aria-pressed]')
-    await user.click(groupingModes[2])
-    const selectionButtons = Array.from(container.querySelectorAll<HTMLButtonElement>('button[aria-pressed]')).slice(3)
-    expect(selectionButtons).toHaveLength(11)
-    for (const button of selectionButtons) await user.click(button)
-    const merge = screen.getAllByRole('button').find((button) => button.textContent?.includes('11'))
-    if (!merge) throw new Error('Merge button for selected pages was not rendered')
-    await user.click(merge)
-
-    const className = classInput(container)
-    await user.type(className, 'Class B')
-    await user.click(confirmButton(className))
+    await user.click(screen.getByRole('button', { name: '为学生1添加作文' }))
+    await user.upload(screen.getByLabelText('上传相册图片'), pages)
 
     expect(screen.getByRole('alert')).toHaveTextContent('10')
+    expect(screen.getByRole('button', { name: '提交作文并进入批改' })).toBeDisabled()
     const materialTask = capturedState?.tasks.find((task) => task.taskName === 'Material task')
     expect(capturedState?.essays.filter((essay) => essay.taskId === materialTask?.id)).toHaveLength(0)
-    expect(container.querySelector('#upload-class-name')).not.toBeNull()
   })
 })

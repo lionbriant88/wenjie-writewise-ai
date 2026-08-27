@@ -185,7 +185,7 @@ export function AppStateProvider({ children, gradingClient }: AppStateProviderPr
       const id = `${taskId}-uploaded-${submissionId}-${groupIndex + 1}`
       const pages = group.pages.map((page, pageIndex) => ({ ...page, id: `${id}-page-${pageIndex + 1}`, pageNumber: pageIndex + 1 }))
       return {
-        id, taskId, essayNumber: `作文 ${taskEssayCount + groupIndex + 1}`, pages, pageCount: pages.length,
+        id, taskId, essayNumber: group.studentName?.trim() || `作文 ${taskEssayCount + groupIndex + 1}`, pages, pageCount: pages.length,
         pageOrder: pages.map((page) => page.id), ocrText: '', ocrConfidence: 0, status: 'pending_grading',
         exceptionReasons: [], teacherReviewed: false, gradingRun: { status: 'idle' }, createdAt: timestamp, updatedAt: timestamp,
       }

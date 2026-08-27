@@ -26,7 +26,7 @@ export interface EnqueueImageEssaysInput {
   submissionId: string
   taskId: string
   className: string
-  essayGroups: Array<{ pages: EssayPage[] }>
+  essayGroups: Array<{ studentName?: string; pages: EssayPage[] }>
 }
 
 export interface AppState {

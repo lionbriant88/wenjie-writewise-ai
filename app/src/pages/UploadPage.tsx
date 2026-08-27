@@ -1,114 +1,363 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { Camera, FileImage, FileText, Plus, Trash2 } from 'lucide-react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { EmptyState } from '../components/EmptyState'
 import { EssayImagePreview } from '../components/EssayImagePreview'
-import { UploadSourceSelector } from '../components/UploadSourceSelector'
 import { useAppState } from '../context/useAppState'
 import { AppLayout } from '../layout/AppLayout'
 import type { EssayPage } from '../types'
-import type { UploadEssayGroup, UploadGroupingMode } from '../utils/essayGrouping'
-import { createEssayImageGroups, renumberEssayGroups } from '../utils/essayGrouping'
-import { findEssaysByTask, findTask } from '../utils/taskLookup'
+import { convertPdfToImages } from '../utils/pdfToImages'
+import { findTask } from '../utils/taskLookup'
 
-const mixedGuideStorageKey = 'wenjie-hide-mixed-grouping-guide'
 const allowedImageTypes = new Set(['image/png', 'image/jpeg', 'image/webp'])
+const imageAccept = 'image/png,image/jpeg,image/webp'
 const maxImageBytes = 8 * 1024 * 1024
+const maxPagesPerStudent = 10
 
-function groupingButtonClass(active: boolean) {
-  return active
-    ? 'rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-800'
-    : 'rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700'
+interface StudentUpload {
+  id: string
+  name: string
+  pages: EssayPage[]
+  menuOpen: boolean
+  editingName: boolean
+  processingPdf: boolean
+}
+
+function createStudent(index: number): StudentUpload {
+  return {
+    id: `student-upload-${Date.now()}-${index}`,
+    name: '',
+    pages: [],
+    menuOpen: false,
+    editingName: false,
+    processingPdf: false,
+  }
+}
+
+function defaultStudentName(index: number) {
+  return `学生${index + 1}`
 }
 
 export function UploadPage() {
   const { taskId = '' } = useParams()
   const navigate = useNavigate()
-  const { tasks, essays, enqueueImageEssays } = useAppState()
+  const { tasks, enqueueImageEssays } = useAppState()
   const task = findTask(tasks, taskId)
-  const taskEssays = findEssaysByTask(essays, taskId)
-  const initialPages = useMemo(() => taskEssays.flatMap((essay) => essay.pages).filter((page) => page.sourceFile).slice(0, 6), [taskEssays])
-  const [pages, setPages] = useState<EssayPage[]>(initialPages)
-  const [groupingMode, setGroupingMode] = useState<UploadGroupingMode>('single')
-  const [mixedGroups, setMixedGroups] = useState<UploadEssayGroup[]>(() => createEssayImageGroups(initialPages, 'single'))
-  const [selectedPageIds, setSelectedPageIds] = useState<string[]>([])
-  const [className, setClassName] = useState(task?.className === '待选择班级' ? '' : (task?.className ?? ''))
-  const [showMixedGuide, setShowMixedGuide] = useState(false)
+  const [students, setStudents] = useState<StudentUpload[]>(() => [createStudent(0)])
   const [uploadError, setUploadError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const submittingRef = useRef(false)
   const submissionIdRef = useRef(`upload-${crypto.randomUUID?.() ?? Date.now()}`)
   const localPreviewUrlsRef = useRef<string[]>([])
-  const pagesById = useMemo(() => new Map(pages.map((page) => [page.id, page])), [pages])
-  const pageOrderIndex = useMemo(() => new Map(pages.map((page, index) => [page.id, index])), [pages])
-  const visibleEssayGroups = useMemo(() => {
-    if (groupingMode !== 'mixed') return createEssayImageGroups(pages, groupingMode)
-    const seen = new Set<string>()
-    const selected = mixedGroups.map((group) => ({ ...group, pageIds: [...group.pageIds].sort((a, b) => (pageOrderIndex.get(a) ?? 0) - (pageOrderIndex.get(b) ?? 0)).filter((id) => pagesById.has(id) && !seen.has(id) && Boolean(seen.add(id))) })).filter((group) => group.pageIds.length)
-    const missing = pages.filter((page) => !seen.has(page.id)).map((page) => ({ id: `group-${page.id}`, pageIds: [page.id] }))
-    return renumberEssayGroups([...selected, ...missing].sort((a, b) => (pageOrderIndex.get(a.pageIds[0]) ?? 0) - (pageOrderIndex.get(b.pageIds[0]) ?? 0)))
-  }, [groupingMode, mixedGroups, pageOrderIndex, pages, pagesById])
 
-  useEffect(() => () => localPreviewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url)), [])
-  if (!task) return <EmptyState title="找不到任务" description="请返回任务列表重新选择一个批改任务。" />
+  useEffect(() => () => {
+    localPreviewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
+  }, [])
 
-  const addPage = () => {
-    const next = pages.length + 1
-    const page: EssayPage = { id: `uploaded-page-${Date.now()}`, label: `新增图片 ${next}`, pageNumber: next, quality: 'clear', accent: '#2563eb', sourceFile: new File([`mock page ${next}`], `mock-page-${next}.png`, { type: 'image/png' }) }
-    setPages((current) => [...current, page])
-    setMixedGroups((current) => renumberEssayGroups([...current, { id: `group-${page.id}`, pageIds: [page.id] }]))
+  if (!task) {
+    return <EmptyState title="找不到任务" description="请返回任务列表重新选择一个批改任务。" />
   }
-  const addLocalFiles = (files: File[]) => {
+
+  const displayName = (student: StudentUpload, index: number) => student.name.trim() || defaultStudentName(index)
+
+  const addImageFiles = (studentId: string, files: File[]) => {
     if (!files.length) return
     const invalid = files.find((file) => !allowedImageTypes.has(file.type) || file.size > maxImageBytes)
-    if (invalid) { setUploadError('仅支持 PNG、JPEG、WebP 图片，且单张不超过 8 MiB。'); return }
+    if (invalid) {
+      setUploadError('仅支持 PNG、JPEG、WebP 图片，且单张不超过 8 MiB。')
+      return
+    }
+
+    const target = students.find((student) => student.id === studentId)
+    if (!target || target.pages.length + files.length > maxPagesPerStudent) {
+      setUploadError(`每位学生最多上传 ${maxPagesPerStudent} 页作文。`)
+      return
+    }
+
     setUploadError('')
-    setPages((current) => {
-      const nextPages = files.map((file, index) => {
-        const id = `local-page-${Date.now()}-${index}`
-        const previewUrl = URL.createObjectURL(file)
-        localPreviewUrlsRef.current.push(previewUrl)
-        return { id, label: file.name, pageNumber: current.length + index + 1, quality: 'clear' as const, accent: '#0891b2', previewUrl, sourceFile: file }
+    const nextPages = files.map((file, fileIndex): EssayPage => {
+      const previewUrl = URL.createObjectURL(file)
+      localPreviewUrlsRef.current.push(previewUrl)
+      return {
+        id: `local-page-${Date.now()}-${fileIndex}-${Math.random().toString(36).slice(2)}`,
+        label: file.name,
+        pageNumber: target.pages.length + fileIndex + 1,
+        quality: 'clear',
+        accent: '#0891b2',
+        previewUrl,
+        sourceFile: file,
+      }
+    })
+    setStudents((current) => current.map((student) => student.id === studentId
+      ? { ...student, pages: [...student.pages, ...nextPages] }
+      : student))
+  }
+
+  const addPdfFile = async (studentId: string, file?: File) => {
+    if (!file) return
+    const target = students.find((student) => student.id === studentId)
+    if (!target) return
+    const remainingPages = maxPagesPerStudent - target.pages.length
+    if (remainingPages < 1) {
+      setUploadError(`每位学生最多上传 ${maxPagesPerStudent} 页作文。`)
+      return
+    }
+
+    setUploadError('')
+    setStudents((current) => current.map((student) => student.id === studentId
+      ? { ...student, processingPdf: true }
+      : student))
+    try {
+      const pageFiles = await convertPdfToImages(file, { maxPages: remainingPages })
+      addImageFiles(studentId, pageFiles)
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'PDF 解析失败，请检查文件后重试。')
+    } finally {
+      setStudents((current) => current.map((student) => student.id === studentId
+        ? { ...student, processingPdf: false }
+        : student))
+    }
+  }
+
+  const removePage = (studentId: string, pageId: string) => {
+    setStudents((current) => current.map((student) => {
+      if (student.id !== studentId) return student
+      const removed = student.pages.find((page) => page.id === pageId)
+      if (removed?.previewUrl) {
+        URL.revokeObjectURL(removed.previewUrl)
+        localPreviewUrlsRef.current = localPreviewUrlsRef.current.filter((url) => url !== removed.previewUrl)
+      }
+      return {
+        ...student,
+        pages: student.pages
+          .filter((page) => page.id !== pageId)
+          .map((page, index) => ({ ...page, pageNumber: index + 1 })),
+      }
+    }))
+  }
+
+  const removeStudent = (studentId: string) => {
+    setStudents((current) => {
+      const removed = current.find((student) => student.id === studentId)
+      removed?.pages.forEach((page) => {
+        if (!page.previewUrl) return
+        URL.revokeObjectURL(page.previewUrl)
+        localPreviewUrlsRef.current = localPreviewUrlsRef.current.filter((url) => url !== page.previewUrl)
       })
-      setMixedGroups((groups) => renumberEssayGroups([...groups, ...nextPages.map((page) => ({ id: `group-${page.id}`, pageIds: [page.id] }))]))
-      return [...current, ...nextPages]
+      return current.filter((student) => student.id !== studentId)
     })
   }
-  const movePage = (pageId: string, direction: 'up' | 'down') => setPages((current) => {
-    const index = current.findIndex((page) => page.id === pageId); const target = direction === 'up' ? index - 1 : index + 1
-    if (index < 0 || target < 0 || target >= current.length) return current
-    const next = [...current]; const [page] = next.splice(index, 1); next.splice(target, 0, page); return next
-  })
-  const removePage = (pageId: string) => {
-    setPages((current) => current.filter((page) => { if (page.id === pageId && page.previewUrl) { URL.revokeObjectURL(page.previewUrl); localPreviewUrlsRef.current = localPreviewUrlsRef.current.filter((url) => url !== page.previewUrl) }; return page.id !== pageId }))
-    setMixedGroups((groups) => renumberEssayGroups(groups.map((group) => ({ ...group, pageIds: group.pageIds.filter((id) => id !== pageId) }))))
-    setSelectedPageIds((ids) => ids.filter((id) => id !== pageId))
-  }
-  const mergeSelectedPages = () => {
-    if (selectedPageIds.length < 2) return
-    const selected = new Set(selectedPageIds); const ids = pages.filter((page) => selected.has(page.id)).map((page) => page.id)
-    setMixedGroups(renumberEssayGroups([...visibleEssayGroups.map((group) => ({ ...group, pageIds: group.pageIds.filter((id) => !selected.has(id)) })).filter((group) => group.pageIds.length), { id: 'group-merged', pageIds: ids }].sort((a, b) => (pageOrderIndex.get(a.pageIds[0]) ?? 0) - (pageOrderIndex.get(b.pageIds[0]) ?? 0))))
-    setSelectedPageIds([])
-  }
-  const splitGroup = (index: number) => setMixedGroups(renumberEssayGroups(visibleEssayGroups.flatMap((group, groupIndex) => groupIndex === index ? group.pageIds.map((id) => ({ id: `group-${id}`, pageIds: [id] })) : [group])))
-  const getPages = (group: UploadEssayGroup) => group.pageIds.map((id) => pagesById.get(id)).filter((page): page is EssayPage => Boolean(page))
-  const enqueueGroups = () => {
-    if (submittingRef.current || !className.trim() || !pages.length) return
-    if (visibleEssayGroups.some((group) => group.pageIds.length > 10 || getPages(group).some((page) => !page.sourceFile || !allowedImageTypes.has(page.sourceFile.type) || page.sourceFile.size > maxImageBytes))) { setUploadError('图片分组不可用：每篇最多 10 页，且仅支持不超过 8 MiB 的 PNG、JPEG、WebP 图片。'); return }
+
+  const enqueueStudents = () => {
+    if (submittingRef.current) return
+    const readyStudents = students
+      .map((student, index) => ({ ...student, resolvedName: displayName(student, index) }))
+      .filter((student) => student.pages.length > 0)
+    if (!readyStudents.length) {
+      setUploadError('请先为至少一位学生上传作文。')
+      return
+    }
+    if (readyStudents.some((student) => student.pages.length > maxPagesPerStudent)) {
+      setUploadError(`每位学生最多上传 ${maxPagesPerStudent} 页作文。`)
+      return
+    }
+
     submittingRef.current = true
     setSubmitting(true)
-    enqueueImageEssays({ submissionId: submissionIdRef.current, taskId: task.id, className, essayGroups: visibleEssayGroups.map((group) => ({ pages: getPages(group) })) })
+    const storedClassName = task.className.trim() && task.className !== '待选择班级' ? task.className.trim() : '未分班'
+    enqueueImageEssays({
+      submissionId: submissionIdRef.current,
+      taskId: task.id,
+      className: storedClassName,
+      essayGroups: readyStudents.map((student) => ({ studentName: student.resolvedName, pages: student.pages })),
+    })
     navigate(`/tasks/${task.id}/progress`)
   }
-  const chooseMode = (mode: UploadGroupingMode) => { setGroupingMode(mode); setSelectedPageIds([]); if (mode === 'mixed') { setMixedGroups(createEssayImageGroups(pages, 'single')); setShowMixedGuide(localStorage.getItem(mixedGuideStorageKey) !== 'true') } else setShowMixedGuide(false) }
 
-  return <AppLayout task={task} title="上传作文与图片整理" currentStep="upload" description="按页数规则整理作文图片，确认分组后直接进入批改队列。"><div className="space-y-6">
-    <UploadSourceSelector onAddMockImage={addPage} onSelectImages={addLocalFiles} disabled={false} multimodal={Boolean(task.materialContext)} />
-    {uploadError ? <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{uploadError}</p> : null}
-    <div className="rounded-lg border border-slate-200 bg-white p-5"><div className="flex flex-wrap items-start justify-between gap-4"><div><h3 className="font-semibold text-slate-950">已上传图片</h3><p className="mt-1 text-sm text-slate-500">当前 {pages.length} 张图片，预计生成 {visibleEssayGroups.length} 篇作文</p></div><div className="w-full max-w-sm"><label className="text-sm font-semibold text-slate-700" htmlFor="upload-class-name">班级</label><div className="mt-1 flex gap-2"><input id="upload-class-name" value={className} onChange={(event) => setClassName(event.target.value)} placeholder="请输入班级" className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm" /><button type="button" onClick={enqueueGroups} disabled={submitting || !className.trim() || !pages.length} className="shrink-0 rounded-lg bg-blue-700 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-200">确认分组并进入批改</button></div></div></div>
-      <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4"><p className="text-sm font-semibold text-slate-900">整理方式</p><div className="mt-3 flex flex-wrap gap-2">{(['single', 'fixed-2', 'mixed'] as const).map((mode) => <button key={mode} type="button" aria-pressed={groupingMode === mode} onClick={() => chooseMode(mode)} className={groupingButtonClass(groupingMode === mode)}>{mode === 'single' ? '一张一篇' : mode === 'fixed-2' ? '每 2 张一篇' : '混合页数'}</button>)}</div>
-      {groupingMode === 'mixed' && showMixedGuide ? <div className="mt-3 rounded-lg border border-blue-100 bg-white p-3 text-sm text-slate-600">选择两张或更多图片后可合并为一篇作文。<button type="button" className="ml-3 text-blue-700" onClick={() => setShowMixedGuide(false)}>知道了</button><button type="button" className="ml-3 text-slate-500" onClick={() => { localStorage.setItem(mixedGuideStorageKey, 'true'); setShowMixedGuide(false) }}>不再提醒</button></div> : null}</div>
-      {groupingMode === 'mixed' && selectedPageIds.length >= 2 ? <div className="mt-4"><button type="button" onClick={mergeSelectedPages} className="rounded-lg bg-blue-700 px-3 py-2 text-sm font-semibold text-white">合并为一篇作文（已选 {selectedPageIds.length} 张）</button></div> : null}
-      <div className="mt-5">{pages.length ? <div className="grid gap-3 lg:grid-cols-2">{visibleEssayGroups.map((group, groupIndex) => <section key={group.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3"><div className="mb-3 flex justify-between"><div><h4 className="text-sm font-semibold text-slate-950">作文 {groupIndex + 1} · 共 {getPages(group).length} 页</h4><p className="text-xs text-slate-500">将按卡片内图片顺序发送给批改模型。</p></div>{group.pageIds.length > 1 ? <button type="button" onClick={() => splitGroup(groupIndex)} className="text-sm text-blue-700">拆分此作文 {groupIndex + 1}</button> : null}</div><div className="grid gap-3 sm:grid-cols-2">{getPages(group).map((page) => { const index = pageOrderIndex.get(page.id) ?? 0; const selected = selectedPageIds.includes(page.id); return <div key={page.id} className={`rounded-lg bg-white p-2 ${selected ? 'ring-2 ring-blue-400' : ''}`}>{groupingMode === 'mixed' ? <button type="button" aria-label={`选择第 ${index + 1} 张图片`} aria-pressed={selected} onClick={() => setSelectedPageIds((ids) => ids.includes(page.id) ? ids.filter((id) => id !== page.id) : [...ids, page.id])}><EssayImagePreview page={page} /></button> : <EssayImagePreview page={page} />}<div className="mt-2 grid grid-cols-3 gap-2"><button type="button" disabled={!index} onClick={() => movePage(page.id, 'up')}>上移</button><button type="button" disabled={index === pages.length - 1} onClick={() => movePage(page.id, 'down')}>下移</button><button type="button" aria-label={`删除 ${page.label}`} onClick={() => removePage(page.id)}>删除</button></div></div>})}</div></section>)}</div> : <EmptyState title="还没有图片" description="添加图片后可整理分组并直接进入批改队列。" />}</div>
-    </div><Link to={`/tasks/${task.id}/progress`} className="inline-flex text-sm font-semibold text-blue-700">查看批改进度</Link>
-  </div></AppLayout>
+  const hasPages = students.some((student) => student.pages.length > 0)
+  const processingPdf = students.some((student) => student.processingPdf)
+
+  return (
+    <AppLayout
+      task={task}
+      title="上传学生作文"
+      currentStep="upload"
+      description="按学生依次上传作文图片、PDF 或现场拍照；每位学生可包含多页。"
+    >
+      <div className="space-y-5">
+        {uploadError ? (
+          <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {uploadError}
+          </p>
+        ) : null}
+
+        <div className="grid gap-4 xl:grid-cols-2">
+          {students.map((student, studentIndex) => {
+            const resolvedName = displayName(student, studentIndex)
+            return (
+              <section key={student.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+                  {student.editingName ? (
+                    <input
+                      autoFocus
+                      aria-label={`${defaultStudentName(studentIndex)}姓名`}
+                      value={student.name}
+                      placeholder={defaultStudentName(studentIndex)}
+                      maxLength={40}
+                      onChange={(event) => setStudents((current) => current.map((item) => item.id === student.id
+                        ? { ...item, name: event.target.value }
+                        : item))}
+                      onBlur={() => setStudents((current) => current.map((item) => item.id === student.id
+                        ? { ...item, editingName: false }
+                        : item))}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') event.currentTarget.blur()
+                        if (event.key === 'Escape') {
+                          event.currentTarget.value = student.name
+                          event.currentTarget.blur()
+                        }
+                      }}
+                      className="min-w-0 flex-1 rounded-lg border border-blue-200 px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:ring-2 focus:ring-blue-100"
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setStudents((current) => current.map((item) => item.id === student.id
+                        ? { ...item, editingName: true }
+                        : item))}
+                      className="rounded-lg px-2 py-1 text-left text-base font-semibold text-slate-950 hover:bg-blue-50 hover:text-blue-700"
+                    >
+                      {resolvedName}
+                    </button>
+                  )}
+                  <div className="flex items-center gap-2 text-xs text-slate-500">
+                    <span>{student.pages.length} 页</span>
+                    {students.length > 1 ? (
+                      <button
+                        type="button"
+                        aria-label={`删除${resolvedName}`}
+                        onClick={() => removeStudent(student.id)}
+                        className="rounded-md p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="p-4">
+                  {student.pages.length ? (
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {student.pages.map((page) => (
+                        <div key={page.id} className="relative">
+                          <EssayImagePreview page={page} />
+                          <button
+                            type="button"
+                            aria-label={`删除 ${page.label}`}
+                            onClick={() => removePage(student.id, page.id)}
+                            className="absolute right-2 top-2 rounded-full bg-white/95 p-1.5 text-slate-500 shadow hover:text-rose-600"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="py-4 text-center text-sm text-slate-500">尚未上传作文</p>
+                  )}
+
+                  <button
+                    type="button"
+                    aria-label={`为${resolvedName}添加作文`}
+                    aria-expanded={student.menuOpen}
+                    onClick={() => setStudents((current) => current.map((item) => item.id === student.id
+                      ? { ...item, menuOpen: !item.menuOpen }
+                      : item))}
+                    className="mt-4 flex w-full flex-col items-center justify-center rounded-xl border border-dashed border-blue-200 bg-blue-50/40 px-4 py-6 text-blue-700 transition hover:border-blue-400 hover:bg-blue-50"
+                  >
+                    <Plus className="h-8 w-8" />
+                    <span className="mt-1 text-sm font-semibold">添加作文</span>
+                  </button>
+
+                  {student.menuOpen ? (
+                    <div className="mt-3 grid gap-2 sm:grid-cols-3" aria-label={`${resolvedName}上传方式`}>
+                      <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-3 text-sm font-semibold text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700">
+                        <FileImage className="h-4 w-4" />
+                        上传相册图片
+                        <input
+                          type="file"
+                          aria-label="上传相册图片"
+                          accept={imageAccept}
+                          multiple
+                          className="sr-only"
+                          onChange={(event) => {
+                            addImageFiles(student.id, Array.from(event.target.files ?? []))
+                            event.target.value = ''
+                          }}
+                        />
+                      </label>
+                      <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-3 text-sm font-semibold text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700">
+                        <FileText className="h-4 w-4" />
+                        上传 PDF 文件
+                        <input
+                          type="file"
+                          aria-label="上传PDF文件"
+                          accept="application/pdf"
+                          disabled={student.processingPdf}
+                          className="sr-only"
+                          onChange={async (event) => {
+                            const input = event.currentTarget
+                            await addPdfFile(student.id, input.files?.[0])
+                            input.value = ''
+                          }}
+                        />
+                      </label>
+                      <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-3 text-sm font-semibold text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700">
+                        <Camera className="h-4 w-4" />
+                        拍照上传
+                        <input
+                          type="file"
+                          aria-label="拍照上传"
+                          accept={imageAccept}
+                          capture="environment"
+                          className="sr-only"
+                          onChange={(event) => {
+                            addImageFiles(student.id, Array.from(event.target.files ?? []))
+                            event.target.value = ''
+                          }}
+                        />
+                      </label>
+                    </div>
+                  ) : null}
+                </div>
+              </section>
+            )
+          })}
+        </div>
+
+        <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+          <button
+            type="button"
+            onClick={() => setStudents((current) => [...current, createStudent(current.length)])}
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-blue-200 px-4 py-2.5 text-sm font-semibold text-blue-700 hover:bg-blue-50"
+          >
+            <Plus className="h-4 w-4" />
+            添加下一位学生
+          </button>
+          <button
+            type="button"
+            onClick={enqueueStudents}
+            disabled={submitting || processingPdf || !hasPages}
+            className="rounded-lg bg-blue-700 px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+          >
+            {processingPdf ? '正在解析 PDF…' : '提交作文并进入批改'}
+          </button>
+        </div>
+
+        <Link to={`/tasks/${task.id}/progress`} className="inline-flex text-sm font-semibold text-blue-700">
+          查看批改进度
+        </Link>
+      </div>
+    </AppLayout>
+  )
 }
