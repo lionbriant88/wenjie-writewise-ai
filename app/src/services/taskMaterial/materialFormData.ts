@@ -20,10 +20,25 @@ const SAFE_IMAGE_EXTENSIONS: Record<string, 'jpeg' | 'png' | 'webp'> = {
   'image/webp': 'webp',
 }
 
+function validateReadyMaterials(materials: readonly TaskMaterialRequestUnit[]): void {
+  for (const material of materials) {
+    if (material.kind === 'image') {
+      if (!Object.prototype.hasOwnProperty.call(SAFE_IMAGE_EXTENSIONS, material.file.type)) {
+        throw new Error('Unsupported ready task material image MIME type.')
+      }
+      continue
+    }
+    if (material.kind !== 'text') {
+      throw new Error('Unsupported ready task material unit.')
+    }
+  }
+}
+
 export function appendTaskMaterials(
   formData: FormData,
   materials: readonly TaskMaterialRequestUnit[],
 ): void {
+  validateReadyMaterials(materials)
   const manifest: MaterialManifestEntry[] = []
   const images: File[] = []
   const textMaterials: Array<{ displayName: string; text: string }> = []
@@ -39,12 +54,11 @@ export function appendTaskMaterials(
       textMaterials.push({ displayName: material.displayName, text: material.text })
       continue
     }
-    throw new Error('Unsupported ready task material unit.')
   }
 
   formData.append('materialManifest', JSON.stringify(manifest))
   images.forEach((file, index) => {
-    const extension = SAFE_IMAGE_EXTENSIONS[file.type] ?? 'jpeg'
+    const extension = SAFE_IMAGE_EXTENSIONS[file.type]!
     formData.append('images', file, `material-image-${index + 1}.${extension}`)
   })
   formData.append('textMaterials', JSON.stringify(textMaterials))
@@ -53,6 +67,7 @@ export function appendTaskMaterials(
 export function createTaskMaterialFormData(
   request: Pick<TaskMaterialRequestBase, 'requestId' | 'fullScore' | 'writingRequirement' | 'materials'>,
 ): FormData {
+  validateReadyMaterials(request.materials)
   const formData = new FormData()
   formData.append('requestId', request.requestId)
   formData.append('fullScore', String(request.fullScore))

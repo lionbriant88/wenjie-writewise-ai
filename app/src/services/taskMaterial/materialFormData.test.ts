@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { appendTaskMaterials, createTaskMaterialFormData } from './materialFormData'
 
 function imageUnit(id: string, name: string, type: 'image/jpeg' | 'image/png' | 'image/webp') {
@@ -73,5 +73,49 @@ describe('task material FormData', () => {
   it('throws only for an impossible non-ready material variant', () => {
     const impossible = [{ id: 'pending-1', kind: 'pending' }] as never
     expect(() => appendTaskMaterials(new FormData(), impossible)).toThrow('Unsupported ready task material unit')
+  })
+
+  it.each([
+    ['GIF', 'image/gif'],
+    ['empty MIME', ''],
+  ])('rejects %s before writing any wire field and does not mutate the input', (_label, type) => {
+    const file = new File(['private-bytes'], 'student-private-file', { type })
+    const materials = [
+      textUnit('text-before-invalid'),
+      { id: 'invalid-image', kind: 'image' as const, file },
+    ]
+    const formData = new FormData()
+    formData.append('sentinel', 'keep')
+    const before = { name: file.name, size: file.size, type: file.type, materials: [...materials] }
+
+    expect(() => appendTaskMaterials(formData, materials)).toThrow('Unsupported ready task material image MIME type.')
+    expect([...formData.entries()]).toEqual([['sentinel', 'keep']])
+    expect({ name: file.name, size: file.size, type: file.type, materials }).toEqual(before)
+    expect(() => createTaskMaterialFormData({
+      requestId: 'invalid-mime', fullScore: 15, writingRequirement: 'Write.', materials,
+    })).toThrow('Unsupported ready task material image MIME type.')
+  })
+
+  it('rejects an unsupported MIME before constructing FormData', () => {
+    const OriginalFormData = globalThis.FormData
+    const formDataConstructor = vi.fn(function FakeFormData() {
+      return new OriginalFormData()
+    })
+    globalThis.FormData = formDataConstructor as unknown as typeof FormData
+
+    try {
+      expect(() => createTaskMaterialFormData({
+        requestId: 'invalid-before-form-data',
+        fullScore: 15,
+        writingRequirement: 'Write.',
+        materials: [{
+          id: 'invalid-image', kind: 'image',
+          file: new File(['private'], 'student-private', { type: 'image/gif' }),
+        }],
+      })).toThrow('Unsupported ready task material image MIME type.')
+      expect(formDataConstructor).not.toHaveBeenCalled()
+    } finally {
+      globalThis.FormData = OriginalFormData
+    }
   })
 })

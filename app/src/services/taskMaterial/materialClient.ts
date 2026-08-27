@@ -59,13 +59,70 @@ function safeFailureMessage(code: RubricFailureCode): string {
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
+/** @internal Shared by the two task-material response projectors. */
+export function readStrictResponseRecord(
+  value: unknown,
+  expectedKeys: readonly string[],
+): Record<string, unknown> | null {
+  try {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+    const prototype = Object.getPrototypeOf(value) as unknown
+    if (prototype !== Object.prototype && prototype !== null) return null
+
+    const expected = new Set(expectedKeys)
+    const ownKeys = Reflect.ownKeys(value)
+    if (
+      ownKeys.length !== expected.size
+      || ownKeys.some((key) => typeof key !== 'string' || !expected.has(key))
+    ) return null
+
+    const projected = Object.create(null) as Record<string, unknown>
+    for (const key of expectedKeys) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (!descriptor || !descriptor.enumerable || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) {
+        return null
+      }
+      projected[key] = descriptor.value
+    }
+    return projected
+  } catch {
+    return null
+  }
 }
 
-function hasExactlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  const actualKeys = Object.keys(value)
-  return actualKeys.length === keys.length && actualKeys.every((key) => keys.includes(key))
+/** @internal Shared by the two task-material response projectors. */
+export function readStrictResponseArray(
+  value: unknown,
+  minimumItems: number,
+  maximumItems: number,
+): unknown[] | null {
+  try {
+    if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) return null
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length')
+    if (!lengthDescriptor || !Object.prototype.hasOwnProperty.call(lengthDescriptor, 'value')) return null
+    const length = lengthDescriptor.value
+    if (!Number.isInteger(length) || length < minimumItems || length > maximumItems) return null
+
+    const expectedKeys = new Set<string>(['length'])
+    for (let index = 0; index < length; index += 1) expectedKeys.add(String(index))
+    const ownKeys = Reflect.ownKeys(value)
+    if (
+      ownKeys.length !== expectedKeys.size
+      || ownKeys.some((key) => typeof key !== 'string' || !expectedKeys.has(key))
+    ) return null
+
+    const projected: unknown[] = []
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
+      if (!descriptor || !descriptor.enumerable || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) {
+        return null
+      }
+      projected.push(descriptor.value)
+    }
+    return projected
+  } catch {
+    return null
+  }
 }
 
 function readString(value: unknown, maxLength: number): string | null {
@@ -75,19 +132,21 @@ function readString(value: unknown, maxLength: number): string | null {
 }
 
 function readStringArray(value: unknown, minimumItems: number, maxItemLength: number): string[] | null {
-  if (!Array.isArray(value) || value.length < minimumItems || value.length > 50) return null
-  const items = value.map((item) => readString(item, maxItemLength))
+  const strictArray = readStrictResponseArray(value, minimumItems, 50)
+  if (!strictArray) return null
+  const items = strictArray.map((item) => readString(item, maxItemLength))
   return items.every((item): item is string => item !== null) ? items : null
 }
 
 function projectMaterialContext(value: unknown): TaskMaterialContext | null {
-  if (!isRecord(value) || !hasExactlyKeys(value, [
+  const context = readStrictResponseRecord(value, [
     'materialSummary', 'writingRequirements', 'constraints', 'reviewWarnings',
-  ])) return null
-  const materialSummary = readString(value.materialSummary, 20_000)
-  const writingRequirements = readStringArray(value.writingRequirements, 1, 10_000)
-  const constraints = readStringArray(value.constraints, 0, 5_000)
-  const reviewWarnings = readStringArray(value.reviewWarnings, 0, 5_000)
+  ])
+  if (!context) return null
+  const materialSummary = readString(context.materialSummary, 20_000)
+  const writingRequirements = readStringArray(context.writingRequirements, 1, 10_000)
+  const constraints = readStringArray(context.constraints, 0, 5_000)
+  const reviewWarnings = readStringArray(context.reviewWarnings, 0, 5_000)
   return materialSummary && writingRequirements && constraints && reviewWarnings
     ? { materialSummary, writingRequirements, constraints, reviewWarnings }
     : null
@@ -98,30 +157,30 @@ function projectResponse(
   requestId: string,
   httpOk: boolean,
 ): MaterialContextClientResponse {
-  if (!isRecord(value) || value.requestId !== requestId) {
-    return gatewayFailure(requestId, 'gateway_invalid_response', true)
-  }
-  if (httpOk && value.status === 'success' && hasExactlyKeys(value, [
+  const success = readStrictResponseRecord(value, [
     'requestId', 'status', 'materialContext',
-  ])) {
-    const materialContext = projectMaterialContext(value.materialContext)
+  ])
+  if (httpOk && success?.requestId === requestId && success.status === 'success') {
+    const materialContext = projectMaterialContext(success.materialContext)
     return materialContext
       ? { requestId, status: 'success', materialContext }
       : gatewayFailure(requestId, 'gateway_invalid_response', true)
   }
-  if (!httpOk && value.status === 'failed' && hasExactlyKeys(value, [
+  const failure = readStrictResponseRecord(value, [
     'requestId', 'status', 'error',
-  ]) && isRecord(value.error) && hasExactlyKeys(value.error, [
+  ])
+  const error = failure ? readStrictResponseRecord(failure.error, [
     'code', 'message', 'retryable',
-  ])) {
-    const code = readString(value.error.code, 128)
-    const message = readString(value.error.message, 2_000)
-    if (code && message && safeFailureCodes.has(code as RubricFailureCode) && typeof value.error.retryable === 'boolean') {
+  ]) : null
+  if (!httpOk && failure?.requestId === requestId && failure.status === 'failed' && error) {
+    const code = readString(error.code, 128)
+    const message = readString(error.message, 2_000)
+    if (code && message && safeFailureCodes.has(code as RubricFailureCode) && typeof error.retryable === 'boolean') {
       const safeCode = code as RubricFailureCode
       return {
         requestId,
         status: 'failed',
-        error: { code: safeCode, message: safeFailureMessage(safeCode), retryable: value.error.retryable },
+        error: { code: safeCode, message: safeFailureMessage(safeCode), retryable: error.retryable },
       }
     }
   }
@@ -135,12 +194,13 @@ export function createRemoteMaterialContextClient({
   return {
     async analyze(request) {
       if (!apiBase) return gatewayFailure(request.requestId, 'gateway_unavailable', false)
+      const formData = createTaskMaterialFormData(request)
 
       let response: Response
       try {
         response = await fetchImpl(`${apiBase.replace(/\/$/, '')}/tasks/material-context`, {
           method: 'POST',
-          body: createTaskMaterialFormData(request),
+          body: formData,
           signal: request.signal,
         })
       } catch {

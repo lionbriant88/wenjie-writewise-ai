@@ -31,6 +31,20 @@ const rubric = {
   reviewWarnings: [],
 }
 
+function responseWithRawBody(body: unknown): Response {
+  return { ok: true, json: async () => body } as Response
+}
+
+function withOwnSymbol<T extends object>(value: T): T {
+  Object.defineProperty(value, Symbol('private'), { value: 'PRIVATE' })
+  return value
+}
+
+function withNonEnumerableExtra<T extends object>(value: T): T {
+  Object.defineProperty(value, 'privateValue', { value: 'PRIVATE', enumerable: false })
+  return value
+}
+
 describe('rubric client', () => {
   it('uses the shared serializer for /tasks/rubric, preserves empty requirement, order, signal, and neutral filenames', async () => {
     const controller = new AbortController()
@@ -134,6 +148,69 @@ describe('rubric client', () => {
       error: { code: 'provider_timeout', message: '评分服务响应超时，请稍后重试。', retryable: true },
     })
     expect(JSON.stringify(response)).not.toContain(rawGatewayMessage)
+  })
+
+  it.each([
+    ['sparse dimensions', () => {
+      const dimensions = new Array(3)
+      dimensions[0] = { ...rubric.dimensions[0], weight: 95 }
+      dimensions[1] = rubric.dimensions[2]
+      return {
+        requestId: request.requestId, status: 'success', rubric: { ...rubric, dimensions },
+      }
+    }],
+    ['custom-prototype rubric', () => ({
+      requestId: request.requestId, status: 'success',
+      rubric: Object.assign(Object.create({ inherited: 'PRIVATE' }) as object, rubric),
+    })],
+    ['own-symbol dimension', () => ({
+      requestId: request.requestId, status: 'success',
+      rubric: { ...rubric, dimensions: [withOwnSymbol({ ...rubric.dimensions[0] }), ...rubric.dimensions.slice(1)] },
+    })],
+    ['own-symbol dimensions array', () => ({
+      requestId: request.requestId, status: 'success',
+      rubric: { ...rubric, dimensions: withOwnSymbol([...rubric.dimensions]) },
+    })],
+    ['non-enumerable extra response field', () => withNonEnumerableExtra({
+      requestId: request.requestId, status: 'success', rubric,
+    })],
+    ['custom-prototype dimensions array', () => {
+      const dimensions = [...rubric.dimensions]
+      Object.setPrototypeOf(dimensions, Object.create(Array.prototype))
+      return { requestId: request.requestId, status: 'success', rubric: { ...rubric, dimensions } }
+    }],
+    ['throwing rubric getter', () => {
+      const body = { requestId: request.requestId, status: 'success' } as Record<string, unknown>
+      Object.defineProperty(body, 'rubric', {
+        enumerable: true,
+        get() { throw new Error('PRIVATE getter failure') },
+      })
+      return body
+    }],
+  ] as const)('fails closed without throwing for non-JSON rubric shape: %s', async (_label, bodyFactory) => {
+    const response = await createRemoteRubricClient({
+      apiBase: 'http://gateway',
+      fetchImpl: vi.fn().mockResolvedValue(responseWithRawBody(bodyFactory())),
+    }).generate(request)
+
+    expect(response).toEqual({
+      requestId: request.requestId, status: 'failed',
+      error: { code: 'gateway_invalid_response', message: '评分标准服务返回了无法安全使用的响应，请重试。', retryable: true },
+    })
+  })
+
+  it('throws locally for an empty image MIME before fetch', async () => {
+    const fetchImpl = vi.fn()
+    const client = createRemoteRubricClient({ apiBase: 'http://gateway', fetchImpl })
+
+    await expect(client.generate({
+      ...request,
+      materials: [{
+        id: 'invalid-empty-mime', kind: 'image',
+        file: new File(['private'], 'student-private-file', { type: '' }),
+      }],
+    })).rejects.toThrow('Unsupported ready task material image MIME type.')
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   it('keeps mock output deterministic without mutating the request or calling fetch', async () => {

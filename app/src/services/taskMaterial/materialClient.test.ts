@@ -27,6 +27,20 @@ const materialContext = {
   reviewWarnings: [],
 }
 
+function responseWithRawBody(body: unknown): Response {
+  return { ok: true, json: async () => body } as Response
+}
+
+function withOwnSymbol<T extends object>(value: T): T {
+  Object.defineProperty(value, Symbol('private'), { value: 'PRIVATE' })
+  return value
+}
+
+function withNonEnumerableExtra<T extends object>(value: T): T {
+  Object.defineProperty(value, 'privateValue', { value: 'PRIVATE', enumerable: false })
+  return value
+}
+
 describe('material context client', () => {
   it('posts the shared exact material body to /tasks/material-context and forwards the AbortSignal once', async () => {
     const controller = new AbortController()
@@ -93,6 +107,65 @@ describe('material context client', () => {
       error: { code: 'provider_timeout', message: '评分服务响应超时，请稍后重试。', retryable: true },
     })
     expect(JSON.stringify(response)).not.toContain(rawMessage)
+  })
+
+  it.each([
+    ['sparse writingRequirements', () => ({
+      requestId: request.requestId, status: 'success',
+      materialContext: { ...materialContext, writingRequirements: new Array(1) },
+    })],
+    ['custom-prototype context', () => ({
+      requestId: request.requestId, status: 'success',
+      materialContext: Object.assign(Object.create({ inherited: 'PRIVATE' }) as object, materialContext),
+    })],
+    ['own-symbol response', () => withOwnSymbol({
+      requestId: request.requestId, status: 'success', materialContext,
+    })],
+    ['non-enumerable extra context field', () => ({
+      requestId: request.requestId, status: 'success',
+      materialContext: withNonEnumerableExtra({ ...materialContext }),
+    })],
+    ['custom-prototype constraints array', () => {
+      const constraints = ['Write in English.']
+      Object.setPrototypeOf(constraints, Object.create(Array.prototype))
+      return { requestId: request.requestId, status: 'success', materialContext: { ...materialContext, constraints } }
+    }],
+    ['own-symbol constraints array', () => ({
+      requestId: request.requestId, status: 'success',
+      materialContext: { ...materialContext, constraints: withOwnSymbol(['Write in English.']) },
+    })],
+    ['throwing context getter', () => {
+      const body = { requestId: request.requestId, status: 'success' } as Record<string, unknown>
+      Object.defineProperty(body, 'materialContext', {
+        enumerable: true,
+        get() { throw new Error('PRIVATE getter failure') },
+      })
+      return body
+    }],
+  ] as const)('fails closed without throwing for non-JSON response shape: %s', async (_label, bodyFactory) => {
+    const response = await createRemoteMaterialContextClient({
+      apiBase: 'http://gateway',
+      fetchImpl: vi.fn().mockResolvedValue(responseWithRawBody(bodyFactory())),
+    }).analyze(request)
+
+    expect(response).toEqual({
+      requestId: request.requestId, status: 'failed',
+      error: { code: 'gateway_invalid_response', message: '材料分析服务返回了无法安全使用的响应，请重试。', retryable: true },
+    })
+  })
+
+  it('throws locally for an unsupported image MIME before fetch', async () => {
+    const fetchImpl = vi.fn()
+    const client = createRemoteMaterialContextClient({ apiBase: 'http://gateway', fetchImpl })
+
+    await expect(client.analyze({
+      ...request,
+      materials: [{
+        id: 'invalid-gif', kind: 'image',
+        file: new File(['GIF89a'], 'student-private.gif', { type: 'image/gif' }),
+      }],
+    })).rejects.toThrow('Unsupported ready task material image MIME type.')
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   it('uses a deterministic non-mutating local mock and configured mock mode never fetches', async () => {
