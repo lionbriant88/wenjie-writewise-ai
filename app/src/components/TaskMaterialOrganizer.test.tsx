@@ -10,6 +10,19 @@ function file(name: string, type = 'image/png') {
   return new File(['material'], name, { type })
 }
 
+function imageUnit(id: string, displayName: string): MaterialUnit {
+  return {
+    id,
+    sourceId: `${id}-source`,
+    kind: 'image',
+    sourceKind: 'image',
+    displayName,
+    file: file(displayName),
+    mimeType: 'image/png',
+    previewUrl: `blob:${id}`,
+  }
+}
+
 function props(overrides: Partial<TaskMaterialOrganizerProps> = {}): TaskMaterialOrganizerProps {
   return {
     units: [],
@@ -105,27 +118,46 @@ describe('TaskMaterialOrganizer', () => {
     expect(onRemoveSource).toHaveBeenNthCalledWith(2, 'failed-source')
   })
 
-  it('forwards unit move and deletion callbacks and disables every action when requested', async () => {
+  it('disables movement at list boundaries while forwarding valid middle moves and deletion', async () => {
     const user = userEvent.setup()
-    const unit: MaterialUnit = {
-      id: 'unit-1', sourceId: 'source-1', kind: 'image', sourceKind: 'image',
-      displayName: 'prompt.png', file: file('prompt.png'), mimeType: 'image/png', previewUrl: 'blob:prompt',
-    }
+    const units = [
+      imageUnit('first', 'first.png'),
+      imageUnit('middle', 'middle.png'),
+      imageUnit('last', 'last.png'),
+    ]
     const onMoveUnit = vi.fn()
     const onRemoveUnit = vi.fn()
-    const view = render(<TaskMaterialOrganizer {...props({ units: [unit], onMoveUnit, onRemoveUnit })} />)
+    render(<TaskMaterialOrganizer {...props({ units, onMoveUnit, onRemoveUnit })} />)
 
-    await user.click(screen.getByRole('button', { name: '上移 prompt.png' }))
-    await user.click(screen.getByRole('button', { name: '下移 prompt.png' }))
-    await user.click(screen.getByRole('button', { name: '删除 prompt.png' }))
-    expect(onMoveUnit).toHaveBeenNthCalledWith(1, 'unit-1', -1)
-    expect(onMoveUnit).toHaveBeenNthCalledWith(2, 'unit-1', 1)
-    expect(onRemoveUnit).toHaveBeenCalledWith('unit-1')
+    expect(screen.getByRole('button', { name: '上移 first.png' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '下移 first.png' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '上移 middle.png' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '下移 middle.png' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '上移 last.png' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '下移 last.png' })).toBeDisabled()
+
+    await user.click(screen.getByRole('button', { name: '上移 first.png' }))
+    await user.click(screen.getByRole('button', { name: '上移 middle.png' }))
+    await user.click(screen.getByRole('button', { name: '下移 middle.png' }))
+    await user.click(screen.getByRole('button', { name: '下移 last.png' }))
+    await user.click(screen.getByRole('button', { name: '删除 middle.png' }))
+    expect(onMoveUnit).toHaveBeenNthCalledWith(1, 'middle', -1)
+    expect(onMoveUnit).toHaveBeenNthCalledWith(2, 'middle', 1)
+    expect(onMoveUnit).toHaveBeenCalledTimes(2)
+    expect(onRemoveUnit).toHaveBeenCalledWith('middle')
+  })
+
+  it('disables both movement directions for one unit and lets global disabled cover every action', () => {
+    const unit = imageUnit('only', 'only.png')
+    const view = render(<TaskMaterialOrganizer {...props({ units: [unit] })} />)
+
+    expect(screen.getByRole('button', { name: '上移 only.png' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '下移 only.png' })).toBeDisabled()
 
     view.rerender(<TaskMaterialOrganizer {...props({ units: [unit], disabled: true })} />)
     expect(screen.getByLabelText('选择作文原材料')).toBeDisabled()
-    expect(screen.getByRole('button', { name: '上移 prompt.png' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '下移 prompt.png' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '删除 prompt.png' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '上移 only.png' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '下移 only.png' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '删除 only.png' })).toBeDisabled()
   })
 })

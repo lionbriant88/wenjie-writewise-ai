@@ -1,4 +1,5 @@
 import { act, renderHook } from '@testing-library/react'
+import { StrictMode, type ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   MaterialNormalizationError,
@@ -57,6 +58,21 @@ afterEach(() => {
 })
 
 describe('useTaskMaterials', () => {
+  it('updates public state when mounted under React StrictMode effect replay', async () => {
+    const options = controllerOptions(async (source) => [imageDraft(source)])
+    const wrapper = ({ children }: { children: ReactNode }) => <StrictMode>{children}</StrictMode>
+    const { result } = renderHook(() => useTaskMaterials(options), { wrapper, reactStrictMode: true })
+
+    await act(async () => {
+      await result.current.addFiles([file('strict.png')])
+    })
+
+    expect(result.current.sources).toHaveLength(1)
+    expect(result.current.sources[0]).toMatchObject({ fileName: 'strict.png', status: 'ready' })
+    expect(result.current.units).toHaveLength(1)
+    expect(result.current.isNormalizing).toBe(false)
+  })
+
   it('keeps source selection order across batches by normalizing one source at a time', async () => {
     const pdf = file('paper.pdf', 'application/pdf')
     const firstPdfPage = file('paper-1.png')
@@ -240,9 +256,10 @@ describe('useTaskMaterials', () => {
     expect(options.revokeObjectURL).toHaveBeenCalledTimes(1)
     expect(options.revokeObjectURL).toHaveBeenLastCalledWith(first!.previewUrl)
 
-    const pdfSourceId = second!.sourceId
-    act(() => result.current.removeSource(pdfSourceId))
-    act(() => result.current.removeSource(pdfSourceId))
+    const pdfSourceKey = result.current.sources.find(({ sourceId }) => sourceId === second!.sourceId)?.key
+    expect(pdfSourceKey).toBeDefined()
+    act(() => result.current.removeSource(pdfSourceKey!))
+    act(() => result.current.removeSource(pdfSourceKey!))
     expect(options.revokeObjectURL).toHaveBeenCalledTimes(2)
     expect(options.revokeObjectURL).toHaveBeenLastCalledWith(second!.previewUrl)
 
@@ -325,5 +342,88 @@ describe('useTaskMaterials', () => {
     expect(barrierResolved).toBe(true)
     expect(result.current.isNormalizing).toBe(false)
     expect(result.current.units).toHaveLength(2)
+  })
+
+  it('does not start normalization for a queued source removed behind active work', async () => {
+    const active = deferred<MaterialUnitDraft[]>()
+    const normalizeFile = vi.fn(async (source: File) => {
+      if (source.name === 'active.pdf') return active.promise
+      return [imageDraft(source)]
+    })
+    const options = controllerOptions(normalizeFile)
+    const { result } = renderHook(() => useTaskMaterials(options))
+    let addPromise!: Promise<void>
+
+    act(() => {
+      addPromise = result.current.addFiles([
+        file('active.pdf', 'application/pdf'),
+        file('removed.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
+      ])
+    })
+    await act(async () => { await Promise.resolve() })
+    const queuedSourceKey = result.current.sources[1]?.key
+    expect(queuedSourceKey).toBeDefined()
+    act(() => result.current.removeSource(queuedSourceKey!))
+
+    await act(async () => {
+      active.resolve([imageDraft(file('active-page.png'), 'pdf', 1)])
+      await addPromise
+    })
+
+    expect(normalizeFile.mock.calls.map(([source]) => source.name)).toEqual(['active.pdf'])
+    expect(result.current.sources.map(({ fileName }) => fileName)).toEqual(['active.pdf'])
+  })
+
+  it('does not start any remaining queued normalization after unmount', async () => {
+    const active = deferred<MaterialUnitDraft[]>()
+    const normalizeFile = vi.fn(async (source: File) => {
+      if (source.name === 'active.pdf') return active.promise
+      return [imageDraft(source)]
+    })
+    const options = controllerOptions(normalizeFile)
+    const { result, unmount } = renderHook(() => useTaskMaterials(options))
+    let addPromise!: Promise<void>
+
+    act(() => {
+      addPromise = result.current.addFiles([
+        file('active.pdf', 'application/pdf'),
+        file('queued.pdf', 'application/pdf'),
+        file('queued.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
+      ])
+    })
+    await act(async () => { await Promise.resolve() })
+    unmount()
+    active.resolve([imageDraft(file('active-page.png'), 'pdf', 1)])
+    await addPromise
+
+    expect(normalizeFile.mock.calls.map(([source]) => source.name)).toEqual(['active.pdf'])
+    expect(options.createObjectURL).not.toHaveBeenCalled()
+  })
+
+  it('uses sourceKey as the only source control handle and never guesses from business sourceId', async () => {
+    const normalizeFile = vi.fn(async (source: File) => {
+      if (source.name === 'failed.pdf') throw new MaterialNormalizationError('pdf_render_failed')
+      return [imageDraft(source)]
+    })
+    const options = controllerOptions(normalizeFile)
+    options.createId.mockImplementationOnce(() => 'source-2')
+    const { result } = renderHook(() => useTaskMaterials(options))
+
+    await act(async () => {
+      await result.current.addFiles([
+        file('ready.png'),
+        file('failed.pdf', 'application/pdf'),
+      ])
+    })
+    const readySource = result.current.sources.find(({ status }) => status === 'ready')
+    expect(readySource).toMatchObject({ key: 'source-1', sourceId: 'source-2' })
+
+    act(() => result.current.removeSource('source-2'))
+    expect(result.current.sources.map(({ fileName }) => fileName)).toEqual(['ready.png'])
+    expect(result.current.units).toHaveLength(1)
+
+    act(() => result.current.removeSource('source-1'))
+    expect(result.current.sources).toHaveLength(0)
+    expect(result.current.units).toHaveLength(0)
   })
 })

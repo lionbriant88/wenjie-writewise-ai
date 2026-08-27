@@ -25,9 +25,9 @@ export interface TaskMaterialsController {
   sources: readonly MaterialSourceState[]
   isNormalizing: boolean
   addFiles(files: readonly File[]): Promise<void>
-  retrySource(sourceId: string): Promise<void>
+  retrySource(sourceKey: string): Promise<void>
   removeUnit(unitId: string): void
-  removeSource(sourceId: string): void
+  removeSource(sourceKey: string): void
   moveUnit(unitId: string, direction: -1 | 1): void
   waitUntilIdle(): Promise<void>
 }
@@ -82,11 +82,17 @@ export function useTaskMaterials(options: UseTaskMaterialsOptions = {}): TaskMat
     revokeObjectURLRef.current(url)
   }, [])
 
-  useEffect(() => () => {
-    mountedRef.current = false
-    for (const url of liveUrlsRef.current) revokeObjectURLRef.current(url)
-    liveUrlsRef.current.clear()
-    sourceFilesRef.current.clear()
+  useEffect(() => {
+    mountedRef.current = true
+    const liveUrls = liveUrlsRef.current
+    const sourceFiles = sourceFilesRef.current
+    const revokeObjectURL = revokeObjectURLRef.current
+    return () => {
+      mountedRef.current = false
+      for (const url of liveUrls) revokeObjectURL(url)
+      liveUrls.clear()
+      sourceFiles.clear()
+    }
   }, [])
 
   const finishPending = useCallback(() => {
@@ -94,8 +100,11 @@ export function useTaskMaterials(options: UseTaskMaterialsOptions = {}): TaskMat
     if (mountedRef.current && pendingCountRef.current === 0) setIsNormalizing(false)
   }, [])
 
-  const processSource = useCallback(async (sourceKey: string, file: File) => {
+  const processSource = useCallback(async (sourceKey: string) => {
     try {
+      if (!mountedRef.current || !isCurrentSourceNormalizing(sourcesRef.current, sourceKey)) return
+      const file = sourceFilesRef.current.get(sourceKey)
+      if (!file) return
       const remainingUnits = MAX_MATERIAL_UNITS - unitsRef.current.length
       const drafts = await normalizeFileRef.current(file, { remainingUnits })
       if (!mountedRef.current || !isCurrentSourceNormalizing(sourcesRef.current, sourceKey)) return
@@ -145,11 +154,11 @@ export function useTaskMaterials(options: UseTaskMaterialsOptions = {}): TaskMat
     }
   }, [replaceSources, replaceUnits, revoke])
 
-  const enqueue = useCallback((sourceKey: string, file: File) => {
+  const enqueue = useCallback((sourceKey: string) => {
     pendingCountRef.current += 1
     if (mountedRef.current) setIsNormalizing(true)
     const queued = queueRef.current
-      .then(() => processSource(sourceKey, file))
+      .then(() => processSource(sourceKey))
       .catch(() => undefined)
       .finally(finishPending)
     queueRef.current = queued
@@ -167,19 +176,19 @@ export function useTaskMaterials(options: UseTaskMaterialsOptions = {}): TaskMat
         status: 'normalizing',
         unitIds: [],
       }])
-      operations.push(enqueue(sourceKey, file))
+      operations.push(enqueue(sourceKey))
     }
     return Promise.all(operations).then(() => undefined)
   }, [enqueue, replaceSources])
 
-  const retrySource = useCallback((sourceId: string) => {
-    const source = sourcesRef.current.find((candidate) => candidate.key === sourceId)
-    const file = sourceFilesRef.current.get(sourceId)
+  const retrySource = useCallback((sourceKey: string) => {
+    const source = sourcesRef.current.find((candidate) => candidate.key === sourceKey)
+    const file = sourceFilesRef.current.get(sourceKey)
     if (!source || source.status !== 'failed' || !file) return queueRef.current
-    replaceSources(sourcesRef.current.map((candidate) => candidate.key === sourceId
-      ? { key: sourceId, fileName: candidate.fileName, status: 'normalizing', unitIds: [] }
+    replaceSources(sourcesRef.current.map((candidate) => candidate.key === sourceKey
+      ? { key: sourceKey, fileName: candidate.fileName, status: 'normalizing', unitIds: [] }
       : candidate))
-    return enqueue(sourceId, file)
+    return enqueue(sourceKey)
   }, [enqueue, replaceSources])
 
   const removeUnit = useCallback((unitId: string) => {
@@ -195,8 +204,8 @@ export function useTaskMaterials(options: UseTaskMaterialsOptions = {}): TaskMat
     replaceSources(nextSources)
   }, [replaceSources, replaceUnits, revoke])
 
-  const removeSource = useCallback((sourceId: string) => {
-    const source = sourcesRef.current.find((candidate) => candidate.key === sourceId || candidate.sourceId === sourceId)
+  const removeSource = useCallback((sourceKey: string) => {
+    const source = sourcesRef.current.find((candidate) => candidate.key === sourceKey)
     if (!source) return
     const removedUnits = source.sourceId
       ? unitsRef.current.filter((unit) => unit.sourceId === source.sourceId)

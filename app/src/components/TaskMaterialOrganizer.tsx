@@ -8,8 +8,8 @@ export interface TaskMaterialOrganizerProps {
   disabled?: boolean
   onSelectFiles(files: readonly File[]): void
   onRemoveUnit(unitId: string): void
-  onRemoveSource(sourceId: string): void
-  onRetrySource(sourceId: string): void
+  onRemoveSource(sourceKey: string): void
+  onRetrySource(sourceKey: string): void
   onMoveUnit(unitId: string, direction: -1 | 1): void
 }
 
@@ -98,7 +98,7 @@ export function TaskMaterialOrganizer({
 
       {units.length > 0 ? (
         <ol className="grid grid-cols-1 gap-3" aria-label="已整理的作文原材料">
-          {units.map((unit) => (
+          {units.map((unit, index) => (
             <li key={unit.id} className="grid grid-cols-1 gap-3 overflow-hidden rounded-lg border border-slate-200 bg-slate-50 p-3 sm:grid-cols-[8rem_minmax(0,1fr)]">
               {unit.kind === 'image' ? (
                 <img
@@ -129,13 +129,13 @@ export function TaskMaterialOrganizer({
                   <UnitAction
                     label="上移"
                     displayName={unit.displayName}
-                    disabled={disabled}
+                    disabled={disabled || index === 0}
                     onClick={() => onMoveUnit(unit.id, -1)}
                   />
                   <UnitAction
                     label="下移"
                     displayName={unit.displayName}
-                    disabled={disabled}
+                    disabled={disabled || index === units.length - 1}
                     onClick={() => onMoveUnit(unit.id, 1)}
                   />
                   <UnitAction
