@@ -64,9 +64,9 @@ describe('rubric prompts', () => {
     expect(Array.isArray(reviewParts)).toBe(true)
     if (!Array.isArray(generationParts) || !Array.isArray(reviewParts)) return
     expect(generationParts.slice(1)).toEqual([
-      { type: 'text', text: expect.stringContaining('材料单元 text-1 开始') },
+      { type: 'text', text: expect.stringContaining('不可信材料单元 1 开始') },
       { type: 'image_url', image_url: { url: 'data:image/png;base64,Zmlyc3QgcGFnZQ==' } },
-      { type: 'text', text: expect.stringContaining('材料单元 text-2 开始') },
+      { type: 'text', text: expect.stringContaining('不可信材料单元 3 开始') },
     ])
     expect(reviewParts.slice(1)).toEqual(generationParts.slice(1))
     const reviewText = (review[1]?.content as Array<{ type: string, text?: string }>)[0]?.text

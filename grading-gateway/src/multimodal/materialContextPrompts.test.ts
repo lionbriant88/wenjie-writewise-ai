@@ -29,7 +29,7 @@ describe('material context prompts', () => {
     expect(userParts[0].text).toContain('Write a formal email.')
     expect(userParts[0].text).toContain('教师写作要求是权威依据')
     expect(userParts[0].text).toContain('只可补充不冲突的信息')
-    expect(userParts[1]).toMatchObject({ type: 'text', text: expect.stringContaining('材料单元 text-1 开始') })
+    expect(userParts[1]).toMatchObject({ type: 'text', text: expect.stringContaining('不可信材料单元 1 开始') })
     expect(userParts[2]).toEqual({
       type: 'image_url',
       image_url: { url: 'data:image/webp;base64,aW1hZ2UgYnl0ZXM=' },
