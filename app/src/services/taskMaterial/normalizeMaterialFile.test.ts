@@ -168,4 +168,12 @@ describe('normalizeMaterialFile', () => {
 
     expect(draft).toMatchObject({ displayName: '.._unsafe_name.png', file })
   })
+
+  it('removes Unicode control, format, line, and paragraph separators while preserving printable text', async () => {
+    const file = sizedFile('中文 作文/\u0085材\\\u2028料\u2029终\u202E稿.png', 'image/png', 128)
+
+    const [draft] = await normalizeMaterialFile(file, { remainingUnits: 10 })
+
+    expect(draft).toMatchObject({ displayName: '中文 作文_材_料终稿.png', file })
+  })
 })

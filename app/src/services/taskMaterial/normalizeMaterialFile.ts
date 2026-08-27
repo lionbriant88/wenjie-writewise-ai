@@ -118,12 +118,11 @@ function mapPdfError(error: unknown): MaterialNormalizationError {
   }
 }
 
+const UNSAFE_DISPLAY_NAME_CHARACTER = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u
+
 function sanitizeDisplayName(fileName: string): string {
   const withoutControlCharacters = Array.from(fileName)
-    .filter((character) => {
-      const codePoint = character.codePointAt(0) ?? 0
-      return codePoint >= 32 && codePoint !== 127
-    })
+    .filter((character) => !UNSAFE_DISPLAY_NAME_CHARACTER.test(character))
     .join('')
   return withoutControlCharacters.replaceAll('/', '_').replaceAll('\\', '_').trim().slice(0, 255) || '材料文件'
 }
