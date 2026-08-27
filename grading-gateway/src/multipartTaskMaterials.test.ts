@@ -317,6 +317,27 @@ describe('validateTaskMaterialMultipart', () => {
     expect(errorText(result)).not.toMatch(/PRIVATE-BYTES|prompt\.docx|Prompt body/)
   })
 
+  it.each(['mimetype', 'size', 'buffer'] as const)('rejects a file whose %s is inherited', (inheritedKey) => {
+    const values = {
+      mimetype: 'image/png',
+      size: 1,
+      buffer: Buffer.from('x'),
+    }
+    const file = Object.assign(
+      Object.create({ [inheritedKey]: values[inheritedKey] }) as Record<string, unknown>,
+      values,
+    )
+    delete file[inheritedKey]
+
+    const result = validateTaskMaterialMultipart(
+      imageOnlyBody(),
+      [file] as unknown as readonly globalThis.Express.Multer.File[],
+      'required',
+    )
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'invalid_request' } })
+  })
+
   it('accepts an 8 MiB image and rejects the next byte without exposing bytes', () => {
     const body = validBody({
       materialManifest: JSON.stringify([{ id: 'u-1', kind: 'image', imageIndex: 0 }]),
@@ -388,6 +409,33 @@ describe('validateTaskMaterialMultipart', () => {
     expect(blankResult.ok).toBe(true)
     if (omittedResult.ok) expect(omittedResult.value).not.toHaveProperty('writingRequirement')
     if (blankResult.ok) expect(blankResult.value).not.toHaveProperty('writingRequirement')
+  })
+
+  it.each([6_000, 10_000])('accepts and preserves a %s-code-point Unicode teacher requirement', (length) => {
+    const requirement = '😀'.repeat(length)
+    const result = validateTaskMaterialMultipart(
+      textOnlyBody({ writingRequirement: `  ${requirement}  ` }),
+      undefined,
+      'required',
+    )
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.value.writingRequirement).toBe(requirement)
+      expect(Array.from(result.value.writingRequirement ?? '')).toHaveLength(length)
+    }
+  })
+
+  it('rejects 10,001 Unicode code points without echoing or truncating the requirement', () => {
+    const privateRequirement = '😀'.repeat(10_001)
+    const result = validateTaskMaterialMultipart(
+      textOnlyBody({ writingRequirement: `  ${privateRequirement}  ` }),
+      undefined,
+      'required',
+    )
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'request_too_large' } })
+    expect(errorText(result)).not.toContain('😀')
   })
 
   it('accepts the inclusive identifier, requirement, display-name and text limits', () => {

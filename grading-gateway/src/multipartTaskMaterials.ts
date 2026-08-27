@@ -188,7 +188,7 @@ export function validateTaskMaterialMultipart(
   if (Object.hasOwn(body, 'writingRequirement')) {
     if (typeof body.writingRequirement !== 'string') return invalid()
     const trimmedRequirement = body.writingRequirement.trim()
-    if (trimmedRequirement.length > MAX_WRITING_REQUIREMENT_CHARACTERS) return tooLarge()
+    if (Array.from(trimmedRequirement).length > MAX_WRITING_REQUIREMENT_CHARACTERS) return tooLarge()
     writingRequirement = trimmedRequirement || undefined
   }
   if (mode === 'required' && !writingRequirement) return invalid()
@@ -205,7 +205,14 @@ export function validateTaskMaterialMultipart(
   for (let index = 0; index < rawImageFiles.length; index += 1) {
     if (!Object.hasOwn(rawImageFiles, index)) return invalid()
     const file = rawImageFiles[index]
-    if (!isRecord(file) || typeof file.mimetype !== 'string' || !SUPPORTED_IMAGE_TYPES.has(file.mimetype as ImageMimeType)) {
+    if (
+      !isRecord(file)
+      || !Object.hasOwn(file, 'mimetype')
+      || !Object.hasOwn(file, 'size')
+      || !Object.hasOwn(file, 'buffer')
+      || typeof file.mimetype !== 'string'
+      || !SUPPORTED_IMAGE_TYPES.has(file.mimetype as ImageMimeType)
+    ) {
       return invalid()
     }
     if (
