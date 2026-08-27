@@ -1,4 +1,5 @@
 import type { RubricDimension, Task } from '../../types'
+import { validateRubricForm } from '../taskRubric/rubricForm'
 import type { ConfirmedTaskPackageV2 } from './types'
 
 const TOTAL_WEIGHT_TOLERANCE = 0.001
@@ -84,9 +85,20 @@ export function buildConfirmedTaskPackage(task: Task): ConfirmedTaskPackageV2 | 
   const source = task.materialContext ?? legacyTaskText(task)
   if (!validText(task.id, 128) || !validText(task.taskName, 2_000) || !Number.isInteger(task.fullScore) || task.fullScore < 1 || task.fullScore > 100 || rubric?.status !== 'confirmed' || !source) return null
   if (!validText(source.materialSummary, 20_000) || !validTextArray(source.writingRequirements, 50) || source.writingRequirements.length < 1 || !validTextArray(source.constraints, 50) || !validTextArray(source.reviewWarnings, 50)) return null
-  if (rubric.dimensions.length < 1 || rubric.dimensions.length > 10 || !validWeights(rubric.dimensions.map(({ weight }) => weight))) return null
-  const dimensions = withLegibilityDimension(rubric.dimensions)
-  if (!dimensions || dimensions.length > 10 || !validWeights(dimensions.map(({ weight }) => weight)) || new Set(dimensions.map(({ id }) => id)).size !== dimensions.length) return null
+  const dimensions = task.materialContext
+    ? rubric.dimensions.map((dimension) => ({ ...dimension }))
+    : withLegibilityDimension(rubric.dimensions)
+  if (!dimensions) return null
+  if (task.materialContext) {
+    const validity = validateRubricForm({
+      fullScore: task.fullScore,
+      writingRequirement: source.writingRequirements[0] ?? '',
+      dimensions,
+    })
+    if (!validity.valid) return null
+  } else if (rubric.dimensions.length < 1 || rubric.dimensions.length > 10 || !validWeights(rubric.dimensions.map(({ weight }) => weight)) || dimensions.length > 10 || !validWeights(dimensions.map(({ weight }) => weight)) || new Set(dimensions.map(({ id }) => id)).size !== dimensions.length) {
+    return null
+  }
   if (dimensions.some((dimension) => !validText(dimension.id, 128) || !validText(dimension.name, 256) || !validText(dimension.description, 2_000) || !validTextArray(dimension.deductionFocus, 50, 1_000) || !validTextArray(dimension.sourceEvidence ?? [], 50, 5_000))) return null
 
   return {

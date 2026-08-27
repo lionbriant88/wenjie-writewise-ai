@@ -26,6 +26,12 @@ describe('buildMultimodalGradingRequest', () => {
     if (result.ok) {
       expect(result.request.pages[0].file.name).toBe('essay.png')
       expect(result.request.confirmedTranscript).toBeUndefined()
+      expect(Object.keys(result.request).sort()).toEqual([
+        'essayId', 'pageIds', 'pages', 'requestId', 'requestVersion', 'task',
+      ])
+      expect(Object.keys(result.request.task).sort()).toEqual([
+        'constraints', 'fullScore', 'materialSummary', 'rubric', 'taskId', 'writingRequirements',
+      ])
     }
   })
 

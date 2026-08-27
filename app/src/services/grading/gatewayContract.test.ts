@@ -941,13 +941,27 @@ describe('Gateway-to-website public grading contract', () => {
       rubricDraft: { source: 'teacher', writingGoal: 'Write clearly.', offTopicCriteria: [], excellentFeatures: [], reviewTriggers: [], status: 'confirmed', dimensions: [{ id: 'language', name: 'Language', weight: 95, description: 'Accuracy.', deductionFocus: [], sourceEvidence: [] }, { id: 'legibility', name: 'Legibility', weight: 5, description: 'Readable.', deductionFocus: [], sourceEvidence: [] }] },
     }
     const websiteEssay: Essay = { id: 'essay-zero-page', taskId: websiteTask.id, essayNumber: 'Synthetic', pages: [], pageCount: 0, pageOrder: [], ocrText: confirmedText, transcriptSource: 'teacher_confirmed', ocrConfidence: 1, status: 'pending_grading', exceptionReasons: [], teacherReviewed: false, createdAt: '2026-08-15T00:00:00.000Z', updatedAt: '2026-08-15T00:00:00.000Z' }
-    const built = buildMultimodalGradingRequest(websiteTask, websiteEssay, 'request-zero-page')
+    const taskWithHistoricalMaterial = {
+      ...websiteTask,
+      materialManifest: { originalFileName: 'prompt.pdf' },
+      materialPdfText: 'Historical PDF text.',
+      materialDocxText: 'Historical DOCX text.',
+      ocrText: 'Historical OCR text.',
+    }
+    const built = buildMultimodalGradingRequest(taskWithHistoricalMaterial, websiteEssay, 'request-zero-page')
     expect(built).toMatchObject({ ok: true, request: { pageIds: [], pages: [], confirmedTranscript: confirmedText } })
     if (!built.ok) return
     const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ requestId: built.request.requestId, status: 'failed', error: { code: 'provider_unavailable', message: 'Safe.', retryable: true } }), { status: 503 }))
     await createRemoteGradingClient({ apiBase: 'http://gateway.test', fetchImpl }).gradeImages(built.request)
     const form = (fetchImpl.mock.calls[0]![1] as RequestInit).body as FormData
-    expect(JSON.parse(String(form.get('metadata')))).toEqual({ requestVersion: 'multimodal-grading-request-v2', requestId: 'request-zero-page', essayId: 'essay-zero-page', pageIds: [], task: built.request.task, confirmedTranscript: confirmedText })
+    expect(fetchImpl).toHaveBeenCalledWith('http://gateway.test/grading/grade-images', expect.objectContaining({ method: 'POST' }))
+    expect([...form.keys()]).toEqual(['metadata'])
+    const metadata = JSON.parse(String(form.get('metadata')))
+    expect(metadata).toEqual({ requestVersion: 'multimodal-grading-request-v2', requestId: 'request-zero-page', essayId: 'essay-zero-page', pageIds: [], task: built.request.task, confirmedTranscript: confirmedText })
+    expect(metadata.task).not.toHaveProperty('materialManifest')
+    expect(metadata.task).not.toHaveProperty('materialPdfText')
+    expect(metadata.task).not.toHaveProperty('materialDocxText')
+    expect(metadata.task).not.toHaveProperty('ocrText')
     expect(form.getAll('pages')).toEqual([])
   })
 
