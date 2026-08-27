@@ -22,15 +22,6 @@ export interface GenerateRubricProviderInput extends TaskMaterialProviderInput {
   writingRequirement?: string
 }
 
-interface LegacyImageRubricProviderInput {
-  requestId: string
-  fullScore: number
-  pages: GatewayImageInput[]
-  signal: AbortSignal
-}
-
-export type GenerateRubricProviderRequest = GenerateRubricProviderInput | LegacyImageRubricProviderInput
-
 export interface GradeEssayProviderInput {
   requestId: string
   task: ConfirmedTaskPackageV2
@@ -43,6 +34,6 @@ export interface GradeEssayProviderInput {
 
 export interface MultimodalProvider {
   generateMaterialContext(input: GenerateMaterialContextProviderInput): Promise<TaskMaterialContextV1>
-  generateRubric(input: GenerateRubricProviderRequest): Promise<GeneratedRubricV1>
+  generateRubric(input: GenerateRubricProviderInput): Promise<GeneratedRubricV1>
   gradeEssay(input: GradeEssayProviderInput): Promise<unknown>
 }

@@ -3,6 +3,18 @@ import { describe, expect, it } from 'vitest'
 import { createServer } from './server.js'
 import { GradingProviderError } from './providers/providerTypes.js'
 import type { MultimodalProvider } from './providers/multimodalProviderTypes.js'
+import type { TaskMaterialContextV1 } from './multimodal/types.js'
+
+function fakeMultimodalProvider(
+  overrides: Partial<MultimodalProvider> = {},
+): MultimodalProvider {
+  return {
+    async generateMaterialContext() { throw new Error('not used') },
+    async generateRubric() { throw new Error('not used') },
+    async gradeEssay() { throw new Error('not used') },
+    ...overrides,
+  }
+}
 
 function imageRubricDimensions() {
   return [
@@ -24,14 +36,33 @@ function strictMultimodalPayload(transcript: string) {
   }
 }
 
+function generatedRubricFixture() {
+  return {
+    taskName: 'Synthetic task', materialSummary: 'A synthetic task material summary.',
+    writingRequirements: ['Write clearly.'], constraints: ['Use English.'],
+    dimensions: [
+      { id: 'content', name: 'Content', weight: 95, description: 'Cover the task.', deductionFocus: ['Missing task coverage.'], sourceEvidence: ['Prompt heading.'] },
+      { id: 'legibility', name: 'Legibility', weight: 5, description: 'Handwriting is legible.', deductionFocus: [], sourceEvidence: [] },
+    ],
+    reviewWarnings: ['Verify source material.'],
+  }
+}
+
+function materialContextFixture(): TaskMaterialContextV1 {
+  return {
+    materialSummary: 'A strict synthetic material summary.',
+    writingRequirements: ['Teacher requirement.', 'Model-inferred requirement.'],
+    constraints: ['Use English.'],
+    reviewWarnings: ['Verify ambiguous source text.'],
+  }
+}
+
 describe('grading gateway server boundary', () => {
   it('requires exact v2 multipart metadata and rejects missing, v1, or unexpected fields before Provider use', async () => {
     let calls = 0
-    const provider: MultimodalProvider = {
-      async generateMaterialContext() { throw new Error('not used') },
-      async generateRubric() { throw new Error('not used') },
+    const provider = fakeMultimodalProvider({
       async gradeEssay(input) { calls += 1; return strictMultimodalPayload(input.confirmedTranscript ?? '') },
-    }
+    })
     const base = {
       requestVersion: 'multimodal-grading-request-v2', requestId: 'versioned-request', essayId: 'versioned-essay',
       pageIds: [], confirmedTranscript: 'Teacher-confirmed synthetic text.',
@@ -44,21 +75,25 @@ describe('grading gateway server boundary', () => {
       (({ requestVersion: _version, ...metadata }) => metadata)(base),
       { ...base, requestVersion: 'multimodal-grading-request-v1' },
       { ...base, unexpected: 'PRIVATE-METADATA-MARKER' },
+      {
+        ...base,
+        writingRequirement: 'PRIVATE-TASK-MATERIAL-REQUIREMENT',
+        materialManifest: 'PRIVATE-TASK-MATERIAL-MANIFEST',
+        textMaterials: 'PRIVATE-TASK-MATERIAL-TEXT',
+      },
     ]
     for (const metadata of invalidMetadata) {
       const response = await request(createServer({ multimodalProvider: provider }))
         .post('/grading/grade-images').field('metadata', JSON.stringify(metadata)).expect(400)
-      expect(JSON.stringify(response.body)).not.toContain('PRIVATE-METADATA-MARKER')
+      expect(JSON.stringify(response.body)).not.toMatch(/PRIVATE-(?:METADATA|TASK-MATERIAL)/)
     }
     expect(calls).toBe(1)
   })
 
   it('accepts a confirmed task metadata payload above the rubric upload field limit', async () => {
-    const provider: MultimodalProvider = {
-      async generateMaterialContext() { throw new Error('not used') },
-      async generateRubric() { throw new Error('not used') },
+    const provider = fakeMultimodalProvider({
       async gradeEssay() { return strictMultimodalPayload('Student text.') },
-    }
+    })
     const materialSummary = `Synthetic ${'x'.repeat(17 * 1024)}`
     const metadata = { requestVersion: 'multimodal-grading-request-v2', requestId: 'large-metadata', essayId: 'large-essay', pageIds: ['essay-1'], task: { taskId: 'large-task', fullScore: 15, materialSummary, writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary, writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } } }
     await request(createServer({ multimodalProvider: provider }))
@@ -71,21 +106,22 @@ describe('grading gateway server boundary', () => {
     const response = await request(createServer())
       .post('/grading/grade-images').field('metadata', `${privateMarker}${'x'.repeat(32 * 1024 * 1024)}`)
       .attach('pages', Buffer.from('essay-page'), { filename: 'essay.png', contentType: 'image/png' }).expect(413)
-    expect(response.body).toMatchObject({ requestId: 'unavailable', status: 'failed', error: { code: 'request_too_large' } })
+    expect(response.body).toMatchObject({
+      requestId: 'unavailable', status: 'failed',
+      error: { code: 'request_too_large', message: 'Rubric upload exceeds the allowed limit.' },
+    })
     expect(JSON.stringify(response.body)).not.toContain(privateMarker)
   })
   it('grades uploaded essay images once with stable metadata IDs and returns the normalized transcript', async () => {
     const calls: Parameters<MultimodalProvider['gradeEssay']>[] = []
-    const provider: MultimodalProvider = {
-      async generateMaterialContext() { throw new Error('not used') },
-      async generateRubric() { throw new Error('not used') },
+    const provider = fakeMultimodalProvider({
       async gradeEssay(input) {
         calls.push([input])
         return {
           ...strictMultimodalPayload('I has a pen.'),
         }
       },
-    }
+    })
     const metadata = {
       requestVersion: 'multimodal-grading-request-v2', requestId: 'image-request', essayId: 'image-essay', pageIds: ['essay-2', 'essay-1'],
       task: {
@@ -100,9 +136,29 @@ describe('grading gateway server boundary', () => {
       .attach('pages', Buffer.from('first-page'), { filename: 'first.jpg', contentType: 'image/jpeg' })
       .expect(200)
 
-    expect(response.body).toMatchObject({ requestId: 'image-request', essayId: 'image-essay', transcript: 'I has a pen.', printedTextExcluded: true, totalScore: 15 })
+    expect(response.body).toMatchObject({ resultVersion: 'grading-result-v2', requestId: 'image-request', essayId: 'image-essay', transcript: 'I has a pen.', printedTextExcluded: true, totalScore: 15 })
     expect(calls).toHaveLength(1)
     expect(calls[0]?.[0]).toMatchObject({ requestId: 'image-request', essayId: 'image-essay', pages: [{ pageId: 'essay-2' }, { pageId: 'essay-1' }] })
+  })
+
+  it('keeps essay image parsing on the rubric multipart validator and rejects unsupported media before Provider use', async () => {
+    let calls = 0
+    const provider = fakeMultimodalProvider({
+      async gradeEssay() { calls += 1; return strictMultimodalPayload('Student text.') },
+    })
+    const metadata = {
+      requestVersion: 'multimodal-grading-request-v2', requestId: 'image-validator', essayId: 'image-validator-essay', pageIds: ['essay-1'],
+      task: { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } },
+    }
+    const response = await request(createServer({ multimodalProvider: provider }))
+      .post('/grading/grade-images')
+      .field('metadata', JSON.stringify(metadata))
+      .attach('pages', Buffer.from('PRIVATE-ESSAY-GIF'), { filename: 'private-essay.gif', contentType: 'image/gif' })
+      .expect(400)
+
+    expect(response.body).toMatchObject({ requestId: 'image-validator', status: 'failed', error: { code: 'invalid_request', retryable: false } })
+    expect(JSON.stringify(response.body)).not.toMatch(/PRIVATE|private-essay|gif/i)
+    expect(calls).toBe(0)
   })
 
   it('forwards teacher-confirmed text once and rejects a different model transcript without exposing either text', async () => {
@@ -112,22 +168,18 @@ describe('grading gateway server boundary', () => {
       task: { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } },
     }
     const calls: Parameters<MultimodalProvider['gradeEssay']>[] = []
-    const matchingProvider: MultimodalProvider = {
-      async generateMaterialContext() { throw new Error('not used') },
-      async generateRubric() { throw new Error('not used') },
+    const matchingProvider = fakeMultimodalProvider({
       async gradeEssay(input) { calls.push([input]); return strictMultimodalPayload(teacherText) },
-    }
+    })
     await request(createServer({ multimodalProvider: matchingProvider }))
       .post('/grading/grade-images').field('metadata', JSON.stringify(metadata)).expect(200)
     expect(calls).toHaveLength(1)
     expect(calls[0]?.[0]).toMatchObject({ confirmedTranscript: teacherText, pages: [] })
 
     let mismatchCalls = 0
-    const differentProvider: MultimodalProvider = {
-      async generateMaterialContext() { throw new Error('not used') },
-      async generateRubric() { throw new Error('not used') },
+    const differentProvider = fakeMultimodalProvider({
       async gradeEssay() { mismatchCalls += 1; return strictMultimodalPayload('MODEL-DIFFERENT') },
-    }
+    })
     const diagnostics: unknown[] = []
     const response = await request(createServer({
       multimodalProvider: differentProvider,
@@ -144,11 +196,9 @@ describe('grading gateway server boundary', () => {
 
   it('rejects image files attached to a teacher-confirmed text regrade', async () => {
     let calls = 0
-    const provider: MultimodalProvider = {
-      async generateMaterialContext() { throw new Error('not used') },
-      async generateRubric() { throw new Error('not used') },
+    const provider = fakeMultimodalProvider({
       async gradeEssay() { calls += 1; throw new Error('must not run') },
-    }
+    })
     const metadata = {
       requestVersion: 'multimodal-grading-request-v2', requestId: 'confirmed-with-image', essayId: 'confirmed-essay', pageIds: [], confirmedTranscript: 'Teacher-confirmed text.',
       task: { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } },
@@ -163,15 +213,13 @@ describe('grading gateway server boundary', () => {
     const exactly50k = `\n${'x'.repeat(49_997)} \n`
     expect(exactly50k).toHaveLength(50_000)
     let calls = 0
-    const provider: MultimodalProvider = {
-      async generateMaterialContext() { throw new Error('not used') },
-      async generateRubric() { throw new Error('not used') },
+    const provider = fakeMultimodalProvider({
       async gradeEssay(input) {
         calls += 1
         const transcript = input.confirmedTranscript ?? ''
         return strictMultimodalPayload(transcript)
       },
-    }
+    })
     const task = { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } }
     const app = createServer({ multimodalProvider: provider })
     await request(app).post('/grading/grade-images')
@@ -188,14 +236,12 @@ describe('grading gateway server boundary', () => {
 
   it('rejects either lone surrogate before Provider use while accepting a valid astral pair', async () => {
     let calls = 0
-    const provider: MultimodalProvider = {
-      async generateMaterialContext() { throw new Error('not used') },
-      async generateRubric() { throw new Error('not used') },
+    const provider = fakeMultimodalProvider({
       async gradeEssay(input) {
         calls += 1
         return strictMultimodalPayload(input.confirmedTranscript ?? '')
       },
-    }
+    })
     const task = { taskId: 'unicode-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: [], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: [], dimensions: imageRubricDimensions(), reviewWarnings: [] } }
     const app = createServer({ multimodalProvider: provider })
 
@@ -216,11 +262,9 @@ describe('grading gateway server boundary', () => {
 
   it('isolates image grading failures without retrying or exposing the raw essay', async () => {
     let calls = 0
-    const provider: MultimodalProvider = {
-      async generateMaterialContext() { throw new Error('not used') },
-      async generateRubric() { throw new Error('not used') },
+    const provider = fakeMultimodalProvider({
       async gradeEssay() { calls += 1; throw new GradingProviderError('provider_unavailable', 'safe failure', true) },
-    }
+    })
     const metadata = { requestVersion: 'multimodal-grading-request-v2', requestId: 'image-failure', essayId: 'essay-failure', pageIds: ['essay-1'], task: { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } } }
     const response = await request(createServer({ multimodalProvider: provider }))
       .post('/grading/grade-images').field('metadata', JSON.stringify(metadata))
@@ -232,9 +276,7 @@ describe('grading gateway server boundary', () => {
 
   it('emits a provider-stage parse diagnostic without adding internal fields to the HTTP response', async () => {
     const diagnostics: unknown[] = []
-    const provider: MultimodalProvider = {
-      async generateMaterialContext() { throw new Error('not used') },
-      async generateRubric() { throw new Error('not used') },
+    const provider = fakeMultimodalProvider({
       async gradeEssay() {
         throw new GradingProviderError(
           'provider_invalid_response',
@@ -243,7 +285,7 @@ describe('grading gateway server boundary', () => {
           'completion_content_json_malformed',
         )
       },
-    }
+    })
     const metadata = { requestVersion: 'multimodal-grading-request-v2', requestId: 'provider-diagnostic', essayId: 'provider-diagnostic-essay', pageIds: ['essay-1'], task: { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } } }
 
     const response = await request(createServer({
@@ -259,60 +301,194 @@ describe('grading gateway server boundary', () => {
     expect(diagnostics).toEqual([{ stage: 'provider', diagnosticCode: 'completion_content_json_malformed' }])
     expect(JSON.stringify(diagnostics)).not.toMatch(/PRIVATE|private-name|ERROR-MESSAGE/)
   })
-  it('sends ordered rubric page data to the injected multimodal provider', async () => {
-    const generatedRubric = {
-      taskName: 'Synthetic task', materialSummary: 'A synthetic task material summary.',
-      writingRequirements: ['Write clearly.'], constraints: ['Use English.'],
-      dimensions: [
-        { id: 'content', name: 'Content', weight: 95, description: 'Cover the task.', deductionFocus: ['Missing task coverage.'], sourceEvidence: ['Prompt heading.'] },
-        { id: 'legibility', name: 'Legibility', weight: 5, description: 'Handwriting is legible.', deductionFocus: [], sourceEvidence: [] },
+
+  it('builds strict material context once from mixed image/text/image materials and preserves the teacher requirement', async () => {
+    const calls: Parameters<MultimodalProvider['generateMaterialContext']>[] = []
+    const context = materialContextFixture()
+    const teacherRequirement = 'Continue the story in English and preserve the supplied opening.'
+    const provider = fakeMultimodalProvider({
+      async generateMaterialContext(input) { calls.push([input]); return context },
+    })
+    const response = await request(createServer({ multimodalProvider: provider }))
+      .post('/tasks/material-context')
+      .field('requestId', 'context-route-1')
+      .field('fullScore', '15')
+      .field('writingRequirement', teacherRequirement)
+      .field('materialManifest', JSON.stringify([
+        { id: 'image-1', kind: 'image', imageIndex: 0 },
+        { id: 'text-1', kind: 'text', textIndex: 0 },
+        { id: 'image-2', kind: 'image', imageIndex: 1 },
+      ]))
+      .field('textMaterials', JSON.stringify([{ displayName: 'prompt.docx', text: 'Synthetic source text.' }]))
+      .attach('images', Buffer.from('first-image'), { filename: 'first.png', contentType: 'image/png' })
+      .attach('images', Buffer.from('second-image'), { filename: 'second.webp', contentType: 'image/webp' })
+      .expect(200)
+
+    expect(response.body).toEqual({ requestId: 'context-route-1', status: 'success', materialContext: context })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.[0]).toMatchObject({
+      requestId: 'context-route-1',
+      fullScore: 15,
+      writingRequirement: teacherRequirement,
+      materials: [
+        { kind: 'image', unitId: 'image-1', mimeType: 'image/png', buffer: Buffer.from('first-image') },
+        { kind: 'text', unitId: 'text-1', displayName: 'prompt.docx', text: 'Synthetic source text.' },
+        { kind: 'image', unitId: 'image-2', mimeType: 'image/webp', buffer: Buffer.from('second-image') },
       ],
-      reviewWarnings: ['Verify source material.'],
-    }
+    })
+  })
+
+  it('rejects an invalid material manifest before resolving or calling the Provider', async () => {
+    let calls = 0
+    const provider = fakeMultimodalProvider({
+      async generateMaterialContext() { calls += 1; return materialContextFixture() },
+    })
+    const response = await request(createServer({ multimodalProvider: provider }))
+      .post('/tasks/material-context')
+      .field('requestId', 'context-invalid-manifest')
+      .field('fullScore', '15')
+      .field('writingRequirement', 'Teacher requirement.')
+      .field('materialManifest', JSON.stringify([{ id: 'image-1', kind: 'image', imageIndex: 1 }]))
+      .field('textMaterials', JSON.stringify([]))
+      .attach('images', Buffer.from('PRIVATE-MATERIAL-BYTES'), { filename: 'private-material.png', contentType: 'image/png' })
+      .expect(400)
+
+    expect(response.body).toMatchObject({ requestId: 'context-invalid-manifest', status: 'failed', error: { code: 'invalid_request', retryable: false } })
+    expect(JSON.stringify(response.body)).not.toMatch(/PRIVATE|private-material|filename|bytes|stack/i)
+    expect(calls).toBe(0)
+  })
+
+  it('maps one material-context timeout to the stable safe timeout failure', async () => {
+    let calls = 0
+    const provider = fakeMultimodalProvider({
+      async generateMaterialContext(input) {
+        calls += 1
+        await new Promise<void>((_resolve, reject) => {
+          input.signal.addEventListener('abort', () => reject(new Error('PRIVATE-ABORT-CONTENT')), { once: true })
+        })
+        throw new Error('unreachable')
+      },
+    })
+    const response = await request(createServer({ multimodalProvider: provider, timeoutMs: 1 }))
+      .post('/tasks/material-context')
+      .field('requestId', 'context-timeout')
+      .field('fullScore', '15')
+      .field('writingRequirement', 'Teacher requirement.')
+      .field('materialManifest', JSON.stringify([{ id: 'text-1', kind: 'text', textIndex: 0 }]))
+      .field('textMaterials', JSON.stringify([{ displayName: 'prompt.docx', text: 'PRIVATE-TIMEOUT-MATERIAL' }]))
+      .expect(503)
+
+    expect(response.body).toMatchObject({ requestId: 'context-timeout', status: 'failed', error: { code: 'provider_timeout', retryable: true } })
+    expect(response.body).not.toHaveProperty('materialContext')
+    expect(JSON.stringify(response.body)).not.toMatch(/PRIVATE|ABORT|TIMEOUT-MATERIAL/)
+    expect(calls).toBe(1)
+  })
+
+  it('maps material-context authentication errors without exposing Provider or material content', async () => {
+    let calls = 0
+    const diagnostics: unknown[] = []
+    const provider = fakeMultimodalProvider({
+      async generateMaterialContext() {
+        calls += 1
+        throw new GradingProviderError('provider_auth_failed', 'PRIVATE-AUTH-CONTENT', false)
+      },
+    })
+    const response = await request(createServer({
+      multimodalProvider: provider,
+      onDiagnostic: (diagnostic: unknown) => diagnostics.push(diagnostic),
+    }))
+      .post('/tasks/material-context')
+      .field('requestId', 'context-auth')
+      .field('fullScore', '15')
+      .field('writingRequirement', 'PRIVATE-TEACHER-CONTENT')
+      .field('materialManifest', JSON.stringify([{ id: 'text-1', kind: 'text', textIndex: 0 }]))
+      .field('textMaterials', JSON.stringify([{ displayName: 'private.docx', text: 'PRIVATE-MATERIAL-CONTENT' }]))
+      .expect(503)
+
+    expect(response.body).toEqual({
+      requestId: 'context-auth', status: 'failed',
+      error: { code: 'provider_auth_failed', message: 'AI 批改服务认证失败。', retryable: false },
+    })
+    expect(diagnostics).toEqual([{ stage: 'provider', diagnosticCode: 'provider_auth_failed' }])
+    expect(JSON.stringify({ response: response.body, diagnostics })).not.toMatch(/PRIVATE|private\.docx|AUTH-CONTENT|MATERIAL-CONTENT/)
+    expect(calls).toBe(1)
+  })
+
+  it('revalidates material context at the route boundary and emits content-free diagnostics', async () => {
+    const diagnostics: unknown[] = []
+    const invalidContext = { ...materialContextFixture(), unexpected: 'PRIVATE-PROVIDER-CONTEXT' } as unknown as TaskMaterialContextV1
+    const provider = fakeMultimodalProvider({
+      async generateMaterialContext() { return invalidContext },
+    })
+    const response = await request(createServer({
+      multimodalProvider: provider,
+      onDiagnostic: (diagnostic: unknown) => diagnostics.push(diagnostic),
+    }))
+      .post('/tasks/material-context')
+      .field('requestId', 'context-invalid-provider')
+      .field('fullScore', '15')
+      .field('writingRequirement', 'Teacher requirement.')
+      .field('materialManifest', JSON.stringify([{ id: 'text-1', kind: 'text', textIndex: 0 }]))
+      .field('textMaterials', JSON.stringify([{ displayName: 'prompt.docx', text: 'PRIVATE-REQUEST-CONTENT' }]))
+      .expect(503)
+
+    expect(response.body).toMatchObject({ requestId: 'context-invalid-provider', status: 'failed', error: { code: 'provider_invalid_response', retryable: true } })
+    expect(response.body).not.toHaveProperty('materialContext')
+    expect(diagnostics).toEqual([{ stage: 'normalization', diagnosticCode: 'material_context_validation' }])
+    expect(JSON.stringify({ response: response.body, diagnostics })).not.toMatch(/PRIVATE|REQUEST-CONTENT|PROVIDER-CONTEXT/)
+  })
+
+  it('sends optional empty teacher input and mixed materials to the rubric Provider in manifest order', async () => {
+    const generatedRubric = generatedRubricFixture()
     const calls: Parameters<MultimodalProvider['generateRubric']>[] = []
-    const provider: MultimodalProvider = {
-      async generateMaterialContext() { throw new Error('not used') },
+    const provider = fakeMultimodalProvider({
       async generateRubric(input) { calls.push([input]); return generatedRubric },
-      async gradeEssay() { throw new Error('not used') },
-    }
+    })
 
     const response = await request(createServer({ multimodalProvider: provider }))
       .post('/tasks/rubric')
       .field('requestId', 'rubric-route-1')
       .field('fullScore', '15')
-      .field('pageIds', JSON.stringify(['material-2', 'material-1']))
-      .attach('pages', Buffer.from('second-page'), { filename: 'second.png', contentType: 'image/png' })
-      .attach('pages', Buffer.from('first-page'), { filename: 'first.jpg', contentType: 'image/jpeg' })
+      .field('writingRequirement', '   ')
+      .field('materialManifest', JSON.stringify([
+        { id: 'image-1', kind: 'image', imageIndex: 0 },
+        { id: 'text-1', kind: 'text', textIndex: 0 },
+        { id: 'image-2', kind: 'image', imageIndex: 1 },
+      ]))
+      .field('textMaterials', JSON.stringify([{ displayName: 'prompt.docx', text: 'Synthetic source text.' }]))
+      .attach('images', Buffer.from('first-image'), { filename: 'first.png', contentType: 'image/png' })
+      .attach('images', Buffer.from('second-image'), { filename: 'second.jpg', contentType: 'image/jpeg' })
       .expect(200)
 
     expect(response.body).toEqual({ requestId: 'rubric-route-1', status: 'success', rubric: generatedRubric })
     expect(calls).toHaveLength(1)
     expect(calls[0]?.[0]).toMatchObject({
       requestId: 'rubric-route-1', fullScore: 15,
-      pages: [
-        { pageId: 'material-2', mimeType: 'image/png', buffer: Buffer.from('second-page') },
-        { pageId: 'material-1', mimeType: 'image/jpeg', buffer: Buffer.from('first-page') },
+      materials: [
+        { kind: 'image', unitId: 'image-1', mimeType: 'image/png', buffer: Buffer.from('first-image') },
+        { kind: 'text', unitId: 'text-1', displayName: 'prompt.docx', text: 'Synthetic source text.' },
+        { kind: 'image', unitId: 'image-2', mimeType: 'image/jpeg', buffer: Buffer.from('second-image') },
       ],
     })
+    expect(calls[0]?.[0]).not.toHaveProperty('writingRequirement')
+    expect(calls[0]?.[0]).not.toHaveProperty('pages')
   })
 
   it('maps a rubric provider timeout without returning partial task state', async () => {
-    const provider: MultimodalProvider = {
-      async generateMaterialContext() { throw new Error('not used') },
+    const provider = fakeMultimodalProvider({
       async generateRubric(input) {
         await new Promise<void>((_resolve, reject) => {
           input.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
         })
         throw new Error('unreachable')
       },
-      async gradeEssay() { throw new Error('not used') },
-    }
+    })
     const response = await request(createServer({ multimodalProvider: provider, timeoutMs: 1 }))
       .post('/tasks/rubric')
       .field('requestId', 'rubric-timeout')
       .field('fullScore', '15')
-      .field('pageIds', JSON.stringify(['material-1']))
-      .attach('pages', Buffer.from('synthetic-image'), { filename: 'material.png', contentType: 'image/png' })
+      .field('materialManifest', JSON.stringify([{ id: 'text-1', kind: 'text', textIndex: 0 }]))
+      .field('textMaterials', JSON.stringify([{ displayName: 'prompt.docx', text: 'Synthetic source text.' }]))
       .expect(503)
 
     expect(response.body).toMatchObject({
@@ -324,8 +500,7 @@ describe('grading gateway server boundary', () => {
 
   it('fails closed when an injected rubric provider returns a generated rubric without the exact 5% legibility dimension', async () => {
     const diagnostics: unknown[] = []
-    const provider: MultimodalProvider = {
-      async generateMaterialContext() { throw new Error('not used') },
+    const provider = fakeMultimodalProvider({
       async generateRubric() {
         return {
           taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write clearly.'], constraints: [],
@@ -333,8 +508,7 @@ describe('grading gateway server boundary', () => {
           reviewWarnings: [],
         }
       },
-      async gradeEssay() { throw new Error('not used') },
-    }
+    })
     const response = await request(createServer({
       multimodalProvider: provider,
       onDiagnostic: (diagnostic: unknown) => diagnostics.push(diagnostic),
@@ -342,8 +516,8 @@ describe('grading gateway server boundary', () => {
       .post('/tasks/rubric')
       .field('requestId', 'rubric-invalid-generated')
       .field('fullScore', '15')
-      .field('pageIds', JSON.stringify(['material-1']))
-      .attach('pages', Buffer.from('synthetic-image'), { filename: 'material.png', contentType: 'image/png' })
+      .field('materialManifest', JSON.stringify([{ id: 'text-1', kind: 'text', textIndex: 0 }]))
+      .field('textMaterials', JSON.stringify([{ displayName: 'prompt.docx', text: 'Synthetic source text.' }]))
       .expect(503)
 
     expect(response.body).toMatchObject({ requestId: 'rubric-invalid-generated', status: 'failed', error: { code: 'provider_invalid_response', retryable: true } })

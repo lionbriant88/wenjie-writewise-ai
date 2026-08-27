@@ -5,14 +5,26 @@ import multer from 'multer'
 import request from 'supertest'
 import { describe, expect, it } from 'vitest'
 import { createServer } from './server.js'
+import type { MultimodalProvider } from './providers/multimodalProviderTypes.js'
+
+function fakeMultimodalProvider(
+  overrides: Partial<MultimodalProvider> = {},
+): MultimodalProvider {
+  return {
+    async generateMaterialContext() { throw new Error('not used') },
+    async generateRubric() { throw new Error('not used') },
+    async gradeEssay() { throw new Error('not used') },
+    ...overrides,
+  }
+}
 
 function safeBody(response: { body: unknown }) {
   return JSON.stringify(response.body)
 }
 
-describe('rubric multipart image boundary', () => {
+describe('task material multipart boundary', () => {
   it('settles the upload middleware once when a multipart client aborts mid-file', async () => {
-    const upload = multer({ storage: multer.memoryStorage() }).single('pages')
+    const upload = multer({ storage: multer.memoryStorage() }).single('images')
     let callbackCalls = 0
     let settleCallback: (error: unknown) => void = () => undefined
     const callbackResult = new Promise<unknown>((resolve) => { settleCallback = resolve })
@@ -29,7 +41,7 @@ describe('rubric multipart image boundary', () => {
     const boundary = 'synthetic-abort-boundary'
     const partialBody = [
       `--${boundary}`,
-      'Content-Disposition: form-data; name="pages"; filename="synthetic.png"',
+      'Content-Disposition: form-data; name="images"; filename="synthetic.png"',
       'Content-Type: image/png',
       '',
       'partial',
@@ -66,15 +78,16 @@ describe('rubric multipart image boundary', () => {
     expect(callbackCalls).toBe(1)
   })
 
-  it('rejects missing pages without exposing multipart data', async () => {
+  it('rejects a manifest image with no matching upload without exposing multipart data', async () => {
     const response = await request(createServer())
       .post('/tasks/rubric')
-      .field('requestId', 'missing-pages')
+      .field('requestId', 'missing-images')
       .field('fullScore', '15')
-      .field('pageIds', JSON.stringify(['material-1']))
+      .field('materialManifest', JSON.stringify([{ id: 'material-1', kind: 'image', imageIndex: 0 }]))
+      .field('textMaterials', JSON.stringify([]))
       .expect(400)
 
-    expect(response.body).toMatchObject({ requestId: 'missing-pages', status: 'failed', error: { code: 'invalid_request', retryable: false } })
+    expect(response.body).toMatchObject({ requestId: 'missing-images', status: 'failed', error: { code: 'invalid_request', retryable: false } })
     expect(safeBody(response)).not.toMatch(/filename|bytes|material\.png|stack/i)
   })
 
@@ -91,13 +104,43 @@ describe('rubric multipart image boundary', () => {
     expect(safeBody(response)).not.toMatch(/PRIVATE-MALFORMED-PAYLOAD|boundary|multipart|stack/i)
   })
 
-  it('rejects page and file count mismatches without exposing filenames', async () => {
+  it('rejects unexpected upload fields safely on both task routes before Provider use', async () => {
+    let contextCalls = 0
+    let rubricCalls = 0
+    const provider = fakeMultimodalProvider({
+      async generateMaterialContext() { contextCalls += 1; throw new Error('must not run') },
+      async generateRubric() { rubricCalls += 1; throw new Error('must not run') },
+    })
+    for (const route of ['/tasks/material-context', '/tasks/rubric']) {
+      let pending = request(createServer({ multimodalProvider: provider }))
+        .post(route)
+        .field('requestId', 'unexpected-upload-field')
+        .field('fullScore', '15')
+      if (route.endsWith('material-context')) pending = pending.field('writingRequirement', 'Teacher requirement.')
+      const response = await pending
+        .field('materialManifest', JSON.stringify([{ id: 'image-1', kind: 'image', imageIndex: 0 }]))
+        .field('textMaterials', JSON.stringify([]))
+        .attach('PRIVATE-UPLOAD-FIELD', Buffer.from('PRIVATE-UPLOAD-CONTENT'), { filename: 'private.png', contentType: 'image/png' })
+        .expect(400)
+
+      expect(response.body).toMatchObject({ status: 'failed', error: { code: 'invalid_request', retryable: false } })
+      expect(safeBody(response)).not.toMatch(/PRIVATE|UPLOAD-FIELD|UPLOAD-CONTENT|private\.png|stack/)
+    }
+    expect(contextCalls).toBe(0)
+    expect(rubricCalls).toBe(0)
+  })
+
+  it('rejects manifest and image count mismatches without exposing filenames', async () => {
     const response = await request(createServer())
       .post('/tasks/rubric')
       .field('requestId', 'count-mismatch')
       .field('fullScore', '15')
-      .field('pageIds', JSON.stringify(['material-1', 'material-2']))
-      .attach('pages', Buffer.from('PRIVATE-BYTES'), { filename: 'private-material.png', contentType: 'image/png' })
+      .field('materialManifest', JSON.stringify([
+        { id: 'material-1', kind: 'image', imageIndex: 0 },
+        { id: 'material-2', kind: 'image', imageIndex: 1 },
+      ]))
+      .field('textMaterials', JSON.stringify([]))
+      .attach('images', Buffer.from('PRIVATE-BYTES'), { filename: 'private-material.png', contentType: 'image/png' })
       .expect(400)
 
     expect(response.body).toMatchObject({ requestId: 'count-mismatch', status: 'failed', error: { code: 'invalid_request', retryable: false } })
@@ -109,8 +152,9 @@ describe('rubric multipart image boundary', () => {
       .post('/tasks/rubric')
       .field('requestId', 'bad-mime')
       .field('fullScore', '15')
-      .field('pageIds', JSON.stringify(['material-1']))
-      .attach('pages', Buffer.from('PRIVATE-BYTES'), { filename: 'private-material.gif', contentType: 'image/gif' })
+      .field('materialManifest', JSON.stringify([{ id: 'material-1', kind: 'image', imageIndex: 0 }]))
+      .field('textMaterials', JSON.stringify([]))
+      .attach('images', Buffer.from('PRIVATE-BYTES'), { filename: 'private-material.gif', contentType: 'image/gif' })
       .expect(400)
 
     expect(response.body).toMatchObject({ requestId: 'bad-mime', status: 'failed', error: { code: 'invalid_request', retryable: false } })
@@ -118,8 +162,7 @@ describe('rubric multipart image boundary', () => {
   })
 
   it('accepts exactly 8 MB and ten images when the provider is configured', async () => {
-    const provider = {
-      async generateMaterialContext() { throw new Error('not used') },
+    const provider = fakeMultimodalProvider({
       async generateRubric() {
         return {
           taskName: 'Synthetic task', materialSummary: 'A synthetic task material summary.',
@@ -131,15 +174,15 @@ describe('rubric multipart image boundary', () => {
           reviewWarnings: ['Verify source material.'],
         }
       },
-      async gradeEssay() { throw new Error('not used') },
-    }
+    })
     let pending = request(createServer({ multimodalProvider: provider }))
       .post('/tasks/rubric')
       .field('requestId', 'maximum-images')
       .field('fullScore', '15')
-      .field('pageIds', JSON.stringify(Array.from({ length: 10 }, (_, index) => `material-${index + 1}`)))
+      .field('materialManifest', JSON.stringify(Array.from({ length: 10 }, (_, index) => ({ id: `material-${index + 1}`, kind: 'image', imageIndex: index }))))
+      .field('textMaterials', JSON.stringify([]))
     for (let index = 0; index < 10; index += 1) {
-      pending = pending.attach('pages', index === 0 ? Buffer.alloc(8 * 1024 * 1024) : Buffer.from('image'), {
+      pending = pending.attach('images', index === 0 ? Buffer.alloc(8 * 1024 * 1024) : Buffer.from('image'), {
         filename: `material-${index + 1}.png`, contentType: 'image/png',
       })
     }
@@ -147,26 +190,28 @@ describe('rubric multipart image boundary', () => {
     expect(response.body).toMatchObject({ requestId: 'maximum-images', status: 'success' })
   })
 
-  it('rejects images larger than 8 MB and more than ten pages safely', async () => {
+  it('rejects images larger than 8 MB and more than ten images safely', async () => {
     const oversized = await request(createServer())
       .post('/tasks/rubric')
       .field('requestId', 'oversized-image')
       .field('fullScore', '15')
-      .field('pageIds', JSON.stringify(['material-1']))
-      .attach('pages', Buffer.alloc((8 * 1024 * 1024) + 1, 1), { filename: 'private-oversized.png', contentType: 'image/png' })
+      .field('materialManifest', JSON.stringify([{ id: 'material-1', kind: 'image', imageIndex: 0 }]))
+      .field('textMaterials', JSON.stringify([]))
+      .attach('images', Buffer.alloc((8 * 1024 * 1024) + 1, 1), { filename: 'private-oversized.png', contentType: 'image/png' })
       .expect(413)
     expect(oversized.body).toMatchObject({ requestId: 'oversized-image', status: 'failed', error: { code: 'request_too_large', retryable: false } })
     expect(safeBody(oversized)).not.toMatch(/private-oversized\.png|bytes|stack/i)
 
     let pending = request(createServer()).post('/tasks/rubric')
-      .field('requestId', 'too-many-pages')
+      .field('requestId', 'too-many-images')
       .field('fullScore', '15')
-      .field('pageIds', JSON.stringify(Array.from({ length: 11 }, (_, index) => `material-${index + 1}`)))
+      .field('materialManifest', JSON.stringify(Array.from({ length: 11 }, (_, index) => ({ id: `material-${index + 1}`, kind: 'image', imageIndex: index }))))
+      .field('textMaterials', JSON.stringify([]))
     for (let index = 0; index < 11; index += 1) {
-      pending = pending.attach('pages', Buffer.from('PRIVATE-BYTES'), { filename: `private-${index}.png`, contentType: 'image/png' })
+      pending = pending.attach('images', Buffer.from('PRIVATE-BYTES'), { filename: `private-${index}.png`, contentType: 'image/png' })
     }
     const tooMany = await pending.expect(413)
-    expect(tooMany.body).toMatchObject({ requestId: 'too-many-pages', status: 'failed', error: { code: 'request_too_large', retryable: false } })
+    expect(tooMany.body).toMatchObject({ requestId: 'too-many-images', status: 'failed', error: { code: 'request_too_large', retryable: false } })
     expect(safeBody(tooMany)).not.toMatch(/PRIVATE-BYTES|private-\d+\.png|bytes|stack/i)
   })
 })

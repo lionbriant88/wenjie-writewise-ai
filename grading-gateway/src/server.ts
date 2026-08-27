@@ -1,9 +1,11 @@
 import cors from 'cors'
-import express from 'express'
+import express, { type NextFunction, type Request, type Response } from 'express'
 import multer from 'multer'
 import { isWellFormedUnicode } from '../../app/src/services/grading/gradingResultSemantics.js'
 import { validateMultimodalGradingRequestMode } from '../../app/src/services/grading/validateMultimodalGradingRequestMode.js'
 import { MAX_RUBRIC_IMAGE_BYTES, MAX_RUBRIC_PAGES, requestIdFromMultipartBody, validateRubricMultipart } from './multipartImages.js'
+import { MAX_TASK_MATERIAL_IMAGE_BYTES, MAX_TASK_MATERIAL_UNITS, validateTaskMaterialMultipart } from './multipartTaskMaterials.js'
+import { validateTaskMaterialContext } from './multimodal/materialContextContract.js'
 import { normalizeMultimodalResult } from './multimodal/normalizeMultimodalResult.js'
 import { validateConfirmedRubric, validateGeneratedRubric } from './multimodal/validateRubric.js'
 import { getMultimodalProvider } from './providers/index.js'
@@ -22,9 +24,15 @@ export interface CreateServerOptions {
   onDiagnostic?: SafeGradingDiagnosticSink
 }
 
-const rubricUpload = multer({
+const taskMaterialUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_RUBRIC_IMAGE_BYTES + 1, files: MAX_RUBRIC_PAGES, fields: 3, fieldSize: 16 * 1024, parts: 20 },
+  limits: {
+    fileSize: MAX_TASK_MATERIAL_IMAGE_BYTES + 1,
+    files: MAX_TASK_MATERIAL_UNITS,
+    fields: 5,
+    fieldSize: 512 * 1024,
+    parts: MAX_TASK_MATERIAL_UNITS + 7,
+  },
 })
 
 export const MAX_IMAGE_GRADING_METADATA_BYTES = 32 * 1024 * 1024
@@ -68,13 +76,40 @@ function toSafeFailure(requestId: string, error: unknown) {
   return failure(requestId, { code: 'provider_unavailable', message: 'AI 批改服务暂时不可用。' }, true)
 }
 
-function rubricUploadFailure(requestId: string, error: unknown) {
+function multipartUploadFailure(requestId: string, error: unknown, route: 'task-material' | 'image-grading') {
   if (error instanceof multer.MulterError && (
     error.code === 'LIMIT_FILE_SIZE' || error.code === 'LIMIT_FILE_COUNT' || error.code === 'LIMIT_PART_COUNT' || error.code === 'LIMIT_FIELD_VALUE'
   )) {
-    return { status: 413, body: failure(requestId, { code: 'request_too_large', message: 'Rubric upload exceeds the allowed limit.' }, false) }
+    return {
+      status: 413,
+      body: failure(requestId, {
+        code: 'request_too_large',
+        message: route === 'task-material'
+          ? 'Task material upload exceeds the allowed limit.'
+          : 'Rubric upload exceeds the allowed limit.',
+      }, false),
+    }
   }
-  return { status: 400, body: failure(requestId, { code: 'invalid_request', message: 'Rubric request is invalid.' }, false) }
+  return {
+    status: 400,
+    body: failure(requestId, {
+      code: 'invalid_request',
+      message: route === 'task-material'
+        ? 'Task material request is invalid.'
+        : 'Rubric request is invalid.',
+    }, false),
+  }
+}
+
+function taskMaterialUploadBoundary(request: Request, response: Response, next: NextFunction) {
+  taskMaterialUpload.array('images', MAX_TASK_MATERIAL_UNITS)(request, response, (error) => {
+    if (!error) {
+      next()
+      return
+    }
+    const safe = multipartUploadFailure(requestIdFromMultipartBody(request.body), error, 'task-material')
+    response.status(safe.status).json(safe.body)
+  })
 }
 
 interface ImageGradeMetadata {
@@ -153,18 +188,59 @@ export function createServer(options: CreateServerOptions = {}) {
   app.get('/health', (_request, response) => {
     response.json({ ok: true, service: 'grading-gateway' })
   })
-  app.post('/tasks/rubric', (request, response, next) => {
-    rubricUpload.array('pages', MAX_RUBRIC_PAGES)(request, response, (error) => {
-      if (!error) {
-        next()
+  app.post('/tasks/material-context', taskMaterialUploadBoundary, async (request, response) => {
+    const files = Array.isArray(request.files) ? request.files : undefined
+    const validated = validateTaskMaterialMultipart(request.body, files, 'required')
+    if (!validated.ok) {
+      response.status(validated.error.code === 'request_too_large' ? 413 : 400)
+        .json(failure(requestIdFromMultipartBody(request.body), validated.error, false))
+      return
+    }
+    const writingRequirement = validated.value.writingRequirement
+    if (!writingRequirement) {
+      response.status(400).json(failure(validated.value.requestId, { code: 'invalid_request', message: 'Task material request is invalid.' }, false))
+      return
+    }
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 60_000)
+    try {
+      const provider = options.multimodalProvider ?? getMultimodalProvider(options.providerName ?? 'mock')
+      const providerContext = await provider.generateMaterialContext({
+        requestId: validated.value.requestId,
+        fullScore: validated.value.fullScore,
+        writingRequirement,
+        materials: validated.value.materials,
+        signal: controller.signal,
+      })
+      const context = validateTaskMaterialContext(providerContext)
+      if (!context.ok) {
+        emitSafeGradingDiagnostic(options.onDiagnostic, { stage: 'normalization', diagnosticCode: 'material_context_validation' })
+        response.status(503).json(failure(validated.value.requestId, context.error, true))
         return
       }
-      const safe = rubricUploadFailure(requestIdFromMultipartBody(request.body), error)
-      response.status(safe.status).json(safe.body)
-    })
-  }, async (request, response) => {
+      response.json({ requestId: validated.value.requestId, status: 'success', materialContext: context.value })
+    } catch (error) {
+      const safe = controller.signal.aborted
+        ? failure(validated.value.requestId, { code: 'provider_timeout', message: 'AI grading timed out.' }, true)
+        : toSafeFailure(validated.value.requestId, error)
+      emitSafeGradingDiagnostic(options.onDiagnostic, {
+        stage: 'provider',
+        diagnosticCode: controller.signal.aborted
+          ? 'provider_timeout'
+          : error instanceof GradingProviderError
+            ? error.diagnosticCode ?? error.code
+            : 'provider_unavailable',
+      })
+      response.status(503).json(safe)
+    } finally {
+      clearTimeout(timeout)
+    }
+  })
+
+  app.post('/tasks/rubric', taskMaterialUploadBoundary, async (request, response) => {
     const files = Array.isArray(request.files) ? request.files : undefined
-    const validated = validateRubricMultipart(request.body, files)
+    const validated = validateTaskMaterialMultipart(request.body, files, 'optional')
     if (!validated.ok) {
       response.status(validated.error.code === 'request_too_large' ? 413 : 400)
         .json(failure(requestIdFromMultipartBody(request.body), validated.error, false))
@@ -203,7 +279,7 @@ export function createServer(options: CreateServerOptions = {}) {
   app.post('/grading/grade-images', (request, response, next) => {
     imageGradeUpload.array('pages', MAX_RUBRIC_PAGES)(request, response, (error) => {
       if (!error) { next(); return }
-      const safe = rubricUploadFailure(imageGradeRequestId(request.body), error)
+      const safe = multipartUploadFailure(imageGradeRequestId(request.body), error, 'image-grading')
       response.status(safe.status).json(safe.body)
     })
   }, async (request, response) => {

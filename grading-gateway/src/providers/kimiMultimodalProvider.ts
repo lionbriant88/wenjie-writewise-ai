@@ -4,7 +4,7 @@ import { buildMaterialContextMessages, materialContextSchema } from '../multimod
 import { generatedRubricSchema, reviewedRubricSchema, buildRubricGenerationMessages, buildRubricReviewMessages } from '../multimodal/rubricPrompts.js'
 import type { GeneratedRubricV1, TaskMaterialContextV1 } from '../multimodal/types.js'
 import { buildEssayGradingMessages, essayGradingSchema } from '../multimodal/gradingPrompt.js'
-import type { GenerateMaterialContextProviderInput, GenerateRubricProviderRequest, GradeEssayProviderInput, MultimodalProvider } from './multimodalProviderTypes.js'
+import type { GenerateMaterialContextProviderInput, GenerateRubricProviderInput, GradeEssayProviderInput, MultimodalProvider } from './multimodalProviderTypes.js'
 import type { KimiTransport } from './kimiTransport.js'
 import { GradingProviderError } from './providerTypes.js'
 
@@ -30,21 +30,6 @@ function prioritizeRubricContext(
   }
 }
 
-function rubricMaterials(input: GenerateRubricProviderRequest) {
-  if ('materials' in input) {
-    return { materials: input.materials, writingRequirement: input.writingRequirement }
-  }
-  return {
-    materials: input.pages.map((page) => ({
-      kind: 'image' as const,
-      unitId: page.pageId,
-      mimeType: page.mimeType,
-      buffer: page.buffer,
-    })),
-    writingRequirement: undefined,
-  }
-}
-
 export class KimiMultimodalProvider implements MultimodalProvider {
   constructor(private readonly transport: KimiTransport) {}
 
@@ -64,13 +49,12 @@ export class KimiMultimodalProvider implements MultimodalProvider {
     return prioritizeTeacherWritingRequirement(validation.value, input.writingRequirement)
   }
 
-  async generateRubric(input: GenerateRubricProviderRequest): Promise<GeneratedRubricV1> {
-    const source = rubricMaterials(input)
+  async generateRubric(input: GenerateRubricProviderInput): Promise<GeneratedRubricV1> {
     const rawDraft = await this.transport.complete({
       messages: buildRubricGenerationMessages({
         fullScore: input.fullScore,
-        writingRequirement: source.writingRequirement,
-        materials: source.materials,
+        writingRequirement: input.writingRequirement,
+        materials: input.materials,
       }),
       schemaName: 'generated-rubric',
       schema: generatedRubricSchema,
@@ -78,13 +62,13 @@ export class KimiMultimodalProvider implements MultimodalProvider {
     })
     const draftValidation = validateGeneratedRubric(rawDraft)
     if (!draftValidation.ok) throw invalidRubricError()
-    const draft = prioritizeRubricContext(draftValidation.value, source.writingRequirement)
+    const draft = prioritizeRubricContext(draftValidation.value, input.writingRequirement)
 
     const rawReviewed = await this.transport.complete({
       messages: buildRubricReviewMessages({
         fullScore: input.fullScore,
-        writingRequirement: source.writingRequirement,
-        materials: source.materials,
+        writingRequirement: input.writingRequirement,
+        materials: input.materials,
         draft,
       }),
       schemaName: 'reviewed-rubric',
@@ -93,7 +77,7 @@ export class KimiMultimodalProvider implements MultimodalProvider {
     })
     const validation = validateGeneratedRubric(rawReviewed)
     if (!validation.ok) throw invalidRubricError()
-    return prioritizeRubricContext(validation.value, source.writingRequirement)
+    return prioritizeRubricContext(validation.value, input.writingRequirement)
   }
 
   async gradeEssay(input: GradeEssayProviderInput): Promise<unknown> {
