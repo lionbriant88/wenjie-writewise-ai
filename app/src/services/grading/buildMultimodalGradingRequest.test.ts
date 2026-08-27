@@ -38,7 +38,11 @@ describe('buildMultimodalGradingRequest', () => {
   it('accepts the actual configured mock rubric at grading preflight', async () => {
     const response = await createConfiguredRubricClient({ VITE_GRADING_MODE: 'mock' }).generate({
       requestId: 'mock-rubric', fullScore: 15,
-      pages: [{ id: 'material-1', file: new File(['material'], 'material.png', { type: 'image/png' }) }],
+      writingRequirement: '',
+      materials: [{
+        id: 'material-1', kind: 'image',
+        file: new File(['material'], 'material.png', { type: 'image/png' }),
+      }],
     })
     expect(response.status).toBe('success')
     if (response.status !== 'success') return

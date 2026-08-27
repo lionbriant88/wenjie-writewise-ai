@@ -184,7 +184,13 @@ export function UploadPage() {
       currentStep="upload"
       description="按学生依次上传作文图片、PDF 或现场拍照；每位学生可包含多页。"
     >
-      <div className="space-y-5">
+      <>
+        {task.materialProcessingStatus === 'failed' ? (
+          <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            材料暂时无法读取，本任务将仅按已填写的写作要求评分。
+          </p>
+        ) : null}
+        <div className="space-y-5">
         {uploadError ? (
           <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
             {uploadError}
@@ -357,7 +363,8 @@ export function UploadPage() {
         <Link to={`/tasks/${task.id}/progress`} className="inline-flex text-sm font-semibold text-blue-700">
           查看批改进度
         </Link>
-      </div>
+        </div>
+      </>
     </AppLayout>
   )
 }

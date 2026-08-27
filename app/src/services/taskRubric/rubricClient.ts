@@ -1,13 +1,10 @@
 import { createTaskMaterialFormData } from '../taskMaterial/materialFormData'
 import { readStrictResponseArray, readStrictResponseRecord } from '../taskMaterial/materialClient'
-import type { TaskMaterialRequestBase } from '../taskMaterial/types'
 import type {
   GeneratedRubricDimension,
   GeneratedTaskRubric,
-  LegacyRubricClientRequest,
   RubricClient,
   RubricClientFailure,
-  RubricClientRequest,
   RubricClientResponse,
   RubricClientSuccess,
   RubricFailureCode,
@@ -149,33 +146,18 @@ function projectResponse(value: unknown, requestId: string, httpOk: boolean): Ru
   return gatewayFailure(requestId, 'gateway_invalid_response', true)
 }
 
-function isLegacyRequest(request: RubricClientRequest): request is LegacyRubricClientRequest {
-  return 'pages' in request
-}
-
-function toTaskMaterialRequest(request: RubricClientRequest): TaskMaterialRequestBase {
-  if (!isLegacyRequest(request)) return request
-  return {
-    requestId: request.requestId,
-    fullScore: request.fullScore,
-    writingRequirement: '',
-    materials: request.pages.map((page) => ({ id: page.id, kind: 'image' as const, file: page.file })),
-  }
-}
-
 export function createRemoteRubricClient({ apiBase, fetchImpl = fetch }: RemoteRubricClientOptions): RubricClient {
   return {
     async generate(request) {
       if (!apiBase) return gatewayFailure(request.requestId, 'gateway_unavailable', false)
-      const taskMaterialRequest = toTaskMaterialRequest(request)
-      const formData = createTaskMaterialFormData(taskMaterialRequest)
+      const formData = createTaskMaterialFormData(request)
 
       let response: Response
       try {
         response = await fetchImpl(`${apiBase.replace(/\/$/, '')}/tasks/rubric`, {
           method: 'POST',
           body: formData,
-          signal: taskMaterialRequest.signal,
+          signal: request.signal,
         })
       } catch {
         return gatewayFailure(request.requestId, 'gateway_unavailable', true)

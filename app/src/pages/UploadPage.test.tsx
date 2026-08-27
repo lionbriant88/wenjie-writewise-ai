@@ -1,7 +1,8 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { MemoryRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AppStateProvider } from '../context/AppStateContext'
 import { useAppState } from '../context/useAppState'
 import { UploadPage } from './UploadPage'
@@ -38,6 +39,52 @@ function renderPage() {
   )
 }
 
+function FailedTaskRedirect() {
+  const { createTask } = useAppState()
+  const [taskId, setTaskId] = useState('')
+
+  useEffect(() => {
+    setTaskId(createTask({
+      taskName: 'Fallback task',
+      fullScore: 15,
+      materialProcessingStatus: 'failed',
+      materialContext: {
+        materialSummary: '教师确认的写作要求：Write clearly.',
+        writingRequirements: ['Write clearly.'],
+        constraints: [],
+        reviewWarnings: [],
+      },
+      rubricDraft: {
+        source: 'teacher',
+        writingGoal: 'Write clearly.',
+        offTopicCriteria: [],
+        dimensions: [
+          { id: 'content', name: 'Content', weight: 95, description: 'Address the task.', deductionFocus: [], sourceEvidence: [] },
+          { id: 'legibility', name: 'Legibility', weight: 5, description: 'Keep writing readable.', deductionFocus: [], sourceEvidence: [] },
+        ],
+        excellentFeatures: [],
+        reviewTriggers: [],
+        status: 'confirmed',
+      },
+    }))
+  }, [createTask])
+
+  return taskId ? <Navigate to={`/tasks/${taskId}/upload`} replace /> : null
+}
+
+function renderFailedTaskPage() {
+  render(
+    <AppStateProvider>
+      <MemoryRouter initialEntries={['/failed-task']}>
+        <Routes>
+          <Route path="/failed-task" element={<FailedTaskRedirect />} />
+          <Route path="/tasks/:taskId/upload" element={<UploadPage />} />
+        </Routes>
+      </MemoryRouter>
+    </AppStateProvider>,
+  )
+}
+
 describe('UploadPage student cards', () => {
   afterEach(() => {
     vi.restoreAllMocks()
@@ -58,6 +105,16 @@ describe('UploadPage student cards', () => {
     expect(screen.getByLabelText('上传相册图片')).toHaveAttribute('accept', 'image/png,image/jpeg,image/webp')
     expect(screen.getByLabelText('上传PDF文件')).toHaveAttribute('accept', 'application/pdf')
     expect(screen.getByLabelText('拍照上传')).toHaveAttribute('capture', 'environment')
+  })
+
+  it('repeats the material-analysis fallback warning without changing the student upload workspace', async () => {
+    renderFailedTaskPage()
+
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      '材料暂时无法读取，本任务将仅按已填写的写作要求评分。',
+    )
+    expect(screen.getByRole('button', { name: '学生1' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '为学生1添加作文' })).toBeInTheDocument()
   })
 
   it('edits a student name, keeps multiple images together and defaults the next blank name to 学生2', async () => {

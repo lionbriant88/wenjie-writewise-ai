@@ -18,19 +18,7 @@ export interface GeneratedTaskRubric {
   reviewWarnings: string[]
 }
 
-export interface RubricClientPage {
-  id: string
-  file: File
-}
-
-/** @deprecated Delete after CreateTaskPage migrates to TaskMaterialRequestBase in Task 10. */
-export interface LegacyRubricClientRequest {
-  requestId: string
-  fullScore: number
-  pages: RubricClientPage[]
-}
-
-export type RubricClientRequest = TaskMaterialRequestBase | LegacyRubricClientRequest
+export type RubricClientRequest = TaskMaterialRequestBase
 
 export type RubricFailureCode =
   | 'invalid_request'

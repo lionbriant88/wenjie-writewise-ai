@@ -69,26 +69,6 @@ describe('rubric client', () => {
     ])
   })
 
-  it('temporarily translates legacy pages to the new image-only manifest with explicit empty writingRequirement', async () => {
-    const legacyPages = [
-      { id: 'legacy-2', file: new File(['two'], 'private-two.webp', { type: 'image/webp' }) },
-      { id: 'legacy-1', file: new File(['one'], 'private-one.png', { type: 'image/png' }) },
-    ]
-    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      requestId: 'legacy-request', status: 'success', rubric,
-    }), { status: 200 }))
-
-    await createRemoteRubricClient({ apiBase: 'http://gateway', fetchImpl }).generate({
-      requestId: 'legacy-request', fullScore: 15, pages: legacyPages,
-    })
-
-    const form = fetchImpl.mock.calls[0]?.[1]?.body as FormData
-    expect(form.get('writingRequirement')).toBe('')
-    expect(form.get('materialManifest')).toBe('[{"id":"legacy-2","kind":"image","imageIndex":0},{"id":"legacy-1","kind":"image","imageIndex":1}]')
-    expect(form.get('textMaterials')).toBe('[]')
-    expect(form.getAll('images')).toHaveLength(2)
-  })
-
   it.each([
     ['request ID mismatch', { requestId: 'wrong', status: 'success', rubric }],
     ['extra response field', { requestId: request.requestId, status: 'success', rubric, privateValue: 'PRIVATE' }],

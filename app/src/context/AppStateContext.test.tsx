@@ -239,7 +239,7 @@ describe('AppStateContext material-based task creation', () => {
     expect(latestState.tasks.find((item) => item.id === taskId)?.completedEssayCount).toBe(1)
   })
 
-  it('creates a genre-free Kimi task with compatibility defaults and assigns its class later', () => {
+  it('creates a unified rubric task with generic defaults and assigns its class later', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-08-02T00:00:00.000Z'))
     render(<AppStateProvider><StateProbe /></AppStateProvider>)
@@ -257,6 +257,7 @@ describe('AppStateContext material-based task creation', () => {
       taskId = latestState.createTask({
         taskName: 'AI generated task',
         fullScore: 15,
+        materialProcessingStatus: 'ready',
         materialContext: {
           materialSummary: 'A source material summary.',
           writingRequirements: ['Respond clearly.'],
@@ -268,8 +269,9 @@ describe('AppStateContext material-based task creation', () => {
     })
 
     expect(latestState.tasks.find((task) => task.id === taskId)).toMatchObject({
-      taskName: 'AI generated task', className: '待选择班级', essayType: '材料写作',
-      scoringTemplateId: 'kimi-generated-v1', fullScore: 15, generateClassReview: true,
+      taskName: 'AI generated task', className: '待选择班级', essayType: '英语作文',
+      scoringTemplateId: 'confirmed-rubric-v1', fullScore: 15, generateClassReview: true,
+      materialProcessingStatus: 'ready',
       materialContext: { materialSummary: 'A source material summary.' },
     })
     expect(latestState.tasks.find((task) => task.id === taskId)?.writingGenre).toBeUndefined()
@@ -289,6 +291,45 @@ describe('AppStateContext material-based task creation', () => {
     expect(latestState.tasks.find((task) => task.id === taskId)?.updatedAt).not.toBe(createdTask?.updatedAt)
     vi.useRealTimers()
   })
+
+  it.each(['none', 'ready', 'failed'] as const)(
+    'persists %s material status without labeling a teacher-only task as material writing or Kimi-generated',
+    (materialProcessingStatus) => {
+      render(<AppStateProvider><StateProbe /></AppStateProvider>)
+      let taskId = ''
+      act(() => {
+        taskId = latestState.createTask({
+          taskName: 'Teacher-only task',
+          fullScore: 15,
+          materialProcessingStatus,
+          materialContext: {
+            materialSummary: '教师确认的写作要求：Write clearly.',
+            writingRequirements: ['Write clearly.'],
+            constraints: [],
+            reviewWarnings: [],
+          },
+          rubricDraft: {
+            source: 'teacher',
+            writingGoal: 'Write clearly.',
+            offTopicCriteria: [],
+            dimensions: generatedDimensions,
+            excellentFeatures: [],
+            reviewTriggers: [],
+            status: 'confirmed',
+          },
+        })
+      })
+
+      expect(latestState.tasks.find((task) => task.id === taskId)).toMatchObject({
+        className: '待选择班级',
+        essayType: '英语作文',
+        scoringTemplateId: 'confirmed-rubric-v1',
+        materialProcessingStatus,
+      })
+      expect(latestState.tasks.find((task) => task.id === taskId)?.essayType).not.toBe('材料写作')
+      expect(latestState.tasks.find((task) => task.id === taskId)?.scoringTemplateId).not.toBe('kimi-generated-v1')
+    },
+  )
 })
 
 let latestState: AppState
