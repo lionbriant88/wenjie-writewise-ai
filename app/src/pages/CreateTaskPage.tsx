@@ -157,13 +157,16 @@ export function CreateTaskPage() {
     }
   }, [currentRequestSnapshot])
 
-  useEffect(() => () => {
-    mountedRef.current = false
-    const active = activeAiRef.current
-    activeAiRef.current = null
-    active?.controller.abort()
-    contextControllerRef.current?.abort()
-    contextControllerRef.current = null
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      const active = activeAiRef.current
+      activeAiRef.current = null
+      active?.controller.abort()
+      contextControllerRef.current?.abort()
+      contextControllerRef.current = null
+    }
   }, [])
 
   const requestAiRubric = async () => {

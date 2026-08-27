@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { StrictMode } from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildTaskCreationInput } from '../services/taskRubric/buildTaskCreationInput'
@@ -195,6 +196,24 @@ describe('CreateTaskPage unified teacher rubric flow', () => {
     }))
     expect(mocks.generate).not.toHaveBeenCalled()
     expect(mocks.analyze).not.toHaveBeenCalled()
+    expect(mocks.navigate).toHaveBeenCalledOnce()
+    expect(mocks.navigate).toHaveBeenCalledWith('/tasks/created-task/upload')
+  })
+
+  it('creates and navigates once after the StrictMode effect replay', async () => {
+    const user = userEvent.setup()
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={['/tasks/new']}>
+          <CreateTaskPage />
+        </MemoryRouter>
+      </StrictMode>,
+    )
+
+    await enterValidRequirement(user, 'Create safely after the StrictMode probe.')
+    await user.click(screen.getByRole('button', { name: '创建任务并上传作文' }))
+
+    await waitFor(() => expect(mocks.createTask).toHaveBeenCalledOnce())
     expect(mocks.navigate).toHaveBeenCalledOnce()
     expect(mocks.navigate).toHaveBeenCalledWith('/tasks/created-task/upload')
   })
