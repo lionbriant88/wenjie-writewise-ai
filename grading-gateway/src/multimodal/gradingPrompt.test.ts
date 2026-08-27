@@ -38,6 +38,9 @@ describe('essay grading prompt', () => {
     expect(text).toContain('logic-*')
     expect(text).toContain('legibility-*')
     expect(text).toMatch(/percentage weights.*full score/i)
+    expect(String(messages[0].content)).toContain(
+      'writingRequirements[0] is the teacher-confirmed requirement and takes priority over later material-inferred requirements.',
+    )
     expect(text).toContain('data:image/png;base64,c2Vjb25k')
     expect(text).toContain('data:image/jpeg;base64,Zmlyc3Q=')
   })
