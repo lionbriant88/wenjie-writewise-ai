@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 import type { GatewayTaskMaterial } from '../multipartTaskMaterials.js'
 import type { GeneratedRubricV1, TaskMaterialContextV1 } from '../multimodal/types.js'
 import { KimiMultimodalProvider } from './kimiMultimodalProvider.js'
@@ -79,9 +79,16 @@ const rubricInput = {
 }
 
 describe('KimiMultimodalProvider', () => {
+  it('requires an explicit rubric strategy in its constructor contract', () => {
+    expectTypeOf<ConstructorParameters<typeof KimiMultimodalProvider>>().toEqualTypeOf<[
+      transport: KimiTransport,
+      rubricStrategy: 'single-pass-v1' | 'two-pass-legacy',
+    ]>()
+  })
+
   it('validates material context once and puts the exact teacher requirement first without duplicates', async () => {
     const transport = transportReturning(context)
-    const provider = new KimiMultimodalProvider(transport)
+    const provider = new KimiMultimodalProvider(transport, 'single-pass-v1')
 
     await expect(provider.generateMaterialContext({
       requestId: 'request-context',
@@ -101,7 +108,7 @@ describe('KimiMultimodalProvider', () => {
   it('rejects an invalid material context after one call', async () => {
     const transport = transportReturning({ ...context, unexpected: true })
 
-    await expect(new KimiMultimodalProvider(transport).generateMaterialContext({
+    await expect(new KimiMultimodalProvider(transport, 'single-pass-v1').generateMaterialContext({
       requestId: 'request-context-invalid',
       fullScore: 15,
       writingRequirement: 'Teacher requirement.',
@@ -118,7 +125,7 @@ describe('KimiMultimodalProvider', () => {
     const failure = new Error('transport unavailable')
     const transport: KimiTransport = { complete: vi.fn().mockRejectedValue(failure) }
 
-    await expect(new KimiMultimodalProvider(transport).generateMaterialContext({
+    await expect(new KimiMultimodalProvider(transport, 'single-pass-v1').generateMaterialContext({
       requestId: 'request-context-failure',
       fullScore: 15,
       writingRequirement: 'Teacher requirement.',
@@ -130,7 +137,7 @@ describe('KimiMultimodalProvider', () => {
 
   it('single-pass-v1 validates one final rubric, sends each ordered material once, and preserves one observation', async () => {
     const transport = transportReturning(draft)
-    const provider = new KimiMultimodalProvider(transport)
+    const provider = new KimiMultimodalProvider(transport, 'single-pass-v1')
 
     await expect(provider.generateRubric(rubricInput)).resolves.toEqual({
       value: { ...draft, writingRequirements: ['Teacher requirement.', 'Draft requirement'] },
@@ -153,7 +160,7 @@ describe('KimiMultimodalProvider', () => {
   it('does not create an empty requirement when the optional teacher requirement is blank', async () => {
     const transport = transportReturning(draft)
 
-    await expect(new KimiMultimodalProvider(transport).generateRubric({
+    await expect(new KimiMultimodalProvider(transport, 'single-pass-v1').generateRubric({
       ...rubricInput,
       writingRequirement: '   ',
     })).resolves.toEqual({ value: draft, attempts: attempts(1) })
@@ -223,14 +230,14 @@ describe('KimiMultimodalProvider', () => {
     })
     const transport: KimiTransport = { complete: vi.fn().mockRejectedValue(failure) }
 
-    await expect(new KimiMultimodalProvider(transport).generateRubric(rubricInput)).rejects.toBe(failure)
+    await expect(new KimiMultimodalProvider(transport, 'single-pass-v1').generateRubric(rubricInput)).rejects.toBe(failure)
     expect(transport.complete).toHaveBeenCalledTimes(1)
   })
 
   it('keeps essay grading at one essay-grading call and never includes raw task materials', async () => {
     const result = { transcript: 'Student text.', transcriptionWarnings: [], printedTextExcluded: true }
     const transport = transportReturning(result)
-    const provider = new KimiMultimodalProvider(transport)
+    const provider = new KimiMultimodalProvider(transport, 'single-pass-v1')
     const task = {
       taskId: 'task-grade', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: reviewed,
     }
@@ -253,7 +260,7 @@ describe('KimiMultimodalProvider', () => {
   it('passes teacher-confirmed text to the single essay grading call', async () => {
     const result = { transcript: 'Teacher corrected transcript.' }
     const transport = transportReturning(result)
-    const provider = new KimiMultimodalProvider(transport)
+    const provider = new KimiMultimodalProvider(transport, 'single-pass-v1')
     const task = { taskId: 'task-grade', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: reviewed }
     await expect(provider.gradeEssay({ requestId: 'request-grade', task, essayId: 'essay-grade', pages, confirmedTranscript: 'Teacher corrected transcript.', signal: new AbortController().signal })).resolves.toEqual({ value: result, attempts: attempts(1) })
     expect(transport.complete).toHaveBeenCalledTimes(1)
@@ -262,7 +269,7 @@ describe('KimiMultimodalProvider', () => {
 
   it('does not retry a failed essay grading transport call', async () => {
     const transport: KimiTransport = { complete: vi.fn().mockRejectedValue(new Error('unavailable')) }
-    const provider = new KimiMultimodalProvider(transport)
+    const provider = new KimiMultimodalProvider(transport, 'single-pass-v1')
     const task = { taskId: 'task-grade', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: reviewed }
     await expect(provider.gradeEssay({ requestId: 'request-grade', task, essayId: 'essay-grade', pages, signal: new AbortController().signal })).rejects.toThrow('unavailable')
     expect(transport.complete).toHaveBeenCalledTimes(1)

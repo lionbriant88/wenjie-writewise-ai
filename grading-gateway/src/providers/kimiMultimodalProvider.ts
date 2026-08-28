@@ -63,7 +63,7 @@ function prioritizeRubricContext(
 export class KimiMultimodalProvider implements MultimodalProvider {
   constructor(
     private readonly transport: KimiTransport,
-    private readonly rubricStrategy: GatewayRuntimeConfig['rubricStrategy'] = 'single-pass-v1',
+    private readonly rubricStrategy: GatewayRuntimeConfig['rubricStrategy'],
   ) {}
 
   private get maxCompletionTokens() {
