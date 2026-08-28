@@ -1081,14 +1081,18 @@ describe('normalizeMultimodalResult', () => {
     expect(usePair ? normalized.result.fullTextRevision.sentencePairs : normalized.result.sentenceRevisions).toEqual([])
   })
 
-  it('accepts bounded auxiliary text and omits an oversized aggregate without discarding the score', () => {
+  it('ignores legacy Provider aggregate length because public revisions are rebuilt locally', () => {
     const atLimit = validPayload()
     ;(atLimit.fullTextRevision as Record<string, unknown>).correctedText = 'x'.repeat(50_000)
-    expect(normalizeMultimodalResult(atLimit, context)).toMatchObject({ ok: true })
+    expect(normalizeMultimodalResult(atLimit, context)).toMatchObject({
+      ok: true, result: { status: 'success', fullTextRevision: { correctedText: atLimit.transcript } },
+    })
 
     const overLimit = validPayload()
     ;(overLimit.fullTextRevision as Record<string, unknown>).correctedText = 'x'.repeat(50_001)
-    expect(normalizeMultimodalResult(overLimit, context)).toMatchObject({ ok: true, result: { status: 'partial' } })
+    expect(normalizeMultimodalResult(overLimit, context)).toMatchObject({
+      ok: true, result: { status: 'success', fullTextRevision: { correctedText: overLimit.transcript } },
+    })
   })
 
   it('drops sentence-pair edits whose rebuilt full text exceeds the public limit', () => {
@@ -1499,6 +1503,30 @@ describe('normalizeMultimodalResult', () => {
     if (!normalized.ok) throw new Error(normalized.error.message)
     expect(normalized.result).toMatchObject({ transcript: 'I has a pen.\nIt are blue.', printedTextExcluded: true, totalScore: 12, maxScore: 15, status: 'success' })
     expect(normalized.result.dimensionScores.map(({ maxScore }) => maxScore)).toEqual([6, 8.25, 0.75])
+  })
+
+  it('rebuilds both public aggregate revisions when optimized Provider output omits them', () => {
+    const payload = validPayload()
+    const fullTextRevision = payload.fullTextRevision as Record<string, unknown>
+    delete fullTextRevision.correctedText
+    delete fullTextRevision.improvedText
+    fullTextRevision.sentencePairs = [{
+      originalText: 'It are blue.', correctedText: 'It is blue.', improvedText: 'It looks blue.',
+      relatedIssueKeys: ['grammar-blue'], changeTypes: ['grammar'], explanation: 'Fix agreement.', requiresTeacherReview: false,
+    }]
+
+    expect(normalizeMultimodalResult(payload, context)).toMatchObject({
+      ok: true,
+      result: {
+        status: 'success',
+        reviewReasons: [],
+        fullTextRevision: {
+          correctedText: 'I has a pen.\nIt is blue.',
+          improvedText: 'I has a pen.\nIt looks blue.',
+          sentencePairs: [expect.objectContaining({ originalText: 'It are blue.' })],
+        },
+      },
+    })
   })
 
   it('preserves a bounded numeric model self-confidence value', () => {
@@ -2299,7 +2327,6 @@ describe('normalizeMultimodalResult', () => {
     ['overall comment', () => validPayload(), (payload: Record<string, unknown>, unsafe: string) => { payload.overallComment = unsafe }],
     ['dimension reason', () => validPayload(), (payload: Record<string, unknown>, unsafe: string) => { ;(payload.dimensionScores as Array<Record<string, unknown>>)[0].reason = unsafe }],
     ['dimension evidence', () => validPayload(), (payload: Record<string, unknown>, unsafe: string) => { ;(payload.dimensionScores as Array<Record<string, unknown>>)[0].evidence = unsafe }],
-    ['full-text aggregate', () => validPayload(), (payload: Record<string, unknown>, unsafe: string) => { ;(payload.fullTextRevision as Record<string, unknown>).correctedText = unsafe }],
   ] as const)('omits or neutralizes ill-formed Unicode in auxiliary %s without rejecting the score core', (_label, makePayload, mutate) => {
     const payload = makePayload()
     mutate(payload, `unsafe-\uD83D-text`)
@@ -2307,6 +2334,22 @@ describe('normalizeMultimodalResult', () => {
     const normalized = normalizeMultimodalResult(payload, context)
 
     expect(normalized).toMatchObject({ ok: true, result: { status: 'partial' } })
+    expect(JSON.stringify(normalized)).not.toMatch(/\\ud83d|\\ude00/iu)
+  })
+
+  it('ignores ill-formed Unicode in a legacy Provider aggregate rebuilt by the Gateway', () => {
+    const payload = validPayload()
+    ;(payload.fullTextRevision as Record<string, unknown>).correctedText = 'unsafe-\uD83D-text'
+
+    const normalized = normalizeMultimodalResult(payload, context)
+
+    expect(normalized).toMatchObject({
+      ok: true,
+      result: {
+        status: 'success',
+        fullTextRevision: { correctedText: payload.transcript, improvedText: payload.transcript },
+      },
+    })
     expect(JSON.stringify(normalized)).not.toMatch(/\\ud83d|\\ude00/iu)
   })
 

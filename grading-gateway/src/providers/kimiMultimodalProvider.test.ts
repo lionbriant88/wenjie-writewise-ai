@@ -261,6 +261,14 @@ describe('KimiMultimodalProvider', () => {
       stage: 'essay_grading_images',
       promptCacheKey: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
     })
+    expect(transport.complete.mock.calls[0]?.[0].schema).toHaveProperty(
+      'properties.fullTextRevision.required',
+      ['sentencePairs', 'logicNotes', 'logicIssues'],
+    )
+    expect(transport.complete.mock.calls[0]?.[0].schema)
+      .not.toHaveProperty('properties.fullTextRevision.properties.correctedText')
+    expect(transport.complete.mock.calls[0]?.[0].schema)
+      .not.toHaveProperty('properties.fullTextRevision.properties.improvedText')
     const messageJson = JSON.stringify(transport.complete.mock.calls[0]?.[0].messages)
     expect(messageJson.indexOf('data:image/png;base64,Zmlyc3QgcGFnZQ==')).toBeLessThan(messageJson.indexOf('data:image/jpeg;base64,c2Vjb25kIHBhZ2U='))
     expect(messageJson).not.toContain('RAW-TASK-MATERIAL-SENTINEL')
@@ -315,6 +323,14 @@ describe('KimiMultimodalProvider', () => {
       schemaName: 'essay-grading-provider-v2-legacy',
       stage: 'essay_grading_images',
     })
+    expect(transport.complete.mock.calls[0]?.[0].schema).toHaveProperty(
+      'properties.fullTextRevision.required',
+      ['correctedText', 'improvedText', 'sentencePairs', 'logicNotes', 'logicIssues'],
+    )
+    expect(transport.complete.mock.calls[0]?.[0].schema)
+      .toHaveProperty('properties.fullTextRevision.properties.correctedText')
+    expect(transport.complete.mock.calls[0]?.[0].schema)
+      .toHaveProperty('properties.fullTextRevision.properties.improvedText')
     expect(transport.complete.mock.calls[0]?.[0]).not.toHaveProperty('promptCacheKey')
     expect(JSON.stringify(transport.complete.mock.calls[0]?.[0].messages)).toContain('Reviewed task')
   })

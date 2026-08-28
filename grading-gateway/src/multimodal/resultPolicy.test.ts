@@ -114,6 +114,13 @@ function logicIssueWithNarrative(
 }
 
 describe('applyResultPolicy', () => {
+  it('rebuilds corrected and improved aggregates from the transcript and safe sentence pairs', () => {
+    expect(applyResultPolicy(payloadWithGrammarIssue(), transcript)).toMatchObject({
+      correctedText: 'I suggest you join the club.',
+      improvedText: 'I suggest you should join the club.',
+    })
+  })
+
   it('accepts an unlinked deduction only when the normalizer explicitly marks it for teacher review', () => {
     const payload = payloadWithGrammarIssue()
     payload.dimensionScores[0] = {

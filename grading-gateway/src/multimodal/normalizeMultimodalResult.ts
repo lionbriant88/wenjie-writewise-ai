@@ -561,7 +561,6 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
   if (parsedIssues.omittedMalformed || omittedUngroundedIssues) overallComment = '已依据评分标准完成批改。'
   let upgrades = parsedUpgrades.items
   if (parsedUpgrades.omittedMalformed) auxiliaryInputDegraded = true
-  if (!fullTextRevisionRecord || rawContext(fullTextRevisionRecord.correctedText) === null || rawContext(fullTextRevisionRecord.improvedText) === null) auxiliaryInputDegraded = true
   const groundedLogicNotes = logicNotes.filter(({ quote }) => exactUniqueTranscriptRange(transcript, quote) !== null)
   const omittedUngroundedLogicNotes = groundedLogicNotes.length !== logicNotes.length
   const issueEvidenceByKey = new Map<string, string>([

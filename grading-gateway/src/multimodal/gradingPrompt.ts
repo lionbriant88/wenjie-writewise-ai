@@ -28,15 +28,40 @@ const logicNoteSchema = { type: 'object', additionalProperties: false, required:
 const logicIssueSchema = { type: 'object', additionalProperties: false, required: KEYS.logicIssue, properties: { issueKey: issueKeySchema, originalText: nonEmptyPublicTextSchema, contextBefore: allowEmptyPublicTextSchema, contextAfter: allowEmptyPublicTextSchema, subType: { type: 'string', enum: ['weak_connection', 'unclear_logic', 'missing_cause_effect', 'unclear_transition', 'topic_drift', 'irrelevant_sentence', 'unclear_reference', 'missing_motivation', 'plot_gap'] }, severity: { type: 'string', enum: ['low', 'medium', 'high'] }, diagnosis: publicTextSchema, suggestedAction: { type: 'string', enum: ['add_connector', 'add_bridge_sentence', 'delete_sentence', 'replace_sentence', 'clarify_reference', 'ask_student_to_explain'] }, conservativeSuggestion: publicTextSchema, polishedSuggestion: publicTextSchema, requiresTeacherReview: { type: 'boolean' } } } as const
 const legibilityIssueSchema = { type: 'object', additionalProperties: false, required: KEYS.legibilityIssue, properties: { issueKey: issueKeySchema, transcriptText: nonEmptyPublicTextSchema, possibleReadings: { type: 'array', minItems: 2, maxItems: 4, uniqueItems: true, items: providerNonBlankStringSchema(LIMITS.possibleReading) }, pageNumber: { type: 'integer', minimum: 1 }, regionDescription: publicTextSchema, explanation: publicTextSchema, defaultOutcome: { type: 'string', enum: ['count_as_legibility_error'] } } } as const
 const recognitionWarningSchema = { type: 'object', additionalProperties: false, required: KEYS.recognitionWarning, properties: { scope: { type: 'string', enum: ['global_unreadable', 'printed_boundary'] }, message: providerNonBlankStringSchema(LIMITS.recognitionMessage) } } as const
+const aggregateRevisionProperties = {
+  sentencePairs: { type: 'array', maxItems: LIMITS.sentencePairs, items: sentencePairSchema },
+  logicNotes: { type: 'array', maxItems: LIMITS.logicNotes, items: logicNoteSchema },
+  logicIssues: { type: 'array', maxItems: LIMITS.logicIssues, items: logicIssueSchema },
+} as const
+const optimizedFullTextRevisionSchema = {
+  type: 'object', additionalProperties: false, required: KEYS.fullTextRevision,
+  properties: aggregateRevisionProperties,
+} as const
+const legacyFullTextRevisionSchema = {
+  type: 'object', additionalProperties: false, required: KEYS.legacyFullTextRevision,
+  properties: {
+    correctedText: allowEmptyPublicTextSchema,
+    improvedText: allowEmptyPublicTextSchema,
+    ...aggregateRevisionProperties,
+  },
+} as const
 
 export const essayGradingSchema = {
   type: 'object', additionalProperties: false,
   required: KEYS.result,
   properties: {
     transcript: publicTextSchema, recognitionWarnings: { type: 'array', maxItems: LIMITS.recognitionWarnings, items: recognitionWarningSchema }, printedTextExcluded: { type: 'boolean' }, reportedTotalScore: { type: 'number' }, dimensionScores: { type: 'array', minItems: 1, maxItems: LIMITS.dimensions, items: dimensionScoreSchema }, issues: { type: 'array', maxItems: LIMITS.issues, items: issueSchema }, sentenceRevisions: { type: 'array', maxItems: LIMITS.revisions, items: revisionSchema }, expressionUpgrades: { type: 'array', maxItems: LIMITS.upgrades, items: upgradeSchema },
-    fullTextRevision: { type: 'object', additionalProperties: false, required: KEYS.fullTextRevision, properties: { correctedText: allowEmptyPublicTextSchema, improvedText: allowEmptyPublicTextSchema, sentencePairs: { type: 'array', maxItems: LIMITS.sentencePairs, items: sentencePairSchema }, logicNotes: { type: 'array', maxItems: LIMITS.logicNotes, items: logicNoteSchema }, logicIssues: { type: 'array', maxItems: LIMITS.logicIssues, items: logicIssueSchema } } },
+    fullTextRevision: optimizedFullTextRevisionSchema,
     legibilityIssues: { type: 'array', maxItems: LIMITS.legibilityIssues, items: legibilityIssueSchema },
     overallComment: publicTextSchema,
+  },
+} as const
+
+export const legacyEssayGradingSchema = {
+  ...essayGradingSchema,
+  properties: {
+    ...essayGradingSchema.properties,
+    fullTextRevision: legacyFullTextRevisionSchema,
   },
 } as const
 

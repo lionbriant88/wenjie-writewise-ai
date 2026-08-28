@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildEssayGradingMessages, essayGradingSchema } from './gradingPrompt.js'
+import { buildEssayGradingMessages, essayGradingSchema, legacyEssayGradingSchema } from './gradingPrompt.js'
 
 const task = {
   taskId: 'task-prompt', fullScore: 20,
@@ -167,6 +167,12 @@ describe('essay grading prompt', () => {
         'polishedSuggestion', 'requiresTeacherReview',
       ])
     expect(essayGradingSchema.properties.fullTextRevision.required)
+      .toEqual(['sentencePairs', 'logicNotes', 'logicIssues'])
+    expect(Object.keys(essayGradingSchema.properties.fullTextRevision.properties))
+      .toEqual(['sentencePairs', 'logicNotes', 'logicIssues'])
+    expect(legacyEssayGradingSchema.properties.fullTextRevision.required)
+      .toEqual(['correctedText', 'improvedText', 'sentencePairs', 'logicNotes', 'logicIssues'])
+    expect(Object.keys(legacyEssayGradingSchema.properties.fullTextRevision.properties))
       .toEqual(['correctedText', 'improvedText', 'sentencePairs', 'logicNotes', 'logicIssues'])
     expect(essayGradingSchema.properties.fullTextRevision.properties.logicIssues.items.properties.subType.enum)
       .toEqual(['weak_connection', 'unclear_logic', 'missing_cause_effect', 'unclear_transition', 'topic_drift', 'irrelevant_sentence', 'unclear_reference', 'missing_motivation', 'plot_gap'])
@@ -218,7 +224,7 @@ describe('essay grading prompt', () => {
     expect(essayGradingSchema.properties.legibilityIssues.items.properties.possibleReadings.items).toMatchObject({ minLength: 1, pattern: '\\S' })
     expect(essayGradingSchema.properties.recognitionWarnings.items.properties.message).toMatchObject({ minLength: 1, pattern: '\\S' })
     expect(essayGradingSchema.properties.overallComment).toMatchObject({ minLength: 1, pattern: '\\S' })
-    expect(essayGradingSchema.properties.fullTextRevision.properties.correctedText).not.toHaveProperty('minLength')
+    expect(legacyEssayGradingSchema.properties.fullTextRevision.properties.correctedText).not.toHaveProperty('minLength')
     expect(essayGradingSchema.properties.fullTextRevision.properties.logicIssues.items.properties.contextBefore).not.toHaveProperty('minLength')
   })
 

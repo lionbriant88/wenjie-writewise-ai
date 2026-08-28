@@ -13,7 +13,7 @@ import { validateTaskMaterialContext, prioritizeTeacherWritingRequirement } from
 import { buildMaterialContextMessages, materialContextSchema } from '../multimodal/materialContextPrompts.js'
 import { generatedRubricSchema, reviewedRubricSchema, buildRubricGenerationMessages, buildRubricReviewMessages } from '../multimodal/rubricPrompts.js'
 import type { GeneratedRubricV1, TaskMaterialContextV1 } from '../multimodal/types.js'
-import { buildEssayGradingMessages, essayGradingSchema } from '../multimodal/gradingPrompt.js'
+import { buildEssayGradingMessages, essayGradingSchema, legacyEssayGradingSchema } from '../multimodal/gradingPrompt.js'
 import type { GenerateMaterialContextProviderInput, GenerateRubricProviderInput, GradeEssayProviderInput, MultimodalProvider } from './multimodalProviderTypes.js'
 import type { KimiTransport } from './kimiTransport.js'
 import { GradingProviderError, type ProviderAttemptObservation } from './providerTypes.js'
@@ -168,7 +168,9 @@ export class KimiMultimodalProvider implements MultimodalProvider {
         pages: input.pages,
         confirmedTranscript: input.confirmedTranscript,
       }),
-      schemaName: providerSchemaVersion, schema: essayGradingSchema, signal: input.signal,
+      schemaName: providerSchemaVersion,
+      schema: this.essayPromptProfile === 'optimized-v1' ? essayGradingSchema : legacyEssayGradingSchema,
+      signal: input.signal,
       stage: input.confirmedTranscript === undefined ? 'essay_grading_images' : 'essay_regrading_text',
       maxCompletionTokens: this.maxCompletionTokens, attempt: 1, diagnosticContext: diagnosticContext(),
       ...(promptCacheKey === undefined ? {} : { promptCacheKey }),

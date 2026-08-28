@@ -50,7 +50,7 @@ function strictMultimodalPayload(transcript: string) {
       { dimensionId: 'legibility', score: 0.75, reason: 'Handwriting is legible.', evidence: transcript, relatedIssueKeys: [] },
     ],
     issues: [], sentenceRevisions: [], expressionUpgrades: [],
-    fullTextRevision: { correctedText: transcript, improvedText: 'Improved synthetic version.', sentencePairs: [], logicNotes: [], logicIssues: [] },
+    fullTextRevision: { sentencePairs: [], logicNotes: [], logicIssues: [] },
     legibilityIssues: [], overallComment: 'Synthetic.',
   }
 }
@@ -100,8 +100,16 @@ describe('grading gateway server boundary', () => {
       pageIds: [], confirmedTranscript: 'Teacher-confirmed synthetic text.',
       task: { taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } },
     }
-    await request(createServer({ multimodalProvider: provider }))
+    const accepted = await request(createServer({ multimodalProvider: provider }))
       .post('/grading/grade-images').field('metadata', JSON.stringify(base)).expect(200)
+    expect(accepted.body).toMatchObject({
+      resultVersion: 'grading-result-v2',
+      status: 'success',
+      fullTextRevision: {
+        correctedText: base.confirmedTranscript,
+        improvedText: base.confirmedTranscript,
+      },
+    })
 
     const invalidMetadata = [
       (({ requestVersion: _version, ...metadata }) => metadata)(base),
