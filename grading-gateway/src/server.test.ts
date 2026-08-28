@@ -5,6 +5,8 @@ import { MAX_TASK_MATERIAL_TEXT_FIELD_BYTES } from './multipartTaskMaterials.js'
 import { GradingProviderError } from './providers/providerTypes.js'
 import type { MultimodalProvider } from './providers/multimodalProviderTypes.js'
 import type { GeneratedRubricV1, TaskMaterialContextV1 } from './multimodal/types.js'
+import type { GatewayRuntimeConfig } from './gatewayRuntimeConfig.js'
+import { createProviderTelemetryRecorder } from './providerTelemetry.js'
 
 interface RawMultimodalProvider {
   generateMaterialContext(input: Parameters<MultimodalProvider['generateMaterialContext']>[0]): Promise<TaskMaterialContextV1>
@@ -69,6 +71,19 @@ function materialContextFixture(): TaskMaterialContextV1 {
     writingRequirements: ['Teacher requirement.', 'Model-inferred requirement.'],
     constraints: ['Use English.'],
     reviewWarnings: ['Verify ambiguous source text.'],
+  }
+}
+
+function legacyRuntimeConfig(): GatewayRuntimeConfig {
+  return {
+    provider: 'kimi', rubricStrategy: 'two-pass-legacy', essayPromptProfile: 'legacy', executionRegistry: 'direct-legacy',
+    deadlines: { httpMs: 360_000, providerFinalMs: 420_000, settlementGraceMs: 30_000 },
+    admission: { hardLimit: 4 }, registry: { terminalTtlMs: 86_400_000, maxEntries: 2_000 },
+    retry: { maxProviderAttempts: 2, maxRateLimitRequeues: 5, baseMs: 2_000, capMs: 60_000, pauseAfterMs: 900_000 },
+    kimi: {
+      apiBase: 'https://api.moonshot.cn/v1', model: 'kimi-k3', reasoningEffort: 'low', promptCacheSecret: '',
+      stageBudgets: { material_context: 16_384, rubric_generation: 16_384, essay_grading_images: 16_384, essay_regrading_text: 16_384 },
+    },
   }
 }
 
@@ -981,14 +996,116 @@ describe('grading gateway server boundary', () => {
     expect(diagnostics).toEqual([{ stage: 'normalization', diagnosticCode: 'rubric_validation' }])
   })
 
-  it('returns a minimal health response', async () => {
-    const response = await request(createServer()).get('/health').expect(200)
-    expect(response.body).toEqual({ ok: true, service: 'grading-gateway' })
-    expect(JSON.stringify(response.body)).not.toMatch(/deepseek|model|key/i)
+  it('returns the safe Phase 0 runtime snapshot without secrets, IDs, usage, or content', async () => {
+    const response = await request(createServer({ runtimeConfig: legacyRuntimeConfig() })).get('/health').expect(200)
+    expect(response.body).toEqual({
+      ok: true,
+      service: 'grading-gateway',
+      runtime: {
+        provider: 'kimi', model: 'kimi-k3', reasoningEffort: 'low',
+        deadlines: { httpMs: 360_000, providerFinalMs: 420_000, settlementGraceMs: 30_000 },
+        stageBudgets: { material_context: 16_384, rubric_generation: 16_384, essay_grading_images: 16_384, essay_regrading_text: 16_384 },
+        hardLimit: 4,
+        modes: { rubricStrategy: 'two-pass-legacy', essayPromptProfile: 'legacy', executionRegistry: 'direct-legacy' },
+        admission: { paused: false },
+      },
+    })
+    expect(JSON.stringify(response.body)).not.toMatch(/key|secret|requestId|essayId|taskId|usage|token|content|digest/i)
+  })
+
+  it('accounts for a completed attempt before strict normalization rejects its business payload', async () => {
+    const metrics: unknown[] = []
+    const telemetry = createProviderTelemetryRecorder({
+      emit: (metric) => metrics.push(metric),
+      processDiagnosticIdFactory: () => '11111111-1111-4111-8111-111111111111',
+    })
+    const provider = fakeMultimodalProvider()
+    provider.gradeEssay = async () => ({
+      value: { malformed: true },
+      attempts: [{
+        attemptDiagnosticId: '22222222-2222-4222-8222-222222222222', finishReason: 'stop', providerElapsedMs: 11,
+        usage: {
+          promptTokens: { status: 'known', value: 10 }, completionTokens: { status: 'known', value: 5 },
+          totalTokens: { status: 'known', value: 15 }, cachedTokens: { status: 'known', value: 2 },
+        },
+      }],
+    })
+    const metadata = {
+      requestVersion: 'multimodal-grading-request-v2', requestId: 'telemetry-normalization', essayId: 'telemetry-essay', pageIds: [], confirmedTranscript: 'Synthetic confirmed text.',
+      task: { taskId: 'telemetry-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } },
+    }
+    const response = await request(createServer({ multimodalProvider: provider, runtimeConfig: legacyRuntimeConfig(), providerTelemetry: telemetry }))
+      .post('/grading/grade-images').field('metadata', JSON.stringify(metadata)).expect(503)
+
+    expect(metrics.filter((metric) => (metric as { event?: string }).event === 'provider_attempt')).toHaveLength(1)
+    expect(telemetry.snapshot()).toMatchObject({ uniqueAttempts: 1, totalTokens: 15 })
+    expect(JSON.stringify(response.body)).not.toMatch(/token|usage|attemptDiagnosticId/i)
+  })
+
+  it('accounts for controlled error attempt observations without exposing them in failure JSON', async () => {
+    const metrics: unknown[] = []
+    const telemetry = createProviderTelemetryRecorder({
+      emit: (metric) => metrics.push(metric),
+      processDiagnosticIdFactory: () => '33333333-3333-4333-8333-333333333333',
+    })
+    const provider = fakeMultimodalProvider()
+    provider.gradeEssay = async () => {
+      throw new GradingProviderError('provider_invalid_response', 'PRIVATE-RAW-RESPONSE', true, undefined, {
+        termination: 'confirmed',
+        attemptObservations: [{
+          attemptDiagnosticId: '44444444-4444-4444-8444-444444444444', finishReason: 'length', providerElapsedMs: 19,
+          usage: {
+            promptTokens: { status: 'known', value: 12 }, completionTokens: { status: 'known', value: 8 },
+            totalTokens: { status: 'known', value: 20 }, cachedTokens: { status: 'unknown', reason: 'absent' },
+          },
+        }],
+      })
+    }
+    const metadata = {
+      requestVersion: 'multimodal-grading-request-v2', requestId: 'telemetry-error', essayId: 'telemetry-error-essay', pageIds: [], confirmedTranscript: 'Synthetic confirmed text.',
+      task: { taskId: 'telemetry-error-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } },
+    }
+    const response = await request(createServer({ multimodalProvider: provider, runtimeConfig: legacyRuntimeConfig(), providerTelemetry: telemetry }))
+      .post('/grading/grade-images').field('metadata', JSON.stringify(metadata)).expect(503)
+
+    expect(metrics.filter((metric) => (metric as { event?: string }).event === 'provider_attempt')).toHaveLength(1)
+    expect(telemetry.snapshot()).toMatchObject({ uniqueAttempts: 1, totalTokens: 20 })
+    expect(JSON.stringify(response.body)).not.toMatch(/PRIVATE|token|usage|attemptDiagnosticId/i)
+  })
+
+  it('accounts once for a completed Provider attempt that settles after the HTTP deadline', async () => {
+    const telemetry = createProviderTelemetryRecorder({
+      processDiagnosticIdFactory: () => '55555555-5555-4555-8555-555555555555',
+    })
+    const provider = fakeMultimodalProvider()
+    provider.gradeEssay = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      return {
+        value: strictMultimodalPayload('Synthetic confirmed text.'),
+        attempts: [{
+          attemptDiagnosticId: '66666666-6666-4666-8666-666666666666', finishReason: 'stop', providerElapsedMs: 29,
+          usage: {
+            promptTokens: { status: 'known', value: 18 }, completionTokens: { status: 'known', value: 7 },
+            totalTokens: { status: 'known', value: 25 }, cachedTokens: { status: 'unknown', reason: 'absent' },
+          },
+        }],
+      }
+    }
+    const metadata = {
+      requestVersion: 'multimodal-grading-request-v2', requestId: 'telemetry-late', essayId: 'telemetry-late-essay', pageIds: [], confirmedTranscript: 'Synthetic confirmed text.',
+      task: { taskId: 'telemetry-late-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: { taskName: 'Synthetic task', materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], dimensions: imageRubricDimensions(), reviewWarnings: [] } },
+    }
+    await request(createServer({ multimodalProvider: provider, runtimeConfig: legacyRuntimeConfig(), providerTelemetry: telemetry, timeoutMs: 5 }))
+      .post('/grading/grade-images').field('metadata', JSON.stringify(metadata)).expect(503)
+    expect(telemetry.snapshot().uniqueAttempts).toBe(0)
+
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(telemetry.snapshot()).toMatchObject({ uniqueAttempts: 1, totalTokens: 25 })
   })
 
   it('does not expose the deprecated generic grading policy bypass', async () => {
-    await request(createServer({ providerName: 'kimi' }))
+    await request(createServer({ runtimeConfig: legacyRuntimeConfig() }))
       .post('/grading/grade')
       .send({ requestId: 'deprecated-request' })
       .expect(404)

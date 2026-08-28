@@ -8,7 +8,8 @@ import type { MultimodalGradingResult } from '../src/multimodal/normalizeMultimo
 import type { ConfirmedTaskPackageV2 } from '../src/multimodal/types.js'
 import type { GatewayImageInput } from '../src/providers/multimodalProviderTypes.js'
 import type { MultimodalProvider } from '../src/providers/multimodalProviderTypes.js'
-import { getMultimodalProvider, parseKimiConfig } from '../src/providers/index.js'
+import { parseGatewayRuntimeConfig, type GatewayRuntimeConfig } from '../src/gatewayRuntimeConfig.js'
+import { getMultimodalProvider } from '../src/providers/index.js'
 
 export interface GoldenEvaluationResult {
   caseId: string
@@ -20,7 +21,7 @@ export interface GoldenEvaluationResult {
 
 export interface GoldenEvaluationDependencies {
   env?: NodeJS.ProcessEnv
-  parseConfig?: typeof parseKimiConfig
+  parseConfig?: typeof parseGatewayRuntimeConfig
   createProvider?: () => Pick<MultimodalProvider, 'gradeEssay'>
   readFixture?: (path: string) => Promise<Buffer>
   normalize?: typeof normalizeMultimodalResult
@@ -351,16 +352,18 @@ export async function runPolicyGoldenEvaluation(dependencies: GoldenEvaluationDe
     return 2
   }
 
-  let model: string
+  let runtimeConfig: GatewayRuntimeConfig
   try {
-    model = (dependencies.parseConfig ?? parseKimiConfig)(env).model
+    runtimeConfig = (dependencies.parseConfig ?? parseGatewayRuntimeConfig)(env)
+    if (runtimeConfig.provider !== 'kimi') throw new Error('Kimi evaluator requires explicit Kimi runtime configuration.')
   } catch {
     emitAll(output, 'unconfigured', 'unexpected_failure')
     return 1
   }
+  const model = runtimeConfig.kimi.model
 
   const evaluationDependencies = {
-    createProvider: dependencies.createProvider ?? (() => getMultimodalProvider('kimi')),
+    createProvider: dependencies.createProvider ?? (() => getMultimodalProvider(runtimeConfig, { apiKey: key })),
     readFixture: dependencies.readFixture ?? readFile,
     normalize: dependencies.normalize ?? normalizeMultimodalResult,
     now: dependencies.now ?? (() => new Date().toISOString()),

@@ -1,75 +1,78 @@
-import { describe, expect, it } from 'vitest'
-import { GradingProviderError } from './providerTypes.js'
-import type { MultimodalProvider } from './multimodalProviderTypes.js'
+import { describe, expect, it, vi } from 'vitest'
+import type { GatewayRuntimeConfig } from '../gatewayRuntimeConfig.js'
 import { KimiMultimodalProvider } from './kimiMultimodalProvider.js'
-import { getMultimodalProvider, getProvider, parseGradingTimeoutMs, parseKimiConfig } from './index.js'
+import type { MultimodalProvider } from './multimodalProviderTypes.js'
+import type { KimiCompletionInput, KimiTransport } from './kimiTransport.js'
+import { createStageBudgetedTransport, getMultimodalProvider, getProvider } from './index.js'
+import { GradingProviderError } from './providerTypes.js'
 
-describe('getProvider', () => {
-  it('selects only the explicit mock and failure providers', () => {
+function runtimeConfig(provider: 'kimi' | 'mock' = 'kimi'): GatewayRuntimeConfig {
+  return {
+    provider,
+    rubricStrategy: 'two-pass-legacy',
+    essayPromptProfile: 'legacy',
+    executionRegistry: 'direct-legacy',
+    deadlines: { httpMs: 360_000, providerFinalMs: 420_000, settlementGraceMs: 30_000 },
+    admission: { hardLimit: 4 },
+    registry: { terminalTtlMs: 86_400_000, maxEntries: 2_000 },
+    retry: { maxProviderAttempts: 2, maxRateLimitRequeues: 5, baseMs: 2_000, capMs: 60_000, pauseAfterMs: 900_000 },
+    kimi: {
+      apiBase: 'https://api.moonshot.cn/v1', model: 'kimi-k3', reasoningEffort: 'low', promptCacheSecret: '',
+      stageBudgets: { material_context: 1_001, rubric_generation: 2_002, essay_grading_images: 3_003, essay_regrading_text: 4_004 },
+    },
+  }
+}
+
+describe('provider selection', () => {
+  it('selects only the explicit legacy mock and failure providers', () => {
     expect(getProvider('mock').publicName).toBe('mock')
     expect(getProvider('mock_failure').publicName).toBe('remote')
+    expect(() => getProvider(undefined)).toThrow(GradingProviderError)
   })
 
-  it.each(['unknown', ''])('fails closed for unavailable provider %s', (name) => {
-    expect(() => getProvider(name)).toThrow(GradingProviderError)
-    try {
-      getProvider(name)
-    } catch (error) {
-      expect(error).toMatchObject({ code: 'provider_not_configured', retryable: false })
-    }
+  it('constructs Kimi only from typed runtime config and an explicit secret dependency', () => {
+    expect(getMultimodalProvider(runtimeConfig(), { apiKey: 'test-kimi-api-key-not-real' })).toBeInstanceOf(KimiMultimodalProvider)
+    expect(() => getMultimodalProvider(runtimeConfig(), { apiKey: '' })).toThrowError(GradingProviderError)
+    expect(() => getMultimodalProvider(runtimeConfig(), {})).toThrowError(GradingProviderError)
   })
 
-  it('registers kimi and no longer registers deepseek', () => {
+  it('allows explicit mock only through an injected multimodal factory and requires no Kimi key', () => {
     const fakeProvider = {} as MultimodalProvider
-    expect(getMultimodalProvider('kimi', { kimiFactory: () => fakeProvider })).toBe(fakeProvider)
-    expect(() => getMultimodalProvider('deepseek')).toThrowError(/涓嶅彈鏀寔/)
+    expect(getMultimodalProvider(runtimeConfig('mock'), { mockFactory: () => fakeProvider })).toBe(fakeProvider)
+    expect(() => getMultimodalProvider(runtimeConfig('mock'))).toThrowError(GradingProviderError)
   })
 
-  it('constructs the Kimi multimodal provider from an explicit test API key', () => {
-    const previousKey = process.env.KIMI_API_KEY
-    process.env.KIMI_API_KEY = 'test-kimi-api-key-not-real'
-    try {
-      expect(getMultimodalProvider('kimi')).toBeInstanceOf(KimiMultimodalProvider)
-    } finally {
-      if (previousKey === undefined) delete process.env.KIMI_API_KEY
-      else process.env.KIMI_API_KEY = previousKey
+  it('overrides every Provider call with the independent budget for its actual stage', async () => {
+    const complete = vi.fn(async (input: KimiCompletionInput) => ({
+      value: { stage: input.stage },
+      observation: {
+        attemptDiagnosticId: '11111111-1111-4111-8111-111111111111',
+        finishReason: 'stop' as const,
+        usage: {
+          promptTokens: { status: 'unknown' as const, reason: 'absent' as const },
+          completionTokens: { status: 'unknown' as const, reason: 'absent' as const },
+          totalTokens: { status: 'unknown' as const, reason: 'absent' as const },
+          cachedTokens: { status: 'unknown' as const, reason: 'absent' as const },
+        },
+        providerElapsedMs: 1,
+      },
+    }))
+    const base: KimiTransport = { maxCompletionTokens: 777, complete }
+    const config = runtimeConfig()
+    const transport = createStageBudgetedTransport(base, config.kimi.stageBudgets)
+
+    for (const stage of ['material_context', 'rubric_generation', 'essay_grading_images', 'essay_regrading_text'] as const) {
+      await transport.complete({
+        messages: [], schemaName: 'test', schema: {}, signal: new AbortController().signal,
+        stage, maxCompletionTokens: 1, attempt: 1, diagnosticContext: '22222222-2222-4222-8222-222222222222',
+      })
     }
-  })
 
-  it('parses supported Kimi settings and rejects invalid reasoning effort', () => {
-    expect(parseKimiConfig({
-      KIMI_API_BASE: 'https://api.moonshot.ai/v1',
-      KIMI_MODEL: 'kimi-k3',
-      KIMI_REASONING_EFFORT: 'high',
-      KIMI_MAX_COMPLETION_TOKENS: '8192',
-    })).toEqual({
-      apiBase: 'https://api.moonshot.ai/v1', model: 'kimi-k3', reasoningEffort: 'high', maxCompletionTokens: 8192,
-    })
-    expect(() => parseKimiConfig({ KIMI_REASONING_EFFORT: 'auto' })).toThrowError(/閰嶇疆鏃犳晥/)
-  })
-
-  it('accepts max reasoning effort', () => {
-    expect(parseKimiConfig({ KIMI_REASONING_EFFORT: 'max' }).reasoningEffort).toBe('max')
-  })
-
-  it('defaults to the verified China Kimi K3 production configuration', () => {
-    expect(parseKimiConfig({})).toEqual({
-      apiBase: 'https://api.moonshot.cn/v1',
-      model: 'kimi-k3',
-      reasoningEffort: 'low',
-      maxCompletionTokens: 16_384,
-    })
-  })
-
-  it('rejects medium reasoning effort', () => {
-    expect(() => parseKimiConfig({ KIMI_REASONING_EFFORT: 'medium' })).toThrow(GradingProviderError)
-  })
-
-  it('validates the Gateway timeout with a six-minute production fallback', () => {
-    expect(parseGradingTimeoutMs(undefined)).toBe(360_000)
-    expect(parseGradingTimeoutMs('1500')).toBe(1500)
-    expect(parseGradingTimeoutMs('0')).toBe(360_000)
-    expect(parseGradingTimeoutMs('1.5')).toBe(360_000)
-    expect(parseGradingTimeoutMs('invalid')).toBe(360_000)
+    expect(complete.mock.calls.map(([input]) => [input.stage, input.maxCompletionTokens])).toEqual([
+      ['material_context', 1_001],
+      ['rubric_generation', 2_002],
+      ['essay_grading_images', 3_003],
+      ['essay_regrading_text', 4_004],
+    ])
   })
 })

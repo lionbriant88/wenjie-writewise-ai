@@ -1,70 +1,60 @@
+import type { GatewayRuntimeConfig } from '../gatewayRuntimeConfig.js'
 import { FailureGradingProvider } from './failureGradingProvider.js'
 import { KimiMultimodalProvider } from './kimiMultimodalProvider.js'
-import { createKimiTransport } from './kimiTransport.js'
+import { createKimiTransport, type KimiTransport, type KimiTransportOptions } from './kimiTransport.js'
 import { MockGradingProvider } from './mockGradingProvider.js'
 import type { MultimodalProvider } from './multimodalProviderTypes.js'
-import { GradingProviderError, type GradingProvider } from './providerTypes.js'
-
-type KimiEnvironment = Partial<Record<
-  | 'KIMI_API_KEY'
-  | 'KIMI_API_BASE'
-  | 'KIMI_MODEL'
-  | 'KIMI_REASONING_EFFORT'
-  | 'KIMI_MAX_COMPLETION_TOKENS',
-  string | undefined
->>
-
-type KimiReasoningEffort = 'low' | 'high' | 'max'
+import { GradingProviderError, type GradingProvider, type ProviderCallStage } from './providerTypes.js'
 
 export interface MultimodalProviderDependencies {
-  kimiFactory?: () => MultimodalProvider
+  apiKey?: string
+  mockFactory?: () => MultimodalProvider
+  kimiTransportFactory?: (options: KimiTransportOptions) => KimiTransport
 }
 
-function kimiConfigurationError() {
-  return new GradingProviderError('provider_not_configured', 'Kimi 閰嶇疆鏃犳晥。', false)
-}
-
-export function parseKimiConfig(env: KimiEnvironment): {
-  apiBase: string
-  model: string
-  reasoningEffort: KimiReasoningEffort
-  maxCompletionTokens: number
-} {
-  const reasoningEffort = env.KIMI_REASONING_EFFORT?.trim() || 'low'
-  if (reasoningEffort !== 'low' && reasoningEffort !== 'high' && reasoningEffort !== 'max') throw kimiConfigurationError()
-
-  const maxCompletionTokens = env.KIMI_MAX_COMPLETION_TOKENS === undefined || env.KIMI_MAX_COMPLETION_TOKENS.trim() === ''
-    ? 16_384
-    : Number(env.KIMI_MAX_COMPLETION_TOKENS)
-  if (!Number.isInteger(maxCompletionTokens) || maxCompletionTokens <= 0) throw kimiConfigurationError()
-  return {
-    apiBase: env.KIMI_API_BASE?.trim() || 'https://api.moonshot.cn/v1',
-    model: env.KIMI_MODEL?.trim() || 'kimi-k3',
-    reasoningEffort,
-    maxCompletionTokens,
-  }
-}
-
-export function parseGradingTimeoutMs(value: string | undefined) {
-  if (value === undefined || value.trim() === '') return 360_000
-  const parsed = Number(value)
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : 360_000
+function providerConfigurationError() {
+  return new GradingProviderError('provider_not_configured', 'AI Provider configuration is invalid.', false)
 }
 
 export function getProvider(name: string | undefined): GradingProvider {
   if (name === 'mock') return new MockGradingProvider()
   if (name === 'mock_failure') return new FailureGradingProvider()
-  throw new GradingProviderError('provider_not_configured', '批改 Provider 未配置或不受支持。', false)
+  throw providerConfigurationError()
+}
+
+export function createStageBudgetedTransport(
+  transport: KimiTransport,
+  budgets: Record<ProviderCallStage, number>,
+): KimiTransport {
+  return {
+    maxCompletionTokens: Math.max(...Object.values(budgets)),
+    complete(input) {
+      return transport.complete({ ...input, maxCompletionTokens: budgets[input.stage] })
+    },
+  }
 }
 
 export function getMultimodalProvider(
-  name: string | undefined,
+  runtimeConfig: GatewayRuntimeConfig,
+  dependencies?: MultimodalProviderDependencies,
+): MultimodalProvider
+export function getMultimodalProvider(
+  config: GatewayRuntimeConfig,
   dependencies: MultimodalProviderDependencies = {},
 ): MultimodalProvider {
-  if (name === 'kimi' && dependencies.kimiFactory) return dependencies.kimiFactory()
-  if (name === 'kimi') {
-    const config = parseKimiConfig(process.env)
-    return new KimiMultimodalProvider(createKimiTransport({ ...config, apiKey: process.env.KIMI_API_KEY }))
+  if (config.provider === 'mock') {
+    if (dependencies.mockFactory) return dependencies.mockFactory()
+    throw providerConfigurationError()
   }
-  throw new GradingProviderError('provider_not_configured', 'Kimi Provider 涓嶅彈鏀寔。', false)
+  const apiKey = dependencies.apiKey
+  if (!apiKey?.trim()) throw providerConfigurationError()
+  const transportFactory = dependencies.kimiTransportFactory ?? createKimiTransport
+  const transport = transportFactory({
+    apiKey,
+    apiBase: config.kimi.apiBase,
+    model: config.kimi.model,
+    reasoningEffort: config.kimi.reasoningEffort,
+    maxCompletionTokens: Math.max(...Object.values(config.kimi.stageBudgets)),
+  })
+  return new KimiMultimodalProvider(createStageBudgetedTransport(transport, config.kimi.stageBudgets))
 }

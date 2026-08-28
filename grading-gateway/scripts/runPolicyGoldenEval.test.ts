@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import type { GatewayRuntimeConfig } from '../src/gatewayRuntimeConfig.js'
 import {
   evaluatePolicyChecks,
   formatGoldenEvaluationLine,
@@ -18,6 +19,19 @@ const transcriptA01 = 'We work together after school.'
 const transcriptA02 = 'We should protect the enviroment.'
 const transcriptA03 = "I can't come to the meeting."
 const transcriptA04 = 'I suggest you joins the club. The moon is made of green paper. We can meet after class.'
+
+function evaluatorRuntimeConfig(): GatewayRuntimeConfig {
+  return {
+    provider: 'kimi', rubricStrategy: 'two-pass-legacy', essayPromptProfile: 'legacy', executionRegistry: 'direct-legacy',
+    deadlines: { httpMs: 360_000, providerFinalMs: 420_000, settlementGraceMs: 30_000 },
+    admission: { hardLimit: 1 }, registry: { terminalTtlMs: 86_400_000, maxEntries: 100 },
+    retry: { maxProviderAttempts: 2, maxRateLimitRequeues: 5, baseMs: 2_000, capMs: 60_000, pauseAfterMs: 900_000 },
+    kimi: {
+      apiBase: 'https://api.moonshot.cn/v1', model: 'k3', reasoningEffort: 'low', promptCacheSecret: '',
+      stageBudgets: { material_context: 1, rubric_generation: 1, essay_grading_images: 1, essay_regrading_text: 1 },
+    },
+  }
+}
 
 function cleanResult(transcript: string): GoldenPolicyResult {
   return {
@@ -259,12 +273,34 @@ describe('policy golden evaluation runner', () => {
     expect(lines).toEqual(notRunLines())
   })
 
+  it('fails incomplete real runtime configuration before creating a Provider', async () => {
+    const lines: string[] = []
+    let providerCalls = 0
+    const exitCode = await runPolicyGoldenEvaluation({
+      env: { KIMI_API_KEY: 'local-test-only' },
+      createProvider: () => {
+        providerCalls += 1
+        throw new Error('must not create Provider')
+      },
+      output: (line) => lines.push(line),
+    })
+
+    expect(exitCode).toBe(1)
+    expect(providerCalls).toBe(0)
+    expect(lines).toEqual([
+      'CASE-A01 fail model=unconfigured policy=grading-policy-v1 category=unexpected_failure',
+      'CASE-A02 fail model=unconfigured policy=grading-policy-v1 category=unexpected_failure',
+      'CASE-A03 fail model=unconfigured policy=grading-policy-v1 category=unexpected_failure',
+      'CASE-A04 fail model=unconfigured policy=grading-policy-v1 category=unexpected_failure',
+    ])
+  })
+
   it('keeps successful cases on their own predicates when one Provider call fails', async () => {
     const lines: string[] = []; const results = passingResults(); let calls = 0
     const values = [results.ambiguousWork, new Error('private provider failure'), results.ambiguousCant, results.grammarAndLogic]
     const exitCode = await runPolicyGoldenEvaluation({
       env: { KIMI_API_KEY: 'local-only' },
-      parseConfig: () => ({ apiBase: 'https://example.test', model: 'k3', reasoningEffort: 'low', maxCompletionTokens: 1 }),
+      parseConfig: () => evaluatorRuntimeConfig(),
       readFixture: async () => Buffer.from('synthetic'),
       createProvider: () => ({ async gradeEssay() { const value = values[calls++]; if (value instanceof Error) throw value; return { value, attempts: [] } } }),
       normalize: (value) => ({ ok: true, result: value as never }),
@@ -284,7 +320,7 @@ describe('policy golden evaluation runner', () => {
     const values = [results.ambiguousWork, results.clearEnviroment, results.ambiguousCant, results.grammarAndLogic]
     const exitCode = await runPolicyGoldenEvaluation({
       env: { KIMI_API_KEY: 'local-only' },
-      parseConfig: () => ({ apiBase: 'https://example.test', model: 'k3', reasoningEffort: 'low', maxCompletionTokens: 1 }),
+      parseConfig: () => evaluatorRuntimeConfig(),
       readFixture: async () => Buffer.from('synthetic'),
       createProvider: () => ({ async gradeEssay() { return { value: values[calls++], attempts: [] } } }),
       normalize: (value) => ({ ok: true, result: value as never }),
@@ -303,7 +339,7 @@ describe('policy golden evaluation runner', () => {
     const observedWeights: number[][] = []
     await runPolicyGoldenEvaluation({
       env: { KIMI_API_KEY: 'local-only' },
-      parseConfig: () => ({ apiBase: 'https://example.test', model: 'k3', reasoningEffort: 'low', maxCompletionTokens: 1 }),
+      parseConfig: () => evaluatorRuntimeConfig(),
       readFixture: async () => Buffer.from('synthetic'),
       createProvider: () => ({ async gradeEssay(input) { observedWeights.push(input.task.rubric.dimensions.map(({ weight }) => weight)); throw new Error('stop after boundary') } }),
       output: () => undefined,
@@ -340,19 +376,19 @@ describe('policy golden evaluation CLI subprocess', () => {
     } finally { server.close(); await rm(cwd, { recursive: true, force: true }) }
   })
 
-  it('captures exit 1 and four allowlisted failure lines without the upstream private marker', async () => {
+  it('rejects incomplete real configuration before any HTTP call or private upstream marker exposure', async () => {
     const privateMarker = 'DO-NOT-PRINT-UPSTREAM-MARKER'; let requests = 0
     const server = createServer((_request, response) => { requests++; response.writeHead(503, { 'Content-Type': 'text/plain' }).end(privateMarker) })
     await new Promise<void>((done) => server.listen(0, '127.0.0.1', done)); const address = server.address(); if (!address || typeof address === 'string') throw new Error('Test server did not bind.')
     const cwd = await mkdtemp(resolve(tmpdir(), 'golden-cli-failure-'))
     try {
       const result = await runCli({ ...process.env, KIMI_API_KEY: 'local-test-only', KIMI_API_BASE: `http://127.0.0.1:${address.port}`, KIMI_MODEL: 'k3' }, cwd)
-      expect(result.code).toBe(1); expect(result.stderr).toBe(''); expect(requests).toBe(4); expect(result.stdout).not.toContain(privateMarker)
+      expect(result.code).toBe(1); expect(result.stderr).toBe(''); expect(requests).toBe(0); expect(result.stdout).not.toContain(privateMarker)
       expect(result.stdout.trim().split(/\r?\n/)).toEqual([
-        'CASE-A01 fail model=k3 policy=grading-policy-v1 category=provider_unavailable',
-        'CASE-A02 fail model=k3 policy=grading-policy-v1 category=provider_unavailable',
-        'CASE-A03 fail model=k3 policy=grading-policy-v1 category=provider_unavailable',
-        'CASE-A04 fail model=k3 policy=grading-policy-v1 category=provider_unavailable',
+        'CASE-A01 fail model=unconfigured policy=grading-policy-v1 category=unexpected_failure',
+        'CASE-A02 fail model=unconfigured policy=grading-policy-v1 category=unexpected_failure',
+        'CASE-A03 fail model=unconfigured policy=grading-policy-v1 category=unexpected_failure',
+        'CASE-A04 fail model=unconfigured policy=grading-policy-v1 category=unexpected_failure',
       ])
     } finally { server.close(); await rm(cwd, { recursive: true, force: true }) }
   })
