@@ -187,6 +187,17 @@ describe('createKimiTransport', () => {
     })
   })
 
+  it.each([
+    ['at the 50-year UTC boundary', 'Monday, 01-Jan-80 00:00:00 GMT', Date.UTC(2080, 0, 1) - Date.UTC(2030, 0, 1)],
+    ['one second after the 50-year UTC boundary', 'Monday, 01-Jan-80 00:00:01 GMT', undefined],
+    ['later in the 50th calendar year', 'Tuesday, 31-Dec-80 08:00:05 GMT', undefined],
+  ])('applies the RFC850 50-year rule to the complete timestamp: %s', async (_caseName, retryAfter, expectedMs) => {
+    const transport = createKimiTransport(controlledOptions(responseFetch(429, '{"error":"SECRET upstream body"}', { 'Retry-After': retryAfter })))
+    const error = await caughtError(transport.complete(observedInput))
+    expect(error).toMatchObject({ code: 'provider_rate_limited', details: { termination: 'confirmed', providerElapsedMs: 17 } })
+    expect((error as { details?: { retryAfterMs?: unknown } }).details?.retryAfterMs).toBe(expectedMs)
+  })
+
   it.each(['-1', '1.5', 'Infinity', '9999999999999999999999999999999999999999999', 'not-a-date', '2030-01-01T00:00:05.000Z'])('ignores invalid 429 Retry-After %s', async (retryAfter) => {
     const transport = createKimiTransport(controlledOptions(responseFetch(429, '{"error":"SECRET upstream body"}', { 'Retry-After': retryAfter })))
     const error = await caughtError(transport.complete(observedInput))

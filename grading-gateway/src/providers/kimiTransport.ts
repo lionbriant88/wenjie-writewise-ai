@@ -106,6 +106,18 @@ const weekdayNumbers: Record<string, number> = {
   Thu: 4, Thursday: 4, Fri: 5, Friday: 5, Sat: 6, Saturday: 6,
 }
 
+function utcTimestamp(year: number, monthName: string, day: number, hour: number, minute: number, second: number) {
+  const month = monthNumbers[monthName]
+  if (month === undefined || day < 1 || hour > 23 || minute > 59 || second > 59) return undefined
+  const timestamp = Date.UTC(year, month, day, hour, minute, second)
+  if (!Number.isSafeInteger(timestamp)) return undefined
+  const date = new Date(timestamp)
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month && date.getUTCDate() === day
+    && date.getUTCHours() === hour && date.getUTCMinutes() === minute && date.getUTCSeconds() === second
+    ? timestamp
+    : undefined
+}
+
 function utcHttpDate(
   weekday: string,
   year: number,
@@ -115,16 +127,19 @@ function utcHttpDate(
   minute: number,
   second: number,
 ) {
-  const month = monthNumbers[monthName]
   const expectedWeekday = weekdayNumbers[weekday]
-  if (month === undefined || expectedWeekday === undefined || day < 1 || hour > 23 || minute > 59 || second > 59) return undefined
-  const timestamp = Date.UTC(year, month, day, hour, minute, second)
-  if (!Number.isSafeInteger(timestamp)) return undefined
+  const timestamp = utcTimestamp(year, monthName, day, hour, minute, second)
+  if (expectedWeekday === undefined || timestamp === undefined) return undefined
   const date = new Date(timestamp)
-  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month || date.getUTCDate() !== day
-    || date.getUTCHours() !== hour || date.getUTCMinutes() !== minute || date.getUTCSeconds() !== second
-    || date.getUTCDay() !== expectedWeekday) return undefined
-  return timestamp
+  return date.getUTCDay() === expectedWeekday ? timestamp : undefined
+}
+
+function fiftyUtcYearsAfter(nowMs: number) {
+  const boundary = new Date(nowMs)
+  if (!Number.isFinite(boundary.getTime())) return undefined
+  boundary.setUTCFullYear(boundary.getUTCFullYear() + 50)
+  const timestamp = boundary.getTime()
+  return Number.isSafeInteger(timestamp) ? timestamp : undefined
 }
 
 function parseHttpDate(value: string, nowMs: number) {
@@ -134,8 +149,12 @@ function parseHttpDate(value: string, nowMs: number) {
   const rfc850 = /^(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday), (\d{2})-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-(\d{2}) (\d{2}):(\d{2}):(\d{2}) GMT$/.exec(value)
   if (rfc850) {
     const currentYear = new Date(nowMs).getUTCFullYear()
-    const year = Math.floor(currentYear / 100) * 100 + Number(rfc850[4])
-    return utcHttpDate(rfc850[1], year > currentYear + 50 ? year - 100 : year, rfc850[3], Number(rfc850[2]), Number(rfc850[5]), Number(rfc850[6]), Number(rfc850[7]))
+    const apparentYear = Math.floor(currentYear / 100) * 100 + Number(rfc850[4])
+    const apparentTimestamp = utcTimestamp(apparentYear, rfc850[3], Number(rfc850[2]), Number(rfc850[5]), Number(rfc850[6]), Number(rfc850[7]))
+    const futureBoundary = fiftyUtcYearsAfter(nowMs)
+    if (apparentTimestamp === undefined || futureBoundary === undefined) return undefined
+    const year = apparentTimestamp > futureBoundary ? apparentYear - 100 : apparentYear
+    return utcHttpDate(rfc850[1], year, rfc850[3], Number(rfc850[2]), Number(rfc850[5]), Number(rfc850[6]), Number(rfc850[7]))
   }
 
   const asctime = /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) ( [1-9]|0[1-9]|[12]\d|3[01]) (\d{2}):(\d{2}):(\d{2}) (\d{4})$/.exec(value)
