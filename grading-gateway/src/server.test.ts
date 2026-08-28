@@ -4,16 +4,30 @@ import { createServer, MAX_IMAGE_GRADING_METADATA_BYTES } from './server.js'
 import { MAX_TASK_MATERIAL_TEXT_FIELD_BYTES } from './multipartTaskMaterials.js'
 import { GradingProviderError } from './providers/providerTypes.js'
 import type { MultimodalProvider } from './providers/multimodalProviderTypes.js'
-import type { TaskMaterialContextV1 } from './multimodal/types.js'
+import type { GeneratedRubricV1, TaskMaterialContextV1 } from './multimodal/types.js'
+
+interface RawMultimodalProvider {
+  generateMaterialContext(input: Parameters<MultimodalProvider['generateMaterialContext']>[0]): Promise<TaskMaterialContextV1>
+  generateRubric(input: Parameters<MultimodalProvider['generateRubric']>[0]): Promise<GeneratedRubricV1>
+  gradeEssay(input: Parameters<MultimodalProvider['gradeEssay']>[0]): Promise<unknown>
+}
 
 function fakeMultimodalProvider(
-  overrides: Partial<MultimodalProvider> = {},
+  overrides: Partial<RawMultimodalProvider> = {},
 ): MultimodalProvider {
   return {
-    async generateMaterialContext() { throw new Error('not used') },
-    async generateRubric() { throw new Error('not used') },
-    async gradeEssay() { throw new Error('not used') },
-    ...overrides,
+    async generateMaterialContext(input) {
+      if (!overrides.generateMaterialContext) throw new Error('not used')
+      return { value: await overrides.generateMaterialContext(input), attempts: [] }
+    },
+    async generateRubric(input) {
+      if (!overrides.generateRubric) throw new Error('not used')
+      return { value: await overrides.generateRubric(input), attempts: [] }
+    },
+    async gradeEssay(input) {
+      if (!overrides.gradeEssay) throw new Error('not used')
+      return { value: await overrides.gradeEssay(input), attempts: [] }
+    },
   }
 }
 

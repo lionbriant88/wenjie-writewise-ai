@@ -47,9 +47,27 @@ const context: TaskMaterialContextV1 = {
 }
 
 function transportReturning(...results: unknown[]) {
-  const complete = vi.fn().mockImplementation(async () => results.shift())
-  return { complete } satisfies KimiTransport
+  let attempt = 0
+  const complete = vi.fn().mockImplementation(async () => ({
+    value: results.shift(),
+    observation: {
+      attemptDiagnosticId: `attempt-${++attempt}`, finishReason: 'stop', providerElapsedMs: 1,
+      usage: {
+        promptTokens: { status: 'unknown', reason: 'absent' }, completionTokens: { status: 'unknown', reason: 'absent' },
+        totalTokens: { status: 'unknown', reason: 'absent' }, cachedTokens: { status: 'unknown', reason: 'absent' },
+      },
+    },
+  }))
+  return { maxCompletionTokens: 8192, complete } satisfies KimiTransport
 }
+
+const attempts = (count: number) => Array.from({ length: count }, (_, index) => ({
+  attemptDiagnosticId: `attempt-${index + 1}`, finishReason: 'stop' as const, providerElapsedMs: 1,
+  usage: {
+    promptTokens: { status: 'unknown' as const, reason: 'absent' as const }, completionTokens: { status: 'unknown' as const, reason: 'absent' as const },
+    totalTokens: { status: 'unknown' as const, reason: 'absent' as const }, cachedTokens: { status: 'unknown' as const, reason: 'absent' as const },
+  },
+}))
 
 const rubricInput = {
   requestId: 'request-rubric',
@@ -71,11 +89,12 @@ describe('KimiMultimodalProvider', () => {
       materials,
       signal: new AbortController().signal,
     })).resolves.toEqual({
-      ...context,
-      writingRequirements: ['Teacher requirement.', 'Model-inferred requirement.'],
+      value: { ...context, writingRequirements: ['Teacher requirement.', 'Model-inferred requirement.'] },
+      attempts: attempts(1),
     })
     expect(transport.complete).toHaveBeenCalledTimes(1)
     expect(transport.complete.mock.calls[0]?.[0]).toMatchObject({ schemaName: 'material-context' })
+    expect(transport.complete.mock.calls[0]?.[0]).toMatchObject({ maxCompletionTokens: 8192 })
   })
 
   it('rejects an invalid material context after one call', async () => {
@@ -110,8 +129,8 @@ describe('KimiMultimodalProvider', () => {
     const provider = new KimiMultimodalProvider(transport)
 
     await expect(provider.generateRubric(rubricInput)).resolves.toEqual({
-      ...reviewed,
-      writingRequirements: ['Teacher requirement.', 'Reviewed requirement'],
+      value: { ...reviewed, writingRequirements: ['Teacher requirement.', 'Reviewed requirement'] },
+      attempts: attempts(2),
     })
     expect(transport.complete).toHaveBeenCalledTimes(2)
     expect(transport.complete.mock.calls[0]?.[0]).toMatchObject({ schemaName: 'generated-rubric' })
@@ -136,7 +155,7 @@ describe('KimiMultimodalProvider', () => {
     await expect(new KimiMultimodalProvider(transport).generateRubric({
       ...rubricInput,
       writingRequirement: '   ',
-    })).resolves.toEqual(reviewed)
+    })).resolves.toEqual({ value: reviewed, attempts: attempts(2) })
   })
 
   it('rejects an invalid draft before making the review call', async () => {
@@ -180,7 +199,7 @@ describe('KimiMultimodalProvider', () => {
       materials: rawTaskMaterials, signal: new AbortController().signal,
     }
 
-    await expect(provider.gradeEssay(gradeInput)).resolves.toEqual(result)
+    await expect(provider.gradeEssay(gradeInput)).resolves.toEqual({ value: result, attempts: attempts(1) })
     expect(transport.complete).toHaveBeenCalledTimes(1)
     expect(transport.complete.mock.calls[0]?.[0]).toMatchObject({ schemaName: 'essay-grading' })
     const messageJson = JSON.stringify(transport.complete.mock.calls[0]?.[0].messages)
@@ -193,7 +212,7 @@ describe('KimiMultimodalProvider', () => {
     const transport = transportReturning(result)
     const provider = new KimiMultimodalProvider(transport)
     const task = { taskId: 'task-grade', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: reviewed }
-    await expect(provider.gradeEssay({ requestId: 'request-grade', task, essayId: 'essay-grade', pages, confirmedTranscript: 'Teacher corrected transcript.', signal: new AbortController().signal })).resolves.toEqual(result)
+    await expect(provider.gradeEssay({ requestId: 'request-grade', task, essayId: 'essay-grade', pages, confirmedTranscript: 'Teacher corrected transcript.', signal: new AbortController().signal })).resolves.toEqual({ value: result, attempts: attempts(1) })
     expect(transport.complete).toHaveBeenCalledTimes(1)
     expect(JSON.stringify(transport.complete.mock.calls[0]?.[0].messages)).toContain('Teacher corrected transcript.')
   })

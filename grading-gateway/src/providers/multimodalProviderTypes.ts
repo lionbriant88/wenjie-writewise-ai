@@ -1,5 +1,6 @@
 import type { GatewayTaskMaterial } from '../multipartTaskMaterials.js'
 import type { ConfirmedTaskPackageV2, GeneratedRubricV1, TaskMaterialContextV1 } from '../multimodal/types.js'
+import type { ProviderCallResult } from './providerTypes.js'
 
 export interface GatewayImageInput {
   pageId: string
@@ -33,7 +34,7 @@ export interface GradeEssayProviderInput {
 }
 
 export interface MultimodalProvider {
-  generateMaterialContext(input: GenerateMaterialContextProviderInput): Promise<TaskMaterialContextV1>
-  generateRubric(input: GenerateRubricProviderInput): Promise<GeneratedRubricV1>
-  gradeEssay(input: GradeEssayProviderInput): Promise<unknown>
+  generateMaterialContext(input: GenerateMaterialContextProviderInput): Promise<ProviderCallResult<TaskMaterialContextV1>>
+  generateRubric(input: GenerateRubricProviderInput): Promise<ProviderCallResult<GeneratedRubricV1>>
+  gradeEssay(input: GradeEssayProviderInput): Promise<ProviderCallResult<unknown>>
 }

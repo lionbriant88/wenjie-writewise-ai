@@ -24,12 +24,57 @@ export type ProviderDiagnosticCode =
   | 'completion_finish_reason'
   | 'completion_truncated'
 
+export type ProviderCallStage =
+  | 'material_context'
+  | 'rubric_generation'
+  | 'essay_grading_images'
+  | 'essay_regrading_text'
+
+export type ObservedTokenCount =
+  | { status: 'known'; value: number }
+  | { status: 'unknown'; reason: 'absent' | 'invalid' | 'inconsistent' }
+
+export interface ProviderUsageSnapshot {
+  promptTokens: ObservedTokenCount
+  completionTokens: ObservedTokenCount
+  totalTokens: ObservedTokenCount
+  cachedTokens: ObservedTokenCount
+}
+
+export interface ProviderAttemptObservation {
+  attemptDiagnosticId: string
+  finishReason: 'stop' | 'length' | 'content_filter' | 'tool_calls' | 'unknown'
+  usage: ProviderUsageSnapshot
+  providerElapsedMs: number
+}
+
+export interface ProviderCompletion<T> {
+  value: T
+  observation: ProviderAttemptObservation
+}
+
+export interface ProviderCallResult<T> {
+  value: T
+  attempts: readonly ProviderAttemptObservation[]
+}
+
+export interface ProviderErrorDetails {
+  diagnosticCode?: ProviderDiagnosticCode
+  finishReason?: 'length' | 'content_filter' | 'tool_calls' | 'unknown'
+  retryAfterMs?: number
+  termination: 'confirmed' | 'unknown'
+  providerElapsedMs?: number
+  usage?: ProviderUsageSnapshot
+  attemptObservations?: readonly ProviderAttemptObservation[]
+}
+
 export class GradingProviderError extends Error {
   constructor(
     readonly code: ProviderErrorCode,
     message: string,
     readonly retryable: boolean,
     readonly diagnosticCode?: ProviderDiagnosticCode,
+    readonly details?: ProviderErrorDetails,
   ) {
     super(message)
     this.name = 'GradingProviderError'

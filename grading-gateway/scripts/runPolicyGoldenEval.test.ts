@@ -266,7 +266,7 @@ describe('policy golden evaluation runner', () => {
       env: { KIMI_API_KEY: 'local-only' },
       parseConfig: () => ({ apiBase: 'https://example.test', model: 'k3', reasoningEffort: 'low', maxCompletionTokens: 1 }),
       readFixture: async () => Buffer.from('synthetic'),
-      createProvider: () => ({ async gradeEssay() { const value = values[calls++]; if (value instanceof Error) throw value; return value } }),
+      createProvider: () => ({ async gradeEssay() { const value = values[calls++]; if (value instanceof Error) throw value; return { value, attempts: [] } } }),
       normalize: (value) => ({ ok: true, result: value as never }),
       output: (line) => lines.push(line),
     })
@@ -286,7 +286,7 @@ describe('policy golden evaluation runner', () => {
       env: { KIMI_API_KEY: 'local-only' },
       parseConfig: () => ({ apiBase: 'https://example.test', model: 'k3', reasoningEffort: 'low', maxCompletionTokens: 1 }),
       readFixture: async () => Buffer.from('synthetic'),
-      createProvider: () => ({ async gradeEssay() { return values[calls++] } }),
+      createProvider: () => ({ async gradeEssay() { return { value: values[calls++], attempts: [] } } }),
       normalize: (value) => ({ ok: true, result: value as never }),
       output: (line) => lines.push(line),
     })

@@ -315,7 +315,7 @@ async function evaluateOne(
       pages: [{ pageId: 'page-1', buffer, mimeType: 'image/png' } satisfies GatewayImageInput],
       signal: AbortSignal.timeout(60_000),
     })
-    const normalized = dependencies.normalize(raw, {
+    const normalized = dependencies.normalize(raw.value, {
       requestId: `golden-${item.id}`,
       essayId: `golden-${item.id}`,
       task,

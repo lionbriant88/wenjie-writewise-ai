@@ -250,7 +250,7 @@ export function createServer(options: CreateServerOptions = {}) {
           signal: controller.signal,
         }),
       )
-      const context = validateTaskMaterialContext(providerContext)
+      const context = validateTaskMaterialContext(providerContext.value)
       if (!context.ok) {
         emitSafeGradingDiagnostic(options.onDiagnostic, { stage: 'normalization', diagnosticCode: 'material_context_validation' })
         response.status(503).json(failure(validated.value.requestId, context.error, true))
@@ -290,7 +290,7 @@ export function createServer(options: CreateServerOptions = {}) {
         options.timeoutMs ?? 60_000,
         () => provider.generateRubric({ ...validated.value, signal: controller.signal }),
       )
-      const rubric = validateGeneratedRubric(providerRubric)
+      const rubric = validateGeneratedRubric(providerRubric.value)
       if (!rubric.ok) {
         emitSafeGradingDiagnostic(options.onDiagnostic, { stage: 'normalization', diagnosticCode: 'rubric_validation' })
         response.status(503).json(failure(validated.value.requestId, rubric.error, true))
@@ -358,7 +358,7 @@ export function createServer(options: CreateServerOptions = {}) {
           signal: controller.signal,
         }),
       )
-      const normalized = normalizeMultimodalResult(payload, { requestId: metadata.requestId, essayId: metadata.essayId, task: metadata.task, provider: 'remote', pageCount: pages.length, confirmedTranscript: metadata.confirmedTranscript, createdAt: (options.now ?? (() => new Date().toISOString()))() })
+      const normalized = normalizeMultimodalResult(payload.value, { requestId: metadata.requestId, essayId: metadata.essayId, task: metadata.task, provider: 'remote', pageCount: pages.length, confirmedTranscript: metadata.confirmedTranscript, createdAt: (options.now ?? (() => new Date().toISOString()))() })
       if (!normalized.ok) {
         emitSafeGradingDiagnostic(options.onDiagnostic, { stage: 'normalization', diagnosticCode: normalized.error.diagnosticCode })
         response.status(503).json(failure(metadata.requestId, normalized.error, true))

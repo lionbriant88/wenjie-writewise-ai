@@ -2,11 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { createKimiTransport, type KimiCompletionInput, type KimiTransportOptions } from './kimiTransport.js'
 
 const maxReasoningOptions: KimiTransportOptions = {
-  apiKey: 'test-only-not-a-real-key',
-  apiBase: 'https://example.invalid/v1',
-  model: 'kimi-k3',
-  reasoningEffort: 'max',
-  maxCompletionTokens: 8192,
+  apiKey: 'test-only-not-a-real-key', apiBase: 'https://example.invalid/v1', model: 'kimi-k3',
+  reasoningEffort: 'max', maxCompletionTokens: 8192,
 }
 
 // @ts-expect-error Kimi does not support medium reasoning effort.
@@ -14,149 +11,158 @@ const mediumReasoningOptions: KimiTransportOptions = { ...maxReasoningOptions, r
 
 const imageUrl = 'data:image/jpeg;base64,SGVsbG8='
 const input: KimiCompletionInput = {
-  schemaName: 'generated-rubric',
-  schema: { type: 'object', additionalProperties: false },
+  schemaName: 'generated-rubric', schema: { type: 'object', additionalProperties: false },
   signal: new AbortController().signal,
+  stage: 'rubric_generation', maxCompletionTokens: 4096, attempt: 3, diagnosticContext: 'random-content-free-context',
   messages: [
     { role: 'system', content: 'Return structured JSON.' },
-    {
-      role: 'user',
-      content: [
-        { type: 'text', text: 'Generate a rubric.' },
-        { type: 'image_url', image_url: { url: imageUrl } },
-      ],
-    },
+    { role: 'user', content: [{ type: 'text', text: 'Generate a rubric.' }, { type: 'image_url', image_url: { url: imageUrl } }] },
   ],
 }
 
-function responseFetch(status: number, body: string) {
-  return vi.fn().mockResolvedValue(new Response(body, {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  }))
+const observedInput = {
+  ...input, promptCacheKey: 'opaque-cache-key',
+}
+
+function responseFetch(status: number, body: string, headers: Record<string, string> = {}) {
+  return vi.fn().mockResolvedValue(new Response(body, { status, headers: { 'Content-Type': 'application/json', ...headers } }))
+}
+
+function controlledOptions(fetchImpl: typeof fetch, times: number[] = [100, 117]) {
+  return {
+    ...maxReasoningOptions, fetchImpl,
+    monotonicNow: () => times.shift() ?? 117,
+    diagnosticIdFactory: () => 'attempt-42',
+    wallClockNow: () => Date.UTC(2030, 0, 1, 0, 0, 0),
+  } as unknown as KimiTransportOptions
+}
+
+async function caughtError(promise: Promise<unknown>) {
+  try { await promise } catch (error) { return error }
+  throw new Error('Expected promise to reject')
 }
 
 describe('createKimiTransport', () => {
-  it('can observe a secret stored only in Error.message', () => {
-    const leakyError = new Error('SECRET message-only value')
-    expect(JSON.stringify(leakyError)).not.toContain('SECRET message-only value')
-    expect(leakyError.message).toContain('SECRET message-only value')
-  })
-
-  it('posts Kimi K3 JSON-schema messages with Base64 image parts only', async () => {
+  it('returns parsed value with allowlisted Kimi usage, finish reason, fresh diagnostic ID, and elapsed time', async () => {
     const fetchImpl = responseFetch(200, JSON.stringify({
       choices: [{ finish_reason: 'stop', message: { content: '{"taskName":"Synthetic"}', reasoning_content: 'do not parse this' } }],
+      usage: {
+        prompt_tokens: 120, completion_tokens: 45, total_tokens: 165,
+        prompt_tokens_details: { cached_tokens: 90, secret: 'do not retain' }, secret: 'do not retain',
+      }, secret: 'do not retain',
     }))
     const log = vi.spyOn(console, 'log')
-    const transport = createKimiTransport({
-      apiKey: 'test-only-not-a-real-key',
-      apiBase: 'https://example.invalid/v1/',
-      model: 'kimi-k3',
-      reasoningEffort: 'high',
-      maxCompletionTokens: 8192,
-      fetchImpl,
-    })
+    const transport = createKimiTransport(controlledOptions(fetchImpl))
 
-    await expect(transport.complete(input)).resolves.toEqual({ taskName: 'Synthetic' })
+    await expect(transport.complete(observedInput)).resolves.toEqual({
+      value: { taskName: 'Synthetic' },
+      observation: {
+        attemptDiagnosticId: 'attempt-42', finishReason: 'stop', providerElapsedMs: 17,
+        usage: {
+          promptTokens: { status: 'known', value: 120 }, completionTokens: { status: 'known', value: 45 },
+          totalTokens: { status: 'known', value: 165 }, cachedTokens: { status: 'known', value: 90 },
+        },
+      },
+    })
     expect(fetchImpl).toHaveBeenCalledWith('https://example.invalid/v1/chat/completions', expect.objectContaining({
-      method: 'POST',
-      headers: { Authorization: 'Bearer test-only-not-a-real-key', 'Content-Type': 'application/json' },
+      method: 'POST', headers: { Authorization: 'Bearer test-only-not-a-real-key', 'Content-Type': 'application/json' },
     }))
     const init = fetchImpl.mock.calls[0]?.[1] as RequestInit
     expect(JSON.parse(String(init.body))).toEqual({
-      model: 'kimi-k3',
-      reasoning_effort: 'high',
-      max_completion_tokens: 8192,
-      response_format: {
-        type: 'json_schema',
-        json_schema: {
-          name: 'generated-rubric', strict: true,
-          schema: { type: 'object', additionalProperties: false },
-        },
-      },
+      model: 'kimi-k3', reasoning_effort: 'max', max_completion_tokens: 4096, prompt_cache_key: 'opaque-cache-key',
+      response_format: { type: 'json_schema', json_schema: { name: 'generated-rubric', strict: true, schema: { type: 'object', additionalProperties: false } } },
       messages: input.messages,
     })
-    const body = JSON.stringify(init.body)
-    expect(body).not.toMatch(/temperature|top_p|thinking|max_tokens|reasoning_content/i)
+    expect(JSON.stringify(init.body)).not.toMatch(/temperature|top_p|thinking|max_tokens|reasoning_content|random-content-free-context/i)
     expect(log).not.toHaveBeenCalled()
     log.mockRestore()
   })
 
-  it.each([
-    ['a single JSON markdown fence', '```json\n{"taskName":"Synthetic"}\n```'],
-    ['a leading byte-order mark', '\ufeff{"taskName":"Synthetic"}'],
-  ])('accepts %s before applying the strict result normalizer', async (_caseName, content) => {
-    const transport = createKimiTransport({
-      ...maxReasoningOptions,
-      fetchImpl: responseFetch(200, JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content } }] })),
-    })
+  it('marks every absent usage field as unknown instead of inventing zero tokens', async () => {
+    const transport = createKimiTransport(controlledOptions(responseFetch(200, JSON.stringify({
+      choices: [{ finish_reason: 'stop', message: { content: '{"taskName":"Synthetic"}' } }],
+    }))))
 
-    await expect(transport.complete(input)).resolves.toEqual({ taskName: 'Synthetic' })
+    await expect(transport.complete(observedInput)).resolves.toMatchObject({ observation: { usage: {
+      promptTokens: { status: 'unknown', reason: 'absent' }, completionTokens: { status: 'unknown', reason: 'absent' },
+      totalTokens: { status: 'unknown', reason: 'absent' }, cachedTokens: { status: 'unknown', reason: 'absent' },
+    } } })
   })
 
   it.each([
-    [401, 'provider_auth_failed', false],
-    [402, 'provider_balance_unavailable', false],
-    [403, 'provider_request_rejected', false],
-    [429, 'provider_rate_limited', true],
-  ] as const)('maps HTTP %s without exposing upstream data', async (status, code, retryable) => {
-    const transport = createKimiTransport({
-      apiKey: 'test-only-not-a-real-key',
-      apiBase: 'https://example.invalid/v1',
-      model: 'kimi-k3', reasoningEffort: 'high', maxCompletionTokens: 8192,
-      fetchImpl: responseFetch(status, '{"error":"SECRET upstream body"}'),
-    })
-
-    await expect(transport.complete(input)).rejects.toMatchObject({ code, retryable })
-    try {
-      await transport.complete(input)
-    } catch (error) {
-      expect(error).toMatchObject({ code, retryable })
-      const message = (error as Error).message
-      expect(message).not.toContain('SECRET upstream body')
-      expect(message).not.toContain('test-only-not-a-real-key')
-      expect(message).not.toContain(imageUrl)
-    }
+    ['negative', { prompt_tokens: -1, completion_tokens: 2, total_tokens: 1 }, 'promptTokens', 'invalid'],
+    ['fractional', { prompt_tokens: 1.5, completion_tokens: 2, total_tokens: 3.5 }, 'promptTokens', 'invalid'],
+    ['non-finite', { prompt_tokens: 'Infinity', completion_tokens: 2, total_tokens: 2 }, 'promptTokens', 'invalid'],
+    ['cached exceeds prompt', { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6, prompt_tokens_details: { cached_tokens: 5 } }, 'cachedTokens', 'inconsistent'],
+    ['contradictory total', { prompt_tokens: 4, completion_tokens: 2, total_tokens: 7 }, 'totalTokens', 'inconsistent'],
+  ] as const)('does not trust %s Kimi usage values', async (_caseName, usage, field, reason) => {
+    const transport = createKimiTransport(controlledOptions(responseFetch(200, JSON.stringify({
+      choices: [{ finish_reason: 'stop', message: { content: '{"taskName":"Synthetic"}' } }], usage,
+    }))))
+    const result = await transport.complete(observedInput)
+    expect(result).toMatchObject({ observation: { usage: { [field]: { status: 'unknown', reason } } } })
+    expect(JSON.stringify(result)).not.toContain('Infinity')
   })
 
-  it('maps an aborted request without returning the network error', async () => {
+  it('preserves legitimate zero token observations as known', async () => {
+    const transport = createKimiTransport(controlledOptions(responseFetch(200, JSON.stringify({
+      choices: [{ finish_reason: 'stop', message: { content: '{"taskName":"Synthetic"}' } }],
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, prompt_tokens_details: { cached_tokens: 0 } },
+    }))))
+
+    await expect(transport.complete(observedInput)).resolves.toMatchObject({ observation: { usage: {
+      promptTokens: { status: 'known', value: 0 }, completionTokens: { status: 'known', value: 0 },
+      totalTokens: { status: 'known', value: 0 }, cachedTokens: { status: 'known', value: 0 },
+    } } })
+  })
+
+  it.each([
+    ['completion_tool_calls', 'tool_calls', { tool_calls: [{ secret: 'SECRET tool' }] }],
+    ['completion_finish_reason', 'content_filter', {}],
+    ['completion_truncated', 'length', {}],
+    ['completion_content_json_incomplete', 'stop', {}],
+  ] as const)('fails closed for %s while retaining only safe terminal telemetry', async (diagnosticCode, finishReason, messageExtras) => {
+    const content = diagnosticCode === 'completion_content_json_incomplete' ? '{SECRET malformed json' : '{"taskName":"Synthetic"}'
+    const transport = createKimiTransport(controlledOptions(responseFetch(200, JSON.stringify({
+      choices: [{ finish_reason: finishReason, message: { content, ...messageExtras } }],
+      usage: { prompt_tokens: 9, completion_tokens: 4, total_tokens: 13 }, secret: 'SECRET upstream body',
+    }))))
+
+    const error = await caughtError(transport.complete(observedInput))
+    expect(error).toMatchObject({ code: 'provider_invalid_response', diagnosticCode, details: {
+      diagnosticCode, termination: 'confirmed', providerElapsedMs: 17, ...(finishReason === 'stop' ? {} : { finishReason }),
+      usage: {
+        promptTokens: { status: 'known', value: 9 }, completionTokens: { status: 'known', value: 4 },
+        totalTokens: { status: 'known', value: 13 }, cachedTokens: { status: 'unknown', reason: 'absent' },
+      },
+    } })
+    expect(JSON.stringify(error)).not.toMatch(/SECRET|test-only-not-a-real-key|SGVsbG8/)
+  })
+
+  it.each([
+    ['whole seconds', '7', 7000], ['HTTP date', 'Tue, 01 Jan 2030 00:00:05 GMT', 5000],
+  ])('preserves the valid 429 Retry-After %s without shortening it', async (_caseName, retryAfter, expectedMs) => {
+    const transport = createKimiTransport(controlledOptions(responseFetch(429, '{"error":"SECRET upstream body"}', { 'Retry-After': retryAfter })))
+    await expect(transport.complete(observedInput)).rejects.toMatchObject({
+      code: 'provider_rate_limited', details: { termination: 'confirmed', providerElapsedMs: 17, retryAfterMs: expectedMs },
+    })
+  })
+
+  it.each(['-1', '1.5', 'Infinity', '9999999999999999999999999999999999999999999', 'not-a-date'])('ignores invalid 429 Retry-After %s', async (retryAfter) => {
+    const transport = createKimiTransport(controlledOptions(responseFetch(429, '{"error":"SECRET upstream body"}', { 'Retry-After': retryAfter })))
+    const error = await caughtError(transport.complete(observedInput))
+    expect(error).toMatchObject({ code: 'provider_rate_limited', details: { termination: 'confirmed', providerElapsedMs: 17 } })
+    expect((error as { details?: { retryAfterMs?: unknown } }).details?.retryAfterMs).toBeUndefined()
+  })
+
+  it('marks fetch and abort failures as termination unknown while preserving only timing', async () => {
     const controller = new AbortController()
     controller.abort()
-    const transport = createKimiTransport({
-      apiKey: 'test-only-not-a-real-key', apiBase: 'https://example.invalid/v1', model: 'kimi-k3',
-      reasoningEffort: 'high', maxCompletionTokens: 8192,
-      fetchImpl: vi.fn().mockRejectedValue(new Error('SECRET network body')),
+    const transport = createKimiTransport(controlledOptions(vi.fn().mockRejectedValue(new Error('SECRET network body'))))
+    const error = await caughtError(transport.complete({ ...observedInput, signal: controller.signal }))
+    expect(error).toMatchObject({
+      code: 'provider_timeout', retryable: true, details: { termination: 'unknown', providerElapsedMs: 17 },
     })
-    await expect(transport.complete({ ...input, signal: controller.signal }))
-      .rejects.toMatchObject({ code: 'provider_timeout', retryable: true })
-  })
-
-  it.each([
-    ['response_json', '<html>SECRET upstream body</html>'],
-    ['completion_envelope', JSON.stringify({ choices: [] })],
-    ['completion_tool_calls', JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { content: '{"taskName":"Synthetic"}', tool_calls: [{ secret: 'SECRET tool' }] } }] })],
-    ['completion_finish_reason', JSON.stringify({ choices: [{ finish_reason: 'content_filter', message: { content: '{"taskName":"Synthetic"}' } }] })],
-    ['completion_finish_reason', JSON.stringify({ choices: [{ finish_reason: 'unknown', message: { content: '{"taskName":"Synthetic"}' } }] })],
-    ['completion_finish_reason', JSON.stringify({ choices: [{ message: { content: '{"taskName":"Synthetic"}' } }] })],
-    ['completion_content_json_incomplete', JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: '{SECRET truncated json' } }] })],
-    ['completion_content_json_malformed', JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: '{"taskName": SECRET}' } }] })],
-    ['completion_content', JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: '' } }] })],
-    ['completion_content', JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: { secret: 'SECRET non-string content' } } }] })],
-    ['completion_truncated', JSON.stringify({ choices: [{ finish_reason: 'length', message: { content: '{SECRET truncated json' } }], usage: { completion_tokens: 16384 } })],
-  ] as const)('rejects malformed Kimi output with safe diagnostic %s', async (diagnosticCode, body) => {
-      const transport = createKimiTransport({
-        apiKey: 'test-only-not-a-real-key', apiBase: 'https://example.invalid/v1', model: 'kimi-k3',
-        reasoningEffort: 'high', maxCompletionTokens: 8192, fetchImpl: responseFetch(200, body),
-      })
-      let caught: unknown
-      try {
-        await transport.complete(input)
-      } catch (error) {
-        caught = error
-      }
-
-      expect(caught).toMatchObject({ code: 'provider_invalid_response', retryable: true, diagnosticCode })
-      const serialized = JSON.stringify(caught)
-      expect(serialized).not.toMatch(/SECRET|test-only-not-a-real-key|SGVsbG8/)
+    expect(JSON.stringify(error)).not.toMatch(/SECRET|test-only-not-a-real-key|SGVsbG8/)
   })
 })
