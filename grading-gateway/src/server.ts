@@ -149,7 +149,7 @@ interface ImageGradeMetadata {
 function readMetadataString(value: unknown, maxLength: number): string | null {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
-  return trimmed && trimmed.length <= maxLength ? trimmed : null
+  return trimmed && Array.from(trimmed).length <= maxLength ? trimmed : null
 }
 
 function readConfirmedTranscript(value: unknown): string | null {

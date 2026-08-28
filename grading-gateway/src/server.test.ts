@@ -102,6 +102,88 @@ describe('grading gateway server boundary', () => {
       .attach('pages', Buffer.from('essay-page'), { filename: 'essay.png', contentType: 'image/png' }).expect(200)
   })
 
+  it('grades a no-material task whose 10,000-code-point requirement produces a non-BMP summary, while rejecting 10,001 before Provider use', async () => {
+    const teacherText = 'Teacher-confirmed synthetic text.'
+    const requirement = '😀'.repeat(10_000)
+    const materialSummary = `教师确认的写作要求：${requirement}`
+    expect(materialSummary).toHaveLength(20_010)
+    expect(Array.from(materialSummary)).toHaveLength(10_010)
+    const calls: Parameters<MultimodalProvider['gradeEssay']>[] = []
+    const provider = fakeMultimodalProvider({
+      async gradeEssay(input) {
+        calls.push([input])
+        return strictMultimodalPayload(teacherText)
+      },
+    })
+    const task = {
+      taskId: 'unicode-no-material-task',
+      fullScore: 15,
+      materialSummary,
+      writingRequirements: [requirement],
+      constraints: [],
+      rubric: {
+        taskName: 'Unicode no-material task',
+        materialSummary,
+        writingRequirements: [requirement],
+        constraints: [],
+        dimensions: imageRubricDimensions(),
+        reviewWarnings: [],
+      },
+    }
+    const app = createServer({ multimodalProvider: provider })
+
+    const accepted = await request(app)
+      .post('/grading/grade-images')
+      .field('metadata', JSON.stringify({
+        requestVersion: 'multimodal-grading-request-v2',
+        requestId: 'unicode-no-material-boundary',
+        essayId: 'unicode-no-material-essay',
+        pageIds: [],
+        confirmedTranscript: teacherText,
+        task,
+      }))
+      .expect(200)
+
+    expect(accepted.body).toMatchObject({
+      resultVersion: 'grading-result-v2',
+      requestId: 'unicode-no-material-boundary',
+    })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.[0].task).toMatchObject({
+      materialSummary,
+      writingRequirements: [requirement],
+    })
+
+    const overRequirement = `${requirement}😀`
+    const overMaterialSummary = `教师确认的写作要求：${overRequirement}`
+    const rejected = await request(app)
+      .post('/grading/grade-images')
+      .field('metadata', JSON.stringify({
+        requestVersion: 'multimodal-grading-request-v2',
+        requestId: 'unicode-no-material-over-limit',
+        essayId: 'unicode-no-material-essay',
+        pageIds: [],
+        confirmedTranscript: teacherText,
+        task: {
+          ...task,
+          materialSummary: overMaterialSummary,
+          writingRequirements: [overRequirement],
+          rubric: {
+            ...task.rubric,
+            materialSummary: overMaterialSummary,
+            writingRequirements: [overRequirement],
+          },
+        },
+      }))
+      .expect(400)
+
+    expect(rejected.body).toMatchObject({
+      status: 'failed',
+      error: { code: 'invalid_request', retryable: false },
+    })
+    expect(calls).toHaveLength(1)
+  })
+
   it('rejects metadata above the image grading limit without echoing its contents', async () => {
     const privateMarker = 'PRIVATE-METADATA-MARKER'
     const response = await request(createServer())
