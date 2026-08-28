@@ -41,7 +41,7 @@ export async function extractDocxBodyText(
 
   const text = extracted.value.trim()
   if (!text) throw new MaterialNormalizationError('docx_empty')
-  if (text.length > MAX_DOCX_TEXT_CHARACTERS) {
+  if (Array.from(text).length > MAX_DOCX_TEXT_CHARACTERS) {
     throw new MaterialNormalizationError('docx_too_long')
   }
 

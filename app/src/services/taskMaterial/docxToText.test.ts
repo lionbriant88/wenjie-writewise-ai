@@ -68,6 +68,27 @@ describe('extractDocxBodyText', () => {
     }), 'docx_too_long')
   })
 
+  it('accepts and preserves exactly 30,000 non-BMP Unicode code points', async () => {
+    const value = '😀'.repeat(MAX_DOCX_TEXT_CHARACTERS)
+    expect(value).toHaveLength(60_000)
+    expect(Array.from(value)).toHaveLength(MAX_DOCX_TEXT_CHARACTERS)
+
+    const result = await extractDocxBodyText(docxFile(128), {
+      extractRawText: async () => ({ value }),
+    })
+
+    expect(result.text).toBe(value)
+    expect(Array.from(result.text)).toHaveLength(MAX_DOCX_TEXT_CHARACTERS)
+  })
+
+  it('rejects 30,001 non-BMP Unicode code points', async () => {
+    const value = '😀'.repeat(MAX_DOCX_TEXT_CHARACTERS + 1)
+
+    await expectCode(extractDocxBodyText(docxFile(128), {
+      extractRawText: async () => ({ value }),
+    }), 'docx_too_long')
+  })
+
   it('maps corrupt extraction to a stable safe error without exposing dependency details', async () => {
     const privateMessage = 'private parser path C:\\secret\\prompt.docx'
 
