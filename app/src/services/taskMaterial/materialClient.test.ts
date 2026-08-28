@@ -110,6 +110,27 @@ describe('material context client', () => {
   })
 
   it.each([
+    [false, 'provider_result_unknown'],
+    [true, 'gateway_invalid_response'],
+  ] as const)('accepts provider_result_unknown only as a non-retryable one-shot result (retryable=%s)', async (retryable, code) => {
+    const response = await createRemoteMaterialContextClient({
+      apiBase: 'http://gateway',
+      fetchImpl: vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        requestId: request.requestId,
+        status: 'failed',
+        error: { code: 'provider_result_unknown', message: 'PRIVATE upstream state', retryable },
+      }), { status: 503 })),
+    }).analyze(request)
+
+    expect(response).toMatchObject({
+      requestId: request.requestId,
+      status: 'failed',
+      error: { code },
+    })
+    expect(JSON.stringify(response)).not.toContain('PRIVATE')
+  })
+
+  it.each([
     ['sparse writingRequirements', () => ({
       requestId: request.requestId, status: 'success',
       materialContext: { ...materialContext, writingRequirements: new Array(1) },
@@ -180,5 +201,33 @@ describe('material context client', () => {
     expect(direct).toEqual(await createMockMaterialContextClient().analyze(request))
     expect(request.materials).toEqual(snapshot)
     expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['missing mode', {}],
+    ['invalid mode', { VITE_GRADING_MODE: 'automatic' }],
+    ['incomplete real mode', { VITE_GRADING_MODE: 'real' }],
+  ])('fails closed without network or mock fallback for %s', async (_label, env) => {
+    const fetchImpl = vi.fn()
+    globalThis.fetch = fetchImpl
+    const response = await createConfiguredMaterialContextClient(env).analyze(request)
+    expect(response).toMatchObject({
+      requestId: request.requestId, status: 'failed',
+      error: { code: 'provider_not_configured', retryable: false },
+    })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('uses the remote material client for a complete explicit real profile', async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new Error('synthetic unavailable'))
+    globalThis.fetch = fetchImpl
+    const response = await createConfiguredMaterialContextClient({
+      VITE_GRADING_MODE: 'real',
+      VITE_GRADING_API_BASE: 'http://gateway.test',
+      VITE_GRADING_QUEUE_MODE: 'adaptive-v1',
+      VITE_GRADING_MAX_IN_FLIGHT: '4',
+    }).analyze(request)
+    expect(response).toMatchObject({ status: 'failed', error: { code: 'gateway_unavailable' } })
+    expect(fetchImpl).toHaveBeenCalledOnce()
   })
 })

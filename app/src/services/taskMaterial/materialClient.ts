@@ -1,6 +1,7 @@
 import type { TaskMaterialContext } from '../../types'
 import { MAX_WRITING_REQUIREMENT_CODE_POINTS } from '../taskRubric/rubricForm'
 import type { RubricClientFailure, RubricFailureCode } from '../taskRubric/types'
+import { normalizeGradingApiBase, parseGradingRuntimeConfig, type GradingRuntimeEnvironment } from '../grading/gradingRuntimeConfig'
 import { createTaskMaterialFormData } from './materialFormData'
 import type { MaterialContextClientRequest } from './types'
 
@@ -20,7 +21,7 @@ interface RemoteMaterialContextClientOptions {
 const safeFailureCodes = new Set<RubricFailureCode>([
   'invalid_request', 'request_too_large', 'provider_not_configured', 'provider_request_rejected',
   'provider_auth_failed', 'provider_balance_unavailable', 'provider_rate_limited', 'provider_timeout',
-  'provider_unavailable', 'provider_content_filtered', 'provider_invalid_response',
+  'provider_result_unknown', 'provider_unavailable', 'provider_content_filtered', 'provider_invalid_response',
   'gateway_invalid_response', 'gateway_unavailable',
 ])
 
@@ -52,6 +53,7 @@ function safeFailureMessage(code: RubricFailureCode): string {
     case 'provider_balance_unavailable': return '评分服务暂时不可用，请联系管理员。'
     case 'provider_rate_limited': return '请求过于频繁，请稍后重试。'
     case 'provider_timeout': return '评分服务响应超时，请稍后重试。'
+    case 'provider_result_unknown': return '评分结果状态暂时未知，请稍后检查。'
     case 'provider_unavailable': return '评分服务暂时不可用，请稍后重试。'
     case 'provider_content_filtered': return '材料无法由评分服务处理，请检查后重试。'
     case 'provider_invalid_response': return '评分服务返回结果无效，请稍后重试。'
@@ -182,6 +184,9 @@ function projectResponse(
     const message = readString(error.message, 2_000)
     if (code && message && safeFailureCodes.has(code as RubricFailureCode) && typeof error.retryable === 'boolean') {
       const safeCode = code as RubricFailureCode
+      if (safeCode === 'provider_result_unknown' && error.retryable !== false) {
+        return gatewayFailure(requestId, 'gateway_invalid_response', true)
+      }
       return {
         requestId,
         status: 'failed',
@@ -196,14 +201,24 @@ export function createRemoteMaterialContextClient({
   apiBase,
   fetchImpl = fetch,
 }: RemoteMaterialContextClientOptions): MaterialContextClient {
+  const normalizedApiBase = normalizeGradingApiBase(apiBase)
   return {
     async analyze(request) {
-      if (!apiBase) return gatewayFailure(request.requestId, 'gateway_unavailable', false)
+      if (!normalizedApiBase) {
+        return {
+          requestId: request.requestId, status: 'failed',
+          error: {
+            code: 'provider_not_configured',
+            message: safeFailureMessage('provider_not_configured'),
+            retryable: false,
+          },
+        }
+      }
       const formData = createTaskMaterialFormData(request)
 
       let response: Response
       try {
-        response = await fetchImpl(`${apiBase.replace(/\/$/, '')}/tasks/material-context`, {
+        response = await fetchImpl(`${normalizedApiBase}/tasks/material-context`, {
           method: 'POST',
           body: formData,
           signal: request.signal,
@@ -242,13 +257,30 @@ export function createMockMaterialContextClient(): MaterialContextClient {
 }
 
 export function createConfiguredMaterialContextClient(
-  env: { VITE_GRADING_MODE?: string; VITE_GRADING_API_BASE?: string } = {
+  env: GradingRuntimeEnvironment = {
     VITE_GRADING_MODE: import.meta.env.VITE_GRADING_MODE,
     VITE_GRADING_API_BASE: import.meta.env.VITE_GRADING_API_BASE,
+    VITE_GRADING_QUEUE_MODE: import.meta.env.VITE_GRADING_QUEUE_MODE,
+    VITE_GRADING_MAX_IN_FLIGHT: import.meta.env.VITE_GRADING_MAX_IN_FLIGHT,
   },
 ): MaterialContextClient {
-  return env.VITE_GRADING_MODE === 'real'
-    ? createRemoteMaterialContextClient({ apiBase: env.VITE_GRADING_API_BASE })
+  const config = parseGradingRuntimeConfig(env)
+  if (!config.ok) {
+    return {
+      async analyze(request) {
+        return {
+          requestId: request.requestId, status: 'failed',
+          error: {
+            code: 'provider_not_configured',
+            message: safeFailureMessage('provider_not_configured'),
+            retryable: false,
+          },
+        }
+      },
+    }
+  }
+  return config.value.mode === 'real'
+    ? createRemoteMaterialContextClient({ apiBase: config.value.apiBase })
     : createMockMaterialContextClient()
 }
 

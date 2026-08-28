@@ -38,6 +38,7 @@ export type GradingErrorCode =
   | 'provider_balance_unavailable'
   | 'provider_rate_limited'
   | 'provider_timeout'
+  | 'provider_result_unknown'
   | 'provider_unavailable'
   | 'provider_content_filtered'
   | 'provider_unexpected_tool_call'
@@ -209,7 +210,12 @@ export interface GradingFailureV1 {
   error: { code: GradingErrorCode; message: string; retryable: boolean }
 }
 
-export type GradingClientResponse = AiGradingResultV1 | GradingFailureV1
+export interface GradingClientFailure extends GradingFailureV1 {
+  clientMeta?: { retryAfterMs?: number; reattachOnly?: true }
+}
+
+export type GradingGatewayResponse = AiGradingResultV1 | GradingFailureV1
+export type GradingClientResponse = AiGradingResultV1 | GradingClientFailure
 
 export interface GradingClient {
   gradeImages(request: MultimodalGradingRequestV2): Promise<GradingClientResponse>

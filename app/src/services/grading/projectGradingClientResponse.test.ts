@@ -146,7 +146,7 @@ function expectInvalid(value: unknown, override: Parameters<typeof projectGradin
     status: 'failed',
     error: {
       code: 'gateway_invalid_response',
-      message: '批改服务返回了无法安全使用的响应，请重试或使用 mock 回退。',
+      message: '批改服务返回了无法安全使用的响应，请重试。',
       retryable: true,
     },
   })
@@ -282,6 +282,25 @@ describe('projectGradingClientResponse', () => {
     expectInvalid(raw, expected)
   })
 
+  it('projects result-unknown as a pure non-retryable public failure without client metadata', () => {
+    const raw = {
+      requestId: 'request-1', status: 'failed',
+      error: { code: 'provider_result_unknown', message: 'PRIVATE upstream detail', retryable: false },
+    }
+    expect(projectGradingClientResponse(raw, { ...expected, httpOk: false })).toEqual({
+      requestId: 'request-1', status: 'failed',
+      error: {
+        code: 'provider_result_unknown',
+        message: '批改结果仍在确认中，请检查同一任务。',
+        retryable: false,
+      },
+    })
+    expectInvalid({
+      ...raw,
+      error: { ...raw.error, retryable: true },
+    }, { ...expected, httpOk: false })
+  })
+
   it('requires the full multimodal transcript contract when requested', () => {
     for (const missing of ['transcript', 'recognitionWarnings', 'printedTextExcluded', 'legibilityIssues'] as const) {
       const raw = validSuccess()
@@ -333,6 +352,11 @@ describe('projectGradingClientResponse', () => {
 
   it('fails closed when a failure object has an unknown outer key', () => {
     expectInvalid({ requestId: 'request-1', status: 'failed', error: { code: 'provider_timeout', message: 'Provider timed out.', retryable: true }, extra: true }, { ...expected, httpOk: false })
+    expectInvalid({
+      requestId: 'request-1', status: 'failed',
+      error: { code: 'provider_rate_limited', message: 'Rate limited.', retryable: true },
+      clientMeta: { retryAfterMs: 1_000 },
+    }, { ...expected, httpOk: false })
   })
 
   it('rejects duplicate or unresolved plural issue links and impossible legibility context', () => {

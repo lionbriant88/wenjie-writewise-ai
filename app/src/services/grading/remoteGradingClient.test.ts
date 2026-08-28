@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createRemoteGradingClient } from './remoteGradingClient'
-import type { MultimodalGradingRequestV2 } from './types'
+import { attachSafeFailureMetadata, createRemoteGradingClient } from './remoteGradingClient'
+import type { GradingFailureV1, MultimodalGradingRequestV2 } from './types'
 
 function successBody(originalText: string) {
   return {
@@ -97,8 +97,103 @@ describe('createRemoteGradingClient', () => {
     const request = imageRequest()
     const fetchImpl = vi.fn()
     await expect(createRemoteGradingClient({ fetchImpl }).gradeImages(request)).resolves.toMatchObject({
-      requestId: request.requestId, status: 'failed', error: { code: 'gateway_unavailable', retryable: false },
+      requestId: request.requestId, status: 'failed', error: { code: 'provider_not_configured', retryable: false },
     })
     expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('adds a valid Retry-After only as local client metadata after strict body projection', async () => {
+    const request = imageRequest()
+    const rawMessage = 'PRIVATE-UPSTREAM-RATE-LIMIT'
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      requestId: request.requestId, status: 'failed',
+      error: { code: 'provider_rate_limited', message: rawMessage, retryable: true },
+      }), { status: 429, headers: { 'Retry-After': '7' } }))
+    const result = await createRemoteGradingClient({ apiBase: 'http://gateway', fetchImpl }).gradeImages(request)
+
+    expect(result).toEqual({
+      requestId: request.requestId, status: 'failed',
+      error: { code: 'provider_rate_limited', message: '批改服务繁忙，请稍后重试。', retryable: true },
+      clientMeta: { retryAfterMs: 7_000 },
+    })
+    expect(JSON.stringify(result)).not.toContain(rawMessage)
+    const form = fetchImpl.mock.calls[0]?.[1]?.body as FormData
+    expect(String(form.get('metadata'))).not.toContain('clientMeta')
+  })
+
+  it('does not attach Retry-After metadata when the Gateway failure body fails strict projection', async () => {
+    const request = imageRequest()
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      requestId: request.requestId,
+      status: 'failed',
+      error: { code: 'provider_rate_limited', message: 'PRIVATE', retryable: true },
+      unexpected: 'PRIVATE',
+    }), { status: 429, headers: { 'Retry-After': '7' } }))
+
+    const result = await createRemoteGradingClient({ apiBase: 'http://gateway', fetchImpl }).gradeImages(request)
+
+    expect(result).toEqual({
+      requestId: request.requestId,
+      status: 'failed',
+      error: {
+        code: 'gateway_invalid_response',
+        message: '批改服务返回了无法安全使用的响应，请重试。',
+        retryable: true,
+      },
+    })
+    expect(result).not.toHaveProperty('clientMeta')
+  })
+
+  it('classifies result-unknown as same-logical-work reattachment only', async () => {
+    const request = imageRequest()
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      requestId: request.requestId, status: 'failed',
+      error: { code: 'provider_result_unknown', message: 'PRIVATE-UNKNOWN-DETAIL', retryable: false },
+    }), { status: 503 }))
+    const result = await createRemoteGradingClient({ apiBase: 'http://gateway', fetchImpl }).gradeImages(request)
+
+    expect(result).toEqual({
+      requestId: request.requestId, status: 'failed',
+      error: { code: 'provider_result_unknown', message: '批改结果仍在确认中，请检查同一任务。', retryable: false },
+      clientMeta: { reattachOnly: true },
+    })
+  })
+
+  it.each([
+    ['leading-zero delay seconds', '007', 7_000],
+    ['IMF-fixdate', 'Tue, 01 Jan 2030 00:00:05 GMT', 5_000],
+    ['obsolete RFC850 date', 'Tuesday, 01-Jan-30 00:00:05 GMT', 5_000],
+    ['asctime date', 'Tue Jan  1 00:00:05 2030', 5_000],
+  ])('parses %s Retry-After without shortening it or mutating the public failure', (_label, header, expectedMs) => {
+    const failure: GradingFailureV1 = {
+      requestId: 'request-date', status: 'failed',
+      error: { code: 'provider_rate_limited', message: 'Safe.', retryable: true },
+    }
+    const result = attachSafeFailureMetadata(
+      failure,
+      new Headers({ 'Retry-After': header }),
+      Date.UTC(2030, 0, 1, 0, 0, 0),
+    )
+    expect(result).toEqual({ ...failure, clientMeta: { retryAfterMs: expectedMs } })
+    expect(failure).not.toHaveProperty('clientMeta')
+  })
+
+  it.each([
+    ['negative', '-1'],
+    ['fractional', '1.5'],
+    ['non-finite', 'Infinity'],
+    ['overflow', '99999999999999999999999999999999'],
+    ['non-HTTP date', '2030-01-01T00:00:05.000Z'],
+    ['past date', 'Mon, 31 Dec 2029 23:59:59 GMT'],
+  ])('ignores malformed or unsafe Retry-After: %s', (_label, header) => {
+    const failure: GradingFailureV1 = {
+      requestId: 'request-invalid-header', status: 'failed',
+      error: { code: 'provider_rate_limited', message: 'Safe.', retryable: true },
+    }
+    expect(attachSafeFailureMetadata(
+      failure,
+      new Headers({ 'Retry-After': header }),
+      Date.UTC(2030, 0, 1),
+    )).toEqual(failure)
   })
 })

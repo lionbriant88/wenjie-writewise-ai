@@ -29,6 +29,7 @@ export type RubricFailureCode =
   | 'provider_balance_unavailable'
   | 'provider_rate_limited'
   | 'provider_timeout'
+  | 'provider_result_unknown'
   | 'provider_unavailable'
   | 'provider_content_filtered'
   | 'provider_invalid_response'
