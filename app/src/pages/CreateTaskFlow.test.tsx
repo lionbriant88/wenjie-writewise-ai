@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useParams } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -9,7 +9,7 @@ import { buildMultimodalGradingRequest } from '../services/grading/buildMultimod
 import { createRemoteGradingClient } from '../services/grading/remoteGradingClient'
 import { createOcrClient } from '../services/ocr/ocrClient'
 import type { GeneratedTaskRubric, RubricClientResponse } from '../services/taskRubric/types'
-import type { Essay, Task } from '../types'
+import type { Task } from '../types'
 import { CreateTaskPage } from './CreateTaskPage'
 import { UploadPage } from './UploadPage'
 
@@ -87,10 +87,18 @@ const generatedRubric: GeneratedTaskRubric = {
 
 let capturedState: AppState | undefined
 let createdTaskId = ''
+let observedCreatedTaskEssayStatuses: string[] = []
 let uuidSequence = 0
 
 function StateCapture() {
   capturedState = useAppState()
+  if (createdTaskId) {
+    observedCreatedTaskEssayStatuses.push(
+      ...capturedState.essays
+        .filter((essay) => essay.taskId === createdTaskId)
+        .map((essay) => essay.status),
+    )
+  }
   return null
 }
 
@@ -108,6 +116,14 @@ function UploadDestination() {
   return <UploadPage />
 }
 
+function QueuedEssayProbe() {
+  const { taskId = '' } = useParams()
+  const { essays } = useAppState()
+  createdTaskId = taskId
+  const queuedEssay = essays.find((essay) => essay.taskId === taskId)
+  return <h1>{queuedEssay ? '学生作文已进入直接批改队列' : '正在等待学生作文入队'}</h1>
+}
+
 function renderCreateFlow(destination: 'probe' | 'upload' = 'probe') {
   return render(
     <AppStateProvider>
@@ -119,6 +135,7 @@ function renderCreateFlow(destination: 'probe' | 'upload' = 'probe') {
             path="/tasks/:taskId/upload"
             element={destination === 'probe' ? <CreatedTaskProbe /> : <UploadDestination />}
           />
+          <Route path="/tasks/:taskId/progress" element={<QueuedEssayProbe />} />
         </Routes>
       </MemoryRouter>
     </AppStateProvider>,
@@ -188,9 +205,19 @@ function getCreatedTask(): Task {
   return task
 }
 
+function readBlobText(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.addEventListener('load', () => resolve(String(reader.result ?? '')))
+    reader.addEventListener('error', () => reject(reader.error ?? new Error('Unable to read synthetic file.')))
+    reader.readAsText(blob)
+  })
+}
+
 beforeEach(() => {
   capturedState = undefined
   createdTaskId = ''
+  observedCreatedTaskEssayStatuses = []
   uuidSequence = 0
   mocks.analyze.mockReset()
   mocks.convertPdfToImages.mockReset()
@@ -422,71 +449,148 @@ describe('optional-material task creation vertical flow', () => {
 
   it('builds v2 essay multipart from only current student pages and never invokes an OCR boundary', async () => {
     const user = userEvent.setup()
-    renderCreateFlow()
+    renderCreateFlow('upload')
     await addMaterials(user, [
       imageFile('task-source.png'),
       pdfFile('task-source.pdf'),
       docxFile('task-source.docx'),
     ])
-    const task = await createVisibleTask(user, 'Teacher-confirmed request for the student essay.')
+    const confirmedRequirement = 'Teacher-confirmed request for the student essay.'
+    await user.type(screen.getByLabelText('写作要求'), confirmedRequirement)
+    await user.click(screen.getByRole('button', { name: '创建任务并上传作文' }))
+    await screen.findByRole('button', { name: '为学生1添加作文' })
+    const task = getCreatedTask()
 
     const studentPageOne = imageFile('student-page-1.png', 'STUDENT_PAGE_ONE_BYTES')
     const studentPageTwo = imageFile('student-page-2.png', 'STUDENT_PAGE_TWO_BYTES')
-    const essay: Essay = {
-      id: 'essay-current-student',
+    await user.click(screen.getByRole('button', { name: '为学生1添加作文' }))
+    await user.upload(screen.getByLabelText('上传相册图片'), [studentPageOne, studentPageTwo])
+    await user.click(screen.getByRole('button', { name: '提交作文并进入批改' }))
+    await screen.findByRole('heading', { name: '学生作文已进入直接批改队列' })
+
+    const taskEssays = capturedState?.essays.filter((candidate) => candidate.taskId === task.id) ?? []
+    expect(taskEssays).toHaveLength(1)
+    const storedEssay = taskEssays[0]
+    if (!storedEssay) throw new Error('Expected the real upload transition to store one essay.')
+    expect(storedEssay).toMatchObject({
       taskId: task.id,
       essayNumber: '学生1',
-      pages: [
-        { id: 'essay-page-1', label: studentPageOne.name, pageNumber: 1, quality: 'clear', accent: '#0891b2', sourceFile: studentPageOne },
-        { id: 'essay-page-2', label: studentPageTwo.name, pageNumber: 2, quality: 'clear', accent: '#0891b2', sourceFile: studentPageTwo },
-      ],
       pageCount: 2,
-      pageOrder: ['essay-page-1', 'essay-page-2'],
       ocrText: '',
       ocrConfidence: 0,
       status: 'pending_grading',
       exceptionReasons: [],
-      teacherReviewed: false,
       gradingRun: { status: 'idle' },
-      createdAt: fixedNow.toISOString(),
-      updatedAt: fixedNow.toISOString(),
-    }
-    const built = buildMultimodalGradingRequest(task, essay, 'grading-request-current-student')
+      teacherReviewed: false,
+    })
+    expect(storedEssay).not.toHaveProperty('transcriptSource')
+    expect(storedEssay.pages).toEqual([
+      {
+        id: `${storedEssay.id}-page-1`,
+        label: 'student-page-1.png',
+        pageNumber: 1,
+        quality: 'clear',
+        accent: '#0891b2',
+        previewUrl: 'blob:owned/student-page-1.png',
+        sourceFile: studentPageOne,
+      },
+      {
+        id: `${storedEssay.id}-page-2`,
+        label: 'student-page-2.png',
+        pageNumber: 2,
+        quality: 'clear',
+        accent: '#0891b2',
+        previewUrl: 'blob:owned/student-page-2.png',
+        sourceFile: studentPageTwo,
+      },
+    ])
+    expect(storedEssay.pageOrder).toEqual([
+      `${storedEssay.id}-page-1`,
+      `${storedEssay.id}-page-2`,
+    ])
+    expect(observedCreatedTaskEssayStatuses).toContain('pending_grading')
+    expect(observedCreatedTaskEssayStatuses).not.toContain('pending_ocr')
+    expect(observedCreatedTaskEssayStatuses).not.toContain('ocr_running')
+    expect(observedCreatedTaskEssayStatuses.every((status) => status === 'pending_grading')).toBe(true)
+
+    const built = buildMultimodalGradingRequest(task, storedEssay, 'grading-request-current-student')
     expect(built.ok).toBe(true)
     if (!built.ok) throw new Error(built.error.message)
 
     const gradingFetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
-    await act(async () => {
-      await createRemoteGradingClient({ apiBase: 'http://grading.test', fetchImpl: gradingFetch })
-        .gradeImages(built.request)
-    })
+    await createRemoteGradingClient({ apiBase: 'http://grading.test', fetchImpl: gradingFetch })
+      .gradeImages(built.request)
 
     expect(gradingFetch).toHaveBeenCalledOnce()
     const [url, init] = gradingFetch.mock.calls[0] as [string, RequestInit]
     expect(url).toBe('http://grading.test/grading/grade-images')
     const form = init?.body as FormData
-    const metadata = JSON.parse(String(form.get('metadata'))) as Record<string, unknown>
+    const entries = Array.from(form.entries())
+    expect(entries.map(([key]) => key)).toEqual(['metadata', 'pages', 'pages'])
+    const metadata = JSON.parse(String(entries[0]?.[1])) as {
+      requestVersion: string
+      essayId: string
+      pageIds: string[]
+      task: {
+        writingRequirements: string[]
+        rubric: { writingRequirements: string[] }
+      }
+    }
     expect(metadata).toMatchObject({
       requestVersion: 'multimodal-grading-request-v2',
-      essayId: 'essay-current-student',
-      pageIds: ['essay-page-1', 'essay-page-2'],
+      essayId: storedEssay.id,
+      pageIds: storedEssay.pageOrder,
     })
-    expect(form.getAll('pages').map((entry) => (entry as File).name)).toEqual([
-      'student-page-1.png',
-      'student-page-2.png',
+    const expectedRequirements = [
+      'Teacher-confirmed request for the student essay.',
+      'Later material-inferred requirement.',
+    ]
+    expect(metadata.task.writingRequirements).toEqual(expectedRequirements)
+    expect(metadata.task.rubric.writingRequirements).toEqual(expectedRequirements)
+
+    const serializedPages = await Promise.all(entries.slice(1).map(async ([key, value]) => {
+      if (!(value instanceof File)) throw new Error('Expected a binary student page entry.')
+      return {
+        key,
+        name: value.name,
+        type: value.type,
+        size: value.size,
+        text: await readBlobText(value),
+      }
+    }))
+    expect(serializedPages).toEqual([
+      {
+        key: 'pages',
+        name: 'student-page-1.png',
+        type: 'image/png',
+        size: 'STUDENT_PAGE_ONE_BYTES'.length,
+        text: 'STUDENT_PAGE_ONE_BYTES',
+      },
+      {
+        key: 'pages',
+        name: 'student-page-2.png',
+        type: 'image/png',
+        size: 'STUDENT_PAGE_TWO_BYTES'.length,
+        text: 'STUDENT_PAGE_TWO_BYTES',
+      },
     ])
-    expect(form.get('materialManifest')).toBeNull()
-    expect(form.get('textMaterials')).toBeNull()
-    expect(JSON.stringify(metadata)).not.toContain('DOCX_PRIVATE_BODY')
-    expect(JSON.stringify(metadata)).not.toContain('TASK_IMAGE_PRIVATE_BYTES')
-    expect(JSON.stringify(metadata)).not.toContain('TASK_PDF_PRIVATE_BYTES')
+
+    const allEntryPayloads = await Promise.all(entries.map(([, value]) => (
+      typeof value === 'string' ? value : readBlobText(value)
+    )))
+    const serializedMultipart = allEntryPayloads.join('\n')
+    for (const taskMaterialSentinel of [
+      'TASK_IMAGE_PRIVATE_BYTES',
+      'TASK_PDF_PRIVATE_BYTES',
+      'TASK_DOCX_PRIVATE_BYTES',
+      'PDF_PAGE_ONE_PRIVATE',
+      'PDF_PAGE_TWO_PRIVATE',
+      'DOCX_PRIVATE_BODY',
+    ]) {
+      expect(serializedMultipart).not.toContain(taskMaterialSentinel)
+    }
 
     expect(createOcrClient).not.toHaveBeenCalled()
     expect(mocks.unexpectedFetch).not.toHaveBeenCalled()
-    expect(capturedState?.essays.filter((candidate) => candidate.taskId === task.id)).toEqual([])
-    expect(capturedState?.essays.some((candidate) => (
-      candidate.taskId === task.id
-      && (candidate.status === 'pending_ocr' || candidate.status === 'ocr_running')
-    ))).toBe(false)
   })
 })
