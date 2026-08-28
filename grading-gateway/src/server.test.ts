@@ -275,6 +275,127 @@ describe('grading gateway server boundary', () => {
     expect(calls).toBe(1)
   })
 
+  it('enforces the grade-images hard deadline when the Provider ignores abort and later resolves', async () => {
+    const teacherText = 'Teacher-confirmed synthetic text.'
+    let calls = 0
+    let observedSignal: AbortSignal | undefined
+    let providerSettled = false
+    const diagnostics: unknown[] = []
+    const provider = fakeMultimodalProvider({
+      async gradeEssay(input) {
+        calls += 1
+        observedSignal = input.signal
+        return new Promise((resolve) => {
+          setTimeout(() => {
+            providerSettled = true
+            resolve(strictMultimodalPayload(teacherText))
+          }, 50)
+        })
+      },
+    })
+    const metadata = {
+      requestVersion: 'multimodal-grading-request-v2',
+      requestId: 'image-hard-deadline-resolve',
+      essayId: 'image-hard-deadline-essay',
+      pageIds: [],
+      confirmedTranscript: teacherText,
+      task: {
+        taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.',
+        writingRequirements: ['Write.'], constraints: ['English.'],
+        rubric: {
+          taskName: 'Synthetic task', materialSummary: 'Synthetic material.',
+          writingRequirements: ['Write.'], constraints: ['English.'],
+          dimensions: imageRubricDimensions(), reviewWarnings: [],
+        },
+      },
+    }
+
+    const response = await request(createServer({
+      multimodalProvider: provider,
+      timeoutMs: 5,
+      onDiagnostic: (diagnostic: unknown) => diagnostics.push(diagnostic),
+    }))
+      .post('/grading/grade-images')
+      .field('metadata', JSON.stringify(metadata))
+      .expect(503)
+
+    expect(response.body).toMatchObject({
+      requestId: 'image-hard-deadline-resolve',
+      status: 'failed',
+      error: { code: 'provider_timeout', retryable: true },
+    })
+    expect(response.body).not.toHaveProperty('resultVersion')
+    expect(calls).toBe(1)
+    expect(observedSignal?.aborted).toBe(true)
+    expect(providerSettled).toBe(false)
+    const responseSnapshot = JSON.stringify(response.body)
+
+    await new Promise((resolve) => setTimeout(resolve, 70))
+
+    expect(providerSettled).toBe(true)
+    expect(JSON.stringify(response.body)).toBe(responseSnapshot)
+    expect(diagnostics).toEqual([{ stage: 'provider', diagnosticCode: 'provider_timeout' }])
+  })
+
+  it('absorbs a late grade-images rejection after returning the hard-deadline failure', async () => {
+    const teacherText = 'Teacher-confirmed synthetic text.'
+    let observedSignal: AbortSignal | undefined
+    let providerSettled = false
+    const diagnostics: unknown[] = []
+    const provider = fakeMultimodalProvider({
+      async gradeEssay(input) {
+        observedSignal = input.signal
+        return new Promise<never>((_resolve, reject) => {
+          setTimeout(() => {
+            providerSettled = true
+            reject(new Error('PRIVATE-LATE-PROVIDER-REJECTION'))
+          }, 50)
+        })
+      },
+    })
+    const metadata = {
+      requestVersion: 'multimodal-grading-request-v2',
+      requestId: 'image-hard-deadline-reject',
+      essayId: 'image-hard-deadline-essay',
+      pageIds: [],
+      confirmedTranscript: teacherText,
+      task: {
+        taskId: 'image-task', fullScore: 15, materialSummary: 'Synthetic material.',
+        writingRequirements: ['Write.'], constraints: ['English.'],
+        rubric: {
+          taskName: 'Synthetic task', materialSummary: 'Synthetic material.',
+          writingRequirements: ['Write.'], constraints: ['English.'],
+          dimensions: imageRubricDimensions(), reviewWarnings: [],
+        },
+      },
+    }
+
+    const response = await request(createServer({
+      multimodalProvider: provider,
+      timeoutMs: 5,
+      onDiagnostic: (diagnostic: unknown) => diagnostics.push(diagnostic),
+    }))
+      .post('/grading/grade-images')
+      .field('metadata', JSON.stringify(metadata))
+      .expect(503)
+
+    expect(response.body).toMatchObject({
+      requestId: 'image-hard-deadline-reject',
+      status: 'failed',
+      error: { code: 'provider_timeout', retryable: true },
+    })
+    expect(JSON.stringify(response.body)).not.toContain('PRIVATE-LATE-PROVIDER-REJECTION')
+    expect(observedSignal?.aborted).toBe(true)
+    expect(providerSettled).toBe(false)
+    const responseSnapshot = JSON.stringify(response.body)
+
+    await new Promise((resolve) => setTimeout(resolve, 70))
+
+    expect(providerSettled).toBe(true)
+    expect(JSON.stringify(response.body)).toBe(responseSnapshot)
+    expect(diagnostics).toEqual([{ stage: 'provider', diagnosticCode: 'provider_timeout' }])
+  })
+
   it('emits a provider-stage parse diagnostic without adding internal fields to the HTTP response', async () => {
     const diagnostics: unknown[] = []
     const provider = fakeMultimodalProvider({

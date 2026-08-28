@@ -117,7 +117,7 @@ function taskMaterialUploadBoundary(request: Request, response: Response, next: 
   })
 }
 
-async function runTaskProviderWithDeadline<T>(
+async function runProviderWithDeadline<T>(
   controller: AbortController,
   timeoutMs: number,
   runProvider: () => Promise<T>,
@@ -126,7 +126,7 @@ async function runTaskProviderWithDeadline<T>(
   const deadline = new Promise<never>((_resolve, reject) => {
     timeout = setTimeout(() => {
       controller.abort()
-      reject(new Error('Task route provider deadline exceeded.'))
+      reject(new Error('Provider deadline exceeded.'))
     }, timeoutMs)
   })
   const providerResult = Promise.resolve().then(runProvider)
@@ -230,7 +230,7 @@ export function createServer(options: CreateServerOptions = {}) {
     const controller = new AbortController()
     try {
       const provider = options.multimodalProvider ?? getMultimodalProvider(options.providerName ?? 'mock')
-      const providerContext = await runTaskProviderWithDeadline(
+      const providerContext = await runProviderWithDeadline(
         controller,
         options.timeoutMs ?? 60_000,
         () => provider.generateMaterialContext({
@@ -276,7 +276,7 @@ export function createServer(options: CreateServerOptions = {}) {
     const controller = new AbortController()
     try {
       const provider = options.multimodalProvider ?? getMultimodalProvider(options.providerName ?? 'mock')
-      const providerRubric = await runTaskProviderWithDeadline(
+      const providerRubric = await runProviderWithDeadline(
         controller,
         options.timeoutMs ?? 60_000,
         () => provider.generateRubric({ ...validated.value, signal: controller.signal }),
@@ -335,10 +335,20 @@ export function createServer(options: CreateServerOptions = {}) {
       pages = images.value.pages
     }
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 60_000)
     try {
       const provider = options.multimodalProvider ?? getMultimodalProvider(options.providerName ?? 'mock')
-      const payload = await provider.gradeEssay({ requestId: metadata.requestId, task: metadata.task, essayId: metadata.essayId, pages, confirmedTranscript: metadata.confirmedTranscript, signal: controller.signal })
+      const payload = await runProviderWithDeadline(
+        controller,
+        options.timeoutMs ?? 60_000,
+        () => provider.gradeEssay({
+          requestId: metadata.requestId,
+          task: metadata.task,
+          essayId: metadata.essayId,
+          pages,
+          confirmedTranscript: metadata.confirmedTranscript,
+          signal: controller.signal,
+        }),
+      )
       const normalized = normalizeMultimodalResult(payload, { requestId: metadata.requestId, essayId: metadata.essayId, task: metadata.task, provider: 'remote', pageCount: pages.length, confirmedTranscript: metadata.confirmedTranscript, createdAt: (options.now ?? (() => new Date().toISOString()))() })
       if (!normalized.ok) {
         emitSafeGradingDiagnostic(options.onDiagnostic, { stage: 'normalization', diagnosticCode: normalized.error.diagnosticCode })
@@ -359,7 +369,7 @@ export function createServer(options: CreateServerOptions = {}) {
             : 'provider_unavailable',
       })
       response.status(503).json(safe)
-    } finally { clearTimeout(timeout) }
+    }
   })
   return app
 }
