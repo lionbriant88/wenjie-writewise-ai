@@ -96,6 +96,18 @@ function elapsedSince(startedAt: number, now: () => number) {
   return Number.isFinite(elapsed) && elapsed >= 0 ? Math.floor(elapsed) : 0
 }
 
+function unknownAttemptObservation(
+  attemptDiagnosticId: string,
+  providerElapsedMs: number,
+): ProviderAttemptObservation {
+  return {
+    attemptDiagnosticId,
+    finishReason: 'unknown',
+    usage: usageSnapshot(undefined),
+    providerElapsedMs,
+  }
+}
+
 const monthNumbers: Record<string, number> = {
   Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5,
   Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11,
@@ -254,7 +266,9 @@ export function createKimiTransport(options: KimiTransportOptions): KimiTranspor
     maxCompletionTokens: options.maxCompletionTokens,
     async complete(input) {
       if (!options.apiKey?.trim()) {
-        throw new GradingProviderError('provider_not_configured', '真实 AI Provider 尚未配置。', false)
+        throw new GradingProviderError('provider_not_configured', '真实 AI Provider 尚未配置。', false, undefined, {
+          termination: 'confirmed',
+        })
       }
       const now = options.monotonicNow ?? performance.now.bind(performance)
       const startedAt = now()
@@ -284,7 +298,10 @@ export function createKimiTransport(options: KimiTransportOptions): KimiTranspor
           },
         )
       } catch {
-        const details = errorDetails('unknown', elapsedSince(startedAt, now))
+        const providerElapsedMs = elapsedSince(startedAt, now)
+        const details = errorDetails('unknown', providerElapsedMs, {
+          attemptObservations: [unknownAttemptObservation(attemptDiagnosticId, providerElapsedMs)],
+        })
         if (input.signal.aborted) throw new GradingProviderError('provider_timeout', '真实 AI 批改超时。', true, undefined, details)
         throw unavailableError(details)
       }
@@ -293,13 +310,20 @@ export function createKimiTransport(options: KimiTransportOptions): KimiTranspor
         const retryAfterMs = response.status === 429
           ? parseRetryAfterMs(response.headers.get('retry-after'), options.wallClockNow ?? Date.now)
           : undefined
-        throw mapKimiHttpStatus(response.status, errorDetails('confirmed', providerElapsedMs, retryAfterMs === undefined ? {} : { retryAfterMs }))
+        throw mapKimiHttpStatus(response.status, errorDetails('confirmed', providerElapsedMs, {
+          ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+          attemptObservations: [unknownAttemptObservation(attemptDiagnosticId, providerElapsedMs)],
+        }))
       }
       let payload: unknown
       try {
         payload = await response.json()
       } catch {
-        throw invalidResponseError('response_json', errorDetails('confirmed', elapsedSince(startedAt, now), { finishReason: 'unknown' }))
+        const providerElapsedMs = elapsedSince(startedAt, now)
+        throw invalidResponseError('response_json', errorDetails('confirmed', providerElapsedMs, {
+          finishReason: 'unknown',
+          attemptObservations: [unknownAttemptObservation(attemptDiagnosticId, providerElapsedMs)],
+        }))
       }
       const providerElapsedMs = elapsedSince(startedAt, now)
       const choice = isRecord(payload) && Array.isArray(payload.choices) ? payload.choices[0] : undefined

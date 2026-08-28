@@ -110,7 +110,18 @@ describe('createKimiTransport', () => {
     })
 
     await expect(transport.complete(observedInput)).rejects.toMatchObject({
-      diagnosticCode: 'response_json', details: { termination: 'confirmed', providerElapsedMs: 44 },
+      diagnosticCode: 'response_json', details: {
+        termination: 'confirmed', providerElapsedMs: 44,
+        attemptObservations: [{
+          attemptDiagnosticId: 'attempt-delayed', finishReason: 'unknown', providerElapsedMs: 44,
+          usage: {
+            promptTokens: { status: 'unknown', reason: 'absent' },
+            completionTokens: { status: 'unknown', reason: 'absent' },
+            totalTokens: { status: 'unknown', reason: 'absent' },
+            cachedTokens: { status: 'unknown', reason: 'absent' },
+          },
+        }],
+      },
     })
   })
 
@@ -183,7 +194,12 @@ describe('createKimiTransport', () => {
   ])('preserves the valid 429 Retry-After %s without shortening it', async (_caseName, retryAfter, expectedMs) => {
     const transport = createKimiTransport(controlledOptions(responseFetch(429, '{"error":"SECRET upstream body"}', { 'Retry-After': retryAfter })))
     await expect(transport.complete(observedInput)).rejects.toMatchObject({
-      code: 'provider_rate_limited', details: { termination: 'confirmed', providerElapsedMs: 17, retryAfterMs: expectedMs },
+      code: 'provider_rate_limited', details: {
+        termination: 'confirmed', providerElapsedMs: 17, retryAfterMs: expectedMs,
+        attemptObservations: [{
+          attemptDiagnosticId: 'attempt-42', finishReason: 'unknown', providerElapsedMs: 17,
+        }],
+      },
     })
   })
 
@@ -205,13 +221,27 @@ describe('createKimiTransport', () => {
     expect((error as { details?: { retryAfterMs?: unknown } }).details?.retryAfterMs).toBeUndefined()
   })
 
-  it('marks fetch and abort failures as termination unknown while preserving only timing', async () => {
+  it.each([
+    ['abort', true, 'provider_timeout'],
+    ['network rejection', false, 'provider_unavailable'],
+  ] as const)('marks %s as termination unknown while preserving one content-free attempt', async (_label, aborted, code) => {
     const controller = new AbortController()
-    controller.abort()
+    if (aborted) controller.abort()
     const transport = createKimiTransport(controlledOptions(vi.fn().mockRejectedValue(new Error('SECRET network body'))))
     const error = await caughtError(transport.complete({ ...observedInput, signal: controller.signal }))
     expect(error).toMatchObject({
-      code: 'provider_timeout', retryable: true, details: { termination: 'unknown', providerElapsedMs: 17 },
+      code, retryable: true, details: {
+        termination: 'unknown', providerElapsedMs: 17,
+        attemptObservations: [{
+          attemptDiagnosticId: 'attempt-42', finishReason: 'unknown', providerElapsedMs: 17,
+          usage: {
+            promptTokens: { status: 'unknown', reason: 'absent' },
+            completionTokens: { status: 'unknown', reason: 'absent' },
+            totalTokens: { status: 'unknown', reason: 'absent' },
+            cachedTokens: { status: 'unknown', reason: 'absent' },
+          },
+        }],
+      },
     })
     expect(JSON.stringify(error)).not.toMatch(/SECRET|test-only-not-a-real-key|SGVsbG8/)
   })

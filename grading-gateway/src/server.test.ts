@@ -1,6 +1,11 @@
 import request from 'supertest'
 import { describe, expect, it } from 'vitest'
-import { createServer, MAX_IMAGE_GRADING_METADATA_BYTES } from './server.js'
+import {
+  createGatewayExecutionServices,
+  createServer,
+  MAX_IMAGE_GRADING_METADATA_BYTES,
+  type GatewayExecutionTimers,
+} from './server.js'
 import { MAX_TASK_MATERIAL_TEXT_FIELD_BYTES } from './multipartTaskMaterials.js'
 import { GradingProviderError } from './providers/providerTypes.js'
 import type { MultimodalProvider } from './providers/multimodalProviderTypes.js'
@@ -85,6 +90,86 @@ function legacyRuntimeConfig(): GatewayRuntimeConfig {
     kimi: {
       apiBase: 'https://api.moonshot.cn/v1', model: 'kimi-k3', reasoningEffort: 'low', promptCacheSecret: '',
       stageBudgets: { material_context: 16_384, rubric_generation: 16_384, essay_grading_images: 16_384, essay_regrading_text: 16_384 },
+    },
+  }
+}
+
+function memoryRuntimeConfig(overrides: Partial<GatewayRuntimeConfig> = {}): GatewayRuntimeConfig {
+  const legacy = legacyRuntimeConfig()
+  return {
+    ...legacy,
+    rubricStrategy: 'single-pass-v1',
+    essayPromptProfile: 'optimized-v1',
+    executionRegistry: 'memory-v1',
+    deadlines: { httpMs: 100, providerFinalMs: 200, settlementGraceMs: 20 },
+    registry: { terminalTtlMs: 1_000, maxEntries: 100 },
+    ...overrides,
+  }
+}
+
+class GatewayManualClock implements GatewayExecutionTimers {
+  now = 0
+  #nextId = 0
+  #timers = new Map<number, { at: number; callback: () => void }>()
+
+  setTimeout(callback: () => void, delayMs: number): unknown {
+    const id = ++this.#nextId
+    this.#timers.set(id, { at: this.now + delayMs, callback })
+    return id
+  }
+
+  clearTimeout(handle: unknown): void {
+    this.#timers.delete(handle as number)
+  }
+
+  advanceBy(milliseconds: number): void {
+    const target = this.now + milliseconds
+    while (true) {
+      const next = [...this.#timers.entries()]
+        .filter(([, timer]) => timer.at <= target)
+        .sort((left, right) => left[1].at - right[1].at || left[0] - right[0])[0]
+      if (!next) break
+      this.#timers.delete(next[0])
+      this.now = next[1].at
+      next[1].callback()
+    }
+    this.now = target
+  }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+async function waitFor(check: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (check()) return
+    await new Promise<void>((resolve) => setImmediate(resolve))
+  }
+  throw new Error('Timed out waiting for synthetic test state.')
+}
+
+function imageGradeMetadata(requestId: string, essayId = 'memory-essay', confirmedTranscript = 'Teacher-confirmed synthetic text.') {
+  return {
+    requestVersion: 'multimodal-grading-request-v2' as const,
+    requestId,
+    essayId,
+    pageIds: [],
+    confirmedTranscript,
+    task: {
+      taskId: 'memory-task', fullScore: 15, materialSummary: 'Synthetic material.',
+      writingRequirements: ['Write.'], constraints: ['English.'],
+      rubric: {
+        taskName: 'Synthetic task', materialSummary: 'Synthetic material.',
+        writingRequirements: ['Write.'], constraints: ['English.'],
+        dimensions: imageRubricDimensions(), reviewWarnings: [],
+      },
     },
   }
 }
@@ -1198,6 +1283,286 @@ describe('grading gateway server boundary', () => {
     expect(telemetry.snapshot()).toMatchObject({
       uniqueAttempts: 1,
       totals: { totalTokens: { status: 'known', value: 25 } },
+    })
+  })
+
+  it('deduplicates concurrent memory-v1 grading while binding each caller request ID', async () => {
+    const providerResult = deferred<ReturnType<typeof strictMultimodalPayload>>()
+    let calls = 0
+    const provider = fakeMultimodalProvider({
+      async gradeEssay() {
+        calls += 1
+        return providerResult.promise
+      },
+    })
+    const app = createServer({ multimodalProvider: provider, runtimeConfig: memoryRuntimeConfig() })
+    const first = request(app).post('/grading/grade-images')
+      .field('metadata', JSON.stringify(imageGradeMetadata('memory-caller-a')))
+    const second = request(app).post('/grading/grade-images')
+      .field('metadata', JSON.stringify(imageGradeMetadata('memory-caller-b')))
+    const responses = Promise.all([first, second])
+
+    await waitFor(() => calls === 1)
+    providerResult.resolve(strictMultimodalPayload('Teacher-confirmed synthetic text.'))
+    const [firstResponse, secondResponse] = await responses
+
+    expect(firstResponse.status).toBe(200)
+    expect(secondResponse.status).toBe(200)
+    expect(new Set([firstResponse.body.requestId, secondResponse.body.requestId]))
+      .toEqual(new Set(['memory-caller-a', 'memory-caller-b']))
+    expect(calls).toBe(1)
+    expect(JSON.stringify([firstResponse.body, secondResponse.body]))
+      .not.toMatch(/logicalRequestId|payloadHash|attempts|telemetry|registry/i)
+  })
+
+  it('returns a content-free 409 when one memory-v1 logical request ID is reused with another payload', async () => {
+    const providerResult = deferred<ReturnType<typeof strictMultimodalPayload>>()
+    let calls = 0
+    const provider = fakeMultimodalProvider({
+      async gradeEssay() {
+        calls += 1
+        return providerResult.promise
+      },
+    })
+    const app = createServer({ multimodalProvider: provider, runtimeConfig: memoryRuntimeConfig() })
+    const firstMetadata = imageGradeMetadata('identity-first')
+    const first = request(app).post('/grading/grade-images')
+      .field('metadata', JSON.stringify(firstMetadata))
+    const firstPromise = Promise.resolve(first)
+    await waitFor(() => calls === 1)
+
+    const privateMarker = 'PRIVATE-CONFLICTING-NONPROMPT-FIELD'
+    const conflicting = {
+      ...imageGradeMetadata('identity-conflict'),
+      task: {
+        ...firstMetadata.task,
+        rubric: { ...firstMetadata.task.rubric, taskName: privateMarker },
+      },
+    }
+    const conflict = await request(app).post('/grading/grade-images')
+      .field('metadata', JSON.stringify(conflicting))
+      .expect(409)
+    expect(conflict.body).toMatchObject({
+      requestId: 'identity-conflict', status: 'failed',
+      error: { code: 'invalid_request', retryable: false },
+    })
+    expect(JSON.stringify(conflict.body)).not.toMatch(/PRIVATE|digest|hash|logical/i)
+    expect(calls).toBe(1)
+
+    providerResult.resolve(strictMultimodalPayload(firstMetadata.confirmedTranscript))
+    await firstPromise
+  })
+
+  it('returns result-unknown at the absolute caller deadline and reattaches to one late cached success', async () => {
+    const clock = new GatewayManualClock()
+    const runtimeConfig = memoryRuntimeConfig()
+    const executionServices = createGatewayExecutionServices(runtimeConfig, {
+      now: () => clock.now,
+      timers: clock,
+      random: () => 0,
+    })
+    const providerResult = deferred<ReturnType<typeof strictMultimodalPayload>>()
+    let calls = 0
+    let signal: AbortSignal | undefined
+    const provider = fakeMultimodalProvider({
+      async gradeEssay(input) {
+        calls += 1
+        signal = input.signal
+        return providerResult.promise
+      },
+    })
+    const app = createServer({
+      multimodalProvider: provider,
+      runtimeConfig,
+      executionServices,
+      monotonicNow: () => clock.now,
+      executionTimers: clock,
+    })
+    const firstPromise = Promise.resolve(request(app).post('/grading/grade-images')
+      .field('metadata', JSON.stringify(imageGradeMetadata('deadline-first'))))
+    await waitFor(() => calls === 1)
+
+    clock.advanceBy(runtimeConfig.deadlines.httpMs)
+    const first = await firstPromise
+    expect(first.status).toBe(503)
+    expect(first.body).toEqual({
+      requestId: 'deadline-first', status: 'failed',
+      error: {
+        code: 'provider_result_unknown',
+        message: '批改结果状态暂时未知，请稍后检查同一任务。',
+        retryable: false,
+      },
+    })
+    expect(signal?.aborted).toBe(false)
+    expect(executionServices.admission.snapshot().activeLeases).toBe(1)
+
+    providerResult.resolve(strictMultimodalPayload('Teacher-confirmed synthetic text.'))
+    await waitFor(() => executionServices.admission.snapshot().activeLeases === 0)
+    const reattached = await request(app).post('/grading/grade-images')
+      .field('metadata', JSON.stringify(imageGradeMetadata('deadline-reattach')))
+      .expect(200)
+    expect(reattached.body.requestId).toBe('deadline-reattach')
+    expect(calls).toBe(1)
+  })
+
+  it('retains an unresolved orphan against the hard cap without inventing a Retry-After time', async () => {
+    const clock = new GatewayManualClock()
+    const runtimeConfig = memoryRuntimeConfig({ admission: { hardLimit: 1 } })
+    const executionServices = createGatewayExecutionServices(runtimeConfig, {
+      now: () => clock.now,
+      timers: clock,
+      random: () => 0,
+    })
+    let calls = 0
+    const never = deferred<ReturnType<typeof strictMultimodalPayload>>()
+    const provider = fakeMultimodalProvider({
+      async gradeEssay() {
+        calls += 1
+        return never.promise
+      },
+    })
+    const app = createServer({
+      multimodalProvider: provider,
+      runtimeConfig,
+      executionServices,
+      monotonicNow: () => clock.now,
+      executionTimers: clock,
+    })
+    const firstPromise = Promise.resolve(request(app).post('/grading/grade-images')
+      .field('metadata', JSON.stringify(imageGradeMetadata('orphan-first'))))
+    await waitFor(() => calls === 1)
+    clock.advanceBy(runtimeConfig.deadlines.httpMs)
+    await firstPromise
+    clock.advanceBy(
+      runtimeConfig.deadlines.providerFinalMs
+      + runtimeConfig.deadlines.settlementGraceMs
+      - runtimeConfig.deadlines.httpMs,
+    )
+
+    expect(executionServices.registry.snapshot().states.orphaned_unknown).toBe(1)
+    expect(executionServices.admission.snapshot().activeLeases).toBe(1)
+    const blocked = await request(app).post('/grading/grade-images')
+      .field('metadata', JSON.stringify(imageGradeMetadata('orphan-blocked', 'another-essay')))
+      .expect(429)
+    expect(blocked.body).toMatchObject({
+      requestId: 'orphan-blocked', status: 'failed',
+      error: { code: 'provider_rate_limited' },
+    })
+    expect(blocked.headers).not.toHaveProperty('retry-after')
+    expect(calls).toBe(1)
+  })
+
+  it('projects truthful rate-limit timing only into Retry-After and exposes the header through CORS', async () => {
+    const runtimeConfig = memoryRuntimeConfig()
+    const executionServices = createGatewayExecutionServices(runtimeConfig, { random: () => 0 })
+    const provider = fakeMultimodalProvider({
+      async gradeEssay() {
+        throw new GradingProviderError('provider_rate_limited', 'PRIVATE-UPSTREAM-BODY', true, undefined, {
+          termination: 'confirmed', retryAfterMs: 2_500,
+        })
+      },
+    })
+    const response = await request(createServer({
+      multimodalProvider: provider,
+      runtimeConfig,
+      executionServices,
+    }))
+      .post('/grading/grade-images')
+      .set('Origin', 'http://127.0.0.1:5173')
+      .field('metadata', JSON.stringify(imageGradeMetadata('rate-limit-header')))
+      .expect(429)
+
+    expect(response.headers['retry-after']).toBe('3')
+    expect(response.headers['access-control-expose-headers']).toContain('Retry-After')
+    expect(response.body).toMatchObject({
+      requestId: 'rate-limit-header', status: 'failed',
+      error: { code: 'provider_rate_limited' },
+    })
+    expect(response.body).not.toHaveProperty('retryAfterMs')
+    expect(JSON.stringify(response.body)).not.toContain('PRIVATE-UPSTREAM-BODY')
+  })
+
+  it('tracks one-shot material work after HTTP timeout and shares its hard admission cap with rubric work', async () => {
+    const clock = new GatewayManualClock()
+    const runtimeConfig = memoryRuntimeConfig({ admission: { hardLimit: 1 } })
+    const executionServices = createGatewayExecutionServices(runtimeConfig, {
+      now: () => clock.now,
+      timers: clock,
+      random: () => 0,
+    })
+    const materialResult = deferred<Awaited<ReturnType<MultimodalProvider['generateMaterialContext']>>>()
+    const providerTelemetry = createProviderTelemetryRecorder()
+    let materialCalls = 0
+    let rubricCalls = 0
+    let materialSignal: AbortSignal | undefined
+    const provider: MultimodalProvider = {
+      async generateMaterialContext(input) {
+        materialCalls += 1
+        materialSignal = input.signal
+        return materialResult.promise
+      },
+      async generateRubric() {
+        rubricCalls += 1
+        return { value: generatedRubricFixture(), attempts: [] }
+      },
+      async gradeEssay() { throw new Error('not used') },
+    }
+    const app = createServer({
+      multimodalProvider: provider,
+      runtimeConfig,
+      executionServices,
+      monotonicNow: () => clock.now,
+      executionTimers: clock,
+      providerTelemetry,
+    })
+    const materialPromise = Promise.resolve(request(app).post('/tasks/material-context')
+      .field('requestId', 'one-shot-material')
+      .field('fullScore', '15')
+      .field('writingRequirement', 'Teacher requirement.')
+      .field('materialManifest', JSON.stringify([{ id: 'text-1', kind: 'text', textIndex: 0 }]))
+      .field('textMaterials', JSON.stringify([{ displayName: 'prompt.docx', text: 'Synthetic source.' }])))
+    await waitFor(() => materialCalls === 1)
+    clock.advanceBy(runtimeConfig.deadlines.httpMs)
+    const timedOut = await materialPromise
+    expect(timedOut.status).toBe(503)
+    expect(timedOut.body).toMatchObject({
+      requestId: 'one-shot-material', status: 'failed',
+      error: { code: 'provider_result_unknown', retryable: false },
+    })
+    expect(materialSignal?.aborted).toBe(false)
+    expect(executionServices.admission.snapshot().activeLeases).toBe(1)
+    expect(providerTelemetry.snapshot().uniqueAttempts).toBe(0)
+
+    const blockedRubric = await request(app).post('/tasks/rubric')
+      .field('requestId', 'one-shot-rubric')
+      .field('fullScore', '15')
+      .field('writingRequirement', 'Teacher requirement.')
+      .field('materialManifest', JSON.stringify([{ id: 'text-1', kind: 'text', textIndex: 0 }]))
+      .field('textMaterials', JSON.stringify([{ displayName: 'prompt.docx', text: 'Synthetic source.' }]))
+      .expect(429)
+    expect(blockedRubric.body.error.code).toBe('provider_rate_limited')
+    expect(blockedRubric.headers).not.toHaveProperty('retry-after')
+    expect(rubricCalls).toBe(0)
+
+    materialResult.resolve({
+      value: materialContextFixture(),
+      attempts: [{
+        attemptDiagnosticId: '11111111-1111-4111-8111-111111111111',
+        finishReason: 'stop',
+        providerElapsedMs: 123,
+        usage: {
+          promptTokens: { status: 'known', value: 12 },
+          completionTokens: { status: 'known', value: 8 },
+          totalTokens: { status: 'known', value: 20 },
+          cachedTokens: { status: 'unknown', reason: 'absent' },
+        },
+      }],
+    })
+    await waitFor(() => executionServices.admission.snapshot().activeLeases === 0)
+    expect(materialCalls).toBe(1)
+    expect(providerTelemetry.snapshot()).toMatchObject({
+      uniqueAttempts: 1,
+      totals: { totalTokens: { status: 'known', value: 20 } },
     })
   })
 

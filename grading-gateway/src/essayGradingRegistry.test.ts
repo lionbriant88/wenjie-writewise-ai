@@ -284,6 +284,29 @@ describe('EssayGradingRegistry deadlines and orphan lifecycle', () => {
     })
   })
 
+  it('preserves a truthful late 429 gate and header delay after the entry became orphaned', async () => {
+    const clock = new ManualClock()
+    const admission = controller(clock, 1)
+    const registry = new EssayGradingRegistry(registryOptions(clock, { admission }))
+    const completion = deferred<RegistryExecutionResult>()
+    const pending = registry.attach(attachInput(() => completion.promise))
+    clock.advanceBy(120)
+    await expect(pending).resolves.toMatchObject({ state: 'orphaned_unknown' })
+
+    completion.reject(confirmedError('provider_rate_limited', true, 400))
+    await flushMicrotasks()
+    expect(registry.inspect('logical-grade-v1:opaque-a')).toMatchObject({
+      state: 'failed_final', retryAt: 520, hasActiveLease: false,
+    })
+    expect(admission.snapshot()).toMatchObject({ activeLeases: 0, rateLimitNotBeforeMs: 520 })
+    expect(await registry.attach(attachInput(() => { throw new Error('must not run') }, {
+      callerRequestId: 'caller-after-late-429',
+    }))).toMatchObject({
+      disposition: 'cached', retryAfterMs: 400,
+      response: { requestId: 'caller-after-late-429', error: { code: 'provider_rate_limited', retryable: false } },
+    })
+  })
+
   it('immediately orphans termination-unknown rejection, increments neither retry counter, and never releases or retries', async () => {
     const clock = new ManualClock()
     const admission = controller(clock, 1)
@@ -440,6 +463,7 @@ describe('EssayGradingRegistry bounded retry state machine', () => {
     let outcome = await registry.attach(attachInput(execute))
     while (outcome.state === 'failed_retryable') outcome = await registry.attach(attachInput(execute))
     expect(outcome).toMatchObject({ state: 'failed_final', response: { error: { code: 'provider_rate_limited', retryable: false } } })
+    expect(outcome).not.toHaveProperty('retryAfterMs')
     expect(registry.inspect('logical-grade-v1:opaque-a')?.rateLimitRequeues).toBe(5)
     expect((await registry.attach(attachInput(execute))).disposition).toBe('cached')
     expect(calls).toBe(6)
@@ -459,11 +483,16 @@ describe('EssayGradingRegistry bounded retry state machine', () => {
       expect(outcome.state).toBe('failed_retryable')
       outcome = await registry.attach(attachInput(execute))
     }
-    expect(outcome).toMatchObject({ state: 'failed_final', response: { error: { code: 'provider_rate_limited', retryable: false } } })
+    expect(outcome).toMatchObject({
+      state: 'failed_final', retryAfterMs: 1_001,
+      response: { error: { code: 'provider_rate_limited', retryable: false } },
+    })
     expect(calls).toBe(6)
     expect(admission.snapshot().pauseReason).toBe('long_retry_after')
     admission.resume()
-    expect((await registry.attach(attachInput(execute))).disposition).toBe('cached')
+    expect(await registry.attach(attachInput(execute))).toMatchObject({
+      disposition: 'cached', retryAfterMs: 1_001,
+    })
     expect(calls).toBe(6)
   })
 

@@ -422,8 +422,19 @@ export class EssayGradingRegistry {
         ? error
         : new GradingProviderError('provider_unavailable', SAFE_PROVIDER_MESSAGES.provider_unavailable, true, undefined, { termination: 'confirmed' })
       if (entry.state === 'orphaned_unknown') {
-        this.#releaseLease(entry, { kind: 'confirmed_failure' })
-        this.#transitionFinal(entry, providerFailureTemplate(providerError, false), false)
+        if (providerError.code === 'provider_rate_limited') {
+          const now = this.#now()
+          const retryAfterMs = this.#validRetryAfter(providerError.details?.retryAfterMs)
+          const retryAt = retryAfterMs === undefined ? undefined : this.#safeFuture(now, retryAfterMs)
+          this.#releaseLease(entry, { kind: 'rate_limited', notBeforeMs: retryAt ?? now })
+          if (retryAfterMs !== undefined && retryAfterMs > this.#options.retryAfterPauseMs) {
+            this.#options.admission.pause('long_retry_after')
+          }
+          this.#transitionFinal(entry, providerFailureTemplate(providerError, false), false, retryAt)
+        } else {
+          this.#releaseLease(entry, { kind: 'confirmed_failure' })
+          this.#transitionFinal(entry, providerFailureTemplate(providerError, false), false)
+        }
         return
       }
       this.#handleConfirmedFailure(entry, providerError)
@@ -437,11 +448,12 @@ export class EssayGradingRegistry {
     if (error.code === 'provider_rate_limited') {
       const retryAfterMs = this.#validRetryAfter(error.details?.retryAfterMs)
       if (entry.counters.rateLimitRequeues >= this.#options.maxRateLimitRequeues) {
-        this.#releaseLease(entry, { kind: 'rate_limited', notBeforeMs: now })
+        const retryAt = retryAfterMs === undefined ? undefined : this.#safeFuture(now, retryAfterMs)
+        this.#releaseLease(entry, { kind: 'rate_limited', notBeforeMs: retryAt ?? now })
         if (retryAfterMs !== undefined && retryAfterMs > this.#options.retryAfterPauseMs) {
           this.#options.admission.pause('long_retry_after')
         }
-        this.#transitionFinal(entry, providerFailureTemplate(error, false), true)
+        this.#transitionFinal(entry, providerFailureTemplate(error, false), true, retryAt)
         return
       }
       if (retryAfterMs !== undefined && retryAfterMs > this.#options.retryAfterPauseMs) {
@@ -500,11 +512,16 @@ export class EssayGradingRegistry {
     this.#resolveTransition(entry)
   }
 
-  #transitionFinal(entry: RegistryEntry, failure: FailureTemplate, resolveCurrent: boolean): void {
+  #transitionFinal(
+    entry: RegistryEntry,
+    failure: FailureTemplate,
+    resolveCurrent: boolean,
+    retryAt?: number,
+  ): void {
     entry.state = 'failed_final'
     entry.failureTemplate = failure
     entry.successTemplate = undefined
-    entry.retryAt = undefined
+    entry.retryAt = retryAt
     entry.terminalAt = this.#now()
     entry.execute = undefined
     this.#clearAttemptRuntime(entry, false)
@@ -547,7 +564,7 @@ export class EssayGradingRegistry {
       return { disposition, state: entry.state, response: bindSuccess(entry.successTemplate, requestId) }
     }
     if (!entry.failureTemplate || entry.state === 'in_flight') throw new Error(INVALID_CONFIG_MESSAGE)
-    const remaining = retryAfterMs ?? (entry.state === 'failed_retryable' && entry.retryAt !== undefined
+    const remaining = retryAfterMs ?? ((entry.state === 'failed_retryable' || entry.state === 'failed_final') && entry.retryAt !== undefined
       ? Math.max(0, Math.ceil(entry.retryAt - this.#now()))
       : 0)
     return {

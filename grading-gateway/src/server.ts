@@ -12,6 +12,12 @@ import {
   validateTaskMaterialMultipart,
 } from './multipartTaskMaterials.js'
 import { validateTaskMaterialContext } from './multimodal/materialContextContract.js'
+import { GRADING_POLICY_VERSION } from './multimodal/gradingPolicy.js'
+import { createCanonicalGradeIdentity } from './multimodal/logicalRequestIdentity.js'
+import {
+  ESSAY_PROVIDER_SCHEMA_VERSION,
+  LEGACY_ESSAY_PROVIDER_SCHEMA_VERSION,
+} from './multimodal/modelTaskContext.js'
 import { normalizeMultimodalResult } from './multimodal/normalizeMultimodalResult.js'
 import { validateConfirmedRubric, validateGeneratedRubric } from './multimodal/validateRubric.js'
 import type { GatewayImageInput, MultimodalProvider } from './providers/multimodalProviderTypes.js'
@@ -27,6 +33,55 @@ import {
   recordUniqueProviderAttempts,
   type ProviderTelemetryRecorder,
 } from './providerTelemetry.js'
+import { EssayGradingRegistry, type RegistryAttachResult, type RegistryTimers } from './essayGradingRegistry.js'
+import { OneShotProviderExecutionTracker, type OneShotExecutionOutcome } from './oneShotProviderExecution.js'
+import { ProviderAdmissionController } from './providerAdmissionController.js'
+
+export interface GatewayExecutionTimers extends RegistryTimers {}
+
+export interface GatewayExecutionServices {
+  admission: ProviderAdmissionController
+  registry: EssayGradingRegistry
+  oneShot: OneShotProviderExecutionTracker
+}
+
+export interface GatewayExecutionServiceOptions {
+  now?: () => number
+  random?: () => number
+  timers?: GatewayExecutionTimers
+}
+
+export function createGatewayExecutionServices(
+  runtimeConfig: GatewayRuntimeConfig,
+  options: GatewayExecutionServiceOptions = {},
+): GatewayExecutionServices {
+  const admission = new ProviderAdmissionController({
+    hardLimit: runtimeConfig.admission.hardLimit,
+    ...(options.now ? { now: options.now } : {}),
+  })
+  const shared = {
+    admission,
+    providerFinalDeadlineMs: runtimeConfig.deadlines.providerFinalMs,
+    settlementGraceMs: runtimeConfig.deadlines.settlementGraceMs,
+    retryAfterPauseMs: runtimeConfig.retry.pauseAfterMs,
+    ...(options.now ? { now: options.now } : {}),
+    ...(options.timers ? { timers: options.timers } : {}),
+  }
+  return {
+    admission,
+    registry: new EssayGradingRegistry({
+      ...shared,
+      terminalTtlMs: runtimeConfig.registry.terminalTtlMs,
+      maxEntries: runtimeConfig.registry.maxEntries,
+      maxProviderAttempts: runtimeConfig.retry.maxProviderAttempts,
+      maxRateLimitRequeues: runtimeConfig.retry.maxRateLimitRequeues,
+      retryBaseMs: runtimeConfig.retry.baseMs,
+      retryCapMs: runtimeConfig.retry.capMs,
+      ...(options.random ? { random: options.random } : {}),
+    }),
+    oneShot: new OneShotProviderExecutionTracker(shared),
+  }
+}
 
 export interface CreateServerOptions {
   allowedOrigin?: string
@@ -36,6 +91,9 @@ export interface CreateServerOptions {
   now?: () => string
   onDiagnostic?: SafeGradingDiagnosticSink
   providerTelemetry?: ProviderTelemetryRecorder
+  executionServices?: GatewayExecutionServices
+  monotonicNow?: () => number
+  executionTimers?: GatewayExecutionTimers
 }
 
 const taskMaterialUpload = multer({
@@ -251,7 +309,9 @@ function safeRuntimeSnapshot(config: GatewayRuntimeConfig | undefined) {
 
 function providerFor(options: CreateServerOptions): MultimodalProvider {
   if (options.multimodalProvider) return options.multimodalProvider
-  throw new GradingProviderError('provider_not_configured', 'AI Provider is not configured.', false)
+  throw new GradingProviderError('provider_not_configured', 'AI Provider is not configured.', false, undefined, {
+    termination: 'confirmed',
+  })
 }
 
 function telemetryContext(
@@ -290,15 +350,150 @@ function runObservedProviderWithDeadline<T>(
   runProvider: () => Promise<ProviderCallResult<T>>,
 ): Promise<ProviderCallResult<T>> {
   return runProviderWithDeadline(controller, timeoutMs, async () => {
-    try {
-      const result = await runProvider()
-      recordUniqueProviderAttempts(telemetry, telemetryContext(options, stage, 'success'), result.attempts)
-      return result
-    } catch (error) {
-      recordErrorAttempts(telemetry, options, stage, error)
-      throw error
-    }
+    return runObservedProvider(telemetry, options, stage, runProvider)
   })
+}
+
+async function runObservedProvider<T>(
+  telemetry: ProviderTelemetryRecorder,
+  options: CreateServerOptions,
+  stage: ProviderCallStage,
+  runProvider: () => Promise<ProviderCallResult<T>>,
+): Promise<ProviderCallResult<T>> {
+  try {
+    const result = await runProvider()
+    recordUniqueProviderAttempts(telemetry, telemetryContext(options, stage, 'success'), result.attempts)
+    return result
+  } catch (error) {
+    recordErrorAttempts(telemetry, options, stage, error)
+    throw error
+  }
+}
+
+const RESULT_UNKNOWN_MESSAGE = '批改结果状态暂时未知，请稍后检查同一任务。'
+const PROVIDER_TIMEOUT_MESSAGE = 'AI grading timed out.'
+const defaultGatewayExecutionTimers: GatewayExecutionTimers = {
+  setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
+  clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+}
+
+function validMonotonicNow(now: () => number): number {
+  const value = now()
+  if (!Number.isFinite(value) || value < 0) throw new Error('Invalid injected monotonic clock.')
+  return value
+}
+
+function setTruthfulRetryAfter(response: Response, retryAfterMs: number | undefined): void {
+  if (retryAfterMs === undefined || !Number.isFinite(retryAfterMs) || retryAfterMs < 0) return
+  const seconds = Math.ceil(retryAfterMs / 1_000)
+  if (!Number.isSafeInteger(seconds)) return
+  response.setHeader('Retry-After', String(seconds))
+}
+
+function sendRegistryResult(response: Response, result: RegistryAttachResult): void {
+  if (result.response.status !== 'failed') {
+    response.json(result.response)
+    return
+  }
+  const code = result.response.error.code
+  const status = result.disposition === 'identity_conflict'
+    ? 409
+    : code === 'provider_rate_limited'
+      ? 429
+      : 503
+  if (status === 429) setTruthfulRetryAfter(response, result.retryAfterMs)
+  response.status(status).json(result.response)
+}
+
+function admissionFailure(
+  requestId: string,
+  services: GatewayExecutionServices,
+  outcome: Extract<OneShotExecutionOutcome<unknown>, { kind: 'admission_rejected' }>,
+) {
+  const pauseReason = services.admission.snapshot().pauseReason
+  const code = pauseReason === 'provider_auth_failed'
+    ? 'provider_auth_failed'
+    : pauseReason === 'provider_balance_unavailable'
+      ? 'provider_balance_unavailable'
+      : pauseReason === 'provider_not_configured'
+        ? 'provider_not_configured'
+        : 'provider_rate_limited'
+  return {
+    status: code === 'provider_rate_limited' ? 429 : 503,
+    body: failure(requestId, {
+      code,
+      message: code === 'provider_rate_limited'
+        ? PROVIDER_SAFE_MESSAGES.provider_rate_limited
+        : PROVIDER_SAFE_MESSAGES[code],
+    }, code === 'provider_rate_limited'),
+    retryAfterMs: code === 'provider_rate_limited' ? outcome.decision.retryAfterMs : undefined,
+  }
+}
+
+function sendOneShotFailure(
+  response: Response,
+  requestId: string,
+  services: GatewayExecutionServices,
+  outcome: Exclude<OneShotExecutionOutcome<unknown>, { kind: 'success' }>,
+): void {
+  if (outcome.kind === 'result_unknown') {
+    response.status(503).json(failure(requestId, {
+      code: 'provider_result_unknown', message: RESULT_UNKNOWN_MESSAGE,
+    }, false))
+    return
+  }
+  if (outcome.kind === 'caller_timeout_before_dispatch') {
+    response.status(503).json(failure(requestId, {
+      code: 'provider_timeout', message: PROVIDER_TIMEOUT_MESSAGE,
+    }, true))
+    return
+  }
+  if (outcome.kind === 'admission_rejected') {
+    const safe = admissionFailure(requestId, services, outcome)
+    if (safe.status === 429) setTruthfulRetryAfter(response, safe.retryAfterMs)
+    response.status(safe.status).json(safe.body)
+    return
+  }
+  const safe = toSafeFailure(requestId, outcome.error)
+  const providerError = outcome.error instanceof GradingProviderError ? outcome.error : undefined
+  const isRateLimited = providerError?.code === 'provider_rate_limited'
+  if (isRateLimited) setTruthfulRetryAfter(response, providerError.details?.retryAfterMs)
+  response.status(isRateLimited ? 429 : 503).json(safe)
+}
+
+type RegistryCallerOutcome =
+  | { kind: 'result'; value: RegistryAttachResult }
+  | { kind: 'result_unknown' }
+  | { kind: 'caller_timeout_before_dispatch' }
+
+async function attachRegistryUntilCallerDeadline(input: {
+  services: GatewayExecutionServices
+  receivedAt: number
+  httpDeadlineMs: number
+  logicalRequestId: string
+  timers: GatewayExecutionTimers
+  now: () => number
+  attach(): Promise<RegistryAttachResult>
+}): Promise<RegistryCallerOutcome> {
+  const current = validMonotonicNow(input.now)
+  const deadlineAt = input.receivedAt + input.httpDeadlineMs
+  if (!Number.isFinite(deadlineAt)) throw new Error('Invalid injected server deadline.')
+  if (current >= deadlineAt) return { kind: 'caller_timeout_before_dispatch' }
+
+  let timer: unknown
+  const deadline = new Promise<RegistryCallerOutcome>((resolve) => {
+    timer = input.timers.setTimeout(() => {
+      timer = undefined
+      const state = input.services.registry.inspect(input.logicalRequestId)?.state
+      resolve(state === 'in_flight' || state === 'orphaned_unknown'
+        ? { kind: 'result_unknown' }
+        : { kind: 'caller_timeout_before_dispatch' })
+    }, deadlineAt - current)
+  })
+  const attachment = Promise.resolve().then(input.attach).then((value): RegistryCallerOutcome => ({ kind: 'result', value }))
+  const outcome = await Promise.race([attachment, deadline])
+  if (timer !== undefined) input.timers.clearTimeout(timer)
+  return outcome
 }
 
 function safeImageOperationMetadata(pages: readonly GatewayImageInput[]) {
@@ -316,16 +511,34 @@ function safeImageOperationMetadata(pages: readonly GatewayImageInput[]) {
 export function createServer(options: CreateServerOptions = {}) {
   const timeoutMs = options.timeoutMs ?? options.runtimeConfig?.deadlines.httpMs ?? 60_000
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error('Invalid injected server deadline.')
+  const monotonicNow = options.monotonicNow ?? performance.now.bind(performance)
+  const executionTimers = options.executionTimers ?? defaultGatewayExecutionTimers
+  const memoryExecution = options.runtimeConfig?.executionRegistry === 'memory-v1'
+    ? options.executionServices ?? createGatewayExecutionServices(options.runtimeConfig, {
+        now: monotonicNow,
+        timers: executionTimers,
+      })
+    : undefined
+  if (options.executionServices && !memoryExecution) {
+    throw new Error('Injected execution services require the memory-v1 execution profile.')
+  }
   const telemetry = options.providerTelemetry ?? createProviderTelemetryRecorder()
   const app = express()
+  const routeReceiptTimes = new WeakMap<Request, number>()
+  const captureRouteReceipt = (request: Request, _response: Response, next: NextFunction) => {
+    routeReceiptTimes.set(request, validMonotonicNow(monotonicNow))
+    next()
+  }
+  const receivedAt = (request: Request) => routeReceiptTimes.get(request) ?? validMonotonicNow(monotonicNow)
   app.use(cors({
     origin: options.allowedOrigin ?? 'http://127.0.0.1:5173',
     allowedHeaders: ['Content-Type', 'X-Grading-Request-Id'],
+    exposedHeaders: ['Retry-After'],
   }))
   app.get('/health', (_request, response) => {
     response.json({ ok: true, service: 'grading-gateway', runtime: safeRuntimeSnapshot(options.runtimeConfig) })
   })
-  app.post('/tasks/material-context', taskMaterialUploadBoundary, async (request, response) => {
+  app.post('/tasks/material-context', captureRouteReceipt, taskMaterialUploadBoundary, async (request, response) => {
     const files = Array.isArray(request.files) ? request.files : undefined
     const validated = validateTaskMaterialMultipart(request.body, files, 'required')
     if (!validated.ok) {
@@ -336,6 +549,45 @@ export function createServer(options: CreateServerOptions = {}) {
     const writingRequirement = validated.value.writingRequirement
     if (!writingRequirement) {
       response.status(400).json(failure(validated.value.requestId, { code: 'invalid_request', message: 'Task material request is invalid.' }, false))
+      return
+    }
+
+    if (memoryExecution) {
+      const outcome = await memoryExecution.oneShot.run({
+        receivedAt: receivedAt(request),
+        httpDeadlineMs: timeoutMs,
+        execute: ({ signal }) => {
+          const provider = providerFor(options)
+          return runObservedProvider(telemetry, options, 'material_context', () => provider.generateMaterialContext({
+            requestId: validated.value.requestId,
+            fullScore: validated.value.fullScore,
+            writingRequirement,
+            materials: validated.value.materials,
+            signal,
+          }))
+        },
+      })
+      if (outcome.kind !== 'success') {
+        emitSafeGradingDiagnostic(options.onDiagnostic, {
+          stage: 'provider',
+          diagnosticCode: outcome.kind === 'failure' && outcome.error instanceof GradingProviderError
+            ? outcome.error.diagnosticCode ?? outcome.error.code
+            : outcome.kind === 'caller_timeout_before_dispatch'
+              ? 'provider_timeout'
+              : outcome.kind === 'result_unknown'
+                ? 'provider_result_unknown'
+                : 'provider_rate_limited',
+        })
+        sendOneShotFailure(response, validated.value.requestId, memoryExecution, outcome)
+        return
+      }
+      const context = validateTaskMaterialContext(outcome.value.value)
+      if (!context.ok) {
+        emitSafeGradingDiagnostic(options.onDiagnostic, { stage: 'normalization', diagnosticCode: 'material_context_validation' })
+        response.status(503).json(failure(validated.value.requestId, context.error, true))
+        return
+      }
+      response.json({ requestId: validated.value.requestId, status: 'success', materialContext: context.value })
       return
     }
 
@@ -379,12 +631,48 @@ export function createServer(options: CreateServerOptions = {}) {
     }
   })
 
-  app.post('/tasks/rubric', taskMaterialUploadBoundary, async (request, response) => {
+  app.post('/tasks/rubric', captureRouteReceipt, taskMaterialUploadBoundary, async (request, response) => {
     const files = Array.isArray(request.files) ? request.files : undefined
     const validated = validateTaskMaterialMultipart(request.body, files, 'optional')
     if (!validated.ok) {
       response.status(validated.error.code === 'request_too_large' ? 413 : 400)
         .json(failure(requestIdFromMultipartBody(request.body), validated.error, false))
+      return
+    }
+
+    if (memoryExecution) {
+      const outcome = await memoryExecution.oneShot.run({
+        receivedAt: receivedAt(request),
+        httpDeadlineMs: timeoutMs,
+        execute: ({ signal }) => {
+          const provider = providerFor(options)
+          return runObservedProvider(telemetry, options, 'rubric_generation', () => provider.generateRubric({
+            ...validated.value,
+            signal,
+          }))
+        },
+      })
+      if (outcome.kind !== 'success') {
+        emitSafeGradingDiagnostic(options.onDiagnostic, {
+          stage: 'provider',
+          diagnosticCode: outcome.kind === 'failure' && outcome.error instanceof GradingProviderError
+            ? outcome.error.diagnosticCode ?? outcome.error.code
+            : outcome.kind === 'caller_timeout_before_dispatch'
+              ? 'provider_timeout'
+              : outcome.kind === 'result_unknown'
+                ? 'provider_result_unknown'
+                : 'provider_rate_limited',
+        })
+        sendOneShotFailure(response, validated.value.requestId, memoryExecution, outcome)
+        return
+      }
+      const rubric = validateGeneratedRubric(outcome.value.value)
+      if (!rubric.ok) {
+        emitSafeGradingDiagnostic(options.onDiagnostic, { stage: 'normalization', diagnosticCode: 'rubric_validation' })
+        response.status(503).json(failure(validated.value.requestId, rubric.error, true))
+        return
+      }
+      response.json({ requestId: validated.value.requestId, status: 'success', rubric: rubric.value })
       return
     }
 
@@ -421,7 +709,7 @@ export function createServer(options: CreateServerOptions = {}) {
       response.status(503).json(safe)
     }
   })
-  app.post('/grading/grade-images', (request, response, next) => {
+  app.post('/grading/grade-images', captureRouteReceipt, (request, response, next) => {
     imageGradeUpload.array('pages', MAX_RUBRIC_PAGES)(request, response, (error) => {
       if (!error) { next(); return }
       const safe = multipartUploadFailure(imageGradeRequestId(request.body), error, 'image-grading')
@@ -451,6 +739,142 @@ export function createServer(options: CreateServerOptions = {}) {
         return
       }
       pages = images.value.pages
+    }
+    if (memoryExecution && options.runtimeConfig) {
+      let identity
+      try {
+        identity = createCanonicalGradeIdentity({
+          task: metadata.task,
+          essayId: metadata.essayId,
+          pageIds: metadata.pageIds,
+          pages,
+          confirmedTranscript: metadata.confirmedTranscript,
+        }, {
+          gradingPolicyVersion: GRADING_POLICY_VERSION,
+          providerSchemaVersion: options.runtimeConfig.essayPromptProfile === 'optimized-v1'
+            ? ESSAY_PROVIDER_SCHEMA_VERSION
+            : LEGACY_ESSAY_PROVIDER_SCHEMA_VERSION,
+        })
+      } catch {
+        response.status(400).json(failure(metadata.requestId, {
+          code: 'invalid_request', message: 'Image grading request is invalid.',
+        }, false))
+        return
+      }
+
+      const stage: ProviderCallStage = metadata.confirmedTranscript === undefined
+        ? 'essay_grading_images'
+        : 'essay_regrading_text'
+      const operationMedia = safeImageOperationMetadata(pages)
+      const callerOutcome = await attachRegistryUntilCallerDeadline({
+        services: memoryExecution,
+        receivedAt: receivedAt(request),
+        httpDeadlineMs: timeoutMs,
+        logicalRequestId: identity.logicalRequestId,
+        timers: executionTimers,
+        now: monotonicNow,
+        attach: () => memoryExecution.registry.attach({
+          logicalRequestId: identity.logicalRequestId,
+          payloadHash: identity.payloadHash,
+          callerRequestId: metadata.requestId,
+          execute: async ({ signal }) => {
+            const operationDiagnosticId = randomUUID()
+            const operationStartedAt = validMonotonicNow(monotonicNow)
+            let operationRecorded = false
+            try {
+              const provider = providerFor(options)
+              const payload = await runObservedProvider(telemetry, options, stage, () => provider.gradeEssay({
+                requestId: metadata.requestId,
+                task: metadata.task,
+                essayId: metadata.essayId,
+                pages,
+                confirmedTranscript: metadata.confirmedTranscript,
+                signal,
+              }))
+              const normalizeStartedAt = validMonotonicNow(monotonicNow)
+              const normalized = normalizeMultimodalResult(payload.value, {
+                requestId: metadata.requestId,
+                essayId: metadata.essayId,
+                task: metadata.task,
+                provider: 'remote',
+                pageCount: pages.length,
+                confirmedTranscript: metadata.confirmedTranscript,
+                createdAt: (options.now ?? (() => new Date().toISOString()))(),
+              })
+              const normalizeMs = validMonotonicNow(monotonicNow) - normalizeStartedAt
+              if (!normalized.ok) {
+                recordProviderOperation(telemetry, {
+                  ...telemetryContext(options, stage, 'failed'), operationDiagnosticId,
+                  normalizeMs, totalMs: validMonotonicNow(monotonicNow) - operationStartedAt,
+                  ...operationMedia,
+                  ...(metadata.confirmedTranscript === undefined
+                    ? {}
+                    : { confirmedTextCodeUnits: metadata.confirmedTranscript.length }),
+                })
+                operationRecorded = true
+                emitSafeGradingDiagnostic(options.onDiagnostic, {
+                  stage: 'normalization', diagnosticCode: normalized.error.diagnosticCode,
+                })
+                throw new GradingProviderError(
+                  'provider_invalid_response',
+                  PROVIDER_SAFE_MESSAGES.provider_invalid_response,
+                  true,
+                  undefined,
+                  { termination: 'confirmed', attemptObservations: payload.attempts },
+                )
+              }
+              recordProviderOperation(telemetry, {
+                ...telemetryContext(options, stage, 'success'), operationDiagnosticId,
+                normalizeMs, totalMs: validMonotonicNow(monotonicNow) - operationStartedAt,
+                ...operationMedia,
+                ...(metadata.confirmedTranscript === undefined
+                  ? {}
+                  : { confirmedTextCodeUnits: metadata.confirmedTranscript.length }),
+              })
+              operationRecorded = true
+              const { requestId: _requestId, ...resultTemplate } = normalized.result
+              return { result: resultTemplate, attempts: payload.attempts }
+            } catch (error) {
+              if (!operationRecorded) {
+                recordProviderOperation(telemetry, {
+                  ...telemetryContext(
+                    options,
+                    stage,
+                    error instanceof GradingProviderError && error.details?.termination === 'confirmed'
+                      ? 'failed'
+                      : 'result_unknown',
+                  ),
+                  operationDiagnosticId,
+                  totalMs: validMonotonicNow(monotonicNow) - operationStartedAt,
+                  ...operationMedia,
+                  ...(metadata.confirmedTranscript === undefined
+                    ? {}
+                    : { confirmedTextCodeUnits: metadata.confirmedTranscript.length }),
+                })
+                emitSafeGradingDiagnostic(options.onDiagnostic, {
+                  stage: 'provider',
+                  diagnosticCode: error instanceof GradingProviderError
+                    ? error.diagnosticCode ?? error.code
+                    : 'provider_unavailable',
+                })
+              }
+              throw error
+            }
+          },
+        }),
+      })
+      if (callerOutcome.kind === 'result') {
+        sendRegistryResult(response, callerOutcome.value)
+      } else if (callerOutcome.kind === 'result_unknown') {
+        response.status(503).json(failure(metadata.requestId, {
+          code: 'provider_result_unknown', message: RESULT_UNKNOWN_MESSAGE,
+        }, false))
+      } else {
+        response.status(503).json(failure(metadata.requestId, {
+          code: 'provider_timeout', message: PROVIDER_TIMEOUT_MESSAGE,
+        }, true))
+      }
+      return
     }
     const controller = new AbortController()
     const stage: ProviderCallStage = metadata.confirmedTranscript === undefined ? 'essay_grading_images' : 'essay_regrading_text'
