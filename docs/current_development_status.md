@@ -13,7 +13,7 @@
 - 同一任务、作文版本和 rubric 版本建立逻辑幂等；重复传输或结果未知时复用 in-flight/成功结果。`429` 退避降并发，鉴权/配置错误暂停全班队列，不可重试错误不自动重试，单篇失败不阻断其他作文。
 - 质量目标包括：单篇总 token 中位数至少降低 25%；结构化结果成功率不低于当前且目标不低于 99%；正文字符错误率退化不超过 0.5 个百分点；教师参考评分归一化误差退化不超过满分 1%；账户支持有效并发至少 4 时，30 篇总耗时较当前串行至少降低 60%。所有目标必须用合成或明确授权的匿名样本验证。
 - 图片压缩暂不直接启用；先测尺寸、token、耗时、正文识别和重要字迹风险，达标后才通过独立开关上线。真实 Key 仅允许置于 ignored 本地环境或进程环境，真实基线与 A/B 前仍需单独确认样本、调用数和费用。
-- 已批准设计：`docs/superpowers/specs/2026-08-28-ai-pipeline-cost-latency-optimization-design.md`。下一步先由用户审阅规格；审阅通过后再使用 writing-plans 编写实施计划，不在设计阶段直接改代码。
+- 已批准设计：`docs/superpowers/specs/2026-08-28-ai-pipeline-cost-latency-optimization-design.md`。用户已确认该规格，TDD 实施计划已写入 `docs/superpowers/plans/2026-08-28-ai-pipeline-cost-latency-optimization.md`，覆盖 usage/耗时观测、单次 rubric、canonical Prompt、Provider 输出去重、Gateway 逻辑幂等与双截止、全局硬准入、前端任务队列、质量 benchmark 和分轮真实授权闸门。计划尚未执行，真实 Kimi 基线、A/B、100 次 soak、30 篇吞吐与图片实验均未获本轮授权、也未运行。
 
 ## 2026-08-28：创建任务页可选材料与统一评分标准已实施
 
