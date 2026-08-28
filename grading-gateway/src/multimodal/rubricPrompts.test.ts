@@ -46,6 +46,23 @@ describe('rubric prompts', () => {
     }
   })
 
+  it('requires the generation call to self-check and submit one final complete object', () => {
+    const messages = buildRubricGenerationMessages({
+      fullScore: 15,
+      writingRequirement: 'Write a news report.',
+      materials,
+    })
+    const systemText = String(messages[0]?.content)
+
+    expect(systemText).toContain('提交前在内部完成最终自检')
+    expect(systemText).toContain('materialSummary')
+    expect(systemText).toContain('writingRequirements')
+    expect(systemText).toContain('constraints')
+    expect(systemText).toContain('dimensions')
+    expect(systemText).toContain('reviewWarnings')
+    expect(systemText).toContain('只提交一次最终完整对象')
+  })
+
   it('requires the legibility dimension with a default weight of 5', () => {
     const prompt = String(buildRubricGenerationMessages({ fullScore: 15, materials })[0].content)
 

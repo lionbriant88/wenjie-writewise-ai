@@ -126,5 +126,8 @@ export function getMultimodalProvider(
     reasoningEffort: config.kimi.reasoningEffort,
     maxCompletionTokens: Math.max(...Object.values(config.kimi.stageBudgets)),
   })
-  return new KimiMultimodalProvider(createStageBudgetedTransport(transport, config.kimi.stageBudgets))
+  return new KimiMultimodalProvider(
+    createStageBudgetedTransport(transport, config.kimi.stageBudgets),
+    config.rubricStrategy,
+  )
 }

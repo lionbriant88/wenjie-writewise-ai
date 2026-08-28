@@ -85,6 +85,7 @@ export function buildRubricGenerationMessages(input: BuildRubricGenerationMessag
         authorityRule,
         materialBoundary(),
         legibilityDimensionRequirement(),
+        '提交前在内部完成最终自检：确认 materialSummary、writingRequirements、constraints、dimensions、reviewWarnings 均完整，教师要求保持最高权威，字迹维度唯一且所有权重合计为 100；只提交一次最终完整对象。',
         '仅输出符合所提供严格 JSON Schema 的完整对象，不要输出解释。评分维度权重使用百分比，权重合计必须为 100。',
       ].join('\n'),
     },

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import type { GatewayRuntimeConfig } from '../gatewayRuntimeConfig.js'
 import { validateGeneratedRubric } from '../multimodal/validateRubric.js'
 import { validateTaskMaterialContext, prioritizeTeacherWritingRequirement } from '../multimodal/materialContextContract.js'
 import { buildMaterialContextMessages, materialContextSchema } from '../multimodal/materialContextPrompts.js'
@@ -60,7 +61,10 @@ function prioritizeRubricContext(
 }
 
 export class KimiMultimodalProvider implements MultimodalProvider {
-  constructor(private readonly transport: KimiTransport) {}
+  constructor(
+    private readonly transport: KimiTransport,
+    private readonly rubricStrategy: GatewayRuntimeConfig['rubricStrategy'] = 'single-pass-v1',
+  ) {}
 
   private get maxCompletionTokens() {
     return this.transport.maxCompletionTokens ?? defaultMaxCompletionTokens
@@ -101,6 +105,10 @@ export class KimiMultimodalProvider implements MultimodalProvider {
     const draftValidation = validateGeneratedRubric(rawDraft.value)
     if (!draftValidation.ok) throw invalidRubricError([rawDraft.observation])
     const draft = prioritizeRubricContext(draftValidation.value, input.writingRequirement)
+
+    if (this.rubricStrategy === 'single-pass-v1') {
+      return { value: draft, attempts: [rawDraft.observation] }
+    }
 
     let rawReviewed
     try {

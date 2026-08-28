@@ -7,6 +7,8 @@ import type { MultimodalProvider } from './providers/multimodalProviderTypes.js'
 import type { GeneratedRubricV1, TaskMaterialContextV1 } from './multimodal/types.js'
 import type { GatewayRuntimeConfig } from './gatewayRuntimeConfig.js'
 import { createProviderTelemetryRecorder } from './providerTelemetry.js'
+import { KimiMultimodalProvider } from './providers/kimiMultimodalProvider.js'
+import type { KimiCompletionInput, KimiTransport } from './providers/kimiTransport.js'
 
 interface RawMultimodalProvider {
   generateMaterialContext(input: Parameters<MultimodalProvider['generateMaterialContext']>[0]): Promise<TaskMaterialContextV1>
@@ -897,6 +899,49 @@ describe('grading gateway server boundary', () => {
     })
     expect(calls[0]?.[0]).not.toHaveProperty('writingRequirement')
     expect(calls[0]?.[0]).not.toHaveProperty('pages')
+  })
+
+  it('serves a normal single-pass rubric with one transport completion and one copy of each material', async () => {
+    const completionInputs: KimiCompletionInput[] = []
+    const transport: KimiTransport = {
+      async complete(input) {
+        completionInputs.push(input)
+        return {
+          value: generatedRubricFixture(),
+          observation: {
+            attemptDiagnosticId: `rubric-route-attempt-${completionInputs.length}`,
+            finishReason: 'stop',
+            providerElapsedMs: 1,
+            usage: {
+              promptTokens: { status: 'unknown', reason: 'absent' },
+              completionTokens: { status: 'unknown', reason: 'absent' },
+              totalTokens: { status: 'unknown', reason: 'absent' },
+              cachedTokens: { status: 'unknown', reason: 'absent' },
+            },
+          },
+        }
+      },
+    }
+    const provider = new KimiMultimodalProvider(transport, 'single-pass-v1')
+
+    const response = await request(createServer({ multimodalProvider: provider }))
+      .post('/tasks/rubric')
+      .field('requestId', 'single-pass-rubric-route')
+      .field('fullScore', '15')
+      .field('writingRequirement', 'Teacher requirement.')
+      .field('materialManifest', JSON.stringify([
+        { id: 'text-1', kind: 'text', textIndex: 0 },
+        { id: 'image-1', kind: 'image', imageIndex: 0 },
+      ]))
+      .field('textMaterials', JSON.stringify([{ displayName: 'prompt.docx', text: 'UNIQUE-TEXT-MATERIAL' }]))
+      .attach('images', Buffer.from('unique-image-material'), { filename: 'prompt.png', contentType: 'image/png' })
+      .expect(200)
+
+    expect(response.body.rubric.writingRequirements).toEqual(['Teacher requirement.', 'Write clearly.'])
+    expect(completionInputs).toHaveLength(1)
+    const messages = JSON.stringify(completionInputs[0]?.messages)
+    expect(messages.match(/UNIQUE-TEXT-MATERIAL/g)).toHaveLength(1)
+    expect(messages.match(/dW5pcXVlLWltYWdlLW1hdGVyaWFs/g)).toHaveLength(1)
   })
 
   it('maps a rubric provider timeout without returning partial task state', async () => {

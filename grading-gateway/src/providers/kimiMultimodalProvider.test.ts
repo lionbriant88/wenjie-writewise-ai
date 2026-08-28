@@ -128,57 +128,70 @@ describe('KimiMultimodalProvider', () => {
     expect(transport.complete).toHaveBeenCalledTimes(1)
   })
 
-  it('validates draft and review, sends the same ordered materials twice, and preserves reviewed rubric identity fields', async () => {
-    const transport = transportReturning(draft, reviewed)
+  it('single-pass-v1 validates one final rubric, sends each ordered material once, and preserves one observation', async () => {
+    const transport = transportReturning(draft)
     const provider = new KimiMultimodalProvider(transport)
 
     await expect(provider.generateRubric(rubricInput)).resolves.toEqual({
-      value: { ...reviewed, writingRequirements: ['Teacher requirement.', 'Reviewed requirement'] },
-      attempts: attempts(2),
+      value: { ...draft, writingRequirements: ['Teacher requirement.', 'Draft requirement'] },
+      attempts: attempts(1),
     })
-    expect(transport.complete).toHaveBeenCalledTimes(2)
+    expect(transport.complete).toHaveBeenCalledTimes(1)
     expect(transport.complete.mock.calls[0]?.[0]).toMatchObject({ schemaName: 'generated-rubric' })
-    expect(transport.complete.mock.calls[1]?.[0]).toMatchObject({ schemaName: 'reviewed-rubric' })
-    for (const call of transport.complete.mock.calls) {
-      const messageJson = JSON.stringify(call[0].messages)
-      const firstTextIndex = messageJson.indexOf('Source text one.')
-      const imageIndex = messageJson.indexOf('data:image/webp;base64,dGFzayBpbWFnZQ==')
-      const secondTextIndex = messageJson.indexOf('Source text two.')
-      expect(firstTextIndex).toBeGreaterThanOrEqual(0)
-      expect(imageIndex).toBeGreaterThan(firstTextIndex)
-      expect(secondTextIndex).toBeGreaterThan(imageIndex)
-    }
-    const reviewMessages = transport.complete.mock.calls[1]?.[0].messages
-    const reviewText = (reviewMessages?.[1]?.content as Array<{ type: string, text?: string }>)[0]?.text
-    expect(reviewText).toContain('"writingRequirements":["Teacher requirement.","Draft requirement"]')
+    const messageJson = JSON.stringify(transport.complete.mock.calls[0]?.[0].messages)
+    const firstTextIndex = messageJson.indexOf('Source text one.')
+    const imageIndex = messageJson.indexOf('data:image/webp;base64,dGFzayBpbWFnZQ==')
+    const secondTextIndex = messageJson.indexOf('Source text two.')
+    expect(firstTextIndex).toBeGreaterThanOrEqual(0)
+    expect(imageIndex).toBeGreaterThan(firstTextIndex)
+    expect(secondTextIndex).toBeGreaterThan(imageIndex)
+    expect(messageJson.match(/Source text one\./g)).toHaveLength(1)
+    expect(messageJson.match(/data:image\/webp;base64,dGFzayBpbWFnZQ==/g)).toHaveLength(1)
+    expect(messageJson.match(/Source text two\./g)).toHaveLength(1)
   })
 
   it('does not create an empty requirement when the optional teacher requirement is blank', async () => {
-    const transport = transportReturning(draft, reviewed)
+    const transport = transportReturning(draft)
 
     await expect(new KimiMultimodalProvider(transport).generateRubric({
       ...rubricInput,
       writingRequirement: '   ',
-    })).resolves.toEqual({ value: reviewed, attempts: attempts(2) })
+    })).resolves.toEqual({ value: draft, attempts: attempts(1) })
   })
 
-  it('rejects an invalid draft before making the review call', async () => {
-    const invalidDraft = { ...draft, dimensions: [{ ...draft.dimensions[0], weight: 99 }, draft.dimensions[1]] }
-    const transport = transportReturning(invalidDraft, reviewed)
+  it.each(['single-pass-v1', 'two-pass-legacy'] as const)(
+    '%s rejects an invalid first completed rubric without a hidden review or repair call',
+    async (rubricStrategy) => {
+      const invalidDraft = { ...draft, dimensions: [{ ...draft.dimensions[0], weight: 99 }, draft.dimensions[1]] }
+      const transport = transportReturning(invalidDraft, reviewed)
 
-    await expect(new KimiMultimodalProvider(transport).generateRubric(rubricInput))
-      .rejects.toMatchObject({
-        code: 'provider_invalid_response',
-        details: { termination: 'confirmed', attemptObservations: attempts(1) },
-      })
-    expect(transport.complete).toHaveBeenCalledTimes(1)
+      await expect(new KimiMultimodalProvider(transport, rubricStrategy).generateRubric(rubricInput))
+        .rejects.toMatchObject({
+          code: 'provider_invalid_response',
+          details: { termination: 'confirmed', attemptObservations: attempts(1) },
+        })
+      expect(transport.complete).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  it('two-pass-legacy preserves the historical review and both completion observations', async () => {
+    const transport = transportReturning(draft, reviewed)
+
+    await expect(new KimiMultimodalProvider(transport, 'two-pass-legacy').generateRubric(rubricInput)).resolves.toEqual({
+      value: { ...reviewed, writingRequirements: ['Teacher requirement.', 'Reviewed requirement'] },
+      attempts: attempts(2),
+    })
+    expect(transport.complete).toHaveBeenCalledTimes(2)
+    expect(transport.complete.mock.calls.map(([input]) => input.schemaName)).toEqual([
+      'generated-rubric', 'reviewed-rubric',
+    ])
   })
 
-  it('fails safely when the reviewed rubric has invalid percentage weights', async () => {
+  it('two-pass-legacy keeps both completed observations when review business validation fails', async () => {
     const invalidReviewed = { ...reviewed, dimensions: [{ ...reviewed.dimensions[0], weight: 99 }, reviewed.dimensions[1]] }
     const transport = transportReturning(draft, invalidReviewed)
 
-    await expect(new KimiMultimodalProvider(transport).generateRubric(rubricInput))
+    await expect(new KimiMultimodalProvider(transport, 'two-pass-legacy').generateRubric(rubricInput))
       .rejects.toMatchObject({
         code: 'provider_invalid_response',
         details: { termination: 'confirmed', attemptObservations: attempts(2) },
@@ -197,15 +210,17 @@ describe('KimiMultimodalProvider', () => {
       .mockRejectedValueOnce(failure)
     const transport = { maxCompletionTokens: 8192, complete } satisfies KimiTransport
 
-    await expect(new KimiMultimodalProvider(transport).generateRubric(rubricInput)).rejects.toMatchObject({
+    await expect(new KimiMultimodalProvider(transport, 'two-pass-legacy').generateRubric(rubricInput)).rejects.toMatchObject({
       code: 'provider_rate_limited',
       details: { termination: 'confirmed', attemptObservations: [first, second] },
     })
     expect(transport.complete).toHaveBeenCalledTimes(2)
   })
 
-  it('does not automatically retry rubric transport failures', async () => {
-    const failure = new Error('transport unavailable')
+  it('single-pass-v1 preserves a completed schema-failure observation without a hidden review call', async () => {
+    const failure = new GradingProviderError('provider_invalid_response', 'safe schema failure', true, undefined, {
+      termination: 'confirmed', attemptObservations: attempts(1),
+    })
     const transport: KimiTransport = { complete: vi.fn().mockRejectedValue(failure) }
 
     await expect(new KimiMultimodalProvider(transport).generateRubric(rubricInput)).rejects.toBe(failure)

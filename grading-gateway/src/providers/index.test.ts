@@ -6,10 +6,13 @@ import type { KimiCompletionInput, KimiTransport } from './kimiTransport.js'
 import { createStageBudgetedTransport, getMultimodalProvider, getProvider } from './index.js'
 import { GradingProviderError } from './providerTypes.js'
 
-function runtimeConfig(provider: 'kimi' | 'mock' = 'kimi'): GatewayRuntimeConfig {
+function runtimeConfig(
+  provider: 'kimi' | 'mock' = 'kimi',
+  rubricStrategy: GatewayRuntimeConfig['rubricStrategy'] = 'single-pass-v1',
+): GatewayRuntimeConfig {
   return {
     provider,
-    rubricStrategy: 'two-pass-legacy',
+    rubricStrategy,
     essayPromptProfile: 'legacy',
     executionRegistry: 'direct-legacy',
     deadlines: { httpMs: 360_000, providerFinalMs: 420_000, settlementGraceMs: 30_000 },
@@ -19,6 +22,43 @@ function runtimeConfig(provider: 'kimi' | 'mock' = 'kimi'): GatewayRuntimeConfig
     kimi: {
       apiBase: 'https://api.moonshot.cn/v1', model: 'kimi-k3', reasoningEffort: 'low', promptCacheSecret: '',
       stageBudgets: { material_context: 1_001, rubric_generation: 2_002, essay_grading_images: 3_003, essay_regrading_text: 4_004 },
+    },
+  }
+}
+
+function generatedRubric(taskName: string) {
+  return {
+    taskName,
+    materialSummary: 'Synthetic summary.',
+    writingRequirements: ['Write clearly.'],
+    constraints: ['Use English.'],
+    dimensions: [
+      {
+        id: 'content', name: 'Content', weight: 95, description: 'Cover the task.',
+        deductionFocus: [], sourceEvidence: [],
+      },
+      {
+        id: 'legibility', name: 'Legibility', weight: 5, description: 'Write legibly.',
+        deductionFocus: [], sourceEvidence: [],
+      },
+    ],
+    reviewWarnings: [],
+  }
+}
+
+function completion(value: unknown, attempt: number) {
+  return {
+    value,
+    observation: {
+      attemptDiagnosticId: `strategy-attempt-${attempt}`,
+      finishReason: 'stop' as const,
+      providerElapsedMs: 1,
+      usage: {
+        promptTokens: { status: 'unknown' as const, reason: 'absent' as const },
+        completionTokens: { status: 'unknown' as const, reason: 'absent' as const },
+        totalTokens: { status: 'unknown' as const, reason: 'absent' as const },
+        cachedTokens: { status: 'unknown' as const, reason: 'absent' as const },
+      },
     },
   }
 }
@@ -34,6 +74,33 @@ describe('provider selection', () => {
     expect(getMultimodalProvider(runtimeConfig(), { apiKey: 'test-kimi-api-key-not-real' })).toBeInstanceOf(KimiMultimodalProvider)
     expect(() => getMultimodalProvider(runtimeConfig(), { apiKey: '' })).toThrowError(GradingProviderError)
     expect(() => getMultimodalProvider(runtimeConfig(), {})).toThrowError(GradingProviderError)
+  })
+
+  it.each([
+    ['single-pass-v1', 1, 'Generated task'],
+    ['two-pass-legacy', 2, 'Reviewed task'],
+  ] as const)('wires %s into the Kimi rubric strategy', async (rubricStrategy, expectedCalls, expectedTaskName) => {
+    let call = 0
+    const complete = vi.fn(async () => {
+      call += 1
+      return completion(generatedRubric(call === 1 ? 'Generated task' : 'Reviewed task'), call)
+    })
+    const provider = getMultimodalProvider(runtimeConfig('kimi', rubricStrategy), {
+      apiKey: 'test-kimi-api-key-not-real',
+      kimiTransportFactory: () => ({ complete }),
+    })
+
+    const result = await provider.generateRubric({
+      requestId: 'strategy-rubric',
+      fullScore: 15,
+      writingRequirement: 'Write clearly.',
+      materials: [],
+      signal: new AbortController().signal,
+    })
+
+    expect(complete).toHaveBeenCalledTimes(expectedCalls)
+    expect(result.value.taskName).toBe(expectedTaskName)
+    expect(result.attempts).toHaveLength(expectedCalls)
   })
 
   it('runs an explicit multimodal mock without a factory or Kimi key', async () => {
