@@ -1013,6 +1013,41 @@ describe('grading gateway server boundary', () => {
     expect(JSON.stringify(response.body)).not.toMatch(/key|secret|requestId|essayId|taskId|usage|token|content|digest/i)
   })
 
+  it('projects nested health configuration through strict allowlists under hostile type escape', async () => {
+    const base = legacyRuntimeConfig()
+    const hostile = {
+      ...base,
+      deadlines: {
+        ...base.deadlines,
+        apiKey: 'PRIVATE-DEADLINE-API-KEY',
+        requestId: 'PRIVATE-DEADLINE-REQUEST-ID',
+      },
+      kimi: {
+        ...base.kimi,
+        stageBudgets: {
+          ...base.kimi.stageBudgets,
+          secret: 'PRIVATE-STAGE-SECRET',
+          essayId: 'PRIVATE-STAGE-ESSAY-ID',
+        },
+      },
+    } as unknown as GatewayRuntimeConfig
+
+    const response = await request(createServer({ runtimeConfig: hostile })).get('/health').expect(200)
+
+    expect(response.body.runtime.deadlines).toEqual({
+      httpMs: 360_000,
+      providerFinalMs: 420_000,
+      settlementGraceMs: 30_000,
+    })
+    expect(response.body.runtime.stageBudgets).toEqual({
+      material_context: 16_384,
+      rubric_generation: 16_384,
+      essay_grading_images: 16_384,
+      essay_regrading_text: 16_384,
+    })
+    expect(JSON.stringify(response.body)).not.toMatch(/PRIVATE|apiKey|secret|requestId|essayId/i)
+  })
+
   it('accounts for a completed attempt before strict normalization rejects its business payload', async () => {
     const metrics: unknown[] = []
     const telemetry = createProviderTelemetryRecorder({
@@ -1038,7 +1073,10 @@ describe('grading gateway server boundary', () => {
       .post('/grading/grade-images').field('metadata', JSON.stringify(metadata)).expect(503)
 
     expect(metrics.filter((metric) => (metric as { event?: string }).event === 'provider_attempt')).toHaveLength(1)
-    expect(telemetry.snapshot()).toMatchObject({ uniqueAttempts: 1, totalTokens: 15 })
+    expect(telemetry.snapshot()).toMatchObject({
+      uniqueAttempts: 1,
+      totals: { totalTokens: { status: 'known', value: 15 } },
+    })
     expect(JSON.stringify(response.body)).not.toMatch(/token|usage|attemptDiagnosticId/i)
   })
 
@@ -1069,7 +1107,10 @@ describe('grading gateway server boundary', () => {
       .post('/grading/grade-images').field('metadata', JSON.stringify(metadata)).expect(503)
 
     expect(metrics.filter((metric) => (metric as { event?: string }).event === 'provider_attempt')).toHaveLength(1)
-    expect(telemetry.snapshot()).toMatchObject({ uniqueAttempts: 1, totalTokens: 20 })
+    expect(telemetry.snapshot()).toMatchObject({
+      uniqueAttempts: 1,
+      totals: { totalTokens: { status: 'known', value: 20 } },
+    })
     expect(JSON.stringify(response.body)).not.toMatch(/PRIVATE|token|usage|attemptDiagnosticId/i)
   })
 
@@ -1101,7 +1142,10 @@ describe('grading gateway server boundary', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 50))
 
-    expect(telemetry.snapshot()).toMatchObject({ uniqueAttempts: 1, totalTokens: 25 })
+    expect(telemetry.snapshot()).toMatchObject({
+      uniqueAttempts: 1,
+      totals: { totalTokens: { status: 'known', value: 25 } },
+    })
   })
 
   it('does not expose the deprecated generic grading policy bypass', async () => {

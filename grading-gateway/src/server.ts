@@ -228,8 +228,17 @@ function safeRuntimeSnapshot(config: GatewayRuntimeConfig | undefined) {
     provider: config.provider,
     model: config.kimi.model,
     reasoningEffort: config.kimi.reasoningEffort,
-    deadlines: { ...config.deadlines },
-    stageBudgets: { ...config.kimi.stageBudgets },
+    deadlines: {
+      httpMs: config.deadlines.httpMs,
+      providerFinalMs: config.deadlines.providerFinalMs,
+      settlementGraceMs: config.deadlines.settlementGraceMs,
+    },
+    stageBudgets: {
+      material_context: config.kimi.stageBudgets.material_context,
+      rubric_generation: config.kimi.stageBudgets.rubric_generation,
+      essay_grading_images: config.kimi.stageBudgets.essay_grading_images,
+      essay_regrading_text: config.kimi.stageBudgets.essay_regrading_text,
+    },
     hardLimit: config.admission.hardLimit,
     modes: {
       rubricStrategy: config.rubricStrategy,

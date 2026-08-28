@@ -50,13 +50,20 @@ export interface SafeProviderOperationMetric extends ProviderOperationMetricInpu
 export type SafeProviderMetric = SafeProviderAttemptMetric | SafeProviderOperationMetric
 export type SafeProviderMetricSink = (metric: SafeProviderMetric) => void
 
+export type ProviderTokenTotalSnapshot =
+  | { status: 'known'; value: number }
+  | { status: 'partial'; lowerBound: number; knownAttempts: number; unknownAttempts: number }
+  | { status: 'unknown'; knownAttempts: 0; unknownAttempts: number }
+
 export interface ProviderTelemetrySnapshot {
   uniqueAttempts: number
-  usageContributingAttempts: number
-  promptTokens: number
-  completionTokens: number
-  totalTokens: number
-  cachedTokens: number
+  usageCoverage: { knownAttempts: number; unknownAttempts: number }
+  totals: {
+    promptTokens: ProviderTokenTotalSnapshot
+    completionTokens: ProviderTokenTotalSnapshot
+    totalTokens: ProviderTokenTotalSnapshot
+    cachedTokens: ProviderTokenTotalSnapshot
+  }
 }
 
 export interface ProviderTelemetryRecorder {
@@ -162,9 +169,14 @@ export function createProviderTelemetryRecorder(options: {
 } = {}): ProviderTelemetryRecorder {
   const processDiagnosticId = (options.processDiagnosticIdFactory ?? randomUUID)()
   const seenAttemptIds = new Set<string>()
-  const totals: ProviderTelemetrySnapshot = {
-    uniqueAttempts: 0, usageContributingAttempts: 0,
-    promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedTokens: 0,
+  const accounting = {
+    uniqueAttempts: 0,
+    usageKnownAttempts: 0,
+    cachedKnownAttempts: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    cachedTokens: 0,
   }
   const emit = (metric: SafeProviderMetric) => {
     const sanitized = sanitizedMetric(metric)
@@ -176,14 +188,17 @@ export function createProviderTelemetryRecorder(options: {
       attempts.forEach((observation, index) => {
         if (!safeId(observation.attemptDiagnosticId) || seenAttemptIds.has(observation.attemptDiagnosticId)) return
         seenAttemptIds.add(observation.attemptDiagnosticId)
-        totals.uniqueAttempts += 1
+        accounting.uniqueAttempts += 1
         const usage = validUsage(observation.usage)
         if (usage) {
-          totals.usageContributingAttempts += 1
-          totals.promptTokens += usage.promptTokens
-          totals.completionTokens += usage.completionTokens
-          totals.totalTokens += usage.totalTokens
-          totals.cachedTokens += usage.cachedTokens ?? 0
+          accounting.usageKnownAttempts += 1
+          accounting.promptTokens += usage.promptTokens
+          accounting.completionTokens += usage.completionTokens
+          accounting.totalTokens += usage.totalTokens
+          if (usage.cachedTokens !== undefined) {
+            accounting.cachedKnownAttempts += 1
+            accounting.cachedTokens += usage.cachedTokens
+          }
         }
         emit({
           event: 'provider_attempt', processDiagnosticId, attemptDiagnosticId: observation.attemptDiagnosticId,
@@ -195,7 +210,27 @@ export function createProviderTelemetryRecorder(options: {
     recordOperation(metric) {
       emit({ event: 'provider_operation', processDiagnosticId, ...metric })
     },
-    snapshot() { return { ...totals } },
+    snapshot() {
+      const aggregate = (value: number, knownAttempts: number): ProviderTokenTotalSnapshot => {
+        const unknownAttempts = accounting.uniqueAttempts - knownAttempts
+        if (knownAttempts === accounting.uniqueAttempts && accounting.uniqueAttempts > 0) return { status: 'known', value }
+        if (knownAttempts > 0) return { status: 'partial', lowerBound: value, knownAttempts, unknownAttempts }
+        return { status: 'unknown', knownAttempts: 0, unknownAttempts }
+      }
+      return {
+        uniqueAttempts: accounting.uniqueAttempts,
+        usageCoverage: {
+          knownAttempts: accounting.usageKnownAttempts,
+          unknownAttempts: accounting.uniqueAttempts - accounting.usageKnownAttempts,
+        },
+        totals: {
+          promptTokens: aggregate(accounting.promptTokens, accounting.usageKnownAttempts),
+          completionTokens: aggregate(accounting.completionTokens, accounting.usageKnownAttempts),
+          totalTokens: aggregate(accounting.totalTokens, accounting.usageKnownAttempts),
+          cachedTokens: aggregate(accounting.cachedTokens, accounting.cachedKnownAttempts),
+        },
+      }
+    },
   }
 }
 

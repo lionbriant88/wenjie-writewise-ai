@@ -40,8 +40,14 @@ describe('provider telemetry', () => {
       promptTokens: 100, completionTokens: 20, totalTokens: 120, cachedTokens: 40,
     }])
     expect(recorder.snapshot()).toEqual({
-      uniqueAttempts: 1, usageContributingAttempts: 1,
-      promptTokens: 100, completionTokens: 20, totalTokens: 120, cachedTokens: 40,
+      uniqueAttempts: 1,
+      usageCoverage: { knownAttempts: 1, unknownAttempts: 0 },
+      totals: {
+        promptTokens: { status: 'known', value: 100 },
+        completionTokens: { status: 'known', value: 20 },
+        totalTokens: { status: 'known', value: 120 },
+        cachedTokens: { status: 'known', value: 40 },
+      },
     })
   })
 
@@ -64,8 +70,46 @@ describe('provider telemetry', () => {
     expect(metrics[0]).not.toHaveProperty('totalTokens')
     expect(metrics[0]).not.toHaveProperty('cachedTokens')
     expect(recorder.snapshot()).toEqual({
-      uniqueAttempts: 1, usageContributingAttempts: 0,
-      promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedTokens: 0,
+      uniqueAttempts: 1,
+      usageCoverage: { knownAttempts: 0, unknownAttempts: 1 },
+      totals: {
+        promptTokens: { status: 'unknown', knownAttempts: 0, unknownAttempts: 1 },
+        completionTokens: { status: 'unknown', knownAttempts: 0, unknownAttempts: 1 },
+        totalTokens: { status: 'unknown', knownAttempts: 0, unknownAttempts: 1 },
+        cachedTokens: { status: 'unknown', knownAttempts: 0, unknownAttempts: 1 },
+      },
+    })
+  })
+
+  it('labels known usage from mixed-coverage attempts as lower bounds instead of authoritative totals', () => {
+    const recorder = createProviderTelemetryRecorder()
+    const unknownUsage: ProviderUsageSnapshot = {
+      promptTokens: { status: 'unknown', reason: 'absent' },
+      completionTokens: { status: 'unknown', reason: 'absent' },
+      totalTokens: { status: 'unknown', reason: 'absent' },
+      cachedTokens: { status: 'unknown', reason: 'absent' },
+    }
+    const context = {
+      stage: 'essay_grading_images' as const,
+      model: 'kimi-k3',
+      reasoningEffort: 'low' as const,
+      outcome: 'success' as const,
+    }
+
+    recordUniqueProviderAttempts(recorder, context, [
+      observation('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+      observation('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', unknownUsage),
+    ])
+
+    expect(recorder.snapshot()).toEqual({
+      uniqueAttempts: 2,
+      usageCoverage: { knownAttempts: 1, unknownAttempts: 1 },
+      totals: {
+        promptTokens: { status: 'partial', lowerBound: 100, knownAttempts: 1, unknownAttempts: 1 },
+        completionTokens: { status: 'partial', lowerBound: 20, knownAttempts: 1, unknownAttempts: 1 },
+        totalTokens: { status: 'partial', lowerBound: 120, knownAttempts: 1, unknownAttempts: 1 },
+        cachedTokens: { status: 'partial', lowerBound: 40, knownAttempts: 1, unknownAttempts: 1 },
+      },
     })
   })
 

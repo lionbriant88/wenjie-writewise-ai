@@ -36,10 +36,67 @@ describe('provider selection', () => {
     expect(() => getMultimodalProvider(runtimeConfig(), {})).toThrowError(GradingProviderError)
   })
 
-  it('allows explicit mock only through an injected multimodal factory and requires no Kimi key', () => {
+  it('runs an explicit multimodal mock without a factory or Kimi key', async () => {
     const fakeProvider = {} as MultimodalProvider
     expect(getMultimodalProvider(runtimeConfig('mock'), { mockFactory: () => fakeProvider })).toBe(fakeProvider)
-    expect(() => getMultimodalProvider(runtimeConfig('mock'))).toThrowError(GradingProviderError)
+
+    const provider = getMultimodalProvider(runtimeConfig('mock'))
+    const context = await provider.generateMaterialContext({
+      requestId: 'explicit-mock-material',
+      fullScore: 15,
+      writingRequirement: 'Write a short synthetic essay.',
+      materials: [],
+      signal: new AbortController().signal,
+    })
+    const rubric = await provider.generateRubric({
+      requestId: 'explicit-mock-rubric',
+      fullScore: 15,
+      writingRequirement: 'Write a short synthetic essay.',
+      materials: [],
+      signal: new AbortController().signal,
+    })
+    const grade = await provider.gradeEssay({
+      requestId: 'explicit-mock-grade',
+      essayId: 'synthetic-essay',
+      task: {
+        taskId: 'synthetic-task',
+        fullScore: 15,
+        materialSummary: rubric.value.materialSummary,
+        writingRequirements: rubric.value.writingRequirements,
+        constraints: rubric.value.constraints,
+        rubric: rubric.value,
+      },
+      pages: [{ pageId: 'page-1', mimeType: 'image/png', buffer: Buffer.from('synthetic-image') }],
+      signal: new AbortController().signal,
+    })
+
+    expect(context).toEqual({
+      value: {
+        materialSummary: 'Write a short synthetic essay.',
+        writingRequirements: ['Write a short synthetic essay.'],
+        constraints: [],
+        reviewWarnings: ['Explicit mock output requires teacher review.'],
+      },
+      attempts: [],
+    })
+    expect(rubric.value.dimensions.map(({ id, weight }) => ({ id, weight }))).toEqual([
+      { id: 'content', weight: 95 },
+      { id: 'legibility', weight: 5 },
+    ])
+    expect(rubric.attempts).toEqual([])
+    expect(grade).toMatchObject({
+      value: {
+        transcript: 'Synthetic multimodal mock transcript.',
+        printedTextExcluded: true,
+        dimensionScores: [{ dimensionId: 'content' }, { dimensionId: 'legibility' }],
+      },
+      attempts: [],
+    })
+  })
+
+  it('fails closed instead of treating a missing Provider as Kimi or mock', () => {
+    const invalid = { ...runtimeConfig('mock'), provider: undefined } as unknown as GatewayRuntimeConfig
+    expect(() => getMultimodalProvider(invalid, { apiKey: 'test-kimi-api-key-not-real' })).toThrowError(GradingProviderError)
   })
 
   it('overrides every Provider call with the independent budget for its actual stage', async () => {
