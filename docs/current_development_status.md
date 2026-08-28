@@ -13,6 +13,7 @@
 - 最终整分支审查已统一写作要求的 10,000 Unicode 码点边界，覆盖表单、确认任务包、批改请求和 Gateway 契约。材料 add、retry、remove、reorder 现在会在用户操作时立即使在途或已应用的 AI 材料上下文过期；迟到结果不会覆盖教师字段，已应用评分标准仍可创建任务，并显示精确的非阻断重新生成提示，直到新快照生成成功。
 - Gateway 的 `textMaterials` multipart 单字段上限现由 10 个材料单元、每个 30,000 文本码点、256 显示名码点、每码点最坏 6 字节 JSON 编码及固定 JSON 开销推导为 1,815,651 字节，仍保持有限；`POST /grading/grade-images` 与任务材料路由共用硬截止竞态，Provider 即使忽略 `AbortSignal` 并晚成功或晚拒绝，也会先返回稳定超时失败且不会二次响应。
 - 最终修复复审第 1 轮又补齐两个 Unicode 边界：`grade-images` 元数据中的任务摘要改按码点计数，无材料任务由 10,000 个非 BMP 码点写作要求形成的 10,010 码点摘要可穿过真实 Gateway 路由到达 fake Provider，10,001 个要求码点仍在 Provider 前被严格合同拒绝；DOCX 规范化后的 30,000 码点正文可完整保留，30,001 码点稳定返回 `docx_too_long`。
+- 最终修复复审第 2 轮把 `grade-images` 元数据的 Unicode 码点校验改为常量内存的早停计数：任何超限语义字符串最多迭代 `maxLength + 1` 个码点。一个仍低于 32 MiB multipart transport 上限、超过 1 MiB 的非法 `requestId` 现在只迭代 129 次，安全返回内容无关的 HTTP 400、不会调用 Provider；已知无效 metadata 的错误响应也不再重复解析同一字段。既有 10,000 非 BMP 写作要求成功与 10,001 拒绝边界保持通过。
 
 ### 本轮精确自动化验证
 
@@ -29,8 +30,9 @@
 | 最终审查 Gateway multipart / 硬超时聚焦组 | 2 个测试文件、94 个用例通过 |
 | 最终修复复审第 1 轮网站 DOCX 相邻组 | 2 个测试文件、29 个用例通过 |
 | 最终修复复审第 1 轮 Gateway 路由组 | 1 个测试文件、31 个用例通过 |
+| 最终修复复审第 2 轮 Gateway 元数据早停组 | 1 个测试文件、32 个用例通过 |
 | 网站全量 | 59 个测试文件、598 个用例通过 |
-| Grading Gateway 全量 | 24 个测试文件、712 个用例通过 |
+| Grading Gateway 全量 | 24 个测试文件、713 个用例通过 |
 | 网站质量门 | Typecheck、lint、生产构建均通过；构建转换 409 个模块 |
 | Gateway 质量门 | Typecheck 与共享评分运行时验证均通过；输出 `shared scoring runtime ok` |
 
