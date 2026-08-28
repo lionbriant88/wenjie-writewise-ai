@@ -1,5 +1,6 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 import type { GatewayTaskMaterial } from '../multipartTaskMaterials.js'
+import { ESSAY_PROVIDER_SCHEMA_VERSION } from '../multimodal/modelTaskContext.js'
 import type { GeneratedRubricV1, TaskMaterialContextV1 } from '../multimodal/types.js'
 import { KimiMultimodalProvider } from './kimiMultimodalProvider.js'
 import type { KimiTransport } from './kimiTransport.js'
@@ -9,6 +10,8 @@ const pages = [
   { pageId: 'page-1', mimeType: 'image/png' as const, buffer: Buffer.from('first page') },
   { pageId: 'page-2', mimeType: 'image/jpeg' as const, buffer: Buffer.from('second page') },
 ]
+
+const promptCacheSecret = 'test-only-cache-secret-at-least-32-bytes'
 
 const materials: GatewayTaskMaterial[] = [
   { kind: 'text', unitId: 'text-1', displayName: 'prompt.docx', text: 'Source text one.' },
@@ -83,12 +86,14 @@ describe('KimiMultimodalProvider', () => {
     expectTypeOf<ConstructorParameters<typeof KimiMultimodalProvider>>().toEqualTypeOf<[
       transport: KimiTransport,
       rubricStrategy: 'single-pass-v1' | 'two-pass-legacy',
+      essayPromptProfile: 'optimized-v1' | 'legacy',
+      promptCacheSecret: string,
     ]>()
   })
 
   it('validates material context once and puts the exact teacher requirement first without duplicates', async () => {
     const transport = transportReturning(context)
-    const provider = new KimiMultimodalProvider(transport, 'single-pass-v1')
+    const provider = new KimiMultimodalProvider(transport, 'single-pass-v1', 'optimized-v1', promptCacheSecret)
 
     await expect(provider.generateMaterialContext({
       requestId: 'request-context',
@@ -108,7 +113,7 @@ describe('KimiMultimodalProvider', () => {
   it('rejects an invalid material context after one call', async () => {
     const transport = transportReturning({ ...context, unexpected: true })
 
-    await expect(new KimiMultimodalProvider(transport, 'single-pass-v1').generateMaterialContext({
+    await expect(new KimiMultimodalProvider(transport, 'single-pass-v1', 'optimized-v1', promptCacheSecret).generateMaterialContext({
       requestId: 'request-context-invalid',
       fullScore: 15,
       writingRequirement: 'Teacher requirement.',
@@ -125,7 +130,7 @@ describe('KimiMultimodalProvider', () => {
     const failure = new Error('transport unavailable')
     const transport: KimiTransport = { complete: vi.fn().mockRejectedValue(failure) }
 
-    await expect(new KimiMultimodalProvider(transport, 'single-pass-v1').generateMaterialContext({
+    await expect(new KimiMultimodalProvider(transport, 'single-pass-v1', 'optimized-v1', promptCacheSecret).generateMaterialContext({
       requestId: 'request-context-failure',
       fullScore: 15,
       writingRequirement: 'Teacher requirement.',
@@ -137,7 +142,7 @@ describe('KimiMultimodalProvider', () => {
 
   it('single-pass-v1 validates one final rubric, sends each ordered material once, and preserves one observation', async () => {
     const transport = transportReturning(draft)
-    const provider = new KimiMultimodalProvider(transport, 'single-pass-v1')
+    const provider = new KimiMultimodalProvider(transport, 'single-pass-v1', 'optimized-v1', promptCacheSecret)
 
     await expect(provider.generateRubric(rubricInput)).resolves.toEqual({
       value: { ...draft, writingRequirements: ['Teacher requirement.', 'Draft requirement'] },
@@ -160,7 +165,7 @@ describe('KimiMultimodalProvider', () => {
   it('does not create an empty requirement when the optional teacher requirement is blank', async () => {
     const transport = transportReturning(draft)
 
-    await expect(new KimiMultimodalProvider(transport, 'single-pass-v1').generateRubric({
+    await expect(new KimiMultimodalProvider(transport, 'single-pass-v1', 'optimized-v1', promptCacheSecret).generateRubric({
       ...rubricInput,
       writingRequirement: '   ',
     })).resolves.toEqual({ value: draft, attempts: attempts(1) })
@@ -172,7 +177,7 @@ describe('KimiMultimodalProvider', () => {
       const invalidDraft = { ...draft, dimensions: [{ ...draft.dimensions[0], weight: 99 }, draft.dimensions[1]] }
       const transport = transportReturning(invalidDraft, reviewed)
 
-      await expect(new KimiMultimodalProvider(transport, rubricStrategy).generateRubric(rubricInput))
+      await expect(new KimiMultimodalProvider(transport, rubricStrategy, 'optimized-v1', promptCacheSecret).generateRubric(rubricInput))
         .rejects.toMatchObject({
           code: 'provider_invalid_response',
           details: { termination: 'confirmed', attemptObservations: attempts(1) },
@@ -184,7 +189,7 @@ describe('KimiMultimodalProvider', () => {
   it('two-pass-legacy preserves the historical review and both completion observations', async () => {
     const transport = transportReturning(draft, reviewed)
 
-    await expect(new KimiMultimodalProvider(transport, 'two-pass-legacy').generateRubric(rubricInput)).resolves.toEqual({
+    await expect(new KimiMultimodalProvider(transport, 'two-pass-legacy', 'optimized-v1', promptCacheSecret).generateRubric(rubricInput)).resolves.toEqual({
       value: { ...reviewed, writingRequirements: ['Teacher requirement.', 'Reviewed requirement'] },
       attempts: attempts(2),
     })
@@ -198,7 +203,7 @@ describe('KimiMultimodalProvider', () => {
     const invalidReviewed = { ...reviewed, dimensions: [{ ...reviewed.dimensions[0], weight: 99 }, reviewed.dimensions[1]] }
     const transport = transportReturning(draft, invalidReviewed)
 
-    await expect(new KimiMultimodalProvider(transport, 'two-pass-legacy').generateRubric(rubricInput))
+    await expect(new KimiMultimodalProvider(transport, 'two-pass-legacy', 'optimized-v1', promptCacheSecret).generateRubric(rubricInput))
       .rejects.toMatchObject({
         code: 'provider_invalid_response',
         details: { termination: 'confirmed', attemptObservations: attempts(2) },
@@ -217,7 +222,7 @@ describe('KimiMultimodalProvider', () => {
       .mockRejectedValueOnce(failure)
     const transport = { maxCompletionTokens: 8192, complete } satisfies KimiTransport
 
-    await expect(new KimiMultimodalProvider(transport, 'two-pass-legacy').generateRubric(rubricInput)).rejects.toMatchObject({
+    await expect(new KimiMultimodalProvider(transport, 'two-pass-legacy', 'optimized-v1', promptCacheSecret).generateRubric(rubricInput)).rejects.toMatchObject({
       code: 'provider_rate_limited',
       details: { termination: 'confirmed', attemptObservations: [first, second] },
     })
@@ -230,14 +235,14 @@ describe('KimiMultimodalProvider', () => {
     })
     const transport: KimiTransport = { complete: vi.fn().mockRejectedValue(failure) }
 
-    await expect(new KimiMultimodalProvider(transport, 'single-pass-v1').generateRubric(rubricInput)).rejects.toBe(failure)
+    await expect(new KimiMultimodalProvider(transport, 'single-pass-v1', 'optimized-v1', promptCacheSecret).generateRubric(rubricInput)).rejects.toBe(failure)
     expect(transport.complete).toHaveBeenCalledTimes(1)
   })
 
   it('keeps essay grading at one essay-grading call and never includes raw task materials', async () => {
     const result = { transcript: 'Student text.', transcriptionWarnings: [], printedTextExcluded: true }
     const transport = transportReturning(result)
-    const provider = new KimiMultimodalProvider(transport, 'single-pass-v1')
+    const provider = new KimiMultimodalProvider(transport, 'single-pass-v1', 'optimized-v1', promptCacheSecret)
     const task = {
       taskId: 'task-grade', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: reviewed,
     }
@@ -251,25 +256,72 @@ describe('KimiMultimodalProvider', () => {
 
     await expect(provider.gradeEssay(gradeInput)).resolves.toEqual({ value: result, attempts: attempts(1) })
     expect(transport.complete).toHaveBeenCalledTimes(1)
-    expect(transport.complete.mock.calls[0]?.[0]).toMatchObject({ schemaName: 'essay-grading' })
+    expect(transport.complete.mock.calls[0]?.[0]).toMatchObject({
+      schemaName: ESSAY_PROVIDER_SCHEMA_VERSION,
+      stage: 'essay_grading_images',
+      promptCacheKey: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+    })
     const messageJson = JSON.stringify(transport.complete.mock.calls[0]?.[0].messages)
     expect(messageJson.indexOf('data:image/png;base64,Zmlyc3QgcGFnZQ==')).toBeLessThan(messageJson.indexOf('data:image/jpeg;base64,c2Vjb25kIHBhZ2U='))
     expect(messageJson).not.toContain('RAW-TASK-MATERIAL-SENTINEL')
+    expect(messageJson).not.toContain('task-grade')
+    expect(messageJson).not.toContain('essay-grade')
+    expect(messageJson).not.toContain('Reviewed task')
+    expect(messageJson).not.toContain('Draft evidence')
   })
 
   it('passes teacher-confirmed text to the single essay grading call', async () => {
     const result = { transcript: 'Teacher corrected transcript.' }
     const transport = transportReturning(result)
-    const provider = new KimiMultimodalProvider(transport, 'single-pass-v1')
+    const provider = new KimiMultimodalProvider(transport, 'single-pass-v1', 'optimized-v1', promptCacheSecret)
     const task = { taskId: 'task-grade', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: reviewed }
     await expect(provider.gradeEssay({ requestId: 'request-grade', task, essayId: 'essay-grade', pages, confirmedTranscript: 'Teacher corrected transcript.', signal: new AbortController().signal })).resolves.toEqual({ value: result, attempts: attempts(1) })
     expect(transport.complete).toHaveBeenCalledTimes(1)
-    expect(JSON.stringify(transport.complete.mock.calls[0]?.[0].messages)).toContain('Teacher corrected transcript.')
+    expect(transport.complete.mock.calls[0]?.[0]).toMatchObject({
+      schemaName: ESSAY_PROVIDER_SCHEMA_VERSION,
+      stage: 'essay_regrading_text',
+      promptCacheKey: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+    })
+    expect(transport.complete.mock.calls[0]?.[0].messages.at(-1)?.content).toEqual([
+      { type: 'text', text: 'Teacher corrected transcript.' },
+    ])
+    expect(JSON.stringify(transport.complete.mock.calls[0]?.[0].messages)).not.toContain('image_url')
+  })
+
+  it('reuses one opaque cache key for the same task revision across image grading and text regrading', async () => {
+    const result = { transcript: 'Student text.' }
+    const transport = transportReturning(result, result)
+    const provider = new KimiMultimodalProvider(transport, 'single-pass-v1', 'optimized-v1', promptCacheSecret)
+    const task = { taskId: 'stable-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: reviewed }
+
+    await provider.gradeEssay({ requestId: 'image-request', task, essayId: 'student-a', pages, signal: new AbortController().signal })
+    await provider.gradeEssay({ requestId: 'text-request', task, essayId: 'student-b', pages: [], confirmedTranscript: 'Exact text.', signal: new AbortController().signal })
+
+    const [imageCall, textCall] = transport.complete.mock.calls.map(([input]) => input)
+    expect(imageCall?.promptCacheKey).toBe(textCall?.promptCacheKey)
+    expect(imageCall?.stage).toBe('essay_grading_images')
+    expect(textCall?.stage).toBe('essay_regrading_text')
+  })
+
+  it('keeps the legacy profile isolated with a distinct schema identity and no prompt cache key', async () => {
+    const result = { transcript: 'Legacy student text.' }
+    const transport = transportReturning(result)
+    const provider = new KimiMultimodalProvider(transport, 'single-pass-v1', 'legacy', '')
+    const task = { taskId: 'legacy-task', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: reviewed }
+
+    await provider.gradeEssay({ requestId: 'legacy-request', task, essayId: 'legacy-essay', pages, signal: new AbortController().signal })
+
+    expect(transport.complete.mock.calls[0]?.[0]).toMatchObject({
+      schemaName: 'essay-grading-provider-v2-legacy',
+      stage: 'essay_grading_images',
+    })
+    expect(transport.complete.mock.calls[0]?.[0]).not.toHaveProperty('promptCacheKey')
+    expect(JSON.stringify(transport.complete.mock.calls[0]?.[0].messages)).toContain('Reviewed task')
   })
 
   it('does not retry a failed essay grading transport call', async () => {
     const transport: KimiTransport = { complete: vi.fn().mockRejectedValue(new Error('unavailable')) }
-    const provider = new KimiMultimodalProvider(transport, 'single-pass-v1')
+    const provider = new KimiMultimodalProvider(transport, 'single-pass-v1', 'optimized-v1', promptCacheSecret)
     const task = { taskId: 'task-grade', fullScore: 15, materialSummary: 'Synthetic material.', writingRequirements: ['Write.'], constraints: ['English.'], rubric: reviewed }
     await expect(provider.gradeEssay({ requestId: 'request-grade', task, essayId: 'essay-grade', pages, signal: new AbortController().signal })).rejects.toThrow('unavailable')
     expect(transport.complete).toHaveBeenCalledTimes(1)

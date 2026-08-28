@@ -1,5 +1,13 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { GatewayRuntimeConfig } from '../gatewayRuntimeConfig.js'
+import {
+  ESSAY_PROVIDER_SCHEMA_VERSION,
+  LEGACY_ESSAY_PROVIDER_SCHEMA_VERSION,
+  canonicalTaskContextJson,
+  derivePromptCacheKey,
+  projectModelTaskContext,
+} from '../multimodal/modelTaskContext.js'
+import { GRADING_POLICY_VERSION } from '../multimodal/gradingPolicy.js'
 import { validateGeneratedRubric } from '../multimodal/validateRubric.js'
 import { validateTaskMaterialContext, prioritizeTeacherWritingRequirement } from '../multimodal/materialContextContract.js'
 import { buildMaterialContextMessages, materialContextSchema } from '../multimodal/materialContextPrompts.js'
@@ -64,6 +72,8 @@ export class KimiMultimodalProvider implements MultimodalProvider {
   constructor(
     private readonly transport: KimiTransport,
     private readonly rubricStrategy: GatewayRuntimeConfig['rubricStrategy'],
+    private readonly essayPromptProfile: GatewayRuntimeConfig['essayPromptProfile'],
+    private readonly promptCacheSecret: string,
   ) {}
 
   private get maxCompletionTokens() {
@@ -136,11 +146,32 @@ export class KimiMultimodalProvider implements MultimodalProvider {
   }
 
   async gradeEssay(input: GradeEssayProviderInput) {
+    const providerSchemaVersion = this.essayPromptProfile === 'optimized-v1'
+      ? ESSAY_PROVIDER_SCHEMA_VERSION
+      : LEGACY_ESSAY_PROVIDER_SCHEMA_VERSION
+    const promptCacheKey = this.essayPromptProfile === 'optimized-v1'
+      ? derivePromptCacheKey({
+          taskId: input.task.taskId,
+          rubricRevisionDigest: createHash('sha256')
+            .update(canonicalTaskContextJson(projectModelTaskContext(input.task)), 'utf8')
+            .digest('base64url'),
+          gradingPolicyVersion: GRADING_POLICY_VERSION,
+          providerSchemaVersion,
+          hmacSecret: this.promptCacheSecret,
+        })
+      : undefined
     const response = await this.transport.complete({
-      messages: buildEssayGradingMessages({ task: input.task, essayId: input.essayId, pages: input.pages, confirmedTranscript: input.confirmedTranscript }),
-      schemaName: 'essay-grading', schema: essayGradingSchema, signal: input.signal,
+      messages: buildEssayGradingMessages({
+        profile: this.essayPromptProfile,
+        task: input.task,
+        essayId: input.essayId,
+        pages: input.pages,
+        confirmedTranscript: input.confirmedTranscript,
+      }),
+      schemaName: providerSchemaVersion, schema: essayGradingSchema, signal: input.signal,
       stage: input.confirmedTranscript === undefined ? 'essay_grading_images' : 'essay_regrading_text',
       maxCompletionTokens: this.maxCompletionTokens, attempt: 1, diagnosticContext: diagnosticContext(),
+      ...(promptCacheKey === undefined ? {} : { promptCacheKey }),
     })
     return { value: response.value, attempts: [response.observation] }
   }

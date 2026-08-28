@@ -922,7 +922,7 @@ describe('grading gateway server boundary', () => {
         }
       },
     }
-    const provider = new KimiMultimodalProvider(transport, 'single-pass-v1')
+    const provider = new KimiMultimodalProvider(transport, 'single-pass-v1', 'legacy', '')
 
     const response = await request(createServer({ multimodalProvider: provider }))
       .post('/tasks/rubric')

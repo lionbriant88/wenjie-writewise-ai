@@ -129,5 +129,7 @@ export function getMultimodalProvider(
   return new KimiMultimodalProvider(
     createStageBudgetedTransport(transport, config.kimi.stageBudgets),
     config.rubricStrategy,
+    config.essayPromptProfile,
+    config.kimi.promptCacheSecret,
   )
 }

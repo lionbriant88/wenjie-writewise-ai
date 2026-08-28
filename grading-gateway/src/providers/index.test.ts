@@ -9,18 +9,20 @@ import { GradingProviderError } from './providerTypes.js'
 function runtimeConfig(
   provider: 'kimi' | 'mock' = 'kimi',
   rubricStrategy: GatewayRuntimeConfig['rubricStrategy'] = 'single-pass-v1',
+  essayPromptProfile: GatewayRuntimeConfig['essayPromptProfile'] = 'legacy',
 ): GatewayRuntimeConfig {
   return {
     provider,
     rubricStrategy,
-    essayPromptProfile: 'legacy',
+    essayPromptProfile,
     executionRegistry: 'direct-legacy',
     deadlines: { httpMs: 360_000, providerFinalMs: 420_000, settlementGraceMs: 30_000 },
     admission: { hardLimit: 4 },
     registry: { terminalTtlMs: 86_400_000, maxEntries: 2_000 },
     retry: { maxProviderAttempts: 2, maxRateLimitRequeues: 5, baseMs: 2_000, capMs: 60_000, pauseAfterMs: 900_000 },
     kimi: {
-      apiBase: 'https://api.moonshot.cn/v1', model: 'kimi-k3', reasoningEffort: 'low', promptCacheSecret: '',
+      apiBase: 'https://api.moonshot.cn/v1', model: 'kimi-k3', reasoningEffort: 'low',
+      promptCacheSecret: essayPromptProfile === 'optimized-v1' ? 'test-only-cache-secret-at-least-32-bytes' : '',
       stageBudgets: { material_context: 1_001, rubric_generation: 2_002, essay_grading_images: 3_003, essay_regrading_text: 4_004 },
     },
   }
@@ -101,6 +103,44 @@ describe('provider selection', () => {
     expect(complete).toHaveBeenCalledTimes(expectedCalls)
     expect(result.value.taskName).toBe(expectedTaskName)
     expect(result.attempts).toHaveLength(expectedCalls)
+  })
+
+  it.each([
+    ['optimized-v1', 'essay-grading-provider-v2', true],
+    ['legacy', 'essay-grading-provider-v2-legacy', false],
+  ] as const)('wires the explicit %s essay prompt profile and cache secret', async (essayPromptProfile, schemaName, expectsCacheKey) => {
+    const complete = vi.fn(async (_input: KimiCompletionInput) => completion({ transcript: 'Synthetic result.' }, 1))
+    const provider = getMultimodalProvider(runtimeConfig('kimi', 'single-pass-v1', essayPromptProfile), {
+      apiKey: 'test-kimi-api-key-not-real',
+      kimiTransportFactory: () => ({ complete }),
+    })
+    const rubric = generatedRubric('Private teacher task name')
+
+    await provider.gradeEssay({
+      requestId: 'factory-request',
+      essayId: 'private-student-name',
+      task: {
+        taskId: 'internal-task-id', fullScore: 15,
+        materialSummary: rubric.materialSummary,
+        writingRequirements: rubric.writingRequirements,
+        constraints: rubric.constraints,
+        rubric,
+      },
+      pages: [{ pageId: 'page-1', mimeType: 'image/png', buffer: Buffer.from('synthetic-page') }],
+      signal: new AbortController().signal,
+    })
+
+    expect(complete.mock.calls[0]?.[0].schemaName).toBe(schemaName)
+    expect(complete.mock.calls[0]?.[0]).toMatchObject({
+      stage: 'essay_grading_images',
+      maxCompletionTokens: 3_003,
+    })
+    if (expectsCacheKey) {
+      expect(complete.mock.calls[0]?.[0].promptCacheKey).toMatch(/^[A-Za-z0-9_-]{43}$/)
+      expect(complete.mock.calls[0]?.[0].promptCacheKey).not.toContain('internal-task-id')
+    } else {
+      expect(complete.mock.calls[0]?.[0]).not.toHaveProperty('promptCacheKey')
+    }
   })
 
   it('runs an explicit multimodal mock without a factory or Kimi key', async () => {
