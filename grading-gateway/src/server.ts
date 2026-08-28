@@ -146,10 +146,19 @@ interface ImageGradeMetadata {
   confirmedTranscript?: string
 }
 
+function hasAtMostCodePoints(value: string, maxLength: number): boolean {
+  let codePointCount = 0
+  for (const _codePoint of value) {
+    codePointCount += 1
+    if (codePointCount > maxLength) return false
+  }
+  return true
+}
+
 function readMetadataString(value: unknown, maxLength: number): string | null {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
-  return trimmed && Array.from(trimmed).length <= maxLength ? trimmed : null
+  return trimmed && hasAtMostCodePoints(trimmed, maxLength) ? trimmed : null
 }
 
 function readConfirmedTranscript(value: unknown): string | null {
@@ -313,7 +322,7 @@ export function createServer(options: CreateServerOptions = {}) {
     const metadata = parseImageGradeMetadata(request.body?.metadata)
     const files = Array.isArray(request.files) ? request.files : undefined
     if (!metadata) {
-      response.status(400).json(failure(imageGradeRequestId(request.body), { code: 'invalid_request', message: 'Image grading request is invalid.' }, false))
+      response.status(400).json(failure('unavailable', { code: 'invalid_request', message: 'Image grading request is invalid.' }, false))
       return
     }
     const requestMode = validateMultimodalGradingRequestMode({

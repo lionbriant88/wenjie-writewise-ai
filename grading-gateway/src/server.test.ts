@@ -1,6 +1,6 @@
 import request from 'supertest'
 import { describe, expect, it } from 'vitest'
-import { createServer } from './server.js'
+import { createServer, MAX_IMAGE_GRADING_METADATA_BYTES } from './server.js'
 import { MAX_TASK_MATERIAL_TEXT_FIELD_BYTES } from './multipartTaskMaterials.js'
 import { GradingProviderError } from './providers/providerTypes.js'
 import type { MultimodalProvider } from './providers/multimodalProviderTypes.js'
@@ -182,6 +182,79 @@ describe('grading gateway server boundary', () => {
       error: { code: 'invalid_request', retryable: false },
     })
     expect(calls).toHaveLength(1)
+  })
+
+  it('bounds Unicode iteration for an oversized metadata ID and rejects it before Provider use', async () => {
+    const privateMarker = 'PRIVATE-OVERSIZED-METADATA-ID-'
+    const oversizedRequestId = `${privateMarker}${'x'.repeat(1024 * 1024)}`
+    const metadataField = JSON.stringify({
+      requestVersion: 'multimodal-grading-request-v2',
+      requestId: oversizedRequestId,
+      essayId: 'bounded-metadata-essay',
+      pageIds: [],
+      confirmedTranscript: 'Teacher-confirmed synthetic text.',
+      task: {
+        taskId: 'bounded-metadata-task',
+        fullScore: 15,
+        materialSummary: 'Synthetic material.',
+        writingRequirements: ['Write.'],
+        constraints: ['English.'],
+        rubric: {
+          taskName: 'Synthetic task',
+          materialSummary: 'Synthetic material.',
+          writingRequirements: ['Write.'],
+          constraints: ['English.'],
+          dimensions: imageRubricDimensions(),
+          reviewWarnings: [],
+        },
+      },
+    })
+    expect(Buffer.byteLength(metadataField, 'utf8')).toBeLessThan(MAX_IMAGE_GRADING_METADATA_BYTES)
+
+    let providerCalls = 0
+    const provider = fakeMultimodalProvider({
+      async gradeEssay() {
+        providerCalls += 1
+        throw new Error('must not run')
+      },
+    })
+    const originalIteratorDescriptor = Object.getOwnPropertyDescriptor(String.prototype, Symbol.iterator)
+    if (!originalIteratorDescriptor?.value) throw new Error('String iterator is unavailable')
+    const originalIterator = String.prototype[Symbol.iterator]
+    let targetNextCalls = 0
+    Object.defineProperty(String.prototype, Symbol.iterator, {
+      ...originalIteratorDescriptor,
+      value: function observedStringIterator(this: string) {
+        const value = String(this)
+        const iterator = originalIterator.call(value)
+        if (value !== oversizedRequestId) return iterator
+        return {
+          next() {
+            targetNextCalls += 1
+            return iterator.next()
+          },
+          [Symbol.iterator]() { return this },
+        }
+      },
+    })
+
+    try {
+      const response = await request(createServer({ multimodalProvider: provider }))
+        .post('/grading/grade-images')
+        .field('metadata', metadataField)
+        .expect(400)
+
+      expect(response.body).toMatchObject({
+        requestId: 'unavailable',
+        status: 'failed',
+        error: { code: 'invalid_request', retryable: false },
+      })
+      expect(JSON.stringify(response.body)).not.toContain(privateMarker)
+      expect(targetNextCalls).toBe(129)
+      expect(providerCalls).toBe(0)
+    } finally {
+      Object.defineProperty(String.prototype, Symbol.iterator, originalIteratorDescriptor)
+    }
   })
 
   it('rejects metadata above the image grading limit without echoing its contents', async () => {
