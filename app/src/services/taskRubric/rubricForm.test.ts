@@ -51,6 +51,19 @@ describe('task rubric form', () => {
     expect(validate(undefined, { writingRequirement: requirement })).toMatchObject({ valid: false, errors: { writingRequirement: expect.any(String) } })
   })
 
+  it('counts the 10,000-character writing-requirement boundary by Unicode code points', () => {
+    const exactly10k = '\u{1F600}'.repeat(10_000)
+    const over10k = `${exactly10k}\u{1F600}`
+
+    expect(exactly10k).toHaveLength(20_000)
+    expect(Array.from(exactly10k)).toHaveLength(10_000)
+    expect(validate(undefined, { writingRequirement: exactly10k })).toMatchObject({ valid: true })
+    expect(validate(undefined, { writingRequirement: over10k })).toMatchObject({
+      valid: false,
+      errors: { writingRequirement: expect.any(String) },
+    })
+  })
+
   it.each([
     ['too few dimensions', validDimensions().slice(0, 1)],
     ['too many dimensions', Array.from({ length: 11 }, (_, index) => ({ ...createOrdinaryRubricDimension(`extra-${index}`), name: 'Extra', description: 'Extra dimension', weight: 100 / 11 }))],

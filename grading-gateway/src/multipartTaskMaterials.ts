@@ -1,10 +1,11 @@
+import { MAX_WRITING_REQUIREMENT_CODE_POINTS } from './multimodal/materialContextContract.js'
+
 export const MAX_TASK_MATERIAL_UNITS = 10
 export const MAX_TASK_MATERIAL_IMAGE_BYTES = 8 * 1024 * 1024
 export const MAX_TASK_MATERIAL_TEXT_CHARACTERS = 30_000
 
 type ImageMimeType = 'image/png' | 'image/jpeg' | 'image/webp'
 
-const MAX_WRITING_REQUIREMENT_CHARACTERS = 10_000
 const SUPPORTED_IMAGE_TYPES = new Set<ImageMimeType>([
   'image/png',
   'image/jpeg',
@@ -188,7 +189,7 @@ export function validateTaskMaterialMultipart(
   if (Object.hasOwn(body, 'writingRequirement')) {
     if (typeof body.writingRequirement !== 'string') return invalid()
     const trimmedRequirement = body.writingRequirement.trim()
-    if (Array.from(trimmedRequirement).length > MAX_WRITING_REQUIREMENT_CHARACTERS) return tooLarge()
+    if (Array.from(trimmedRequirement).length > MAX_WRITING_REQUIREMENT_CODE_POINTS) return tooLarge()
     writingRequirement = trimmedRequirement || undefined
   }
   if (mode === 'required' && !writingRequirement) return invalid()

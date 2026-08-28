@@ -6,7 +6,7 @@ const CONTEXT_KEYS = ['materialSummary', 'writingRequirements', 'constraints', '
 const INVALID_CONTEXT_MESSAGE = 'Task material context is invalid.'
 const MAX_CONTEXT_ITEMS = 50
 const MAX_CONTEXT_ITEM_LENGTH = 5_000
-const MAX_WRITING_REQUIREMENT_LENGTH = 10_000
+export const MAX_WRITING_REQUIREMENT_CODE_POINTS = 10_000
 
 const contextItemSchema = {
   type: 'string',
@@ -18,7 +18,7 @@ const contextItemSchema = {
 const writingRequirementSchema = {
   type: 'string',
   minLength: 1,
-  maxLength: MAX_WRITING_REQUIREMENT_LENGTH,
+  maxLength: MAX_WRITING_REQUIREMENT_CODE_POINTS,
   pattern: '\\S',
 } as const
 
@@ -89,7 +89,11 @@ function readStringArray(value: unknown, minimumItems: number, maxItemLength: nu
 export function validateTaskMaterialContext(value: unknown): TaskMaterialContextValidationResult {
   if (!isRecord(value) || !hasExactlyKeys(value, CONTEXT_KEYS)) return invalid()
   const materialSummary = readString(value.materialSummary, 20_000)
-  const writingRequirements = readStringArray(value.writingRequirements, 1, MAX_WRITING_REQUIREMENT_LENGTH)
+  const writingRequirements = readStringArray(
+    value.writingRequirements,
+    1,
+    MAX_WRITING_REQUIREMENT_CODE_POINTS,
+  )
   const constraints = readStringArray(value.constraints, 0, MAX_CONTEXT_ITEM_LENGTH)
   const reviewWarnings = readStringArray(value.reviewWarnings, 0, MAX_CONTEXT_ITEM_LENGTH)
   if (!materialSummary || !writingRequirements || !constraints || !reviewWarnings) return invalid()

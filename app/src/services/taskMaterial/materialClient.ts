@@ -1,4 +1,5 @@
 import type { TaskMaterialContext } from '../../types'
+import { MAX_WRITING_REQUIREMENT_CODE_POINTS } from '../taskRubric/rubricForm'
 import type { RubricClientFailure, RubricFailureCode } from '../taskRubric/types'
 import { createTaskMaterialFormData } from './materialFormData'
 import type { MaterialContextClientRequest } from './types'
@@ -144,7 +145,11 @@ function projectMaterialContext(value: unknown): TaskMaterialContext | null {
   ])
   if (!context) return null
   const materialSummary = readString(context.materialSummary, 20_000)
-  const writingRequirements = readStringArray(context.writingRequirements, 1, 10_000)
+  const writingRequirements = readStringArray(
+    context.writingRequirements,
+    1,
+    MAX_WRITING_REQUIREMENT_CODE_POINTS,
+  )
   const constraints = readStringArray(context.constraints, 0, 5_000)
   const reviewWarnings = readStringArray(context.reviewWarnings, 0, 5_000)
   return materialSummary && writingRequirements && constraints && reviewWarnings

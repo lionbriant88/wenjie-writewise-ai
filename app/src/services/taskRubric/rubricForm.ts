@@ -2,7 +2,12 @@ import type { RubricDimension } from '../../types'
 
 export const DEFAULT_TASK_NAME = '作文批改任务'
 export const LEGIBILITY_DIMENSION_ID = 'legibility'
+export const MAX_WRITING_REQUIREMENT_CODE_POINTS = 10_000
 export const TOTAL_WEIGHT_TOLERANCE = 0.001
+
+export function countUnicodeCodePoints(value: string): number {
+  return Array.from(value).length
+}
 
 export interface RubricFormValue {
   fullScore: number
@@ -53,7 +58,7 @@ export function validateRubricForm({ fullScore, writingRequirement, dimensions }
   const trimmedRequirement = writingRequirement.trim()
   if (!trimmedRequirement) {
     errors.writingRequirement = '请填写写作要求。'
-  } else if (trimmedRequirement.length > 10_000) {
+  } else if (countUnicodeCodePoints(trimmedRequirement) > MAX_WRITING_REQUIREMENT_CODE_POINTS) {
     errors.writingRequirement = '写作要求不能超过 10000 个字符。'
   }
 

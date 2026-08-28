@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { Essay, Task } from '../../types'
+import { buildTaskCreationInput } from '../taskRubric/buildTaskCreationInput'
+import { createDefaultRubricDimensions } from '../taskRubric/rubricForm'
 import { createConfiguredRubricClient } from '../taskRubric/rubricClient'
+import { buildConfirmedTaskPackage } from './buildConfirmedTaskPackage'
 import { buildMultimodalGradingRequest } from './buildMultimodalGradingRequest'
 
 const task: Task = {
@@ -20,6 +23,63 @@ function essay(file?: File): Essay {
 }
 
 describe('buildMultimodalGradingRequest', () => {
+  it('keeps a 10,000-code-point non-BMP writing requirement gradable and rejects 10,001', () => {
+    const exactly10k = '\u{1F600}'.repeat(10_000)
+    const over10k = `${exactly10k}\u{1F600}`
+    const built = buildTaskCreationInput({
+      taskName: 'Unicode boundary task',
+      fullScore: 15,
+      writingRequirement: exactly10k,
+      dimensions: createDefaultRubricDimensions(),
+      source: 'teacher',
+      materialProcessingStatus: 'none',
+    })
+
+    expect(built).toMatchObject({ ok: true })
+    if (!built.ok) return
+    const createdTask: Task = {
+      ...task,
+      taskName: built.value.taskName,
+      fullScore: built.value.fullScore,
+      materialContext: built.value.materialContext,
+      rubricDraft: built.value.rubricDraft,
+    }
+    const packageV2 = buildConfirmedTaskPackage(createdTask)
+    expect(packageV2).not.toBeNull()
+    expect(packageV2?.writingRequirements).toHaveLength(1)
+    expect(packageV2?.writingRequirements[0] === exactly10k).toBe(true)
+    const gradingRequest = buildMultimodalGradingRequest(
+      createdTask,
+      essay(new File(['image'], 'essay.png', { type: 'image/png' })),
+      'unicode-boundary-request',
+    )
+    expect(gradingRequest).toMatchObject({
+      ok: true,
+      request: { requestVersion: 'multimodal-grading-request-v2' },
+    })
+    expect(gradingRequest.ok && gradingRequest.request.task.writingRequirements[0] === exactly10k).toBe(true)
+
+    expect(buildTaskCreationInput({
+      taskName: 'Unicode boundary task',
+      fullScore: 15,
+      writingRequirement: over10k,
+      dimensions: createDefaultRubricDimensions(),
+      source: 'teacher',
+      materialProcessingStatus: 'none',
+    })).toMatchObject({ ok: false, validity: { errors: { writingRequirement: expect.any(String) } } })
+    expect(buildConfirmedTaskPackage({
+      ...createdTask,
+      materialContext: {
+        ...createdTask.materialContext!,
+        writingRequirements: [over10k],
+      },
+      rubricDraft: {
+        ...createdTask.rubricDraft!,
+        writingGoal: over10k,
+      },
+    })).toBeNull()
+  })
+
   it('builds an ordered confirmed task package without OCR transcript', () => {
     const result = buildMultimodalGradingRequest(task, essay(new File(['image'], 'essay.png', { type: 'image/png' })), 'request-1')
     expect(result).toMatchObject({ ok: true, request: { requestVersion: 'multimodal-grading-request-v2', requestId: 'request-1', essayId: 'essay-1', pageIds: ['page-1'], task: { taskId: task.id, fullScore: 15, materialSummary: 'A short material.', rubric: { taskName: 'Material writing', dimensions: [{ id: 'content', sourceEvidence: [] }, { id: 'legibility', weight: 5 }] } } } })

@@ -1,11 +1,18 @@
 import type { RubricDimension, Task } from '../../types'
-import { validateRubricForm } from '../taskRubric/rubricForm'
+import {
+  countUnicodeCodePoints,
+  MAX_WRITING_REQUIREMENT_CODE_POINTS,
+  validateRubricForm,
+} from '../taskRubric/rubricForm'
 import type { ConfirmedTaskPackageV2 } from './types'
 
 const TOTAL_WEIGHT_TOLERANCE = 0.001
 const LEGIBILITY_WEIGHT = 5
 
-const validText = (value: unknown, max = 10_000) => typeof value === 'string' && value === value.trim() && value.length > 0 && value.length <= max
+const validText = (value: unknown, max = 10_000) => typeof value === 'string'
+  && value === value.trim()
+  && value.length > 0
+  && countUnicodeCodePoints(value) <= max
 const validTextArray = (value: unknown, maxItems = 100, maxItemLength = 5_000) => Array.isArray(value) && value.length <= maxItems && value.every((item) => validText(item, maxItemLength))
 const validWeights = (weights: number[]) => weights.length > 0
   && weights.every((weight) => Number.isFinite(weight) && weight > 0 && weight <= 100)
@@ -84,7 +91,7 @@ export function buildConfirmedTaskPackage(task: Task): ConfirmedTaskPackageV2 | 
   const rubric = task.rubricDraft
   const source = task.materialContext ?? legacyTaskText(task)
   if (!validText(task.id, 128) || !validText(task.taskName, 2_000) || !Number.isInteger(task.fullScore) || task.fullScore < 1 || task.fullScore > 100 || rubric?.status !== 'confirmed' || !source) return null
-  if (!validText(source.materialSummary, 20_000) || !validTextArray(source.writingRequirements, 50) || source.writingRequirements.length < 1 || !validTextArray(source.constraints, 50) || !validTextArray(source.reviewWarnings, 50)) return null
+  if (!validText(source.materialSummary, 20_000) || !validTextArray(source.writingRequirements, 50, MAX_WRITING_REQUIREMENT_CODE_POINTS) || source.writingRequirements.length < 1 || !validTextArray(source.constraints, 50) || !validTextArray(source.reviewWarnings, 50)) return null
   const dimensions = task.materialContext
     ? rubric.dimensions.map((dimension) => ({ ...dimension }))
     : withLegibilityDimension(rubric.dimensions)

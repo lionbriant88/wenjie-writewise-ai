@@ -1,5 +1,6 @@
 import { createTaskMaterialFormData } from '../taskMaterial/materialFormData'
 import { readStrictResponseArray, readStrictResponseRecord } from '../taskMaterial/materialClient'
+import { MAX_WRITING_REQUIREMENT_CODE_POINTS } from './rubricForm'
 import type {
   GeneratedRubricDimension,
   GeneratedTaskRubric,
@@ -95,7 +96,11 @@ function projectRubric(value: unknown): GeneratedTaskRubric | null {
   if (!rubric) return null
   const taskName = readString(rubric.taskName, 2_000)
   const materialSummary = readString(rubric.materialSummary, 20_000)
-  const writingRequirements = readStringArray(rubric.writingRequirements, 50, 10_000)
+  const writingRequirements = readStringArray(
+    rubric.writingRequirements,
+    50,
+    MAX_WRITING_REQUIREMENT_CODE_POINTS,
+  )
   const constraints = readStringArray(rubric.constraints, 50, 5_000)
   const reviewWarnings = readStringArray(rubric.reviewWarnings, 50, 5_000)
   const rawDimensions = readStrictResponseArray(rubric.dimensions, 1, 10)
