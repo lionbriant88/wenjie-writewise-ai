@@ -7,7 +7,7 @@ import type { GeneratedRubricV1, TaskMaterialContextV1 } from '../multimodal/typ
 import { buildEssayGradingMessages, essayGradingSchema } from '../multimodal/gradingPrompt.js'
 import type { GenerateMaterialContextProviderInput, GenerateRubricProviderInput, GradeEssayProviderInput, MultimodalProvider } from './multimodalProviderTypes.js'
 import type { KimiTransport } from './kimiTransport.js'
-import { GradingProviderError } from './providerTypes.js'
+import { GradingProviderError, type ProviderAttemptObservation } from './providerTypes.js'
 
 const defaultMaxCompletionTokens = 16_384
 
@@ -15,12 +15,34 @@ function diagnosticContext() {
   return randomUUID()
 }
 
-function invalidRubricError() {
-  return new GradingProviderError('provider_invalid_response', 'Kimi 返回的评分标准不符合要求。', true)
+function dedupeObservations(observations: readonly ProviderAttemptObservation[]) {
+  const seen = new Set<string>()
+  return observations.filter((observation) => {
+    if (seen.has(observation.attemptDiagnosticId)) return false
+    seen.add(observation.attemptDiagnosticId)
+    return true
+  })
 }
 
-function invalidMaterialContextError() {
-  return new GradingProviderError('provider_invalid_response', 'Kimi 返回的题目材料上下文不符合要求。', true)
+function invalidRubricError(observations: readonly ProviderAttemptObservation[]) {
+  return new GradingProviderError('provider_invalid_response', 'Kimi 返回的评分标准不符合要求。', true, undefined, {
+    termination: 'confirmed', attemptObservations: dedupeObservations(observations),
+  })
+}
+
+function invalidMaterialContextError(observations: readonly ProviderAttemptObservation[]) {
+  return new GradingProviderError('provider_invalid_response', 'Kimi 返回的题目材料上下文不符合要求。', true, undefined, {
+    termination: 'confirmed', attemptObservations: dedupeObservations(observations),
+  })
+}
+
+function rethrowWithCompletedObservations(error: unknown, completed: readonly ProviderAttemptObservation[]): never {
+  if (!(error instanceof GradingProviderError)) throw error
+  const details = error.details ?? { termination: 'unknown' as const }
+  throw new GradingProviderError(error.code, error.message, error.retryable, error.diagnosticCode, {
+    ...details,
+    attemptObservations: dedupeObservations([...completed, ...(details.attemptObservations ?? [])]),
+  })
 }
 
 function prioritizeRubricContext(
@@ -57,7 +79,7 @@ export class KimiMultimodalProvider implements MultimodalProvider {
       stage: 'material_context', maxCompletionTokens: this.maxCompletionTokens, attempt: 1, diagnosticContext: diagnosticContext(),
     })
     const validation = validateTaskMaterialContext(response.value)
-    if (!validation.ok) throw invalidMaterialContextError()
+    if (!validation.ok) throw invalidMaterialContextError([response.observation])
     return {
       value: prioritizeTeacherWritingRequirement(validation.value, input.writingRequirement),
       attempts: [response.observation],
@@ -77,23 +99,28 @@ export class KimiMultimodalProvider implements MultimodalProvider {
       stage: 'rubric_generation', maxCompletionTokens: this.maxCompletionTokens, attempt: 1, diagnosticContext: diagnosticContext(),
     })
     const draftValidation = validateGeneratedRubric(rawDraft.value)
-    if (!draftValidation.ok) throw invalidRubricError()
+    if (!draftValidation.ok) throw invalidRubricError([rawDraft.observation])
     const draft = prioritizeRubricContext(draftValidation.value, input.writingRequirement)
 
-    const rawReviewed = await this.transport.complete({
-      messages: buildRubricReviewMessages({
-        fullScore: input.fullScore,
-        writingRequirement: input.writingRequirement,
-        materials: input.materials,
-        draft,
-      }),
-      schemaName: 'reviewed-rubric',
-      schema: reviewedRubricSchema,
-      signal: input.signal,
-      stage: 'rubric_generation', maxCompletionTokens: this.maxCompletionTokens, attempt: 2, diagnosticContext: diagnosticContext(),
-    })
+    let rawReviewed
+    try {
+      rawReviewed = await this.transport.complete({
+        messages: buildRubricReviewMessages({
+          fullScore: input.fullScore,
+          writingRequirement: input.writingRequirement,
+          materials: input.materials,
+          draft,
+        }),
+        schemaName: 'reviewed-rubric',
+        schema: reviewedRubricSchema,
+        signal: input.signal,
+        stage: 'rubric_generation', maxCompletionTokens: this.maxCompletionTokens, attempt: 2, diagnosticContext: diagnosticContext(),
+      })
+    } catch (error) {
+      return rethrowWithCompletedObservations(error, [rawDraft.observation])
+    }
     const validation = validateGeneratedRubric(rawReviewed.value)
-    if (!validation.ok) throw invalidRubricError()
+    if (!validation.ok) throw invalidRubricError([rawDraft.observation, rawReviewed.observation])
     return {
       value: prioritizeRubricContext(validation.value, input.writingRequirement),
       attempts: [rawDraft.observation, rawReviewed.observation],

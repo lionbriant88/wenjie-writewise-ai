@@ -78,6 +78,42 @@ describe('createKimiTransport', () => {
     log.mockRestore()
   })
 
+  it('measures elapsed time through the delayed completion body read', async () => {
+    let now = 100
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => {
+        now = 144
+        return { choices: [{ finish_reason: 'stop', message: { content: '{"taskName":"Synthetic"}' } }] }
+      },
+    } as unknown as Response)
+    const transport = createKimiTransport({
+      ...maxReasoningOptions, fetchImpl, monotonicNow: () => now, diagnosticIdFactory: () => 'attempt-delayed',
+    })
+
+    await expect(transport.complete(observedInput)).resolves.toMatchObject({
+      observation: { attemptDiagnosticId: 'attempt-delayed', providerElapsedMs: 44 },
+    })
+  })
+
+  it('recaptures elapsed time when a delayed completion body fails to parse', async () => {
+    let now = 100
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => {
+        now = 144
+        throw new Error('SECRET delayed body failure')
+      },
+    } as unknown as Response)
+    const transport = createKimiTransport({
+      ...maxReasoningOptions, fetchImpl, monotonicNow: () => now, diagnosticIdFactory: () => 'attempt-delayed',
+    })
+
+    await expect(transport.complete(observedInput)).rejects.toMatchObject({
+      diagnosticCode: 'response_json', details: { termination: 'confirmed', providerElapsedMs: 44 },
+    })
+  })
+
   it('marks every absent usage field as unknown instead of inventing zero tokens', async () => {
     const transport = createKimiTransport(controlledOptions(responseFetch(200, JSON.stringify({
       choices: [{ finish_reason: 'stop', message: { content: '{"taskName":"Synthetic"}' } }],
@@ -148,7 +184,7 @@ describe('createKimiTransport', () => {
     })
   })
 
-  it.each(['-1', '1.5', 'Infinity', '9999999999999999999999999999999999999999999', 'not-a-date'])('ignores invalid 429 Retry-After %s', async (retryAfter) => {
+  it.each(['-1', '1.5', 'Infinity', '9999999999999999999999999999999999999999999', 'not-a-date', '2030-01-01T00:00:05.000Z'])('ignores invalid 429 Retry-After %s', async (retryAfter) => {
     const transport = createKimiTransport(controlledOptions(responseFetch(429, '{"error":"SECRET upstream body"}', { 'Retry-After': retryAfter })))
     const error = await caughtError(transport.complete(observedInput))
     expect(error).toMatchObject({ code: 'provider_rate_limited', details: { termination: 'confirmed', providerElapsedMs: 17 } })

@@ -104,6 +104,12 @@ function parseRetryAfterMs(value: string | null, wallClockNow: () => number) {
     const milliseconds = seconds * 1_000
     return Number.isSafeInteger(seconds) && Number.isSafeInteger(milliseconds) ? milliseconds : undefined
   }
+  const httpDates = [
+    /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT$/,
+    /^(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), \d{2}-(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-\d{2} \d{2}:\d{2}:\d{2} GMT$/,
+    /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (?: [1-9]|0[1-9]|[12]\d|3[01]) \d{2}:\d{2}:\d{2} \d{4}$/,
+  ]
+  if (!httpDates.some((pattern) => pattern.test(normalized))) return undefined
   const retryAt = Date.parse(normalized)
   const delay = retryAt - wallClockNow()
   return Number.isSafeInteger(delay) && delay >= 0 ? delay : undefined
@@ -220,8 +226,8 @@ export function createKimiTransport(options: KimiTransportOptions): KimiTranspor
         if (input.signal.aborted) throw new GradingProviderError('provider_timeout', '真实 AI 批改超时。', true, undefined, details)
         throw unavailableError(details)
       }
-      const providerElapsedMs = elapsedSince(startedAt, now)
       if (!response.ok) {
+        const providerElapsedMs = elapsedSince(startedAt, now)
         const retryAfterMs = response.status === 429
           ? parseRetryAfterMs(response.headers.get('retry-after'), options.wallClockNow ?? Date.now)
           : undefined
@@ -231,8 +237,9 @@ export function createKimiTransport(options: KimiTransportOptions): KimiTranspor
       try {
         payload = await response.json()
       } catch {
-        throw invalidResponseError('response_json', errorDetails('confirmed', providerElapsedMs, { finishReason: 'unknown' }))
+        throw invalidResponseError('response_json', errorDetails('confirmed', elapsedSince(startedAt, now), { finishReason: 'unknown' }))
       }
+      const providerElapsedMs = elapsedSince(startedAt, now)
       const choice = isRecord(payload) && Array.isArray(payload.choices) ? payload.choices[0] : undefined
       const rawFinishReason = isRecord(choice) ? choice.finish_reason : undefined
       const message = isRecord(choice) && isRecord(choice.message) ? choice.message : undefined

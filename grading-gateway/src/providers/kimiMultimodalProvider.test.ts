@@ -3,6 +3,7 @@ import type { GatewayTaskMaterial } from '../multipartTaskMaterials.js'
 import type { GeneratedRubricV1, TaskMaterialContextV1 } from '../multimodal/types.js'
 import { KimiMultimodalProvider } from './kimiMultimodalProvider.js'
 import type { KimiTransport } from './kimiTransport.js'
+import { GradingProviderError } from './providerTypes.js'
 
 const pages = [
   { pageId: 'page-1', mimeType: 'image/png' as const, buffer: Buffer.from('first page') },
@@ -106,7 +107,10 @@ describe('KimiMultimodalProvider', () => {
       writingRequirement: 'Teacher requirement.',
       materials,
       signal: new AbortController().signal,
-    })).rejects.toMatchObject({ code: 'provider_invalid_response' })
+    })).rejects.toMatchObject({
+      code: 'provider_invalid_response',
+      details: { termination: 'confirmed', attemptObservations: attempts(1) },
+    })
     expect(transport.complete).toHaveBeenCalledTimes(1)
   })
 
@@ -163,7 +167,10 @@ describe('KimiMultimodalProvider', () => {
     const transport = transportReturning(invalidDraft, reviewed)
 
     await expect(new KimiMultimodalProvider(transport).generateRubric(rubricInput))
-      .rejects.toMatchObject({ code: 'provider_invalid_response' })
+      .rejects.toMatchObject({
+        code: 'provider_invalid_response',
+        details: { termination: 'confirmed', attemptObservations: attempts(1) },
+      })
     expect(transport.complete).toHaveBeenCalledTimes(1)
   })
 
@@ -172,7 +179,28 @@ describe('KimiMultimodalProvider', () => {
     const transport = transportReturning(draft, invalidReviewed)
 
     await expect(new KimiMultimodalProvider(transport).generateRubric(rubricInput))
-      .rejects.toMatchObject({ code: 'provider_invalid_response' })
+      .rejects.toMatchObject({
+        code: 'provider_invalid_response',
+        details: { termination: 'confirmed', attemptObservations: attempts(2) },
+      })
+    expect(transport.complete).toHaveBeenCalledTimes(2)
+  })
+
+  it('merges the completed draft observation with a second-call failure without duplicate IDs', async () => {
+    const first = attempts(1)[0]!
+    const second = { ...first, attemptDiagnosticId: 'attempt-2' }
+    const failure = new GradingProviderError('provider_rate_limited', 'safe transport failure', true, undefined, {
+      termination: 'confirmed', attemptObservations: [second, second],
+    })
+    const complete = vi.fn()
+      .mockResolvedValueOnce({ value: draft, observation: first })
+      .mockRejectedValueOnce(failure)
+    const transport = { maxCompletionTokens: 8192, complete } satisfies KimiTransport
+
+    await expect(new KimiMultimodalProvider(transport).generateRubric(rubricInput)).rejects.toMatchObject({
+      code: 'provider_rate_limited',
+      details: { termination: 'confirmed', attemptObservations: [first, second] },
+    })
     expect(transport.complete).toHaveBeenCalledTimes(2)
   })
 
