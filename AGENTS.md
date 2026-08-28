@@ -25,6 +25,21 @@
 - 密钥只能存在于被 Git 忽略的本地环境文件或进程环境中，不得写入本文件、代码、日志、测试 fixture 或提交记录。
 - 调试真实批改失败时，必须在直接多模态架构内检查模型配置、鉴权、图片与请求规模、严格 Schema、输出截断、上游状态和结果归一化；不得未经用户改变决策就转向 OCR。
 
+## 当前 AI 成本与吞吐优化决策
+
+- 用户已批准以“最大吞吐目标 + 稳健有界并发”优化全流程；不得把它实现成无上限并发。真实 Kimi 环境必须有显式并发硬上限，调度器在上限内根据成功率、耗时、`429` 和可选 TPM 预算自适应升降。
+- 教师一次启动当前任务的全部待批改作文，系统自动排队和补充空闲槽位；单篇失败不得阻断其他作文。Kimi K3 当前不接 Batch API，也不得把多名学生合并进一个模型请求。
+- AI 辅助生成评分标准的正常路径只能执行一次 Kimi completion，原材料只发送一次；使用严格 Schema 和本地确定性校验，不再默认执行第二次模型复核或隐藏式模型修复。教师最终创建任务仍承担人工确认。
+- 对外继续保持 `multimodal-grading-request-v2`、`grading-result-v2` 和 `POST /grading/grade-images`。Gateway 校验完整任务包后，只向 Provider 投影一份 canonical 任务上下文；必须保留规范化、去重、受限的 `reviewWarnings`，但不得把顶层与 rubric 内重复字段、材料溯源元数据、学生姓名或原题材料发送进逐篇 Prompt。
+- 同一任务 revision 的稳定政策和 canonical 任务上下文必须放在 Prompt 前部，并使用服务端生成或确定性派生、绑定 rubric/policy/schema revision 且不含个人信息的 opaque `prompt_cache_key` 帮助 Kimi 自动前缀缓存；不得直接发送教师命名或普通业务 ID。缓存键不是幂等键，缓存是否命中不得影响正确性。
+- 第一阶段只做确定性无损输出去重：Provider 不再重复生成最终由 Gateway 根据 transcript 与 `sentencePairs` 重建的 `correctedText` 和 `improvedText`；教师可见的完整 `grading-result-v2` 保持不变。其他语义相近反馈字段只有在真实 A/B 证明质量不退化后才允许继续合并。
+- 同一 Gateway 进程连续可用且没有有效内容变更或明确终止后受控重试时，正常 N 篇初次批改应恰好对应 N 次多模态 completion。总 token 不可能与学生人数无关，但必须删除单篇重复上下文和重复输出，并通过并发把全班关键路径由完全串行压缩为受账户能力约束的多轮执行；多实例或重启前必须使用共享或持久幂等 registry 才能继续作出同等保证。
+- Gateway 必须保留并安全汇总 Kimi 返回的 `prompt_tokens`、`completion_tokens`、`total_tokens`、可选 `cached_tokens`、`finish_reason` 和阶段耗时；日志不得包含作文正文、图片、Base64、完整 Prompt、学生姓名、API Key 或 Provider 原始响应。
+- 同一作文版本与同一评分标准版本必须使用稳定逻辑幂等身份。重复提交、传输重发或结果未知时先复用原 in-flight/成功结果，不得立即产生第二次 Provider 调用；鉴权或配置错误暂停队列，`429` 退避降并发，不可重试错误不得自动重试。
+- 图片尺寸或编码优化必须先在合成或已授权匿名样本上做 A/B；正文识别、评分和重要字迹风险达到设计质量门槛后才可启用。不得用未经验证的有损压缩换取 token，也不得把图片优化变成 OCR 阶段。
+- 生产或真实 Kimi 运行必须显式选择 Provider；缺失配置时不得静默回退 mock。真实 Key 只允许进入被 Git 忽略的本地环境文件或进程环境，真实基线调用前还必须单独确认样本范围、调用数和费用。
+- 完整设计与质量门槛见 `docs/superpowers/specs/2026-08-28-ai-pipeline-cost-latency-optimization-design.md`。该设计已经批准但尚未实施；在实施完成并验证前，不得把当前两阶段 rubric、全局串行或无 usage 观测描述成已经优化。
+
 ## 当前作文输入决策
 
 - 每位学生对应一张卡片，初始名称按顺序为“学生1”“学生2”……；姓名可编辑，留空时继续使用默认名称。
