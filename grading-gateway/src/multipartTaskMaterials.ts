@@ -3,6 +3,24 @@ import { MAX_WRITING_REQUIREMENT_CODE_POINTS } from './multimodal/materialContex
 export const MAX_TASK_MATERIAL_UNITS = 10
 export const MAX_TASK_MATERIAL_IMAGE_BYTES = 8 * 1024 * 1024
 export const MAX_TASK_MATERIAL_TEXT_CHARACTERS = 30_000
+export const MAX_TASK_MATERIAL_DISPLAY_NAME_CHARACTERS = 256
+
+// JSON.stringify can represent one Unicode code point with six ASCII bytes (for example, "\u0000").
+const MAX_JSON_ESCAPED_UTF8_BYTES_PER_CODE_POINT = 6
+const TEXT_MATERIAL_JSON_ENVELOPE_BYTES = Buffer.byteLength(
+  JSON.stringify({ displayName: '', text: '' }),
+  'utf8',
+)
+export const MAX_TASK_MATERIAL_TEXT_FIELD_BYTES =
+  Buffer.byteLength('[]', 'utf8')
+  + (MAX_TASK_MATERIAL_UNITS - 1)
+  + MAX_TASK_MATERIAL_UNITS * (
+    TEXT_MATERIAL_JSON_ENVELOPE_BYTES
+    + MAX_JSON_ESCAPED_UTF8_BYTES_PER_CODE_POINT * (
+      MAX_TASK_MATERIAL_DISPLAY_NAME_CHARACTERS
+      + MAX_TASK_MATERIAL_TEXT_CHARACTERS
+    )
+  )
 
 type ImageMimeType = 'image/png' | 'image/jpeg' | 'image/webp'
 
@@ -155,11 +173,11 @@ function readTextMaterials(value: unknown): TextMaterialEntry[] | 'too_large' | 
   const materials: TextMaterialEntry[] = []
   for (const item of parsed) {
     if (!isRecord(item) || !hasExactlyKeys(item, ['displayName', 'text'])) return null
-    const displayName = readTrimmedString(item.displayName, 256)
+    const displayName = readTrimmedString(item.displayName, MAX_TASK_MATERIAL_DISPLAY_NAME_CHARACTERS)
     if (!displayName || typeof item.text !== 'string') return null
     const text = item.text.trim()
     if (!text) return null
-    if (text.length > MAX_TASK_MATERIAL_TEXT_CHARACTERS) return 'too_large'
+    if (Array.from(text).length > MAX_TASK_MATERIAL_TEXT_CHARACTERS) return 'too_large'
     materials.push({ displayName, text })
   }
   return materials

@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  MAX_TASK_MATERIAL_DISPLAY_NAME_CHARACTERS,
   MAX_TASK_MATERIAL_IMAGE_BYTES,
+  MAX_TASK_MATERIAL_TEXT_FIELD_BYTES,
   MAX_TASK_MATERIAL_TEXT_CHARACTERS,
+  MAX_TASK_MATERIAL_UNITS,
   validateTaskMaterialMultipart,
 } from './multipartTaskMaterials.js'
 
@@ -63,6 +66,18 @@ function errorText(result: ReturnType<typeof validateTaskMaterialMultipart>): st
 }
 
 describe('validateTaskMaterialMultipart', () => {
+  it('exports a finite text-field byte limit equal to the worst-case semantic JSON envelope', () => {
+    const worstCaseMaterials = Array.from({ length: MAX_TASK_MATERIAL_UNITS }, () => ({
+      displayName: '\u0000'.repeat(MAX_TASK_MATERIAL_DISPLAY_NAME_CHARACTERS),
+      text: '\u0000'.repeat(MAX_TASK_MATERIAL_TEXT_CHARACTERS),
+    }))
+    const worstCaseBytes = Buffer.byteLength(JSON.stringify(worstCaseMaterials), 'utf8')
+
+    expect(Number.isSafeInteger(MAX_TASK_MATERIAL_TEXT_FIELD_BYTES)).toBe(true)
+    expect(MAX_TASK_MATERIAL_TEXT_FIELD_BYTES).toBe(worstCaseBytes)
+    expect(MAX_TASK_MATERIAL_TEXT_FIELD_BYTES).toBeLessThan(2 * 1024 * 1024)
+  })
+
   it('reconstructs interleaved image and text units in manifest order', () => {
     const result = validateTaskMaterialMultipart(validBody(), validFiles, 'required')
 
@@ -371,6 +386,26 @@ describe('validateTaskMaterialMultipart', () => {
     }), [], 'required')
 
     expect(result).toMatchObject({ ok: false, error: { code } })
+  })
+
+  it('counts the 30,000-character text limit in Unicode code points', () => {
+    const bodyFor = (text: string) => validBody({
+      materialManifest: JSON.stringify([{ id: 'u-1', kind: 'text', textIndex: 0 }]),
+      textMaterials: JSON.stringify([{ displayName: 'prompt.docx', text }]),
+    })
+    const accepted = validateTaskMaterialMultipart(
+      bodyFor('😀'.repeat(MAX_TASK_MATERIAL_TEXT_CHARACTERS)),
+      [],
+      'required',
+    )
+    const rejected = validateTaskMaterialMultipart(
+      bodyFor('😀'.repeat(MAX_TASK_MATERIAL_TEXT_CHARACTERS + 1)),
+      [],
+      'required',
+    )
+
+    expect(accepted.ok).toBe(true)
+    expect(rejected).toMatchObject({ ok: false, error: { code: 'request_too_large' } })
   })
 
   it.each([

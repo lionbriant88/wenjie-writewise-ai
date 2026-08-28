@@ -1,6 +1,7 @@
 import request from 'supertest'
 import { describe, expect, it } from 'vitest'
 import { createServer } from './server.js'
+import { MAX_TASK_MATERIAL_TEXT_FIELD_BYTES } from './multipartTaskMaterials.js'
 import { GradingProviderError } from './providers/providerTypes.js'
 import type { MultimodalProvider } from './providers/multimodalProviderTypes.js'
 import type { TaskMaterialContextV1 } from './multimodal/types.js'
@@ -336,6 +337,78 @@ describe('grading gateway server boundary', () => {
         { kind: 'image', unitId: 'image-2', mimeType: 'image/webp', buffer: Buffer.from('second-image') },
       ],
     })
+  })
+
+  it.each([
+    ['multibyte UTF-8 text', '汉'],
+    ['JSON-escaped control characters', '\u0000'],
+  ] as const)('admits the semantic maximum of ten 30,000-code-point text materials with %s', async (_label, character) => {
+    const calls: Parameters<MultimodalProvider['generateMaterialContext']>[] = []
+    const provider = fakeMultimodalProvider({
+      async generateMaterialContext(input) {
+        calls.push([input])
+        return materialContextFixture()
+      },
+    })
+    const materialManifest = Array.from({ length: 10 }, (_, index) => ({
+      id: `text-${index}`,
+      kind: 'text',
+      textIndex: index,
+    }))
+    const textMaterials = Array.from({ length: 10 }, (_, index) => ({
+      displayName: `material-${index}.docx`,
+      text: character.repeat(30_000),
+    }))
+
+    const response = await request(createServer({ multimodalProvider: provider }))
+      .post('/tasks/material-context')
+      .field('requestId', `context-semantic-max-${character.codePointAt(0)?.toString(16)}`)
+      .field('fullScore', '15')
+      .field('writingRequirement', 'Teacher requirement.')
+      .field('materialManifest', JSON.stringify(materialManifest))
+      .field('textMaterials', JSON.stringify(textMaterials))
+      .expect(200)
+
+    expect(response.body).toMatchObject({ status: 'success' })
+    expect(calls).toHaveLength(1)
+    const received = calls[0]?.[0].materials ?? []
+    expect(received).toHaveLength(10)
+    expect(received.every((material) => (
+      material.kind === 'text'
+      && Array.from(material.text).length === 30_000
+      && material.text === character.repeat(30_000)
+    ))).toBe(true)
+  })
+
+  it('keeps the task-material text field bounded and returns a content-free 413 above it', async () => {
+    let calls = 0
+    const privateMarker = 'PRIVATE-OVERSIZED-TEXT-MATERIAL'
+    const provider = fakeMultimodalProvider({
+      async generateMaterialContext() {
+        calls += 1
+        return materialContextFixture()
+      },
+    })
+    const oversizedField = `${privateMarker}${'x'.repeat(
+      MAX_TASK_MATERIAL_TEXT_FIELD_BYTES + 1 - privateMarker.length,
+    )}`
+
+    const response = await request(createServer({ multimodalProvider: provider }))
+      .post('/tasks/material-context')
+      .field('requestId', 'context-transport-too-large')
+      .field('fullScore', '15')
+      .field('writingRequirement', 'Teacher requirement.')
+      .field('materialManifest', JSON.stringify([{ id: 'text-1', kind: 'text', textIndex: 0 }]))
+      .field('textMaterials', oversizedField)
+      .expect(413)
+
+    expect(response.body).toMatchObject({
+      requestId: 'context-transport-too-large',
+      status: 'failed',
+      error: { code: 'request_too_large', retryable: false },
+    })
+    expect(JSON.stringify(response.body)).not.toContain(privateMarker)
+    expect(calls).toBe(0)
   })
 
   it('rejects an invalid material manifest before resolving or calling the Provider', async () => {

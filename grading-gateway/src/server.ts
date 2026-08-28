@@ -4,7 +4,12 @@ import multer from 'multer'
 import { isWellFormedUnicode } from '../../app/src/services/grading/gradingResultSemantics.js'
 import { validateMultimodalGradingRequestMode } from '../../app/src/services/grading/validateMultimodalGradingRequestMode.js'
 import { MAX_RUBRIC_IMAGE_BYTES, MAX_RUBRIC_PAGES, requestIdFromMultipartBody, validateRubricMultipart } from './multipartImages.js'
-import { MAX_TASK_MATERIAL_IMAGE_BYTES, MAX_TASK_MATERIAL_UNITS, validateTaskMaterialMultipart } from './multipartTaskMaterials.js'
+import {
+  MAX_TASK_MATERIAL_IMAGE_BYTES,
+  MAX_TASK_MATERIAL_TEXT_FIELD_BYTES,
+  MAX_TASK_MATERIAL_UNITS,
+  validateTaskMaterialMultipart,
+} from './multipartTaskMaterials.js'
 import { validateTaskMaterialContext } from './multimodal/materialContextContract.js'
 import { normalizeMultimodalResult } from './multimodal/normalizeMultimodalResult.js'
 import { validateConfirmedRubric, validateGeneratedRubric } from './multimodal/validateRubric.js'
@@ -30,7 +35,7 @@ const taskMaterialUpload = multer({
     fileSize: MAX_TASK_MATERIAL_IMAGE_BYTES + 1,
     files: MAX_TASK_MATERIAL_UNITS,
     fields: 5,
-    fieldSize: 512 * 1024,
+    fieldSize: MAX_TASK_MATERIAL_TEXT_FIELD_BYTES,
     parts: MAX_TASK_MATERIAL_UNITS + 7,
   },
 })
