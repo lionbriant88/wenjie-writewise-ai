@@ -96,6 +96,53 @@ function elapsedSince(startedAt: number, now: () => number) {
   return Number.isFinite(elapsed) && elapsed >= 0 ? Math.floor(elapsed) : 0
 }
 
+const monthNumbers: Record<string, number> = {
+  Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5,
+  Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11,
+}
+
+const weekdayNumbers: Record<string, number> = {
+  Sun: 0, Sunday: 0, Mon: 1, Monday: 1, Tue: 2, Tuesday: 2, Wed: 3, Wednesday: 3,
+  Thu: 4, Thursday: 4, Fri: 5, Friday: 5, Sat: 6, Saturday: 6,
+}
+
+function utcHttpDate(
+  weekday: string,
+  year: number,
+  monthName: string,
+  day: number,
+  hour: number,
+  minute: number,
+  second: number,
+) {
+  const month = monthNumbers[monthName]
+  const expectedWeekday = weekdayNumbers[weekday]
+  if (month === undefined || expectedWeekday === undefined || day < 1 || hour > 23 || minute > 59 || second > 59) return undefined
+  const timestamp = Date.UTC(year, month, day, hour, minute, second)
+  if (!Number.isSafeInteger(timestamp)) return undefined
+  const date = new Date(timestamp)
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month || date.getUTCDate() !== day
+    || date.getUTCHours() !== hour || date.getUTCMinutes() !== minute || date.getUTCSeconds() !== second
+    || date.getUTCDay() !== expectedWeekday) return undefined
+  return timestamp
+}
+
+function parseHttpDate(value: string, nowMs: number) {
+  const imfFixdate = /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat), (\d{2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{4}) (\d{2}):(\d{2}):(\d{2}) GMT$/.exec(value)
+  if (imfFixdate) return utcHttpDate(imfFixdate[1], Number(imfFixdate[4]), imfFixdate[3], Number(imfFixdate[2]), Number(imfFixdate[5]), Number(imfFixdate[6]), Number(imfFixdate[7]))
+
+  const rfc850 = /^(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday), (\d{2})-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-(\d{2}) (\d{2}):(\d{2}):(\d{2}) GMT$/.exec(value)
+  if (rfc850) {
+    const currentYear = new Date(nowMs).getUTCFullYear()
+    const year = Math.floor(currentYear / 100) * 100 + Number(rfc850[4])
+    return utcHttpDate(rfc850[1], year > currentYear + 50 ? year - 100 : year, rfc850[3], Number(rfc850[2]), Number(rfc850[5]), Number(rfc850[6]), Number(rfc850[7]))
+  }
+
+  const asctime = /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) ( [1-9]|0[1-9]|[12]\d|3[01]) (\d{2}):(\d{2}):(\d{2}) (\d{4})$/.exec(value)
+  if (asctime) return utcHttpDate(asctime[1], Number(asctime[7]), asctime[2], Number(asctime[3]), Number(asctime[4]), Number(asctime[5]), Number(asctime[6]))
+  return undefined
+}
+
 function parseRetryAfterMs(value: string | null, wallClockNow: () => number) {
   if (value === null) return undefined
   const normalized = value.trim()
@@ -104,14 +151,10 @@ function parseRetryAfterMs(value: string | null, wallClockNow: () => number) {
     const milliseconds = seconds * 1_000
     return Number.isSafeInteger(seconds) && Number.isSafeInteger(milliseconds) ? milliseconds : undefined
   }
-  const httpDates = [
-    /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT$/,
-    /^(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), \d{2}-(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-\d{2} \d{2}:\d{2}:\d{2} GMT$/,
-    /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (?: [1-9]|0[1-9]|[12]\d|3[01]) \d{2}:\d{2}:\d{2} \d{4}$/,
-  ]
-  if (!httpDates.some((pattern) => pattern.test(normalized))) return undefined
-  const retryAt = Date.parse(normalized)
-  const delay = retryAt - wallClockNow()
+  const nowMs = wallClockNow()
+  const retryAt = parseHttpDate(normalized, nowMs)
+  if (retryAt === undefined) return undefined
+  const delay = retryAt - nowMs
   return Number.isSafeInteger(delay) && delay >= 0 ? delay : undefined
 }
 

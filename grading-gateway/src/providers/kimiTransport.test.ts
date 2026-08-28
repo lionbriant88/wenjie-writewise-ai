@@ -176,7 +176,10 @@ describe('createKimiTransport', () => {
   })
 
   it.each([
-    ['whole seconds', '7', 7000], ['HTTP date', 'Tue, 01 Jan 2030 00:00:05 GMT', 5000],
+    ['whole seconds', '7', 7000],
+    ['IMF-fixdate', 'Tue, 01 Jan 2030 08:00:05 GMT', 28_805_000],
+    ['obsolete RFC850', 'Tuesday, 01-Jan-30 08:00:05 GMT', 28_805_000],
+    ['asctime', 'Tue Jan  1 08:00:05 2030', 28_805_000],
   ])('preserves the valid 429 Retry-After %s without shortening it', async (_caseName, retryAfter, expectedMs) => {
     const transport = createKimiTransport(controlledOptions(responseFetch(429, '{"error":"SECRET upstream body"}', { 'Retry-After': retryAfter })))
     await expect(transport.complete(observedInput)).rejects.toMatchObject({
