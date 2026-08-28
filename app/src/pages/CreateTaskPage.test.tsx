@@ -80,6 +80,8 @@ const generatedRubric: GeneratedTaskRubric = {
   reviewWarnings: ['Review unclear source text.'],
 }
 
+const materialStaleNotice = '材料已变化；当前评分标准仍可使用，如需让 AI 重新参考材料，可再次生成。'
+
 function aiSuccess(requestId: string, rubric = generatedRubric): RubricClientResponse {
   return { requestId, status: 'success', rubric }
 }
@@ -422,6 +424,84 @@ describe('CreateTaskPage optional AI assistance', () => {
     expect(screen.getByRole('button', { name: '编辑内容与任务完成' })).toBeInTheDocument()
     expect(mocks.generate).toHaveBeenCalledOnce()
   })
+
+  it('invalidates pending AI immediately when a newly selected PDF is still normalizing', async () => {
+    const user = userEvent.setup()
+    const pendingAi = deferred<RubricClientResponse>()
+    const pendingPdf = deferred<File[]>()
+    const abort = vi.spyOn(AbortController.prototype, 'abort')
+    mocks.generate.mockReturnValueOnce(pendingAi.promise)
+    mocks.convertPdfToImages.mockReturnValueOnce(pendingPdf.promise)
+    renderCreateTaskPage()
+    await uploadMaterial(user, 'ready-a.png')
+    await enterValidRequirement(user, 'Keep the teacher-authored requirement.')
+
+    await user.click(screen.getByRole('button', { name: '根据材料生成评分标准' }))
+    await waitFor(() => expect(mocks.generate).toHaveBeenCalledOnce())
+    await user.upload(
+      screen.getByLabelText('选择作文原材料'),
+      new File(['pdf'], 'slow-b.pdf', { type: 'application/pdf', lastModified: 456 }),
+    )
+
+    expect(await screen.findByText('正在处理，请稍候…')).toBeInTheDocument()
+    expect(abort).toHaveBeenCalled()
+    await act(async () => {
+      const request = mocks.generate.mock.calls[0]?.[0] as { requestId: string }
+      pendingAi.resolve(aiSuccess(request.requestId))
+      await pendingAi.promise
+    })
+    expect(screen.queryByRole('button', { name: '编辑AI 内容' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '编辑内容与任务完成' })).toBeInTheDocument()
+    expect(screen.getByLabelText('写作要求')).toHaveValue('Keep the teacher-authored requirement.')
+
+    await act(async () => {
+      pendingPdf.resolve([new File(['page'], 'slow-page.png', { type: 'image/png', lastModified: 789 })])
+      await pendingPdf.promise
+    })
+    expect(await screen.findByText('slow-b.pdf · 第 1 页')).toBeInTheDocument()
+  })
+
+  it.each(['add', 'retry', 'remove', 'reorder'] as const)(
+    '%s immediately marks an applied AI rubric stale without blocking creation, and fresh AI clears the notice',
+    async (mutation) => {
+      const user = userEvent.setup()
+      mocks.generate.mockImplementation(async (request: { requestId: string }) => aiSuccess(request.requestId))
+      renderCreateTaskPage()
+      await uploadMaterial(user, 'first.png')
+      await uploadMaterial(user, 'second.png')
+      if (mutation === 'retry') {
+        mocks.convertPdfToImages.mockRejectedValueOnce(new Error('synthetic conversion failure'))
+        await user.upload(
+          screen.getByLabelText('选择作文原材料'),
+          new File(['pdf'], 'retry.pdf', { type: 'application/pdf', lastModified: 456 }),
+        )
+        expect(await screen.findByRole('button', { name: '重试 retry.pdf' })).toBeInTheDocument()
+      }
+      await enterValidRequirement(user, 'Teacher requirement remains usable.')
+      await user.click(screen.getByRole('button', { name: '根据材料生成评分标准' }))
+      expect(await screen.findByRole('button', { name: '编辑AI 内容' })).toBeInTheDocument()
+
+      if (mutation === 'add') {
+        await uploadMaterial(user, 'third.png')
+      } else if (mutation === 'retry') {
+        mocks.convertPdfToImages.mockResolvedValueOnce([
+          new File(['page'], 'retry-page.png', { type: 'image/png', lastModified: 789 }),
+        ])
+        await user.click(screen.getByRole('button', { name: '重试 retry.pdf' }))
+        expect(await screen.findByText('retry.pdf · 第 1 页')).toBeInTheDocument()
+      } else if (mutation === 'remove') {
+        await user.click(screen.getByRole('button', { name: '删除 second.png' }))
+      } else {
+        await user.click(screen.getByRole('button', { name: '上移 second.png' }))
+      }
+
+      expect(screen.getByText(materialStaleNotice)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '创建任务并上传作文' })).toBeEnabled()
+      await user.click(screen.getByRole('button', { name: '根据材料生成评分标准' }))
+      await waitFor(() => expect(mocks.generate).toHaveBeenCalledTimes(2))
+      await waitFor(() => expect(screen.queryByText(materialStaleNotice)).not.toBeInTheDocument())
+    },
+  )
 
   it('does not overwrite a dimension the teacher edits while AI is pending', async () => {
     const user = userEvent.setup()

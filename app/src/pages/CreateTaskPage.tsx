@@ -42,6 +42,8 @@ type MaterialContextState =
 
 type GeneratingAiState = Extract<AiAssistState, { status: 'generating' }>
 
+const MATERIAL_STALE_NOTICE = '材料已变化；当前评分标准仍可使用，如需让 AI 重新参考材料，可再次生成。'
+
 function newRequestId(prefix: string) {
   return `${prefix}-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`
 }
@@ -60,6 +62,13 @@ function materialSignature(units: readonly MaterialUnit[]): string {
         unit.file.lastModified,
       ]
     : [unit.id, unit.kind, unit.sourceKind, unit.displayName, unit.text]))
+}
+
+function materialFreshnessIdentity(
+  units: readonly MaterialUnit[],
+  mutationVersion: number,
+): string {
+  return JSON.stringify({ mutationVersion, units: materialSignature(units) })
 }
 
 function requestSnapshot(signature: string, fullScore: number, writingRequirement: string): string {
@@ -112,6 +121,8 @@ export function CreateTaskPage() {
   const [rubricSource, setRubricSource] = useState<'teacher' | 'ai'>('teacher')
   const [aiState, setAiState] = useState<AiAssistState>({ status: 'idle' })
   const [materialContextState, setMaterialContextState] = useState<MaterialContextState>({ status: 'none' })
+  const [materialMutationVersion, setMaterialMutationVersion] = useState(0)
+  const [showMaterialStaleNotice, setShowMaterialStaleNotice] = useState(false)
   const [submitWarning, setSubmitWarning] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const submittingRef = useRef(false)
@@ -120,9 +131,15 @@ export function CreateTaskPage() {
   const materialContextStateRef = useRef<MaterialContextState>(materialContextState)
   const contextControllerRef = useRef<AbortController | null>(null)
   const latestUnitsRef = useRef<readonly MaterialUnit[]>(materials.units)
+  const materialMutationVersionRef = useRef(0)
+  const rubricSourceRef = useRef(rubricSource)
 
   latestUnitsRef.current = materials.units
-  const currentMaterialSignature = materialSignature(materials.units)
+  rubricSourceRef.current = rubricSource
+  const currentMaterialSignature = materialFreshnessIdentity(
+    materials.units,
+    materialMutationVersion,
+  )
   const currentRequestSnapshot = requestSnapshot(currentMaterialSignature, fullScore, writingRequirement)
   const latestRequestSnapshotRef = useRef(currentRequestSnapshot)
   latestRequestSnapshotRef.current = currentRequestSnapshot
@@ -142,6 +159,20 @@ export function CreateTaskPage() {
     activeAiRef.current = null
     active.controller.abort()
     if (mountedRef.current) setAiState({ status: 'idle' })
+  }
+
+  const registerMaterialMutation = () => {
+    const nextVersion = materialMutationVersionRef.current + 1
+    materialMutationVersionRef.current = nextVersion
+    setMaterialMutationVersion(nextVersion)
+    latestRequestSnapshotRef.current = requestSnapshot(
+      materialFreshnessIdentity(latestUnitsRef.current, nextVersion),
+      fullScore,
+      writingRequirement,
+    )
+    abortAi()
+    replaceMaterialContextState({ status: 'stale' })
+    if (rubricSourceRef.current === 'ai') setShowMaterialStaleNotice(true)
   }
 
   useEffect(() => {
@@ -173,7 +204,11 @@ export function CreateTaskPage() {
     const readyUnits = latestUnitsRef.current
     if (readyUnits.length === 0 || materials.isNormalizing || submittingRef.current) return
 
-    const snapshot = requestSnapshot(materialSignature(readyUnits), fullScore, writingRequirement)
+    const snapshot = requestSnapshot(
+      materialFreshnessIdentity(readyUnits, materialMutationVersionRef.current),
+      fullScore,
+      writingRequirement,
+    )
     const requestId = newRequestId('rubric')
     const controller = new AbortController()
     const active: GeneratingAiState = { status: 'generating', requestId, snapshot, controller }
@@ -223,9 +258,10 @@ export function CreateTaskPage() {
 
     setDimensions(visibleDimensions)
     if (!writingRequirement.trim()) setWritingRequirement(effectiveWritingRequirement)
+    rubricSourceRef.current = 'ai'
     setRubricSource('ai')
     const appliedSnapshot = requestSnapshot(
-      materialSignature(readyUnits),
+      materialFreshnessIdentity(readyUnits, materialMutationVersionRef.current),
       fullScore,
       effectiveWritingRequirement,
     )
@@ -234,6 +270,7 @@ export function CreateTaskPage() {
       signature: appliedSnapshot,
       value: toMaterialContext(response.rubric),
     })
+    setShowMaterialStaleNotice(false)
     setAiState({ status: 'idle' })
   }
 
@@ -261,7 +298,11 @@ export function CreateTaskPage() {
     if (!mountedRef.current) return
 
     const readyUnits = latestUnitsRef.current
-    const snapshot = requestSnapshot(materialSignature(readyUnits), form.fullScore, form.writingRequirement)
+    const snapshot = requestSnapshot(
+      materialFreshnessIdentity(readyUnits, materialMutationVersionRef.current),
+      form.fullScore,
+      form.writingRequirement,
+    )
     let analyzedMaterialContext: TaskMaterialContext | undefined
     let materialProcessingStatus: TaskMaterialProcessingStatus = 'none'
     const cached = materialContextStateRef.current
@@ -363,12 +404,33 @@ export function CreateTaskPage() {
           units={materials.units}
           sources={materials.sources}
           disabled={submitting}
-          onSelectFiles={(files) => { void materials.addFiles(files) }}
-          onRemoveUnit={materials.removeUnit}
-          onRemoveSource={materials.removeSource}
-          onRetrySource={(sourceKey) => { void materials.retrySource(sourceKey) }}
-          onMoveUnit={materials.moveUnit}
+          onSelectFiles={(files) => {
+            registerMaterialMutation()
+            void materials.addFiles(files)
+          }}
+          onRemoveUnit={(unitId) => {
+            registerMaterialMutation()
+            materials.removeUnit(unitId)
+          }}
+          onRemoveSource={(sourceKey) => {
+            registerMaterialMutation()
+            materials.removeSource(sourceKey)
+          }}
+          onRetrySource={(sourceKey) => {
+            registerMaterialMutation()
+            void materials.retrySource(sourceKey)
+          }}
+          onMoveUnit={(unitId, direction) => {
+            registerMaterialMutation()
+            materials.moveUnit(unitId, direction)
+          }}
         />
+
+        {showMaterialStaleNotice ? (
+          <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            {MATERIAL_STALE_NOTICE}
+          </p>
+        ) : null}
 
         <TaskRubricEditor
           writingRequirement={writingRequirement}
