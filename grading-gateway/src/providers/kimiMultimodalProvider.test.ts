@@ -332,7 +332,17 @@ describe('KimiMultimodalProvider', () => {
     expect(transport.complete.mock.calls[0]?.[0].schema)
       .toHaveProperty('properties.fullTextRevision.properties.improvedText')
     expect(transport.complete.mock.calls[0]?.[0]).not.toHaveProperty('promptCacheKey')
-    expect(JSON.stringify(transport.complete.mock.calls[0]?.[0].messages)).toContain('Reviewed task')
+    const messageJson = JSON.stringify(transport.complete.mock.calls[0]?.[0].messages)
+    expect(messageJson).not.toContain('legacy-task')
+    expect(messageJson).not.toContain('legacy-essay')
+    expect(messageJson).not.toContain('Reviewed task')
+    expect(messageJson).not.toContain('Draft evidence')
+    expect(messageJson).not.toContain('Draft deduction')
+    expect(messageJson).not.toContain('taskId')
+    expect(messageJson).not.toContain('essayId')
+    expect(messageJson).not.toContain('taskName')
+    expect(messageJson).not.toContain('sourceEvidence')
+    expect(messageJson).not.toContain('deductionFocus')
   })
 
   it('does not retry a failed essay grading transport call', async () => {

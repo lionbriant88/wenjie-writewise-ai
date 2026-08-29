@@ -316,6 +316,47 @@ describe('essay grading prompt', () => {
     expect(serialized).not.toContain('sourceEvidence')
   })
 
+  it.each(['optimized-v1', 'legacy'] as const)(
+    'projects one canonical deidentified task context for the %s profile',
+    (profile) => {
+      const privateTask = {
+        ...task,
+        taskId: 'PRIVATE-TASK-ID',
+        rubric: {
+          ...task.rubric,
+          taskName: 'PRIVATE-TEACHER-TASK-NAME',
+          reviewWarnings: ['  Keep this allowed review warning.  ', 'Keep this allowed review warning.'],
+          dimensions: [{
+            ...task.rubric.dimensions[0],
+            sourceEvidence: ['PRIVATE-MATERIAL-PROVENANCE'],
+            deductionFocus: ['PRIVATE-DEDUCTION-FOCUS'],
+          }],
+        },
+      }
+      const messages = buildEssayGradingMessages({
+        profile,
+        task: privateTask,
+        essayId: 'PRIVATE-STUDENT-NAME-LI-MING',
+        pages: [{ pageId: 'PRIVATE-PAGE-ID', mimeType: 'image/png', buffer: Buffer.from('anonymous-image') }],
+      })
+      const serialized = JSON.stringify(messages)
+
+      expect(serialized.match(/Write a response to the supplied school scenario\./g)).toHaveLength(1)
+      expect(serialized.match(/Keep this allowed review warning\./g)).toHaveLength(1)
+      expect(serialized).not.toContain('PRIVATE-TASK-ID')
+      expect(serialized).not.toContain('PRIVATE-TEACHER-TASK-NAME')
+      expect(serialized).not.toContain('PRIVATE-STUDENT-NAME-LI-MING')
+      expect(serialized).not.toContain('PRIVATE-MATERIAL-PROVENANCE')
+      expect(serialized).not.toContain('PRIVATE-DEDUCTION-FOCUS')
+      expect(serialized).not.toContain('PRIVATE-PAGE-ID')
+      expect(serialized).not.toContain('essayId')
+      expect(serialized).not.toContain('taskId')
+      expect(serialized).not.toContain('taskName')
+      expect(serialized).not.toContain('sourceEvidence')
+      expect(serialized).not.toContain('deductionFocus')
+    },
+  )
+
   it('places exact teacher-confirmed text last with zero images and no essay identity in optimized mode', () => {
     const confirmedTranscript = 'Exact teacher-confirmed text.\nDo not alter spacing.'
     const messages = buildEssayGradingMessages({

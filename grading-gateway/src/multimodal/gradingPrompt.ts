@@ -101,7 +101,7 @@ function legacyEssayGradingMessages(input: BuildEssayGradingMessagesInput): Kimi
     ]),
     ...sharedOutputInstructions(),
   ].join('\n') }, { role: 'user', content: [{ type: 'text', text: JSON.stringify({
-    essayId: input.essayId, fullScore: input.task.fullScore, task: input.task,
+    task: projectModelTaskContext(input.task),
     ...(hasConfirmedTranscript ? { trustedConfirmedTranscript: input.confirmedTranscript } : {}),
   }) }, ...(hasConfirmedTranscript ? [] : pageImageParts(input.pages))] }]
 }
