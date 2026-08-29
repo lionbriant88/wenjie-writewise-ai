@@ -269,6 +269,8 @@ export interface FullTextRevision {
 export interface GradingResult {
   id: string
   essayId: string
+  /** Missing legacy revisions normalize to 0; every teacher edit advances this local revision. */
+  resultRevision?: number
   totalScore: number
   dimensionScores: ScoreDimension[]
   errorAnnotations: ErrorAnnotation[]
