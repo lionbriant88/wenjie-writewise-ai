@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
@@ -356,6 +356,7 @@ const notRunLines = () => [
 ]
 
 interface CliResult { code: number | null; stdout: string; stderr: string }
+const authorizationRequiredLine = 'POLICY-EVAL not_run category=authorization_required'
 async function runCli(env: NodeJS.ProcessEnv, cwd: string): Promise<CliResult> {
   const here = dirname(fileURLToPath(import.meta.url)); const cli = resolve(here, '../node_modules/tsx/dist/cli.mjs'); const script = resolve(here, 'runPolicyGoldenEval.ts')
   return await new Promise((resolveResult, reject) => {
@@ -366,10 +367,66 @@ async function runCli(env: NodeJS.ProcessEnv, cwd: string): Promise<CliResult> {
 }
 
 describe('policy golden evaluation CLI subprocess', () => {
+  it.each([
+    ['missing', undefined],
+    ['incorrect', 'Approved'],
+  ])('requires exact shell authorization before reading an available Key (%s)', async (_label, authorization) => {
+    let requests = 0
+    const server = createServer((_request, response) => { requests++; response.writeHead(503).end() })
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+    const address = server.address(); if (!address || typeof address === 'string') throw new Error('Test server did not bind.')
+    const cwd = await mkdtemp(resolve(tmpdir(), 'golden-cli-unauthorized-key-'))
+    const localKey = 'LOCAL-TEST-KEY-MUST-NOT-PRINT'
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      KIMI_API_KEY: localKey,
+      KIMI_API_BASE: `http://127.0.0.1:${address.port}`,
+    }
+    delete env.GRADING_POLICY_EVAL_AUTHORIZATION
+    if (authorization !== undefined) env.GRADING_POLICY_EVAL_AUTHORIZATION = authorization
+    try {
+      const result = await runCli(env, cwd)
+      expect(result.code).toBe(3)
+      expect(result.stderr).toBe('')
+      expect(result.stdout.trim().split(/\r?\n/)).toEqual([authorizationRequiredLine])
+      expect(result.stdout).not.toContain(localKey)
+      expect(requests).toBe(0)
+    } finally { server.close(); await rm(cwd, { recursive: true, force: true }) }
+  })
+
+  it('checks shell authorization before dotenv can supply authorization or a Key', async () => {
+    let requests = 0
+    const server = createServer((_request, response) => { requests++; response.writeHead(503).end() })
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+    const address = server.address(); if (!address || typeof address === 'string') throw new Error('Test server did not bind.')
+    const cwd = await mkdtemp(resolve(tmpdir(), 'golden-cli-unauthorized-dotenv-'))
+    const localKey = 'LOCAL-DOTENV-KEY-MUST-NOT-PRINT'
+    await writeFile(resolve(cwd, '.env'), [
+      'GRADING_POLICY_EVAL_AUTHORIZATION=approved',
+      `KIMI_API_KEY=${localKey}`,
+      `KIMI_API_BASE=http://127.0.0.1:${address.port}`,
+    ].join('\n'), 'utf8')
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      KIMI_API_BASE: `http://127.0.0.1:${address.port}`,
+    }
+    delete env.GRADING_POLICY_EVAL_AUTHORIZATION
+    delete env.KIMI_API_KEY
+    try {
+      const result = await runCli(env, cwd)
+      expect(result.code).toBe(3)
+      expect(result.stderr).toBe('')
+      expect(result.stdout.trim().split(/\r?\n/)).toEqual([authorizationRequiredLine])
+      expect(result.stdout).not.toContain(localKey)
+      expect(result.stdout).not.toContain(cwd)
+      expect(requests).toBe(0)
+    } finally { server.close(); await rm(cwd, { recursive: true, force: true }) }
+  })
+
   it('captures four sanitized not-run lines, empty stderr, exit 2, and zero HTTP calls without credentials', async () => {
     let requests = 0; const server = createServer((_request, response) => { requests++; response.writeHead(503).end() })
     await new Promise<void>((done) => server.listen(0, '127.0.0.1', done)); const address = server.address(); if (!address || typeof address === 'string') throw new Error('Test server did not bind.')
-    const cwd = await mkdtemp(resolve(tmpdir(), 'golden-cli-missing-')); const env: NodeJS.ProcessEnv = { ...process.env, KIMI_API_BASE: `http://127.0.0.1:${address.port}` }; delete env.KIMI_API_KEY
+    const cwd = await mkdtemp(resolve(tmpdir(), 'golden-cli-missing-')); const env: NodeJS.ProcessEnv = { ...process.env, GRADING_POLICY_EVAL_AUTHORIZATION: 'approved', KIMI_API_BASE: `http://127.0.0.1:${address.port}` }; delete env.KIMI_API_KEY
     try {
       const result = await runCli(env, cwd)
       expect(result.code).toBe(2); expect(result.stderr).toBe(''); expect(result.stdout.trim().split(/\r?\n/)).toEqual(notRunLines()); expect(requests).toBe(0)
@@ -382,7 +439,7 @@ describe('policy golden evaluation CLI subprocess', () => {
     await new Promise<void>((done) => server.listen(0, '127.0.0.1', done)); const address = server.address(); if (!address || typeof address === 'string') throw new Error('Test server did not bind.')
     const cwd = await mkdtemp(resolve(tmpdir(), 'golden-cli-failure-'))
     try {
-      const result = await runCli({ ...process.env, KIMI_API_KEY: 'local-test-only', KIMI_API_BASE: `http://127.0.0.1:${address.port}`, KIMI_MODEL: 'k3' }, cwd)
+      const result = await runCli({ ...process.env, GRADING_POLICY_EVAL_AUTHORIZATION: 'approved', KIMI_API_KEY: 'local-test-only', KIMI_API_BASE: `http://127.0.0.1:${address.port}`, KIMI_MODEL: 'k3' }, cwd)
       expect(result.code).toBe(1); expect(result.stderr).toBe(''); expect(requests).toBe(0); expect(result.stdout).not.toContain(privateMarker)
       expect(result.stdout.trim().split(/\r?\n/)).toEqual([
         'CASE-A01 fail model=unconfigured policy=grading-policy-v1 category=unexpected_failure',

@@ -91,6 +91,7 @@ const allowedFailureCategories = new Set([
   'unexpected_failure',
 ])
 const SAFE_TOKEN = /^[a-z0-9][a-z0-9._-]{0,63}$/
+const DIRECT_AUTHORIZATION_REQUIRED_LINE = 'POLICY-EVAL not_run category=authorization_required'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -396,6 +397,11 @@ export async function runPolicyGoldenEvaluation(dependencies: GoldenEvaluationDe
 }
 
 async function main(): Promise<void> {
+  if (process.env.GRADING_POLICY_EVAL_AUTHORIZATION !== 'approved') {
+    console.log(DIRECT_AUTHORIZATION_REQUIRED_LINE)
+    process.exitCode = 3
+    return
+  }
   try {
     loadDotenv()
     process.exitCode = await runPolicyGoldenEvaluation()
