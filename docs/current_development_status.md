@@ -1,19 +1,21 @@
 # 当前开发状态
 
-最后更新：2026-08-28
+最后更新：2026-08-29
 
-## 2026-08-28：AI 调用成本、延迟与全班吞吐优化设计已批准（尚未实施）
+## 2026-08-29：AI 调用成本、延迟与全班吞吐优化已完成本地实现与 fake 验收
 
-- 已完成对创建材料理解、AI 评分标准生成、逐篇多模态批改、Prompt/Schema、前端调度、Gateway 超时与 Kimi 官方能力的只读审计。当前实现仍是 AI rubric 两次顺序 completion、全局单篇串行、无自动全班队列、无 Gateway 幂等复用，且 transport 丢弃 Provider usage；这些是待优化基线，不得误述为已完成。
-- 用户选择“全班尽快完成”，并批准“最大吞吐目标 + 稳健有界并发”：教师一次启动全班，系统在显式硬上限内根据成功率、耗时、`429` 和可选 TPM 预算自适应升降；不得无上限并发，不使用 K3 Batch，也不把多名学生合并进一个模型请求。
-- AI 辅助评分标准的正常路径将从“生成 + 携带材料复核”两次 completion 合并为一次；材料只发送一次，严格 Schema 和本地业务校验负责确定性验证，教师创建任务继续承担最终人工确认。
-- 对外 v2 合同和 `POST /grading/grade-images` 保持不变。Gateway 将向 Provider 投影一份 canonical 任务上下文，删除顶层/rubric 重复、逐篇不消费的溯源元数据和学生姓名；同任务稳定前缀使用 `prompt_cache_key`，但缓存不作为正确性前提。
-- 第一阶段输出压缩只删除无损重复：Provider 不再生成最终已由 Gateway 根据正文和 `sentencePairs` 重建的原始 `correctedText` / `improvedText`，外部 `grading-result-v2` 和教师页面保持完整。其他反馈字段须等真实 A/B 证明质量不退化后再合并。
-- Gateway 将记录脱敏的阶段耗时、`prompt_tokens`、`completion_tokens`、`total_tokens`、可选 `cached_tokens` 和 `finish_reason`；不记录正文、图片、Base64、学生姓名、完整 Prompt、Key 或 Provider 原始响应。
-- 同一任务、作文版本和 rubric 版本建立逻辑幂等；重复传输或结果未知时复用 in-flight/成功结果。`429` 退避降并发，鉴权/配置错误暂停全班队列，不可重试错误不自动重试，单篇失败不阻断其他作文。
-- 质量目标包括：单篇总 token 中位数至少降低 25%；结构化结果成功率不低于当前且目标不低于 99%；正文字符错误率退化不超过 0.5 个百分点；教师参考评分归一化误差退化不超过满分 1%；账户支持有效并发至少 4 时，30 篇总耗时较当前串行至少降低 60%。所有目标必须用合成或明确授权的匿名样本验证。
-- 图片压缩暂不直接启用；先测尺寸、token、耗时、正文识别和重要字迹风险，达标后才通过独立开关上线。真实 Key 仅允许置于 ignored 本地环境或进程环境，真实基线与 A/B 前仍需单独确认样本、调用数和费用。
-- 已批准设计：`docs/superpowers/specs/2026-08-28-ai-pipeline-cost-latency-optimization-design.md`。用户已确认该规格，TDD 实施计划已写入 `docs/superpowers/plans/2026-08-28-ai-pipeline-cost-latency-optimization.md`，覆盖 usage/耗时观测、单次 rubric、canonical Prompt、Provider 输出去重、Gateway 逻辑幂等与双截止、全局硬准入、前端任务队列、质量 benchmark 和分轮真实授权闸门。计划尚未执行，真实 Kimi 基线、A/B、100 次 soak、30 篇吞吐与图片实验均未获本轮授权、也未运行。
+- 已按批准设计实现“最大吞吐目标 + 稳健有界并发”，没有无上限并发、Batch API 或多学生合并请求。教师一次启动全部待批改作文；网站与 Gateway 使用一致的稳定成功窗口，在显式硬上限内补槽，`429` / 已知瞬时失败按标准 `Retry-After` 以同一请求身份有界重挂，单篇最终失败不阻断其他作文。
+- AI 辅助评分标准正常路径现在只执行一次 completion，材料只发送一次；严格 Schema、本地确定性校验和教师最终创建确认取代默认第二次模型复核。真实回滚开关仍保留，但 legacy Prompt 也使用 canonical 脱敏任务上下文，不发送作文/任务身份、教师任务名、材料溯源或学生信息。
+- 对外继续使用 `multimodal-grading-request-v2`、`grading-result-v2` 和 `POST /grading/grade-images`。逐篇 Provider Prompt 只收到一份 canonical 任务上下文；`prompt_cache_key` 为服务端 opaque HMAC。optimized Provider 输出省略可由 transcript 与 `sentencePairs` 无损重建的 `correctedText` / `improvedText`，Gateway 仍返回完整 v2 结果，教师页面合同未改变。
+- Gateway 已安全记录和汇总阶段耗时、`prompt_tokens`、`completion_tokens`、`total_tokens`、可选 `cached_tokens` 与 `finish_reason`；不安全整数或累加溢出降级为 partial/unknown。日志、health 与 benchmark 报告不包含正文、图片、Base64、学生姓名、完整 Prompt、Key 或 Provider 原始响应。
+- memory registry 已实现同一逻辑作文版本/rubric/profile 的 in-flight 与成功复用、payload 冲突保护、双截止与 result-unknown 重附着。成功与可重试状态会释放捕获原图的 executor 闭包，避免作文页随缓存常驻。该 registry 仍仅限单进程内存；重启或多实例没有共享幂等保证。
+- 鉴权、余额、Kimi 403 权限或配置错误会暂停全局准入。生产没有匿名 resume 路由；修复配置/权限并重启 Gateway 后，教师在页面显式恢复，触发暂停的作文会用原 generation/request ID 重挂。`/health` 只返回实时、脱敏的 admission 聚合状态。
+- 私有 benchmark/CLI、严格 manifest、匿名 aggregate、质量门槛、100-call soak、30-essay throughput、原图隔离和 loopback fake Gateway 已实现。所有真实入口要求 shell 中精确授权，且在 dotenv、私有样本、Provider 和 HTTP 之前 fail closed；缺人工审计时也在读取私有 bundle 前停止。
+- 本地最终验证：Gateway 39 个测试文件 / 1144 项测试通过，App 63 个测试文件 / 739 项测试通过；两端 typecheck、App lint/build、共享评分运行时、策略 fixture、secret/env/active-OCR safety check 与 `git diff --check` 均通过。全分支此前积欠的 Prompt、并发、幂等和前端队列审查已完成，最终 Critical 0 / Important 0。
+- 浏览器 loopback 验收使用 6 名合成学生和原始匿名测试图片：一键启动、限流自动续跑、单篇最终失败隔离、鉴权暂停、fake 内存执行层重启后显式恢复、result-unknown“检查结果”、正常结果页均通过；Provider 最大同时活动 1，配置硬上限 3，桌面 `1440×900` 与移动端 `390×844` 无 console warning/error 或横向溢出。验收后 `8792` / `5174` 均无监听。
+- 以上只证明 fake/loopback 行为和离线契约，不证明真实 Kimi 的节省幅度或质量。真实 40+40 A/B、100 次 soak、30 篇吞吐和图片变体均未运行；25% token、99% 结构化成功率、CER/评分不退化与 60% 吞吐目标仍是未测门槛。图片仍使用原始有序字节，没有 resize/re-encode，也没有引入 OCR。
+- 完整 Round A 仍缺同一受控 A+B 人工盲评协调器。本地 JSON 或普通 adapter 即使自洽也只能得到 `inconclusive / external_candidate_evidence_unverified`，不能 release pass。Task 16 每一轮仍需用户单独确认样本、调用数和费用；在用户决定人工评审协调方案前不得开始真实轮次。
+- 批准设计仍为 `docs/superpowers/specs/2026-08-28-ai-pipeline-cost-latency-optimization-design.md`，实施计划为 `docs/superpowers/plans/2026-08-28-ai-pipeline-cost-latency-optimization.md`。历史“尚未实施”记录已由本节取代，但历史真实 Kimi 运行记录不视为本轮优化基线或质量证据。
 
 ## 2026-08-28：创建任务页可选材料与统一评分标准已实施
 

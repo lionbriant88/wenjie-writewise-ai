@@ -38,7 +38,11 @@
 - 同一作文版本与同一评分标准版本必须使用稳定逻辑幂等身份。重复提交、传输重发或结果未知时先复用原 in-flight/成功结果，不得立即产生第二次 Provider 调用；鉴权或配置错误暂停队列，`429` 退避降并发，不可重试错误不得自动重试。
 - 图片尺寸或编码优化必须先在合成或已授权匿名样本上做 A/B；正文识别、评分和重要字迹风险达到设计质量门槛后才可启用。不得用未经验证的有损压缩换取 token，也不得把图片优化变成 OCR 阶段。
 - 生产或真实 Kimi 运行必须显式选择 Provider；缺失配置时不得静默回退 mock。真实 Key 只允许进入被 Git 忽略的本地环境文件或进程环境，真实基线调用前还必须单独确认样本范围、调用数和费用。
-- 完整设计与质量门槛见 `docs/superpowers/specs/2026-08-28-ai-pipeline-cost-latency-optimization-design.md`。该设计已经批准但尚未实施；在实施完成并验证前，不得把当前两阶段 rubric、全局串行或无 usage 观测描述成已经优化。
+- 上述优化已在 `codex/ai-pipeline-optimization` 分支完成本地实现与 fake/loopback 验收：评分标准正常路径为单次 completion；逐篇 Prompt 使用 canonical 脱敏任务上下文；Gateway 重建两个无损聚合文本；usage/finish reason/阶段耗时安全汇总；同进程 memory registry 复用 in-flight/成功结果；网站以同一稳定请求身份执行全任务有界自适应队列。不得把这些 fake 证据表述成真实 Kimi 的成本、质量或吞吐结论。
+- 当前 registry 只在单个 Gateway 进程内有效，不支持重启后或多实例间幂等保证。鉴权、余额、模型权限或配置错误会暂停 Gateway；生产恢复流程是修复问题并重启 Gateway，再由教师在页面显式恢复，触发暂停的作文以原 generation/request ID 重挂。不得新增匿名生产 resume 路由。
+- 完整设计与质量门槛见 `docs/superpowers/specs/2026-08-28-ai-pipeline-cost-latency-optimization-design.md`。真实 Kimi 基线、40+40 A/B、100 次 soak、30 篇吞吐和图片变体均尚未运行；25% token、99% 结构化成功率、CER/评分不退化与 60% 吞吐目标均未得到真实证明。Task 16 每一轮仍需单独确认样本、调用数和费用。
+- 当前质量 CLI 对缺失或不可认证的人工盲评/soak 审计证据一律 fail closed。本地 JSON 或普通 adapter 不能形成 release pass；完整 Round A 仍缺同一受控 A+B 人工评审协调器。在用户另行决定并补齐该协调器前，不得开始或声称能完成 Task 16。
+- 图片仍按原始有序字节发送；没有启用 resize/re-encode，也没有引入 OCR 主流程、降级路径或图片转文本预处理。
 
 ## 当前作文输入决策
 
