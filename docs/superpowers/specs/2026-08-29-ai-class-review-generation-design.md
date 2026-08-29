@@ -3,10 +3,11 @@
 ## 状态
 
 - 日期：2026-08-29
-- 设计状态：核心产品决策已获用户批准；本文件完成商品化交互、成本与数据生命周期复核，待用户核对书面转录后再进入实施计划
+- 设计状态：核心产品决策与本文件书面转录均已获用户确认；三份独立 TDD 实施计划已编写，全部审查缺口已修正，当前冻结版本通过最终独立语义与机械终审（Critical / Important / Minor 均为 0）
 - 实施状态：尚未实施
 - 范围：班级级共性问题聚合、明确拼写清单、AI 班级总结、教师编辑与排序、生成幂等、持久化与权限发布门槛
 - 前置设计：`2026-08-28-ai-pipeline-cost-latency-optimization-design.md`
+- 实施计划：`2026-08-29-ai-class-review-local-prototype.md`、`2026-08-29-ai-class-review-commercial-infrastructure.md`、`2026-08-29-ai-class-review-integration-release.md`
 
 ## 摘要
 
@@ -355,7 +356,7 @@ createdAt / completedAt / appliedAt? / invalidatedAt?
 
 不得把学生姓名、任务名称、作文正文或普通业务 ID 写入 Provider 关联身份、日志关联 ID或 `prompt_cache_key`。
 
-`succeeded` 表示合法候选已经原子应用到 report；`succeeded_unapplied` 表示 Provider 已成功且候选已验证，但因并发 AI 文本编辑或无法安全合并而尚未应用；`discarded` 表示教师明确放弃该候选；`invalidated` 表示任务/来源删除或可信运维结算使一个尚未应用的批次永久不可应用。这四种状态和 `failed` 都不会再次进入 Provider；只有 `queued | running | result_unknown` 占用任务级 active-generation 唯一约束。
+`succeeded` 表示合法候选已经原子应用到 report；`succeeded_unapplied` 表示 Provider 已成功且候选已验证，但因并发 AI 文本编辑或无法安全合并而尚未应用；`discarded` 表示教师明确放弃该候选；`invalidated` 表示任务/来源删除或可信运维结算使一个尚未应用的批次永久不可应用。这四种状态和 `failed` 都不会再次进入 Provider。任务级 actionable-generation 唯一约束覆盖 `queued | running | result_unknown | succeeded_unapplied`，同时封住“待调度/运行批次 + 未处置候选”的交叉竞态。Platform `queued` 表示尚未 claim；worker 必须先在 Platform 事务中持久化 claim、execution identity/hash 并转为 `running`，再调用 Gateway。Platform `running` 表示已 claim 且处于 dispatch/attach/等待准入或 Provider 执行生命周期，不能用来推断是否占槽；唯一 Provider 容量真源是 Gateway 的 `active | unknown` lease。`result_unknown` 表示业务侧只能检查原 execution，通常对应 Gateway `unknown` lease；`succeeded_unapplied` 只占任务级 actionable 位置、不占 Provider 槽。
 
 ### `ClassReviewIssueBlock`
 
@@ -426,8 +427,8 @@ AI 文本编辑只包括总体评价、主要优点和学习建议。保存这�
 
 商品化路径不允许客户端自行声明班级人数、比例或证据归属，也不能把当前 Grading Gateway 误当成用户/租户安全边界。职责固定为：
 
-- **权威任务服务**：拥有登录教师/租户授权、任务与结果 repository、report transaction、generation registry、任务级 active-run 唯一约束、证据关系、全量统计和最终报告合并；
-- **Grading Gateway**：拥有全局 Provider admission、Kimi Prompt/Schema、一次 completion、输出结构校验和安全 usage；它只接受权威任务服务通过服务间认证发送的去身份化有界投影；
+- **权威任务服务**：拥有登录教师/租户授权、任务与结果 repository、report transaction、generation registry、任务级 actionable-generation 唯一约束、证据关系、全量统计和最终报告合并；
+- **Grading Gateway**：拥有跨实例共享的全局 Provider admission、Kimi Prompt/Schema、一次 completion、输出结构校验、安全 usage，以及按 opaque execution identity 与 canonical payload hash 绑定的持久 Provider 执行/结果 registry；它只接受权威任务服务通过服务间认证发送的去身份化有界投影；
 - **浏览器**：只发送用户命令和期望 revision，不发送班级人数、结果数组、证据或 Provider Prompt。
 
 浏览器到权威任务服务使用独立业务合同：
@@ -579,7 +580,7 @@ class-review-report-v1 =
 
 `apply_candidate` 和 `discard_candidate` 的 `generationId` 都引用已有的 `succeeded_unapplied` run，不创建新 run、不调用 Provider。应用时必须再次校验任务仍获授权、候选未失效、候选绑定的历史 source revisions 仍可用且未删除，并校验 generation revision、当前 task/report revision 与 `aiTextEditRevision`，再按最新教师项和顺序执行一次 CAS。这里不要求历史 source revision 仍是每篇作文的当前 revision；普通单篇修改仍允许教师明确应用旧快照。成功后 run 转为 `succeeded`，report 写入 `appliedGenerationId`，候选正文从临时存储移除。若任一当前 revision 又发生变化，候选继续停留在 `succeeded_unapplied`，刷新冲突说明，绝不能覆盖更新后的教师 AI 文本。放弃只对 generation revision 做 CAS，成功后转为 `discarded` 并删除候选正文/证据；它不覆盖 report，也不要求 report revision 停留在候选产生时。任一前置条件冲突都返回安全冲突状态，不得隐式新建 generation。
 
-客户端 generation ID 不是并发锁。服务端创建批次时必须在同一事务内校验 task/report revision、固定 snapshot digest 和结果 revisions，并通过数据库唯一约束保证每个任务最多只有一个 `queued | running | result_unknown` 批次。另一个标签页即使提交不同 generation ID，也只能重挂同一快照的现有批次；若请求的 revision 已不同，则返回安全的 `active_generation_conflict`，不能先产生第二次 Provider 调用再依赖报告写入 CAS 决胜。
+客户端 generation ID 不是并发锁。服务端创建批次时必须在同一事务内锁定稳定 task 行，校验 task/report revision、固定 snapshot digest、结果 revisions 和服务端计算的 canonical payload hash，并通过一个覆盖 `queued | running | result_unknown | succeeded_unapplied` 的数据库 actionable 唯一约束保证每个任务至多一个当前动作真源。另一个标签页即使提交不同 generation ID 或 request identity，只要已有 active run 的 snapshot、全部固定 revisions 与 canonical payload hash 完全相同，就返回该既有 generation ID；snapshot、任一固定 revision 或 payload hash 不同则返回安全的 `active_generation_conflict`。若已有 `succeeded_unapplied`，只返回待处理候选状态，不把它重挂成新批次。不得先产生第二次 Provider 调用再依赖报告写入 CAS 决胜。
 
 服务端必须：
 
@@ -655,7 +656,7 @@ class-review-report-v1 =
 
 `class-review-projection-v1` 使用以下版本化默认硬边界；调整任何边界都必须提升 projection version 并重新跑质量与成本验收：
 
-- 全量统计最多包含 10 个评分维度、20 个分数区间和 32 个固定问题/严重度计数项，统计 JSON 不超过 8 KiB UTF-8；超出固定枚举的长尾只合并到明确的 `other` 计数，不发送动态标签。
+- 全量统计最多包含 10 个评分维度、20 个分数区间和 32 个固定问题/严重度计数项；字面量 `other` 也占用这 32 个槽位中的 1 个。统计 JSON 不超过 8 KiB UTF-8；超出固定枚举的长尾只合并到 `other`，不发送动态标签。
 - 语义投影最多 64 个原子组。每组最多 1 个代表片段，原句、建议/诊断分别最多 160 个 Unicode 码点，标题或类型标签最多 48 个码点，组内可见字符串总计最多 360 个码点。
 - 代表片段只截取包含证据核心的原文连续子串，并在服务端保留完整 evidence ref；不得让模型把截断片段当作完整作文。码点截断必须确定性执行，不能切断 surrogate pair。
 - 投影 evidence JSON 不超过 32 KiB UTF-8；固定 system、policy、Schema 与统计前缀合计不得超过 16 KiB；最终发送给 Provider 的全部文本不超过 48 KiB UTF-8。任一固定前缀自身超限时部署测试直接失败。
@@ -800,25 +801,28 @@ projection version
 
 同一 generation 的双击、重发、断线重挂和结果检查必须 attach 到同一 in-flight 或成功记录。显式重新生成创建新的 generation ID，即使输入快照未变化也视为教师授权的新调用。
 
-任务级 active-generation 唯一约束先于 generation 级幂等：同一任务已有 `queued`、`running` 或 `result_unknown` 批次时，不得接受另一个 generation 进入 Provider 准入。只有已有批次可信结束，或由受控运维流程把无法结算的批次解析为明确终态后，教师才能创建下一批次。
+任务级 actionable-generation 唯一约束先于 generation 级幂等：同一任务已有 `queued`、`running`、`result_unknown` 或 `succeeded_unapplied` 时，不得接受另一个 generation。前三态只有在可信结束，或由受控运维流程把无法结算的批次解析为明确终态后，才释放该位置；`succeeded_unapplied` 只有在应用、明确放弃或删除失效后释放。
 
-`succeeded_unapplied` 已是 Provider 终态，不占运行槽位，但作为未处置候选阻止新的生成命令；教师应用或明确放弃候选均为 0 次模型调用。
+`queued` 只表示业务批次等待 worker claim，占任务级 actionable 位置；worker 在发起任何 Gateway submit/attach 前先以 Platform 事务把它转为 `running`。`running` 可以处于 Gateway 准入前、等待准入、`active` Provider 调用、原 execution attach 或成功结果提交阶段，因此本身不等于一个 Provider 槽；只有 Gateway `active | unknown` lease 计入共享容量。`result_unknown` 只能检查原 execution，不能重发。`succeeded_unapplied` 已是 Provider 终态，不占运行槽位，但仍占上述任务级 actionable 位置；教师应用或明确放弃候选均为 0 次模型调用。
 
 run 的合法状态转换固定如下：
 
 - `queued → running → succeeded | succeeded_unapplied | failed | result_unknown | invalidated`；
+- `running → queued` 只允许同一 generation/execution identity/hash 在 Provider 明确确认 0 completion 的有界 `429` / 准入失败后发生；该转换前必须结算并释放对应 lease，不得用于 timeout、连接丢失或任何结果未知状态；
 - `queued → failed | invalidated`；
 - `result_unknown → succeeded | succeeded_unapplied | failed | invalidated`，只能由可信 Provider 对账或受控运维结算触发；
 - `succeeded_unapplied → succeeded | discarded | invalidated`，分别对应应用、放弃或来源/任务删除；
 - `succeeded`、`discarded`、`invalidated`、`failed` 不得再进入 Provider 或恢复候选。
 
-任务或任一快照来源删除时，权威任务服务必须在删除事务中把相关 `queued | running | result_unknown | succeeded_unapplied` run 标为 `invalidated`、递增 generation revision/失效 epoch、清除候选正文与证据，并释放任务级 active-generation 唯一约束。已经发出的 Provider 请求可能无法撤销，但继续占用全局 admission 槽直到返回；返回处理必须以 `state=running`、未变化的失效 epoch、request identity 和所有 source revisions 仍存在为联合写入栅栏。任一条件不成立时只记录不含内容的安全 usage/终态，不持久化响应正文、不修改 report，也绝不能恢复已删除来源。新 generation 即使随后获得教师授权，也仍须等待全局 admission 有空闲槽位。
+任务或任一快照来源删除时，权威任务服务必须在删除事务中把相关 `queued | running | result_unknown | succeeded_unapplied` run 标为 `invalidated`、递增 generation revision/失效 epoch、清除候选正文与证据，并释放任务级 actionable-generation 唯一约束。已经发出的 Provider 请求可能无法撤销，但继续占用全局 admission 槽直到返回；返回处理必须以未变化的失效 epoch、原 execution identity/payload hash、lease fence 和来源仍存在为联合写入栅栏。任一条件不成立时只允许结算不含内容的安全 usage，不持久化响应正文、不修改 report，也绝不能恢复已删除来源。新 generation 即使随后获得教师授权，也仍须等待全局 admission 有空闲槽位。
 
 若来源删除发生在 run 已 `succeeded` 之后，不回写历史状态为 `invalidated`：该 run 保留为去内容、去业务关系的成功审计终态，report 与 AI 派生内容按删除规则清理并进入 `ai_removed`。这样 run 状态只描述当时 Provider/应用结果，不被误用为内容当前仍可展示的标志。
 
 ### 持久 registry
 
-商品化实现必须持久化 generation run 和成功结果。当前 `OneShotProviderExecutionTracker` 没有成功缓存或跨请求 attach，不能单独承担班级生成幂等。单进程 memory registry 只能作为本地开发限制，不能覆盖刷新、重启或多实例保证。
+商品化实现必须有两个互补的持久层：权威任务服务持久化业务 generation run、候选和最终报告；Grading Gateway 为 `material_context | rubric_generation | essay_grading_images | essay_regrading_text | class_review_generation` 五个计费阶段持久化 opaque、payload-hash-bound 的 Provider execution。Gateway 必须在返回 HTTP 成功前原子写入严格归一化结果、usage 和终态；丢失响应、进程重启或另一 Gateway 实例只能 lookup/attach 原 execution，不能重新 submit。权威任务服务提交业务结果后再 acknowledge 并清除 Gateway 的加密结果 envelope；删除通过独立 purge/fence 流程处理。当前 `OneShotProviderExecutionTracker` 没有成功缓存或跨请求 attach，不能单独承担这些保证；单进程 memory registry 只能用于本地开发。
+
+删除采用两阶段收口：仍有未结 Provider 调用时，Gateway 只保留随机 lease/fence 和不可展示的临时 tombstone 来拒绝迟到内容，未知 lease 继续占用共享准入且不能因 TTL 自动释放；调用被可信结算后，安全 usage 迁移为不含 execution key、payload hash、request/snapshot/task 关系的去关联聚合，随后物理删除 execution identity、payload digest、结果 envelope 与 tombstone。租户/任务删除完成条件必须等待该 final purge outbox 清空；不得为保留 admission 槽而永久保留可关联 identity。
 
 ### Prompt 缓存
 
@@ -826,7 +830,7 @@ run 的合法状态转换固定如下：
 
 ### Provider 准入
 
-班级生成复用同一个全局 Provider admission controller，占用一个槽位，不建立独立并发池。队列正常已 settled，因此不应与大批逐篇请求竞争；若仍有受控恢复请求，沿用同一硬上限和准入策略。
+班级生成复用同一个全局 Provider admission controller，占用一个槽位，不建立独立并发池。商品化多实例中，hard/target limit、稳定成功窗口、429 deadline、鉴权/余额/配置暂停、token-contract-drift 暂停和 active/unknown leases 必须由 Gateway 专用持久 store 事务共享；单实例内存计数不能作为生产保证。队列正常已 settled，因此不应与大批逐篇请求竞争；若仍有受控恢复请求，沿用同一硬上限和准入策略。
 
 每 generation 的 Provider 正常 completion 尝试为 1：
 
@@ -899,11 +903,11 @@ run 的合法状态转换固定如下：
 
 先采用以下 fail-closed 删除语义，且其优先级高于“普通修改后保留旧快照”的产品规则：
 
-- 删除整个任务时，级联删除 report、issue blocks、evidence refs、generation candidates、教师编辑、精选素材和排序；只允许按另行批准的审计政策保留不含内容与业务 ID 的聚合 usage。
+- 删除整个任务时，级联删除 report、issue blocks、evidence refs、generation candidates、教师编辑、精选素材和排序；只允许按另行批准的审计政策保留不含内容、execution identity、payload/snapshot digest 与业务 ID 的聚合 usage。
 - 删除单篇作文或执行学生数据删除请求时，立即删除关联 evidence ref、匿名摘录和待应用候选，并按前述状态机使所有包含该作文快照的未结 generation 失效；明确拼写与确定性统计零调用重算。
 - 任何 AI generation 的输入快照只要包含被删除作文，其 AI 总评、优点、建议和 AI 问题块全部从 active report 移除，report 进入 `ai_removed`，不继续展示由已删除数据派生的文本；教师问题/素材先删除该作文的来源引用，仍有其他合法教师来源时保留并重算，最后一个来源消失时才删除该教师内容。
 - 系统不自动重新生成。若剩余数据仍符合资格，教师可以再次显式生成并产生一次新调用；页面只显示内容无关的“来源数据已删除，原 AI 内容已移除”。
-- 作文删除后，generation run 仅可保留安全状态、时间和 usage 计数；snapshot/result 关系、投影文本和候选输出必须随删除清理。整个任务删除后若审计政策允许保留 usage，只能转为不含 `taskId`、request identity、snapshot digest 或其他可回连业务关系的去关联聚合记录。
+- 作文删除后，generation run 仅可保留安全状态、时间和 usage 计数；snapshot/result 关系、投影文本和候选输出必须随删除清理。整个任务删除后若审计政策允许保留 usage，只能先通过 final-purge outbox 转为不含 `taskId`、request identity、Gateway execution key、canonical payload hash、snapshot digest 或其他可回连业务关系的去关联聚合记录；随后删除 Gateway execution/tombstone 行。未结 lease 可临时保留随机 fence 直至可信结算，但不得恢复内容或因 TTL 静默释放；删除回执保持可见的 `pending_provider_settlement`，直到 Provider 返回或受控运维以可信证据结算并完成 final purge，不能无观测地永久悬挂。
 
 正式上线前还需由产品、学校和法律责任方另行确定：
 
@@ -992,7 +996,8 @@ usage 只在真正发生一次 Provider completion 时累计一次。多个调�
 - report 在同一读取事务返回唯一 actionable generation；刷新、新标签页和新设备无需预知 ID 即可恢复 queued/running/result-unknown/unapplied，终态 run 不进入该摘要；
 - 刷新后 report 同时提供 generation revision 与独立 `aiTextEditRevision`，可以构造合法 apply；确认后另一标签页再次编辑 AI 文本时 CAS 拒绝且候选保持未应用；
 - 双击、重放、断线重挂和检查结果不新增 completion；
-- 两个标签页使用不同 generation ID 竞争时，任务级唯一约束只允许一个进入 Provider；
+- 两个标签页使用不同 generation ID 竞争时，相同 snapshot、固定 revisions 与 canonical payload hash 必须 attach 到同一 generation；任一成员不同必须安全冲突，任务级唯一约束只允许一个批次进入 Provider；
+- `queued` 只占任务级 actionable 位置；`running` 是已 claim 的业务生命周期而非槽位计数。无论 Platform 状态为何，只有 Gateway `active | unknown` lease 才占共享 Provider 槽；覆盖 running-before-submit、active-call、跨事务崩溃恢复和 confirmed-zero `running → queued`；
 - 显式重新生成增加 1 次；
 - 已确认 429 同 generation 有界重挂；
 - result unknown 不自动重发；
@@ -1054,7 +1059,7 @@ usage 只在真正发生一次 Provider completion 时累计一次。多个调�
 - 来源删除后的级联或脱敏；
 - 单篇删除清除相关 AI 派生内容且不自动重生成；
 - 删除期间在途/结果未知/待应用候选全部失效，迟到 Provider 结果不能恢复内容；
-- 任务删除级联。
+- 任务删除级联；未结 lease 使删除回执保持 `pending_provider_settlement`，可信结算后的 final purge 才删除 execution key/payload hash 并完成回执。
 
 ### 回归
 
@@ -1082,5 +1087,5 @@ usage 只在真正发生一次 Provider completion 时累计一次。多个调�
 不得把班级页面改造与完整账号/租户/数据库基础设施塞进一个不可审查的大实施计划。后续拆成三个有独立验收门的工作包：
 
 1. **本地功能原型计划**：纯函数聚合、字段覆盖、严格三层合同、fake synthesis、单进程原型 registry、单页班级总览、单篇加入切换、编辑/排序、脱敏器、telemetry 与 fake/loopback 验收；不改逐篇合同，并在界面/文档明确“本地原型，不用于真实班级长期保存”。
-2. **商业基础设施独立计划**：认证教师/租户/任务授权、权威任务服务、持久 repository、事务 generation registry、任务级唯一约束、删除级联、保留政策和多实例准入。该计划需要单独架构评审，不能作为原型计划中的附带任务。
+2. **商业基础设施独立计划**：认证教师/租户/任务授权、权威任务服务、持久 repository、事务 generation registry、Gateway 持久执行/结果 registry、任务级 actionable 唯一约束、删除级联/final purge、保留政策和多实例共享准入。该计划需要单独架构评审，不能作为原型计划中的附带任务。
 3. **集成与发布计划**：把原型接口替换为权威任务服务，完成跨刷新/多设备/权限/删除/并发恢复验收；随后在用户另行确认样本、调用数和费用后执行真实 Kimi 班级总结 smoke，记录 usage、延迟和结构化成功证据，再进行商业发布评审。
