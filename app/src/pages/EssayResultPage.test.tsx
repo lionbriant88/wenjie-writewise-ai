@@ -118,8 +118,8 @@ describe('EssayResultPage teacher decision workflow', () => {
     }
     renderPendingReviewFlow(gradingClient)
 
-    await user.click(screen.getByRole('button', { name: '开始批改' }))
-    await user.click(await screen.findByRole('link', { name: '查看并确认' }))
+    await user.click(screen.getByRole('button', { name: '开始批改全部待处理作文' }))
+    await user.click((await screen.findAllByRole('link', { name: '查看并确认' }))[0])
 
     expect(screen.getByText('真实 AI')).toBeInTheDocument()
     expect(screen.getByText('请复核合成作文中的改写建议。')).toBeInTheDocument()
@@ -156,8 +156,8 @@ describe('EssayResultPage teacher decision workflow', () => {
     }
     renderPendingReviewFlow(gradingClient)
 
-    await user.click(screen.getByRole('button', { name: '开始批改' }))
-    await user.click(await screen.findByRole('link', { name: '查看并确认' }))
+    await user.click(screen.getByRole('button', { name: '开始批改全部待处理作文' }))
+    await user.click((await screen.findAllByRole('link', { name: '查看并确认' }))[0])
     await user.click(screen.getByRole('tab', { name: '问题批改' }))
 
     expect(screen.getByText('字迹不清导致语义无法确认')).toBeInTheDocument()
@@ -166,22 +166,15 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.getAllByRole('tab')).toHaveLength(4)
   })
 
-  it('labels browser-local recovery as mock fallback', async () => {
+  it('labels browser-local fixture results as demonstrations rather than a provider fallback', async () => {
     const user = userEvent.setup()
-    const gradingClient: GradingClient = {
-      gradeImages: vi.fn(async (request) => ({
-        requestId: request.requestId,
-        status: 'failed' as const,
-        error: { code: 'provider_timeout' as const, message: '安全失败。', retryable: true },
-      })),
-    }
-    renderPendingReviewFlow(gradingClient)
+    renderPendingReviewFlow(createMockGradingClient())
 
-    await user.click(screen.getByRole('button', { name: '开始批改' }))
-    await user.click(await screen.findByRole('button', { name: '使用 mock 回退' }))
-    await user.click(await screen.findByRole('link', { name: '查看并确认' }))
+    await user.click(screen.getByRole('button', { name: '开始批改全部待处理作文' }))
+    await user.click((await screen.findAllByRole('link', { name: '查看并确认' }))[0])
 
-    expect(screen.getByText('mock 回退')).toBeInTheDocument()
+    expect(screen.getByText('演示结果')).toBeInTheDocument()
+    expect(document.body.textContent).not.toMatch(/mock 回退/i)
   })
 
   it('shows confirmation only for grading-ready state and disables it without a result', async () => {

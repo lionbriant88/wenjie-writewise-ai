@@ -6,11 +6,13 @@ import { EssayStatusChip } from '../components/EssayStatusChip'
 import { ProgressSummary } from '../components/ProgressSummary'
 import { useAppState } from '../context/useAppState'
 import { AppLayout } from '../layout/AppLayout'
+import type { QueueItemSnapshot, TaskQueueSnapshot } from '../services/grading/taskGradingScheduler'
 import type { Essay } from '../types'
 import {
   filterEssaysByProgressTab,
+  getProgressEssayPhase,
   getProgressQueueStats,
-  isProcessableEssayStatus,
+  type ProgressEssayPhase,
   type ProgressQueueTab,
 } from '../utils/progressQueue'
 import { findEssaysByTask, findTask } from '../utils/taskLookup'
@@ -18,42 +20,76 @@ import { findEssaysByTask, findTask } from '../utils/taskLookup'
 const progressTabs: Array<{ id: ProgressQueueTab; label: string }> = [
   { id: 'all', label: '全部' },
   { id: 'processing', label: '处理中' },
-  { id: 'review', label: '需复核' },
+  { id: 'review', label: '待教师处理' },
   { id: 'completed', label: '已完成' },
 ]
 
 const emptyTabText: Record<ProgressQueueTab, string> = {
   all: '当前还没有作文进入批改队列。',
   processing: '当前没有处理中的作文。',
-  review: '当前没有需要教师复核的作文。',
+  review: '当前没有等待教师处理的作文。',
   completed: '当前没有已确认完成的作文。',
 }
 
-function ProcessingState({ essay }: { essay: Essay }) {
-  if (essay.status === 'grading') {
-    return <button type="button" disabled className="rounded-lg bg-blue-50 px-3 py-2 font-semibold text-blue-700">批改中</button>
-  }
-  if (essay.status === 'pending_ocr') return <span className="text-slate-500">等待图像识别</span>
-  if (essay.status === 'ocr_running') return <span className="text-cyan-700">正在识别作文文本</span>
-  return <span className="text-slate-500">等待开始批改</span>
+const pauseCopy: Record<
+  NonNullable<TaskQueueSnapshot['pauseReason']>,
+  { title: string; description: string }
+> = {
+  auth: {
+    title: '身份验证失败',
+    description: '请修复批改服务的身份验证配置，再恢复剩余队列。',
+  },
+  balance: {
+    title: '账户额度不可用',
+    description: '请处理账户额度问题，再恢复剩余队列。',
+  },
+  configuration: {
+    title: '批改服务配置不可用',
+    description: '请修复运行配置，再恢复剩余队列。',
+  },
+  long_retry_after: {
+    title: '服务要求较长等待',
+    description: '恢复后系统仍会遵守服务要求的剩余等待时间，并继续处理队列。',
+  },
+}
+
+function currentQueueItem(
+  essay: Essay,
+  snapshot: TaskQueueSnapshot | undefined,
+  rubricGeneration: number,
+): QueueItemSnapshot | undefined {
+  const item = snapshot?.items[essay.id]
+  if (snapshot?.taskId !== essay.taskId
+    || item?.essayId !== essay.id
+    || item.sourceGeneration !== (essay.sourceGeneration ?? 0)
+    || item.rubricGeneration !== rubricGeneration) return undefined
+  return item
+}
+
+function failureMessage(essay: Essay, item?: QueueItemSnapshot): string {
+  return item?.errorMessage
+    ?? (essay.gradingRun?.status === 'failed' ? essay.gradingRun.errorMessage : undefined)
+    ?? '本篇作文暂时无法自动完成批改。'
 }
 
 function EssayAction({
   essay,
   taskId,
-  retryGradeEssay,
-  fallbackToMockGrading,
+  phase,
+  item,
+  retryTaskEssay,
+  checkUnknownTaskEssay,
   markEssayManual,
-  gradingBlocked,
 }: {
   essay: Essay
   taskId: string
-  retryGradeEssay: (essayId: string) => Promise<void>
-  fallbackToMockGrading: (essayId: string) => Promise<void>
+  phase: ProgressEssayPhase
+  item?: QueueItemSnapshot
+  retryTaskEssay: (essayId: string) => void
+  checkUnknownTaskEssay: (essayId: string) => void
   markEssayManual: (essayId: string) => void
-  gradingBlocked: boolean
 }) {
-  if (essay.status === 'grading_ready') {
+  if (phase === 'teacher_confirmation' || phase === 'succeeded') {
     return (
       <div>
         <Link to={`/tasks/${taskId}/essays/${essay.id}`} className="font-semibold text-amber-800">
@@ -65,34 +101,43 @@ function EssayAction({
       </div>
     )
   }
-  if (essay.status === 'completed') {
+  if (phase === 'completed') {
     return <Link to={`/tasks/${taskId}/essays/${essay.id}`} className="font-semibold text-blue-700">查看结果</Link>
   }
-  if (essay.status === 'needs_review') {
-    return <Link to={`/tasks/${taskId}/exceptions`} className="font-semibold text-rose-700">去复核识别结果</Link>
+  if (phase === 'teacher_review') {
+    return <Link to={`/tasks/${taskId}/exceptions`} className="font-semibold text-rose-700">去处理异常</Link>
   }
-  if (essay.status === 'manual') return <span className="font-semibold text-amber-700">已转人工处理</span>
-  if (essay.gradingRun?.status === 'failed') {
+  if (phase === 'manual') return <span className="font-semibold text-amber-700">已转人工处理</span>
+
+  if (phase === 'result_unknown') {
     return (
       <div className="max-w-xl space-y-2">
-        <p className="text-sm text-rose-700">{essay.gradingRun.errorMessage}</p>
+        <p className="text-sm text-violet-700">{failureMessage(essay, item)}</p>
+        <button
+          type="button"
+          onClick={() => checkUnknownTaskEssay(essay.id)}
+          className="rounded-lg bg-violet-700 px-3 py-2 text-xs font-semibold text-white"
+        >
+          检查结果
+        </button>
+      </div>
+    )
+  }
+
+  if (phase === 'retryable_failure' || phase === 'final_failure') {
+    return (
+      <div className="max-w-xl space-y-2">
+        <p className="text-sm text-rose-700">{failureMessage(essay, item)}</p>
         <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            disabled={gradingBlocked}
-            onClick={() => void retryGradeEssay(essay.id)}
-            className="rounded-lg bg-blue-700 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            重试批改
-          </button>
-          <button
-            type="button"
-            disabled={gradingBlocked}
-            onClick={() => void fallbackToMockGrading(essay.id)}
-            className="rounded-lg border border-blue-200 px-3 py-2 text-xs font-semibold text-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            使用 mock 回退
-          </button>
+          {phase === 'retryable_failure' ? (
+            <button
+              type="button"
+              onClick={() => retryTaskEssay(essay.id)}
+              className="rounded-lg bg-blue-700 px-3 py-2 text-xs font-semibold text-white"
+            >
+              重试批改
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => markEssayManual(essay.id)}
@@ -101,11 +146,14 @@ function EssayAction({
             转人工处理
           </button>
         </div>
-        <p className="text-xs text-slate-500">重试将发起新的调用，可能产生第二次真实 Provider 费用。</p>
       </div>
     )
   }
-  return <ProcessingState essay={essay} />
+
+  if (phase === 'rate_limit_wait') return <span className="text-amber-700">系统将在等待结束后自动继续</span>
+  if (phase === 'queued') return <span className="text-sky-700">等待系统调度</span>
+  if (phase === 'running') return <span className="text-blue-700">正在生成批改结果</span>
+  return <span className="text-slate-500">等待任务启动</span>
 }
 
 export function ProgressPage() {
@@ -113,24 +161,39 @@ export function ProgressPage() {
   const {
     tasks,
     essays,
-    isGradingInFlight,
-    gradeEssay,
-    retryGradeEssay,
-    fallbackToMockGrading,
+    taskGradingQueues,
+    startTaskGrading,
+    retryTaskEssay,
+    checkUnknownTaskEssay,
+    resumeTaskGrading,
     markEssayManual,
   } = useAppState()
   const [activeTab, setActiveTab] = useState<ProgressQueueTab>('all')
   const task = findTask(tasks, taskId)
-  const taskEssays = findEssaysByTask(essays, taskId)
-  const queueStats = getProgressQueueStats(taskEssays)
-  const filteredEssays = filterEssaysByProgressTab(taskEssays, activeTab)
-  const gradingBlocked = isGradingInFlight
-  const nextProcessableEssay = gradingBlocked ? undefined : taskEssays.find((essay) => (
-    isProcessableEssayStatus(essay.status) && essay.gradingRun?.status !== 'failed'
-  ))
-  const hasExceptions = taskEssays.some((essay) => essay.status === 'needs_review')
 
   if (!task) return <EmptyState title="找不到任务" description="请返回任务列表重新选择一个批改任务。" />
+
+  const taskEssays = findEssaysByTask(essays, taskId)
+  const queueSnapshot = taskGradingQueues[taskId]
+  const rubricGeneration = task.rubricGeneration ?? 0
+  const queueStats = getProgressQueueStats(taskEssays, queueSnapshot, rubricGeneration)
+  const filteredEssays = filterEssaysByProgressTab(
+    taskEssays,
+    activeTab,
+    queueSnapshot,
+    rubricGeneration,
+  )
+  const hasExceptions = taskEssays.some((essay) => essay.status === 'needs_review')
+  const terminalForOverview = taskEssays.length > 0 && taskEssays.every((essay) => {
+    const phase = getProgressEssayPhase(essay, queueSnapshot, rubricGeneration)
+    return phase === 'completed' || phase === 'manual'
+  })
+  const pause = queueSnapshot?.pauseReason ? pauseCopy[queueSnapshot.pauseReason] : undefined
+  const activeCount = queueSnapshot?.activeCount ?? 0
+  const targetConcurrency = queueSnapshot?.targetConcurrency ?? 1
+  const queuedCount = queueSnapshot
+    ? Object.values(queueSnapshot.items).filter((item) => item.phase === 'queued').length
+    : 0
 
   const tabCount = (tab: ProgressQueueTab) => {
     if (tab === 'processing') return queueStats.processing
@@ -144,10 +207,31 @@ export function ProgressPage() {
       task={task}
       title="批改进度"
       currentStep="progress"
-      description={task.materialContext ? '图片已入队，可逐篇启动 Kimi 批改；不会自动并发或重试。' : '教师确认识别文本后可逐篇启动批改；MVP 不进行批量并发或自动重试。'}
+      description="学生作文页将直接交给多模态模型；全部待处理作文可一次启动，系统会在明确上限内自动排队。"
     >
       <div className="space-y-5">
-        <ProgressSummary essays={taskEssays} />
+        <ProgressSummary stats={queueStats} />
+
+        {pause ? (
+          <section
+            data-testid="task-pause-banner"
+            className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-rose-900"
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="font-semibold">{pause.title}</p>
+                <p className="mt-1 text-sm">{pause.description}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => resumeTaskGrading(task.id)}
+                className="shrink-0 rounded-lg bg-rose-700 px-4 py-2 text-sm font-semibold text-white"
+              >
+                恢复批改
+              </button>
+            </div>
+          </section>
+        ) : null}
 
         <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -157,19 +241,21 @@ export function ProgressPage() {
               </div>
               <div>
                 <p className="text-sm font-semibold text-slate-950">
-                  当前队列：{queueStats.processing} 篇处理中，{queueStats.reviewNeeded} 篇待复核
+                  当前同时批改 {activeCount} 篇，系统最多同时处理 {targetConcurrency} 篇
                 </p>
-                <p className="mt-1 text-sm text-slate-600">每次只启动一篇；运行中禁止重复点击。</p>
+                <p className="mt-1 text-sm text-slate-600">
+                  {queuedCount} 篇排队中，{queueStats.reviewNeeded} 篇等待教师处理；单篇失败不会阻断其他作文。
+                </p>
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              {nextProcessableEssay ? (
+              {queueStats.processable > 0 ? (
                 <button
                   type="button"
-                  onClick={() => void gradeEssay(nextProcessableEssay.id)}
+                  onClick={() => startTaskGrading(task.id)}
                   className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white shadow-sm"
                 >
-                  开始批改
+                  开始批改全部待处理作文
                 </button>
               ) : null}
               {hasExceptions ? (
@@ -177,7 +263,7 @@ export function ProgressPage() {
                   查看异常队列
                 </Link>
               ) : null}
-              {!nextProcessableEssay && queueStats.processing === 0 && queueStats.reviewNeeded === 0 && queueStats.total > 0 ? (
+              {terminalForOverview ? (
                 <Link to={`/tasks/${task.id}/class-review`} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700">
                   进入班级总览 <ArrowRight className="h-4 w-4" />
                 </Link>
@@ -187,7 +273,7 @@ export function ProgressPage() {
         </section>
 
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          MVP 结果仅保存在当前页面状态中，刷新或重启后不保证恢复。
+          批改结果仅保存在当前页面状态中，刷新或重启后不保证恢复。
         </p>
 
         <div role="tablist" aria-label="批改状态筛选" className="flex gap-2 overflow-x-auto rounded-lg border border-slate-200 bg-white p-2">
@@ -214,7 +300,11 @@ export function ProgressPage() {
         ) : (
           <div className="space-y-3">
             {filteredEssays.map((essay) => {
-              const reviewRow = essay.status === 'needs_review' || essay.status === 'grading_ready'
+              const phase = getProgressEssayPhase(essay, queueSnapshot, rubricGeneration)
+              const item = currentQueueItem(essay, queueSnapshot, rubricGeneration)
+              const reviewRow = phase === 'teacher_review'
+                || phase === 'teacher_confirmation'
+                || phase === 'succeeded'
               return (
                 <article
                   key={essay.id}
@@ -225,17 +315,18 @@ export function ProgressPage() {
                 >
                   <div>
                     <p className="font-semibold text-slate-950">{essay.essayNumber}</p>
-                    <p className="mt-1 text-xs text-slate-500">{essay.pageCount} 页{task.materialContext ? ' · 图片已入队' : ` · 识别置信度 ${Math.round(essay.ocrConfidence * 100)}%`}</p>
+                    <p className="mt-1 text-xs text-slate-500">{essay.pageCount} 页 · 作文页已就绪</p>
                   </div>
-                  <EssayStatusChip status={essay.status} />
+                  <EssayStatusChip status={essay.status} phase={phase} />
                   <div className="text-sm">
                     <EssayAction
                       essay={essay}
                       taskId={task.id}
-                      retryGradeEssay={retryGradeEssay}
-                      fallbackToMockGrading={fallbackToMockGrading}
+                      phase={phase}
+                      item={item}
+                      retryTaskEssay={retryTaskEssay}
+                      checkUnknownTaskEssay={checkUnknownTaskEssay}
                       markEssayManual={markEssayManual}
-                      gradingBlocked={gradingBlocked}
                     />
                   </div>
                 </article>

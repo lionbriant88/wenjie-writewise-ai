@@ -321,7 +321,7 @@ export function EssayResultPage() {
                 </p>
                 {result.source ? (
                   <span className="mt-1 inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">
-                    {result.source === 'remote' ? '真实 AI' : 'mock 回退'}
+                    {result.source === 'remote' ? '真实 AI' : '演示结果'}
                   </span>
                 ) : null}
               </div>

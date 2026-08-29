@@ -8,6 +8,7 @@ import { buildMultimodalGradingRequest } from './buildMultimodalGradingRequest'
 
 const task: Task = {
   id: 'task-material', taskName: 'Material writing', className: 'Class 1', essayType: 'material', fullScore: 15,
+  rubricGeneration: 7,
   scoringTemplateId: 'kimi-generated-v1', status: 'processing', totalEssayCount: 1, completedEssayCount: 0,
   exceptionEssayCount: 0, createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z', generateClassReview: true,
   materialContext: { materialSummary: 'A short material.', writingRequirements: ['Respond clearly.'], constraints: [], reviewWarnings: [] },
@@ -19,7 +20,7 @@ const task: Task = {
 }
 
 function essay(file?: File): Essay {
-  return { id: 'essay-1', taskId: task.id, essayNumber: 'Essay 1', pages: [{ id: 'page-1', label: 'essay.png', pageNumber: 1, quality: 'clear', accent: '#000', sourceFile: file }], pageCount: 1, pageOrder: ['page-1'], ocrText: '', ocrConfidence: 0, status: 'pending_grading', exceptionReasons: [], teacherReviewed: false, createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z' }
+  return { id: 'essay-1', taskId: task.id, essayNumber: 'Essay 1', sourceGeneration: 11, pages: [{ id: 'page-1', label: 'essay.png', pageNumber: 1, quality: 'clear', accent: '#000', sourceFile: file }], pageCount: 1, pageOrder: ['page-1'], ocrText: '', ocrConfidence: 0, status: 'pending_grading', exceptionReasons: [], teacherReviewed: false, createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z' }
 }
 
 describe('buildMultimodalGradingRequest', () => {
@@ -92,6 +93,8 @@ describe('buildMultimodalGradingRequest', () => {
       expect(Object.keys(result.request.task).sort()).toEqual([
         'constraints', 'fullScore', 'materialSummary', 'rubric', 'taskId', 'writingRequirements',
       ])
+      expect(JSON.stringify(result.request)).not.toContain('sourceGeneration')
+      expect(JSON.stringify(result.request)).not.toContain('rubricGeneration')
     }
   })
 

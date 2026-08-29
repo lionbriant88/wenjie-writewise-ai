@@ -1,4 +1,5 @@
 import type { Essay, EssayStatus, Task } from '../types'
+import type { ProgressEssayPhase } from './progressQueue'
 
 export type WorkflowStepId = 'upload' | 'progress' | 'class-review'
 
@@ -88,53 +89,91 @@ export function getProgressNextAction(task: Task, essays: Essay[]): NextAction {
   return {
     tone: 'info',
     title: activeCount > 0 ? `${activeCount} 篇作文仍在处理队列中` : '等待作文进入批改队列',
-    description: 'OCR 确认后可逐篇启动批改；运行中不会自动重试或批量并发。',
-    primaryLabel: '开始批改',
+    description: '点击后将一次启动当前任务的全部待处理作文；系统会在有界并发内自动排队，单篇失败不影响其他作文。',
+    primaryLabel: '开始批改全部待处理作文',
     primaryTo: `/tasks/${task.id}/progress`,
     secondaryLabel: '查看异常队列',
     secondaryTo: `/tasks/${task.id}/exceptions`,
   }
 }
 
-export function getEssayStatusMeta(status: EssayStatus): EssayStatusMeta {
-  const map: Record<EssayStatus, EssayStatusMeta> = {
-    pending_ocr: {
-      label: '待识别',
-      className: 'border-slate-200 bg-slate-100 text-slate-600',
-    },
-    ocr_running: {
-      label: '识别中',
-      className: 'border-cyan-200 bg-cyan-50 text-cyan-700',
-      animated: true,
-    },
-    pending_grading: {
-      label: '待批改',
+export function getProgressEssayPhaseMeta(phase: ProgressEssayPhase): EssayStatusMeta {
+  const map: Record<ProgressEssayPhase, EssayStatusMeta> = {
+    waiting: {
+      label: '等待批改',
       className: 'border-indigo-200 bg-indigo-50 text-indigo-700',
     },
-    grading: {
+    queued: {
+      label: '排队中',
+      className: 'border-sky-200 bg-sky-50 text-sky-700',
+    },
+    running: {
       label: '批改中',
       className: 'border-blue-200 bg-blue-50 text-blue-700',
       animated: true,
     },
-    grading_ready: {
+    rate_limit_wait: {
+      label: '因限流等待',
+      className: 'border-amber-200 bg-amber-50 text-amber-700',
+    },
+    result_unknown: {
+      label: '结果确认中',
+      className: 'border-violet-200 bg-violet-50 text-violet-700',
+      animated: true,
+    },
+    retryable_failure: {
+      label: '可重试失败',
+      className: 'border-rose-200 bg-rose-50 text-rose-700',
+    },
+    final_failure: {
+      label: '不可重试失败',
+      className: 'border-rose-300 bg-rose-100 text-rose-800',
+    },
+    succeeded: {
       label: '待教师确认',
       className: 'border-amber-200 bg-amber-50 text-amber-700',
+    },
+    teacher_confirmation: {
+      label: '待教师确认',
+      className: 'border-amber-200 bg-amber-50 text-amber-700',
+    },
+    teacher_review: {
+      label: '待教师复核',
+      className: 'border-rose-200 bg-rose-50 text-rose-700',
     },
     completed: {
       label: '已完成',
       className: 'border-emerald-200 bg-emerald-50 text-emerald-700',
       showCheck: true,
     },
-    needs_review: {
-      label: '需人工复核',
-      className: 'border-rose-200 bg-rose-50 text-rose-700',
-    },
     manual: {
-      label: '人工批改',
+      label: '人工处理',
       className: 'border-amber-200 bg-amber-50 text-amber-700',
       showCheck: true,
     },
   }
 
-  return map[status]
+  return map[phase]
+}
+
+export function getEssayStatusMeta(status: EssayStatus): EssayStatusMeta {
+  if (status === 'ocr_running') {
+    return {
+      label: '处理中',
+      className: 'border-cyan-200 bg-cyan-50 text-cyan-700',
+      animated: true,
+    }
+  }
+
+  const phaseByStatus: Record<Exclude<EssayStatus, 'ocr_running'>, ProgressEssayPhase> = {
+    pending_ocr: 'waiting',
+    pending_grading: 'waiting',
+    grading: 'running',
+    grading_ready: 'teacher_confirmation',
+    completed: 'completed',
+    needs_review: 'teacher_review',
+    manual: 'manual',
+  }
+
+  return getProgressEssayPhaseMeta(phaseByStatus[status])
 }

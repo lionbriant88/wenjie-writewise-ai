@@ -6,6 +6,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AppStateProvider } from '../context/AppStateContext'
 import type { AppState } from '../context/appStateContextValue'
 import { useAppState } from '../context/useAppState'
+import { createMockGradingClient } from '../services/grading/mockGradingClient'
+import type { TaskGradingSchedulerOptions } from '../services/grading/taskGradingScheduler'
+import type { GradingClient } from '../services/grading/types'
 import { ProgressPage } from './ProgressPage'
 import { UploadPage } from './UploadPage'
 
@@ -40,7 +43,10 @@ function MaterialTaskSetup() {
         offTopicCriteria: [],
         excellentFeatures: [],
         reviewTriggers: [],
-        dimensions: [{ id: 'content', name: 'Content', weight: 100, description: 'Answer the material.', deductionFocus: [], sourceEvidence: ['A short source material.'] }],
+        dimensions: [
+          { id: 'content', name: 'Content', weight: 95, description: 'Answer the material.', deductionFocus: [], sourceEvidence: ['A short source material.'] },
+          { id: 'legibility', name: 'Legibility', weight: 5, description: 'Keep the response readable.', deductionFocus: [], sourceEvidence: [] },
+        ],
       },
     })
     navigate(`/tasks/${taskId}/upload`)
@@ -49,9 +55,15 @@ function MaterialTaskSetup() {
   return null
 }
 
-function renderMaterialFlow() {
+function renderMaterialFlow(
+  gradingClient?: GradingClient,
+  gradingSchedulerOptions?: TaskGradingSchedulerOptions,
+) {
   return render(
-    <AppStateProvider>
+    <AppStateProvider
+      gradingClient={gradingClient}
+      gradingSchedulerOptions={gradingSchedulerOptions}
+    >
       <StateCapture />
       <MemoryRouter initialEntries={['/material-setup']}>
         <Routes>
@@ -71,10 +83,15 @@ describe('material task direct image upload flow', () => {
     localStorage.clear()
   })
 
-  it('queues the original files in displayed order exactly once and keeps OCR out of material upload and progress', async () => {
+  it('queues multiple students once and starts every pending essay through one task action', async () => {
     const user = userEvent.setup()
     vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn((file: File) => `blob:${file.name}`), revokeObjectURL: vi.fn() })
-    const { container } = renderMaterialFlow()
+    const localClient = createMockGradingClient()
+    const gradeImages = vi.fn(localClient.gradeImages)
+    const { container } = renderMaterialFlow(
+      { gradeImages },
+      { mode: 'adaptive-v1', hardLimit: 2, stableSuccessWindow: 1 },
+    )
     await screen.findByRole('button', { name: '为学生1添加作文' })
 
     expect(document.body.textContent).not.toMatch(/OCR/i)
@@ -82,22 +99,32 @@ describe('material task direct image upload flow', () => {
     const fileB = new File(['page-b'], 'second-page.png', { type: 'image/png' })
     await user.click(screen.getByRole('button', { name: '为学生1添加作文' }))
     await user.upload(screen.getByLabelText('上传相册图片'), [fileA, fileB])
-    await user.dblClick(screen.getByRole('button', { name: '提交作文并进入批改' }))
+    await user.click(screen.getByRole('button', { name: '添加下一位学生' }))
+    const fileC = new File(['page-c'], 'student-2.png', { type: 'image/png' })
+    await user.click(screen.getByRole('button', { name: '为学生2添加作文' }))
+    await user.upload(screen.getAllByLabelText('上传相册图片')[1], fileC)
+    await user.click(screen.getByRole('button', { name: '提交作文并进入批改' }))
 
     await screen.findByRole('heading', { name: /批改进度/ })
     expect(container.querySelector('#upload-class-name')).toBeNull()
     expect(screen.queryByRole('button', { name: /提交作文并进入批改/ })).not.toBeInTheDocument()
 
     const materialTask = capturedState?.tasks.find((task) => task.taskName === 'Material task')
-    await waitFor(() => expect(capturedState?.essays.filter((essay) => essay.taskId === materialTask?.id)).toHaveLength(1))
-    const queued = capturedState?.essays.find((essay) => essay.taskId === materialTask?.id)
-    expect(queued).toBeDefined()
-    expect(queued?.pages).toHaveLength(2)
-    expect(queued?.pages[0].sourceFile).toBe(fileA)
-    expect(queued?.pages[1].sourceFile).toBe(fileB)
-    expect(queued?.essayNumber).toBe('学生1')
-    expect(queued?.pageOrder).toEqual(queued?.pages.map((page) => page.id))
-    expect(document.body.textContent).not.toMatch(/OCR/i)
+    await waitFor(() => expect(capturedState?.essays.filter((essay) => essay.taskId === materialTask?.id)).toHaveLength(2))
+    const queued = capturedState?.essays.filter((essay) => essay.taskId === materialTask?.id) ?? []
+    expect(queued.map((essay) => essay.essayNumber)).toEqual(['学生1', '学生2'])
+    expect(queued.map((essay) => essay.status)).toEqual(['pending_grading', 'pending_grading'])
+    expect(queued[0]?.pages).toHaveLength(2)
+    expect(queued[0]?.pages[0].sourceFile).toBe(fileA)
+    expect(queued[0]?.pages[1].sourceFile).toBe(fileB)
+    expect(queued[1]?.pages[0].sourceFile).toBe(fileC)
+    expect(queued[0]?.pageOrder).toEqual(queued[0]?.pages.map((page) => page.id))
+    expect(screen.getAllByRole('button', { name: '开始批改全部待处理作文' })).toHaveLength(1)
+
+    await user.click(screen.getByRole('button', { name: '开始批改全部待处理作文' }))
+
+    await waitFor(() => expect(gradeImages).toHaveBeenCalledTimes(2))
+    expect(document.body.textContent).not.toMatch(/OCR|mock 回退/i)
   })
 
   it('blocks eleven otherwise valid image pages for one student before it changes route or queues essays', async () => {

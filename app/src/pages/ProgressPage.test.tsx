@@ -1,19 +1,22 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import { AppStateProvider } from '../context/AppStateContext'
 import { useAppState } from '../context/useAppState'
-import { createMockGradingClient } from '../services/grading/mockGradingClient'
-import type { GradingClient, MultimodalGradingRequestV2 } from '../services/grading/types'
+import type { TaskGradingSchedulerOptions } from '../services/grading/taskGradingScheduler'
+import type { GradingClient, GradingClientResponse, MultimodalGradingRequestV2 } from '../services/grading/types'
 import { EssayResultPage } from './EssayResultPage'
 import { ExceptionsPage } from './ExceptionsPage'
 import { ProgressPage } from './ProgressPage'
-import { UploadPage } from './UploadPage'
 
-function renderProgressFlow(taskId = 'task-2', gradingClient?: GradingClient) {
-  render(
-    <AppStateProvider gradingClient={gradingClient}>
+function renderProgressFlow(
+  taskId = 'task-2',
+  gradingClient?: GradingClient,
+  gradingSchedulerOptions?: TaskGradingSchedulerOptions,
+) {
+  return render(
+    <AppStateProvider gradingClient={gradingClient} gradingSchedulerOptions={gradingSchedulerOptions}>
       <MemoryRouter initialEntries={[`/tasks/${taskId}/progress`]}>
         <Routes>
           <Route path="/tasks/:taskId/progress" element={<ProgressPage />} />
@@ -25,37 +28,76 @@ function renderProgressFlow(taskId = 'task-2', gradingClient?: GradingClient) {
   )
 }
 
-function renderUploadFlow() {
-  render(
-    <AppStateProvider>
-      <MemoryRouter initialEntries={['/tasks/task-1/upload']}>
-        <Routes>
-          <Route path="/tasks/:taskId/upload" element={<UploadPage />} />
-          <Route path="/tasks/:taskId/progress" element={<ProgressPage />} />
-          <Route path="/tasks/:taskId/essays/:essayId" element={<EssayResultPage />} />
-        </Routes>
-      </MemoryRouter>
-    </AppStateProvider>,
-  )
+function successfulResult(request: MultimodalGradingRequestV2) {
+  const transcript = request.confirmedTranscript ?? 'Synthetic direct-image transcript.'
+  return {
+    resultVersion: 'grading-result-v2' as const,
+    requestId: request.requestId,
+    essayId: request.essayId,
+    provider: 'mock' as const,
+    status: 'success' as const,
+    totalScore: request.task.fullScore,
+    maxScore: request.task.fullScore,
+    dimensionScores: request.task.rubric.dimensions.map((dimension) => ({
+      dimensionId: dimension.id,
+      name: dimension.name,
+      score: dimension.weight * request.task.fullScore / 100,
+      maxScore: dimension.weight * request.task.fullScore / 100,
+      weight: dimension.weight,
+      reason: 'Synthetic reason.',
+      evidence: transcript,
+    })),
+    issues: [],
+    sentenceRevisions: [],
+    expressionUpgrades: [],
+    recognitionWarnings: [],
+    legibilityIssues: [],
+    fullTextRevision: {
+      originalText: transcript,
+      correctedText: transcript,
+      improvedText: transcript,
+      sentencePairs: [],
+      logicNotes: [],
+      logicIssues: [],
+    },
+    overallComment: 'Synthetic result.',
+    reviewReasons: [],
+    createdAt: '2026-08-29T00:00:00.000Z',
+    transcript,
+    printedTextExcluded: true,
+  }
 }
 
 function CrossTaskControls() {
-  const { essays, enqueueImageEssays, gradeEssay } = useAppState()
-  const otherTaskEssay = essays.find((essay) => essay.taskId === 'task-2' && essay.status === 'pending_grading')
+  const { enqueueImageEssays, startTaskGrading } = useAppState()
   return (
     <div>
       <button type="button" onClick={() => enqueueImageEssays({
-        submissionId: 'cross-task-current', taskId: 'task-3', className: 'Synthetic class',
-        essayGroups: [{ pages: [{ id: 'current-page', label: 'Current page', pageNumber: 1, quality: 'clear', accent: '#000', sourceFile: new File(['image'], 'current.png', { type: 'image/png' }) }] }],
+        submissionId: 'cross-task-current',
+        taskId: 'task-3',
+        className: 'Synthetic class',
+        essayGroups: [{
+          pages: [{
+            id: 'current-page',
+            label: 'Current page',
+            pageNumber: 1,
+            quality: 'clear',
+            accent: '#000',
+            sourceFile: new File(['image'], 'current.png', { type: 'image/png' }),
+          }],
+        }],
       })}>添加当前任务待批改作文</button>
-      <button type="button" onClick={() => { if (otherTaskEssay) void gradeEssay(otherTaskEssay.id) }}>启动另一任务批改</button>
+      <button type="button" onClick={() => startTaskGrading('task-2')}>启动另一任务批改</button>
     </div>
   )
 }
 
 function renderCrossTaskProgress(gradingClient: GradingClient) {
-  render(
-    <AppStateProvider gradingClient={gradingClient}>
+  return render(
+    <AppStateProvider
+      gradingClient={gradingClient}
+      gradingSchedulerOptions={{ mode: 'single-legacy', hardLimit: 1, stableSuccessWindow: 2 }}
+    >
       <CrossTaskControls />
       <MemoryRouter initialEntries={['/tasks/task-3/progress']}>
         <Routes><Route path="/tasks/:taskId/progress" element={<ProgressPage />} /></Routes>
@@ -64,139 +106,213 @@ function renderCrossTaskProgress(gradingClient: GradingClient) {
   )
 }
 
-function failedClient(grade = vi.fn(async (request: MultimodalGradingRequestV2) => ({
-  requestId: request.requestId,
-  status: 'failed' as const,
-  error: { code: 'provider_timeout' as const, message: '安全超时提示。', retryable: true },
-}))) {
-  return { client: { gradeImages: grade } satisfies GradingClient, grade }
-}
-
-describe('ProgressPage', () => {
-  it('offers one-at-a-time grading without batch controls and documents memory-only state', () => {
+describe('ProgressPage bounded whole-task grading', () => {
+  it('offers one task-level start action and contains no stale OCR, serial, mock-fallback, or provider-cost copy', () => {
     renderProgressFlow()
-    expect(screen.getByRole('button', { name: '开始批改' })).toBeEnabled()
-    expect(screen.queryByRole('button', { name: /全部|批量/ })).not.toBeInTheDocument()
+
+    expect(screen.getByRole('button', { name: '开始批改全部待处理作文' })).toBeEnabled()
     expect(screen.getByText(/结果仅保存在当前页面状态中/)).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: /处理中/ })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: /需复核/ })).toBeInTheDocument()
-    expect(document.body.textContent).not.toMatch(/DeepSeek|API.?key/i)
+    expect(screen.getByRole('tab', { name: /待教师处理/ })).toBeInTheDocument()
+    expect(document.body.textContent).not.toMatch(/OCR|逐篇|不会自动并发|mock 回退|第二次真实 Provider|RPM|TPM|token|cache/i)
   })
 
-  it('starts only the next pending essay and exposes its ready result for teacher review', async () => {
+  it('shows running and queued essays after one click while exposing the bounded concurrency', async () => {
     const user = userEvent.setup()
-    renderProgressFlow('task-2', createMockGradingClient())
-    await user.click(screen.getByRole('button', { name: '开始批改' }))
-    const reviewLink = await screen.findByRole('link', { name: '查看并确认' })
-    expect(reviewLink.parentElement).toHaveTextContent('建议重点复核')
-    expect(screen.queryByRole('button', { name: /批量/ })).not.toBeInTheDocument()
-  })
-
-  it('shows a disabled running-row action and does not automatically retry', async () => {
-    const user = userEvent.setup()
-    let resolve!: (value: Awaited<ReturnType<GradingClient['gradeImages']>>) => void
-    const deferred = new Promise<Awaited<ReturnType<GradingClient['gradeImages']>>>((done) => { resolve = done })
-    const grade = vi.fn((_request: MultimodalGradingRequestV2) => deferred)
-    renderProgressFlow('task-2', { gradeImages: grade })
-    await user.click(screen.getByRole('button', { name: '开始批改' }))
-    expect(await screen.findByRole('button', { name: '批改中' })).toBeDisabled()
-    expect(screen.queryByRole('button', { name: '开始批改' })).not.toBeInTheDocument()
-    expect(grade).toHaveBeenCalledTimes(1)
-    const request = grade.mock.calls[0][0]
-    resolve({
-      requestId: request.requestId,
-      status: 'failed',
-      error: { code: 'provider_timeout', message: '安全超时提示。', retryable: true },
-    })
-  })
-
-  it('disables failed-row retry actions while another essay in the task is running', async () => {
-    const user = userEvent.setup()
-    let resolveSecond!: (value: Awaited<ReturnType<GradingClient['gradeImages']>>) => void
-    const secondResponse = new Promise<Awaited<ReturnType<GradingClient['gradeImages']>>>((done) => { resolveSecond = done })
-    const grade = vi.fn((request: MultimodalGradingRequestV2) => grade.mock.calls.length === 1
-      ? Promise.resolve({ requestId: request.requestId, status: 'failed' as const, error: { code: 'provider_timeout' as const, message: '安全超时提示。', retryable: true } })
-      : secondResponse)
-    renderProgressFlow('task-2', { gradeImages: grade })
-    await user.click(screen.getByRole('button', { name: '开始批改' }))
-    expect(await screen.findByRole('button', { name: '重试批改' })).toBeEnabled()
-    await user.click(screen.getByRole('button', { name: '开始批改' }))
-    expect(screen.getByRole('button', { name: '重试批改' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '使用 mock 回退' })).toBeDisabled()
-    const request = grade.mock.calls[1][0]
-    resolveSecond({ requestId: request.requestId, status: 'failed', error: { code: 'provider_timeout', message: '安全超时提示。', retryable: true } })
-  })
-
-  it('hides current-task start actions while a different task request is in flight', async () => {
-    const user = userEvent.setup()
-    let resolveOther!: (value: Awaited<ReturnType<GradingClient['gradeImages']>>) => void
-    const deferred = new Promise<Awaited<ReturnType<GradingClient['gradeImages']>>>((done) => { resolveOther = done })
-    const grade = vi.fn((_request: MultimodalGradingRequestV2) => deferred)
-    renderCrossTaskProgress({ gradeImages: grade })
-    await user.click(screen.getByRole('button', { name: '添加当前任务待批改作文' }))
-    expect(screen.getByRole('button', { name: '开始批改' })).toBeEnabled()
-    await user.click(screen.getByRole('button', { name: '启动另一任务批改' }))
-    expect(grade).toHaveBeenCalledTimes(1)
-    expect(screen.queryByRole('button', { name: '开始批改' })).not.toBeInTheDocument()
-    const request = grade.mock.calls[0][0]
-    resolveOther({ requestId: request.requestId, status: 'failed', error: { code: 'provider_timeout', message: '安全超时提示。', retryable: true } })
-    await waitFor(() => expect(screen.getByRole('button', { name: '开始批改' })).toBeEnabled())
-  })
-
-  it('renders safe failure recovery and explicit retry creates one additional call', async () => {
-    const user = userEvent.setup()
-    const { client, grade } = failedClient()
-    renderProgressFlow('task-2', client)
-    await user.click(screen.getByRole('button', { name: '开始批改' }))
-    expect(await screen.findByText('安全超时提示。')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '重试批改' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: '使用 mock 回退' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: '转人工处理' })).toBeEnabled()
-    expect(screen.getByText(/可能产生第二次真实 Provider 费用/)).toBeInTheDocument()
-    expect(grade).toHaveBeenCalledTimes(1)
-    await user.click(screen.getByRole('button', { name: '重试批改' }))
-    expect(grade).toHaveBeenCalledTimes(2)
-    expect(grade.mock.calls[0][0].requestId).not.toBe(grade.mock.calls[1][0].requestId)
-  })
-
-  it('keeps mock fallback and manual handling actionable after failure', async () => {
-    const user = userEvent.setup()
-    const first = failedClient()
-    renderProgressFlow('task-2', first.client)
-    await user.click(screen.getByRole('button', { name: '开始批改' }))
-    await user.click(await screen.findByRole('button', { name: '使用 mock 回退' }))
-    expect((await screen.findAllByText('待教师确认')).length).toBeGreaterThan(0)
-    expect(first.grade).toHaveBeenCalledTimes(1)
-
-    const second = failedClient()
-    renderProgressFlow('task-2', second.client)
-    const startButtons = screen.getAllByRole('button', { name: '开始批改' })
-    await user.click(startButtons[startButtons.length - 1])
-    const manualButtons = await screen.findAllByRole('button', { name: '转人工处理' })
-    await user.click(manualButtons[manualButtons.length - 1])
-    expect(screen.getAllByText('已转人工处理').length).toBeGreaterThan(0)
-  })
-
-  it('includes grading_ready in review filtering and preserves neutral recognition review navigation', async () => {
-    const user = userEvent.setup()
-    renderProgressFlow('task-1')
-    await user.click(screen.getByRole('tab', { name: /需复核/ }))
-    expect(screen.getAllByTestId('progress-review-row').length).toBeGreaterThan(0)
-    expect(screen.getAllByRole('link', { name: '去复核识别结果' }).length).toBeGreaterThan(0)
-    expect(document.body.textContent).not.toMatch(/OCR/i)
-  })
-
-  it('takes a directly queued image upload into the progress page', async () => {
-    const user = userEvent.setup()
-    vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn(() => 'blob:progress-upload'), revokeObjectURL: vi.fn() })
-    renderUploadFlow()
-    await user.click(screen.getByRole('button', { name: '为学生1添加作文' }))
-    await user.upload(
-      screen.getByLabelText('上传相册图片'),
-      new File(['image'], 'student-1.png', { type: 'image/png' }),
+    let resolve!: (value: GradingClientResponse) => void
+    const pending = new Promise<GradingClientResponse>((done) => { resolve = done })
+    const gradeImages = vi.fn((_request: MultimodalGradingRequestV2) => pending)
+    renderProgressFlow(
+      'task-2',
+      { gradeImages },
+      { mode: 'single-legacy', hardLimit: 1, stableSuccessWindow: 2 },
     )
-    await user.click(screen.getByRole('button', { name: '提交作文并进入批改' }))
-    expect(screen.getByRole('heading', { name: '批改进度' })).toBeInTheDocument()
-    expect(screen.getAllByText('待批改').length).toBeGreaterThan(0)
+
+    await user.click(screen.getByRole('button', { name: '开始批改全部待处理作文' }))
+
+    expect((await screen.findAllByText('批改中')).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText('排队中')).length).toBeGreaterThan(0)
+    expect(screen.getByText(/当前同时批改 1 篇.*最多同时处理 1 篇/)).toBeInTheDocument()
+    expect(gradeImages).toHaveBeenCalledTimes(1)
+    resolve(successfulResult(gradeImages.mock.calls[0][0]))
+  })
+
+  it('isolates one retryable failure, continues other essays, and retries with the same caller ID', async () => {
+    const user = userEvent.setup()
+    let failedEssayId = ''
+    const requests: MultimodalGradingRequestV2[] = []
+    const attempts = new Map<string, number>()
+    const gradeImages = vi.fn(async (request: MultimodalGradingRequestV2) => {
+      requests.push(request)
+      failedEssayId ||= request.essayId
+      const attempt = (attempts.get(request.essayId) ?? 0) + 1
+      attempts.set(request.essayId, attempt)
+      if (request.essayId === failedEssayId && attempt === 1) {
+        return {
+          requestId: request.requestId,
+          status: 'failed' as const,
+          error: { code: 'provider_timeout' as const, message: '安全超时提示。', retryable: true },
+        }
+      }
+      return successfulResult(request)
+    })
+    renderProgressFlow(
+      'task-2',
+      { gradeImages },
+      { mode: 'single-legacy', hardLimit: 1, stableSuccessWindow: 2 },
+    )
+
+    await user.click(screen.getByRole('button', { name: '开始批改全部待处理作文' }))
+    expect(await screen.findByText('可重试失败')).toBeInTheDocument()
+    expect((await screen.findAllByText('待教师确认')).length).toBeGreaterThan(0)
+    const firstId = requests.find((request) => request.essayId === failedEssayId)?.requestId
+
+    await user.click(screen.getByRole('button', { name: '重试批改' }))
+    await waitFor(() => expect(attempts.get(failedEssayId)).toBe(2))
+    const retryIds = requests.filter((request) => request.essayId === failedEssayId).map((request) => request.requestId)
+    expect(retryIds).toEqual([firstId, firstId])
+    await waitFor(() => expect(screen.queryByText('可重试失败')).not.toBeInTheDocument())
+  })
+
+  it('uses 检查结果 for an unknown settlement and reattaches the same job', async () => {
+    const user = userEvent.setup()
+    let unknownEssayId = ''
+    const requests: MultimodalGradingRequestV2[] = []
+    const gradeImages = vi.fn(async (request: MultimodalGradingRequestV2) => {
+      requests.push(request)
+      unknownEssayId ||= request.essayId
+      if (request.essayId === unknownEssayId && requests.filter((item) => item.essayId === unknownEssayId).length === 1) {
+        return {
+          requestId: request.requestId,
+          status: 'failed' as const,
+          error: { code: 'provider_result_unknown' as const, message: '结果仍在确认。', retryable: false },
+          clientMeta: { reattachOnly: true as const },
+        }
+      }
+      return successfulResult(request)
+    })
+    renderProgressFlow(
+      'task-2',
+      { gradeImages },
+      { mode: 'single-legacy', hardLimit: 1, stableSuccessWindow: 2 },
+    )
+
+    await user.click(screen.getByRole('button', { name: '开始批改全部待处理作文' }))
+    expect(await screen.findByText('结果确认中')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '重试批改' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '检查结果' }))
+
+    await waitFor(() => expect(requests.filter((request) => request.essayId === unknownEssayId)).toHaveLength(2))
+    const ids = requests.filter((request) => request.essayId === unknownEssayId).map((request) => request.requestId)
+    expect(ids[1]).toBe(ids[0])
+  })
+
+  it('does not offer retry or result-check actions for a final failure', async () => {
+    const user = userEvent.setup()
+    let firstEssayId = ''
+    const gradeImages = vi.fn(async (request: MultimodalGradingRequestV2) => {
+      firstEssayId ||= request.essayId
+      return request.essayId === firstEssayId
+        ? {
+            requestId: request.requestId,
+            status: 'failed' as const,
+            error: { code: 'provider_content_filtered' as const, message: '该作文无法自动处理。', retryable: false },
+          }
+        : successfulResult(request)
+    })
+    renderProgressFlow(
+      'task-2',
+      { gradeImages },
+      { mode: 'single-legacy', hardLimit: 1, stableSuccessWindow: 2 },
+    )
+
+    await user.click(screen.getByRole('button', { name: '开始批改全部待处理作文' }))
+
+    expect(await screen.findByText('不可重试失败')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '重试批改' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '检查结果' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '转人工处理' })).toBeEnabled()
+  })
+
+  it('shows rate-limit waiting without exposing a teacher retry action', async () => {
+    const user = userEvent.setup()
+    const gradeImages = vi.fn(async (request: MultimodalGradingRequestV2) => ({
+      requestId: request.requestId,
+      status: 'failed' as const,
+      error: { code: 'provider_rate_limited' as const, message: '请求较多，请稍候。', retryable: true },
+      clientMeta: { retryAfterMs: 60_000 },
+    }))
+    renderProgressFlow(
+      'task-2',
+      { gradeImages },
+      { mode: 'single-legacy', hardLimit: 1, stableSuccessWindow: 2 },
+    )
+
+    await user.click(screen.getByRole('button', { name: '开始批改全部待处理作文' }))
+
+    expect(await screen.findByText('因限流等待')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '重试批改' })).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['auth', 'provider_auth_failed', false, undefined, '身份验证失败'],
+    ['balance', 'provider_balance_unavailable', false, undefined, '账户额度不可用'],
+    ['configuration', 'provider_not_configured', false, undefined, '批改服务配置不可用'],
+    ['long retry', 'provider_rate_limited', true, 900_001, '服务要求较长等待'],
+  ] as const)(
+    'shows and explicitly clears the %s task pause banner',
+    async (_label, code, retryable, retryAfterMs, expectedCopy) => {
+      const user = userEvent.setup()
+      let callCount = 0
+      const gradeImages = vi.fn(async (request: MultimodalGradingRequestV2): Promise<GradingClientResponse> => {
+        callCount += 1
+        if (callCount > 1) return successfulResult(request)
+        return {
+          requestId: request.requestId,
+          status: 'failed',
+          error: { code, message: expectedCopy, retryable },
+          ...(retryAfterMs === undefined ? {} : { clientMeta: { retryAfterMs } }),
+        }
+      })
+      renderProgressFlow(
+        'task-2',
+        { gradeImages },
+        { mode: 'single-legacy', hardLimit: 1, stableSuccessWindow: 2 },
+      )
+
+      await user.click(screen.getByRole('button', { name: '开始批改全部待处理作文' }))
+      const banner = await screen.findByTestId('task-pause-banner')
+      expect(banner).toHaveTextContent(expectedCopy)
+      await user.click(within(banner).getByRole('button', { name: '恢复批改' }))
+      await waitFor(() => expect(screen.queryByTestId('task-pause-banner')).not.toBeInTheDocument())
+    },
+  )
+
+  it('does not hide the current task action while another task occupies the shared slot', async () => {
+    const user = userEvent.setup()
+    const gradeImages = vi.fn((_request: MultimodalGradingRequestV2) => new Promise<GradingClientResponse>(() => undefined))
+    renderCrossTaskProgress({ gradeImages })
+    await user.click(screen.getByRole('button', { name: '添加当前任务待批改作文' }))
+    expect(screen.getByRole('button', { name: '开始批改全部待处理作文' })).toBeEnabled()
+
+    await user.click(screen.getByRole('button', { name: '启动另一任务批改' }))
+    expect(gradeImages).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: '开始批改全部待处理作文' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: '开始批改全部待处理作文' }))
+    expect(await screen.findByText('排队中')).toBeInTheDocument()
+  })
+
+  it('keeps valid AI results in the teacher-handling tab instead of treating them as completed', async () => {
+    const user = userEvent.setup()
+    const gradeImages = vi.fn(async (request: MultimodalGradingRequestV2) => successfulResult(request))
+    renderProgressFlow(
+      'task-2',
+      { gradeImages },
+      { mode: 'single-legacy', hardLimit: 1, stableSuccessWindow: 2 },
+    )
+    await user.click(screen.getByRole('button', { name: '开始批改全部待处理作文' }))
+    await screen.findAllByText('待教师确认')
+
+    await user.click(screen.getByRole('tab', { name: /待教师处理/ }))
+    expect(screen.getAllByRole('link', { name: '查看并确认' }).length).toBeGreaterThan(0)
   })
 })

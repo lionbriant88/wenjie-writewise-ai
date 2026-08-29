@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Essay, EssayStatus, Task } from '../types'
 import {
   getEssayStatusMeta,
+  getProgressEssayPhaseMeta,
   getProgressNextAction,
   getWorkflowSteps,
 } from './workflow'
@@ -109,18 +110,44 @@ describe('workflow helpers', () => {
   })
 
   it.each([
-    ['pending_ocr', '待识别', false, false],
-    ['ocr_running', '识别中', true, false],
-    ['pending_grading', '待批改', false, false],
+    ['pending_ocr', '等待批改', false, false],
+    ['ocr_running', '处理中', true, false],
+    ['pending_grading', '等待批改', false, false],
     ['grading', '批改中', true, false],
     ['grading_ready', '待教师确认', false, false],
     ['completed', '已完成', false, true],
-    ['needs_review', '需人工复核', false, false],
-    ['manual', '人工批改', false, true],
+    ['needs_review', '待教师复核', false, false],
+    ['manual', '人工处理', false, true],
   ] satisfies Array<[EssayStatus, string, boolean, boolean]>)(
     'returns metadata for %s',
     (status, label, animated, showCheck) => {
       const meta = getEssayStatusMeta(status)
+
+      expect(meta.label).toBe(label)
+      expect(meta.label).not.toMatch(/OCR|识别/i)
+      expect(Boolean(meta.animated)).toBe(animated)
+      expect(Boolean(meta.showCheck)).toBe(showCheck)
+      expect(meta.className).toEqual(expect.any(String))
+    },
+  )
+
+  it.each([
+    ['waiting', '等待批改', false, false],
+    ['queued', '排队中', false, false],
+    ['running', '批改中', true, false],
+    ['rate_limit_wait', '因限流等待', false, false],
+    ['result_unknown', '结果确认中', true, false],
+    ['retryable_failure', '可重试失败', false, false],
+    ['final_failure', '不可重试失败', false, false],
+    ['succeeded', '待教师确认', false, false],
+    ['teacher_confirmation', '待教师确认', false, false],
+    ['teacher_review', '待教师复核', false, false],
+    ['completed', '已完成', false, true],
+    ['manual', '人工处理', false, true],
+  ] as const)(
+    'returns teacher-facing metadata for progress phase %s',
+    (phase, label, animated, showCheck) => {
+      const meta = getProgressEssayPhaseMeta(phase)
 
       expect(meta.label).toBe(label)
       expect(Boolean(meta.animated)).toBe(animated)
@@ -136,5 +163,21 @@ describe('workflow helpers', () => {
       primaryLabel: '查看并确认批改',
       primaryTo: '/tasks/task-1/essays/作文 1',
     })
+  })
+
+  it('offers one action that starts every currently pending essay', () => {
+    const next = getProgressNextAction(task, [
+      essay('作文 1', 'pending_grading'),
+      essay('作文 2', 'grading'),
+    ])
+
+    expect(next).toMatchObject({
+      tone: 'info',
+      primaryLabel: '开始批改全部待处理作文',
+      primaryTo: '/tasks/task-1/progress',
+    })
+    expect(next.description).toContain('全部待处理作文')
+    expect(next.description).toContain('有界并发')
+    expect(next.description).not.toMatch(/OCR|识别|逐篇/i)
   })
 })

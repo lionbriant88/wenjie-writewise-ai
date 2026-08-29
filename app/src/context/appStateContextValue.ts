@@ -1,5 +1,6 @@
 import { createContext } from 'react'
 import type { OcrTranscriptAudit } from '../services/ocr/audit/types'
+import type { TaskQueueSnapshot } from '../services/grading/taskGradingScheduler'
 import type {
   ClassInsight,
   ClassReviewMaterial,
@@ -32,6 +33,8 @@ export interface EnqueueImageEssaysInput {
 export interface AppState {
   tasks: Task[]
   essays: Essay[]
+  taskGradingQueues: Readonly<Record<string, TaskQueueSnapshot>>
+  /** @deprecated The queue snapshot should be used for per-task/per-essay state. */
   isGradingInFlight: boolean
   gradingResults: GradingResult[]
   classInsights: ClassInsight[]
@@ -42,9 +45,14 @@ export interface AppState {
   enqueueImageEssays: (input: EnqueueImageEssaysInput) => void
   updateEssayOcrText: (essayId: string, text: string, confirmedAt?: string) => void
   markEssayManual: (essayId: string) => void
+  startTaskGrading: (taskId: string) => void
+  retryTaskEssay: (essayId: string) => void
+  checkUnknownTaskEssay: (essayId: string) => void
+  resumeTaskGrading: (taskId: string) => void
+  /** @deprecated Compatibility wrapper; use startTaskGrading. */
   gradeEssay: (essayId: string) => Promise<void>
+  /** @deprecated Compatibility wrapper; use retryTaskEssay. */
   retryGradeEssay: (essayId: string) => Promise<void>
-  fallbackToMockGrading: (essayId: string) => Promise<void>
   confirmGradingResult: (essayId: string) => void
   updateGradingResult: (essayId: string, patch: Partial<GradingResult>) => void
   addClassReviewMaterial: (input: ClassReviewMaterialInput) => ClassReviewMaterial

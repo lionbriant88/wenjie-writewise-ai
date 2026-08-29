@@ -21,6 +21,8 @@ export type ExceptionReason =
 
 export interface Task {
   id: string
+  /** Monotonic UI generation used to reject grading results from an older rubric revision. */
+  rubricGeneration?: number
   taskName: string
   className: string
   essayType: string
@@ -92,6 +94,8 @@ export interface EssayPage {
 export interface Essay {
   id: string
   taskId: string
+  /** Monotonic UI generation used to reject grading results from older source pages or text. */
+  sourceGeneration?: number
   essayNumber: string
   pages: EssayPage[]
   pageCount: number
@@ -117,18 +121,25 @@ export interface TaskMaterialContext {
   reviewWarnings: string[]
 }
 
+type CapturedGradingGenerations = {
+  /** Absent legacy values are interpreted as generation 0. */
+  sourceGeneration?: number
+  /** Absent legacy values are interpreted as generation 0. */
+  rubricGeneration?: number
+}
+
 export type GradingRunState =
   | { status: 'idle' }
-  | { status: 'running'; requestId: string; startedAt: string }
-  | {
+  | ({ status: 'running'; requestId: string; startedAt: string } & CapturedGradingGenerations)
+  | ({
       status: 'success' | 'partial'
       requestId: string
       source: 'mock' | 'remote'
       reviewReasons: string[]
       startedAt: string
       completedAt: string
-    }
-  | {
+    } & CapturedGradingGenerations)
+  | ({
       status: 'failed'
       requestId: string
       errorCode: string
@@ -136,7 +147,7 @@ export type GradingRunState =
       retryable: boolean
       startedAt?: string
       completedAt: string
-    }
+    } & CapturedGradingGenerations)
 
 export interface ScoreDimension {
   id: string

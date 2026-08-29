@@ -1,9 +1,16 @@
 import { Check } from 'lucide-react'
 import type { EssayStatus } from '../types'
-import { getEssayStatusMeta } from '../utils/workflow'
+import type { ProgressEssayPhase } from '../utils/progressQueue'
+import { getEssayStatusMeta, getProgressEssayPhaseMeta } from '../utils/workflow'
 
-export function EssayStatusChip({ status }: { status: EssayStatus }) {
-  const meta = getEssayStatusMeta(status)
+export function EssayStatusChip({
+  status,
+  phase,
+}: {
+  status: EssayStatus
+  phase?: ProgressEssayPhase
+}) {
+  const meta = phase ? getProgressEssayPhaseMeta(phase) : getEssayStatusMeta(status)
 
   return (
     <span

@@ -68,6 +68,7 @@ const essay = (
   return {
     id,
     taskId,
+    sourceGeneration: 0,
     essayNumber: `作文 ${index}`,
     pages,
     pageCount,
@@ -327,6 +328,7 @@ const mockRubricDraft: NonNullable<Task['rubricDraft']> = {
 export const mockTasks: Task[] = [
   {
     id: 'task-1',
+    rubricGeneration: 0,
     taskName: '九年级建议信单元测',
     className: '九年级 3 班',
     essayType: '建议信',
@@ -345,6 +347,7 @@ export const mockTasks: Task[] = [
   },
   {
     id: 'task-2',
+    rubricGeneration: 0,
     taskName: '高一邀请信课堂练习',
     className: '高一 6 班',
     essayType: '邀请信',
@@ -363,6 +366,7 @@ export const mockTasks: Task[] = [
   },
   {
     id: 'task-3',
+    rubricGeneration: 0,
     taskName: '八年级通知写作作业',
     className: '八年级 1 班',
     essayType: '通知',
@@ -386,14 +390,14 @@ export const mockEssays: Essay[] = [
     const number = index + 1
     if (number === 3) return essay('task-1', number, 'needs_review', 0.61, 2, 'messy')
     if (number === 7) return essay('task-1', number, 'needs_review', 0.74, 1, 'blurred')
-    if (number === 9) return essay('task-1', number, 'grading', 0.88, 2)
+    if (number === 9) return essay('task-1', number, 'pending_grading', 0.88, 2)
     return essay('task-1', number, 'completed', 0.89, number === 5 ? 2 : 1)
   }),
   ...Array.from({ length: 8 }, (_, index) => {
     const number = index + 1
     if (number === 2) return essay('task-2', number, 'needs_review', 0.68, 1, 'messy')
     if (number <= 4) return essay('task-2', number, 'completed', 0.9, number === 4 ? 2 : 1)
-    return essay('task-2', number, number === 5 ? 'ocr_running' : 'pending_grading', 0.83)
+    return essay('task-2', number, 'pending_grading', 0.83)
   }),
   ...Array.from({ length: 12 }, (_, index) =>
     essay('task-3', index + 1, 'completed', 0.92, index === 1 ? 2 : 1),

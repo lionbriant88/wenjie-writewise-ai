@@ -1,7 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { mockEssays, mockGradingResults } from './mockData'
+import { mockEssays, mockGradingResults, mockTasks } from './mockData'
 
 describe('mock grading result consistency', () => {
+  it('initializes every canonical task and essay generation explicitly', () => {
+    expect(mockTasks.every((task) => task.rubricGeneration === 0)).toBe(true)
+    expect(mockEssays.every((essay) => essay.sourceGeneration === 0)).toBe(true)
+  })
+
+  it('keeps every unfinished canonical essay in the current actionable queue state', () => {
+    const activeStatuses = mockEssays
+      .filter((essay) => essay.status !== 'completed' && essay.status !== 'needs_review')
+      .map((essay) => essay.status)
+
+    expect(new Set(activeStatuses)).toEqual(new Set(['pending_grading']))
+  })
+
   it('provides full text revision data for completed mock grading results', () => {
     for (const result of mockGradingResults) {
       expect(result.fullTextRevision, `${result.id} should include full text revision`).toBeDefined()
