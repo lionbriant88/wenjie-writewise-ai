@@ -28,7 +28,7 @@
 ## 当前 AI 成本与吞吐优化决策
 
 - 用户已批准以“最大吞吐目标 + 稳健有界并发”优化全流程；不得把它实现成无上限并发。真实 Kimi 环境必须有显式并发硬上限，调度器在上限内根据成功率、耗时、`429` 和可选 TPM 预算自适应升降。
-- 教师一次启动当前任务的全部待批改作文，系统自动排队和补充空闲槽位；单篇失败不得阻断其他作文。Kimi K3 当前不接 Batch API，也不得把多名学生合并进一个模型请求。
+- 教师一次启动当前任务的全部待批改作文，系统自动排队和补充空闲槽位；单篇失败不得阻断其他作文。Kimi K3 当前不接 Batch API，也不得把多名学生合并进一个模型请求进行识别或逐篇评分；全部逐篇结果形成后允许按下述班级总览决策执行一次去身份化的班级级综合，这不属于多学生联合评分。
 - AI 辅助生成评分标准的正常路径只能执行一次 Kimi completion，原材料只发送一次；使用严格 Schema 和本地确定性校验，不再默认执行第二次模型复核或隐藏式模型修复。教师最终创建任务仍承担人工确认。
 - 对外继续保持 `multimodal-grading-request-v2`、`grading-result-v2` 和 `POST /grading/grade-images`。Gateway 校验完整任务包后，只向 Provider 投影一份 canonical 任务上下文；必须保留规范化、去重、受限的 `reviewWarnings`，但不得把顶层与 rubric 内重复字段、材料溯源元数据、学生姓名或原题材料发送进逐篇 Prompt。
 - 同一任务 revision 的稳定政策和 canonical 任务上下文必须放在 Prompt 前部，并使用服务端生成或确定性派生、绑定 rubric/policy/schema revision 且不含个人信息的 opaque `prompt_cache_key` 帮助 Kimi 自动前缀缓存；不得直接发送教师命名或普通业务 ID。缓存键不是幂等键，缓存是否命中不得影响正确性。
@@ -43,6 +43,21 @@
 - 完整设计与质量门槛见 `docs/superpowers/specs/2026-08-28-ai-pipeline-cost-latency-optimization-design.md`。真实 Kimi 基线、40+40 A/B、100 次 soak、30 篇吞吐和图片变体均尚未运行；25% token、99% 结构化成功率、CER/评分不退化与 60% 吞吐目标均未得到真实证明。Task 16 每一轮仍需单独确认样本、调用数和费用。
 - 当前质量 CLI 对缺失或不可认证的人工盲评/soak 审计证据一律 fail closed。本地 JSON 或普通 adapter 不能形成 release pass；完整 Round A 仍缺同一受控 A+B 人工评审协调器。在用户另行决定并补齐该协调器前，不得开始或声称能完成 Task 16。
 - 图片仍按原始有序字节发送；没有启用 resize/re-encode，也没有引入 OCR 主流程、降级路径或图片转文本预处理。
+
+## 当前班级总览与 AI 班级总结决策
+
+- 班级总览的当前有效口径是本任务全部“有效成功作文”：结果结构合法、与当前作文源版本和评分标准版本匹配、未删除或作废；教师是否已点击最终确认不是纳入门槛。教师修改过的结果使用修改后的当前版本，单篇最终失败不阻断其余成功作文。成绩通道有效数记为 `N_success`；问题通道完整数记为 `N_issue`，问题通道不完整的 partial 不得被当成“没有问题”。
+- 普通共性问题必须同时满足比例和人数门槛：`requiredSupport = max(N_issue < 10 ? 2 : 3, ceil(N_issue × 20%))`，其中同一作文在同一模式中只计一名学生。人数、比例、出现次数和例句均由权威任务服务按证据重算，不得采用模型自报统计；页面必须披露 `N_issue / N_success`。
+- 明确低级拼写错误只有在证据确定、修正可由 v2 issue 与唯一 sentence revision/pair 机械交叉验证、无需教师复核且不存在字迹歧义时，才不受频次门槛限制；它们自动进入独立、紧凑的“明确拼写清单”，不能冒充共性问题。`type=spelling` 是正常路径；为覆盖用户明确举例的 `filling → feeling`，certain 的单词级 `word_choice` 只有通过规格中的严格近形词距离与唯一修正规则才可纳入。结果修改、重批或作废后必须确定性重算。
+- 班级总结只能在任务队列 settled 且 `N_success >= 2` 后，由教师显式点击生成。正常首次生成执行一次 Kimi completion；查看、统计、拼写聚合、双击、HTTP 重放、刷新重挂和结果检查不得增加 completion。任务级持久 active-generation 唯一约束必须阻止不同标签页用不同 ID 并发计费；教师明确重新生成、来源删除后重新生成或可能已计费的终态失败后明确重试才创建新 generation，并各最多增加一次新调用；`result_unknown` 可信结算前不得新建批次。若合法候选因并发教师编辑进入 `succeeded_unapplied`，应用/放弃均为 0 次调用；覆盖当前教师 AI 文本必须有明确文案、确认和 `aiTextEditRevision` CAS，后续新编辑不得被旧确认覆盖。
+- 班级级 Provider 输入来自权威任务服务固定的去身份化快照：全量统计精确计算，非拼写问题使用可审计原子组和有硬字节/组数/token 上限、分层、跨作文轮转的语义投影。`class-review-prompt-budget-v1` 的 Provider Prompt 硬上限为 16,384 tokens，其中可控 payload 最多 15,872，至少预留 512 tokens 给 Provider framing；v1 准入始终取 `max(modelTokenizerCount, utf8ByteCount)`，不允许低估 tokenizer 绕过保守字节上界；framing 预算尚未由当前模型版本基线证明时真实 Kimi 必须 fail closed，超限必须在 Provider 前 0 调用失败。代表片段必须经过内容级身份检测与脱敏，不能安全清除时省略并降低覆盖量。不得发送姓名、班级/任务名称、普通业务 ID、图片、原题材料、作文全文、完整逐篇结果、教师备注或精选素材；投影不足 100% 时必须披露覆盖量，不得宣称全量召回。
+- 班级级 Provider 只生成总体评价、主要优点、受控问题组的诊断/教学建议和学习建议；不得重复生成服务端可回填的人数、比例、出现次数和例句，不生成改写练习、独立“主要不足”或独立“教学重点”，也不做 Map-Reduce、Embedding、第二次模型复核或隐藏修复。
+- 班级总览采用一个纵向工作页，依次展示当前成绩统计、AI 班级总结、共性问题与建议、明确拼写清单和教师精选素材，不恢复四个一级 Tab。总体评价、主要优点和学习建议通过一个统一编辑入口编辑；共性问题与教师添加问题共用一个可手动排序的列表，“置顶”只表示调整展示顺序，不建立第二套 pinned 状态。明确拼写保持紧凑确定性排序，提升为主要问题后才进入手动排序列表。
+- 教师可以在首次 AI 班级总结前从单篇加入问题；权威任务服务为此持久化 task-scoped draft report workspace。workspace 行存在不代表 AI 已生成，页面 CTA 只能依据是否已有成功应用的 AI generation；初次生成失败或候选放弃时，教师问题、教师证据、精选素材和顺序继续保留。report 读取必须原子返回每任务唯一的 `currentGeneration` actionable 摘要，使刷新、新标签页和新设备无需预知 generation ID 即可恢复 active/result-unknown/unapplied 状态。
+- 教师后来修改单篇结果时，已有 AI 报告默认保留为生成时快照，不自动重算、不阻断使用、不显示强制“已过期”警告；页面始终显示生成时间和当时纳入数量。教师明确重新生成时原子替换 AI 内容，保留教师添加的问题与排序；若 AI 文本已被教师编辑，必须先确认覆盖；AI 总结仍在编辑或有未保存草稿时不得触发重新生成，必须先保存或取消。
+- 教师证据与 system-generation 证据必须逐条区分并绑定精确 result revision；重新生成只替换系统证据，来源页不能用当前结果冒充已经清理或更新的历史 revision。教师项抑制同 topic 的 AI 项时保留当前 system variant；主动移出最后一个教师来源且该 variant 仍合法时恢复为 AI 项并保留位置，来源删除导致整批 AI 失效时则不得恢复。AI 单成员 topic key 必须直接复用 atomic key。任务/来源删除会使相关在途、结果未知和待应用 generation 永久失效，迟到 Provider 结果不得恢复已删除内容。
+- 商品化实现必须由权威任务服务持久化任务/结果 revision、generation run、成功报告、AI 文本编辑基线、教师问题、精选素材和唯一排序真源，并在生成、查看、编辑、来源访问和重新生成时校验教师身份、租户与任务归属。Grading Gateway 只承担服务间 synthesis 与全局 Provider 准入，不能充当公网用户安全边界。当前 React 内存状态和单进程 memory registry 只能支持本地原型；持久任务仓库、权限和数据保留规则未完成前不得宣称商业发布就绪。
+- 班级总结不修改逐篇 v2 合同。浏览器业务合同使用 `class-review-generation-command-v1` / `class-review-generation-status-v1` / `class-review-report-v1`；权威任务服务到 Grading Gateway 使用 `class-review-synthesis-request-v1` / `class-review-synthesis-result-v1`；Provider Schema 为 `kimi-class-review-output-v1`。完整批准设计与验收门槛见 `docs/superpowers/specs/2026-08-29-ai-class-review-generation-design.md`；该设计尚未实施，也未获得本轮真实 Kimi 调用授权。
 
 ## 当前作文输入决策
 
