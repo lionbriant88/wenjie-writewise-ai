@@ -254,13 +254,13 @@ describe('ProgressPage bounded whole-task grading', () => {
   })
 
   it.each([
-    ['auth', 'provider_auth_failed', false, undefined, '身份验证失败'],
-    ['balance', 'provider_balance_unavailable', false, undefined, '账户额度不可用'],
-    ['configuration', 'provider_not_configured', false, undefined, '批改服务配置不可用'],
-    ['long retry', 'provider_rate_limited', true, 900_001, '服务要求较长等待'],
+    ['auth', 'provider_auth_failed', false, undefined, '身份验证失败', '请修复配置或权限并重启 Gateway 后，再恢复批改。'],
+    ['balance', 'provider_balance_unavailable', false, undefined, '账户额度不可用', '请处理账户额度或权限问题并重启 Gateway 后，再恢复批改。'],
+    ['configuration', 'provider_not_configured', false, undefined, '批改服务配置不可用', '请修复配置或权限并重启 Gateway 后，再恢复批改。'],
+    ['long retry', 'provider_rate_limited', true, 900_001, '服务要求较长等待', '恢复后系统仍会遵守服务要求的剩余等待时间，并继续处理队列。'],
   ] as const)(
     'shows and explicitly clears the %s task pause banner',
-    async (_label, code, retryable, retryAfterMs, expectedCopy) => {
+    async (_label, code, retryable, retryAfterMs, expectedCopy, expectedGuidance) => {
       const user = userEvent.setup()
       let callCount = 0
       const gradeImages = vi.fn(async (request: MultimodalGradingRequestV2): Promise<GradingClientResponse> => {
@@ -282,6 +282,7 @@ describe('ProgressPage bounded whole-task grading', () => {
       await user.click(screen.getByRole('button', { name: '开始批改全部待处理作文' }))
       const banner = await screen.findByTestId('task-pause-banner')
       expect(banner).toHaveTextContent(expectedCopy)
+      expect(banner).toHaveTextContent(expectedGuidance)
       await user.click(within(banner).getByRole('button', { name: '恢复批改' }))
       await waitFor(() => expect(screen.queryByTestId('task-pause-banner')).not.toBeInTheDocument())
     },

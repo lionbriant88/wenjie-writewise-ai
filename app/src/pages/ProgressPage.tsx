@@ -37,15 +37,15 @@ const pauseCopy: Record<
 > = {
   auth: {
     title: '身份验证失败',
-    description: '请修复批改服务的身份验证配置，再恢复剩余队列。',
+    description: '请修复配置或权限并重启 Gateway 后，再恢复批改。',
   },
   balance: {
     title: '账户额度不可用',
-    description: '请处理账户额度问题，再恢复剩余队列。',
+    description: '请处理账户额度或权限问题并重启 Gateway 后，再恢复批改。',
   },
   configuration: {
     title: '批改服务配置不可用',
-    description: '请修复运行配置，再恢复剩余队列。',
+    description: '请修复配置或权限并重启 Gateway 后，再恢复批改。',
   },
   long_retry_after: {
     title: '服务要求较长等待',

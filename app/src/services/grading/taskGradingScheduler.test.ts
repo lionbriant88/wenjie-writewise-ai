@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { GradingClientResponse } from './types'
+import type { GradingClientResponse, MultimodalGradingRequestV2 } from './types'
+import { createRemoteGradingClient } from './remoteGradingClient'
 import {
   createTaskGradingScheduler,
   type GradingJob,
@@ -21,6 +22,14 @@ async function flushMicrotasks() {
   await Promise.resolve()
   await Promise.resolve()
   await Promise.resolve()
+}
+
+async function flushUntil(predicate: () => boolean) {
+  for (let index = 0; index < 100; index += 1) {
+    if (predicate()) return
+    await Promise.resolve()
+  }
+  throw new Error('Timed out while flushing scheduler microtasks.')
 }
 
 function success(requestId: string, essayId: string): GradingClientResponse {
@@ -50,6 +59,81 @@ function job(
   rubricGeneration = 0,
 ): GradingJob {
   return { taskId, essayId, requestId, sourceGeneration, rubricGeneration, run }
+}
+
+function remoteRequest(requestId: string, essayId: string): MultimodalGradingRequestV2 {
+  return {
+    requestVersion: 'multimodal-grading-request-v2',
+    requestId,
+    essayId,
+    pageIds: [`${essayId}-page-1`],
+    task: {
+      taskId: 'task-remote-vertical',
+      fullScore: 15,
+      materialSummary: 'Synthetic material.',
+      writingRequirements: ['Write a synthetic response.'],
+      constraints: [],
+      rubric: {
+        taskName: 'Synthetic remote vertical task',
+        materialSummary: 'Synthetic material.',
+        writingRequirements: ['Write a synthetic response.'],
+        constraints: [],
+        reviewWarnings: [],
+        dimensions: [{
+          id: 'content',
+          name: 'Content',
+          weight: 100,
+          description: 'Complete the task.',
+          deductionFocus: [],
+          sourceEvidence: [],
+        }],
+      },
+    },
+    pages: [{
+      pageId: `${essayId}-page-1`,
+      file: new File(['synthetic'], `${essayId}.png`, { type: 'image/png' }),
+    }],
+  }
+}
+
+function remoteSuccessBody(request: MultimodalGradingRequestV2) {
+  const transcript = 'Synthetic transcript.'
+  return {
+    resultVersion: 'grading-result-v2',
+    requestId: request.requestId,
+    essayId: request.essayId,
+    provider: 'remote',
+    status: 'success',
+    totalScore: 15,
+    maxScore: 15,
+    dimensionScores: [{
+      dimensionId: 'content',
+      name: 'Content',
+      score: 15,
+      maxScore: 15,
+      weight: 100,
+      reason: 'Synthetic reason.',
+      evidence: transcript,
+    }],
+    issues: [],
+    sentenceRevisions: [],
+    expressionUpgrades: [],
+    fullTextRevision: {
+      originalText: transcript,
+      correctedText: transcript,
+      improvedText: transcript,
+      sentencePairs: [],
+      logicNotes: [],
+      logicIssues: [],
+    },
+    overallComment: 'Synthetic result.',
+    transcript,
+    recognitionWarnings: [],
+    legibilityIssues: [],
+    printedTextExcluded: true,
+    reviewReasons: [],
+    createdAt: '2026-08-29T00:00:00.000Z',
+  }
 }
 
 class FakeRuntime {
@@ -241,6 +325,93 @@ describe('createTaskGradingScheduler', () => {
     expect(lastRun).toHaveBeenCalledTimes(1)
   })
 
+  it.each([
+    ['target_busy', 'provider_rate_limited', 429],
+    ['provider unavailable', 'provider_unavailable', 503],
+  ] as const)(
+    'reattaches the fifth remote %s response after Retry-After and completes the sixth essay without a manual failure',
+    async (_label, code, httpStatus) => {
+      const runtime = new FakeRuntime()
+      const requests = Array.from({ length: 6 }, (_, index) => remoteRequest(
+        `remote-request-${index + 1}`,
+        `remote-essay-${index + 1}`,
+      ))
+      const requestById = new Map(requests.map((request) => [request.requestId, request]))
+      const callRequestIds: string[] = []
+      let fifthAttempt = 0
+      const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const form = init?.body as FormData
+        const metadata = JSON.parse(String(form.get('metadata'))) as { requestId: string }
+        const request = requestById.get(metadata.requestId)
+        if (!request) throw new Error('Unexpected synthetic request ID.')
+        callRequestIds.push(metadata.requestId)
+        if (metadata.requestId === 'remote-request-5' && fifthAttempt++ === 0) {
+          return new Response(JSON.stringify({
+            requestId: metadata.requestId,
+            status: 'failed',
+            error: { code, message: 'PRIVATE-GATEWAY-DETAIL', retryable: true },
+          }), { status: httpStatus, headers: { 'Retry-After': '1' } })
+        }
+        return new Response(JSON.stringify(remoteSuccessBody(request)), { status: 200 })
+      })
+      const client = createRemoteGradingClient({
+        apiBase: 'http://gateway.test',
+        fetchImpl,
+        now: runtime.now,
+      })
+      const scheduler = createTaskGradingScheduler({
+        mode: 'adaptive-v1',
+        hardLimit: 2,
+        stableSuccessWindow: 8,
+        now: runtime.now,
+        timers: runtime.timers,
+      })
+      scheduler.startTask('task-remote-vertical', requests.map((request) => job(
+        'task-remote-vertical',
+        request.essayId,
+        request.requestId,
+        () => client.gradeImages(request),
+      )))
+
+      await flushUntil(() => (
+        scheduler.getSnapshot('task-remote-vertical').items['remote-essay-5']?.phase === 'rate_limit_wait'
+      ))
+      expect(callRequestIds).toEqual([
+        'remote-request-1',
+        'remote-request-2',
+        'remote-request-3',
+        'remote-request-4',
+        'remote-request-5',
+      ])
+      expect(scheduler.getSnapshot('task-remote-vertical').items['remote-essay-5']).toMatchObject({
+        phase: 'rate_limit_wait',
+        requestId: 'remote-request-5',
+        retryAt: 1_000,
+      })
+      expect(scheduler.getSnapshot('task-remote-vertical').items['remote-essay-6']?.phase).toBe('queued')
+      expect(Object.values(scheduler.getSnapshot('task-remote-vertical').items)
+        .some((item) => item.phase === 'retryable_failure')).toBe(false)
+
+      runtime.advanceBy(999)
+      await flushMicrotasks()
+      expect(callRequestIds).toHaveLength(5)
+      runtime.advanceBy(1)
+      await flushUntil(() => scheduler.getSnapshot('task-remote-vertical').status === 'settled')
+
+      expect(callRequestIds).toEqual([
+        'remote-request-1',
+        'remote-request-2',
+        'remote-request-3',
+        'remote-request-4',
+        'remote-request-5',
+        'remote-request-5',
+        'remote-request-6',
+      ])
+      expect(scheduler.getSnapshot('task-remote-vertical').items['remote-essay-5']?.phase).toBe('succeeded')
+      expect(scheduler.getSnapshot('task-remote-vertical').items['remote-essay-6']?.phase).toBe('succeeded')
+    },
+  )
+
   it('pauses a task for a Retry-After over fifteen minutes and still never retries early after resume', async () => {
     const runtime = new FakeRuntime()
     const first = deferred<GradingClientResponse>()
@@ -350,7 +521,10 @@ describe('createTaskGradingScheduler', () => {
 
     const auth = deferred<GradingClientResponse>()
     const running = deferred<GradingClientResponse>()
-    const authRun = vi.fn(() => auth.promise)
+    const authRetry = deferred<GradingClientResponse>()
+    const authRun = vi.fn()
+      .mockImplementationOnce(() => auth.promise)
+      .mockImplementationOnce(() => authRetry.promise)
     const runningRun = vi.fn(() => running.promise)
     const queuedRun = vi.fn(async () => success('request-3', 'essay-3'))
     scheduler.startTask('task-auth', [
@@ -374,20 +548,72 @@ describe('createTaskGradingScheduler', () => {
 
     scheduler.resumeTask('task-auth')
     await flushMicrotasks()
+    expect(authRun).toHaveBeenCalledTimes(2)
     expect(queuedRun).toHaveBeenCalledTimes(1)
+    expect(scheduler.getSnapshot('task-auth').items['essay-1']).toMatchObject({
+      phase: 'running',
+      requestId: 'request-1',
+      sourceGeneration: 0,
+      rubricGeneration: 0,
+    })
+
+    authRetry.resolve(success('request-1', 'essay-1'))
+    await flushMicrotasks()
+    expect(scheduler.getSnapshot('task-auth').status).toBe('settled')
   })
 
   it.each([
     ['provider_balance_unavailable', 'balance'],
     ['provider_not_configured', 'configuration'],
-  ] as const)('maps %s to the task pause reason %s', async (code, pauseReason) => {
+  ] as const)('maps %s to %s and requeues its triggering job on explicit resume', async (code, pauseReason) => {
     const response = deferred<GradingClientResponse>()
+    const resumed = deferred<GradingClientResponse>()
+    const run = vi.fn()
+      .mockImplementationOnce(() => response.promise)
+      .mockImplementationOnce(() => resumed.promise)
     const scheduler = createTaskGradingScheduler({ mode: 'adaptive-v1', hardLimit: 1, stableSuccessWindow: 2 })
-    scheduler.startTask('task-pause', [job('task-pause', 'essay-1', 'request-1', () => response.promise)])
+    scheduler.startTask('task-pause', [job('task-pause', 'essay-1', 'request-1', run)])
     await flushMicrotasks()
     response.resolve(failure('request-1', code, false))
     await flushMicrotasks()
     expect(scheduler.getSnapshot('task-pause')).toMatchObject({ status: 'paused', pauseReason })
+
+    scheduler.resumeTask('task-pause')
+    await flushMicrotasks()
+    expect(run).toHaveBeenCalledTimes(2)
+    expect(scheduler.getSnapshot('task-pause').items['essay-1']).toMatchObject({
+      phase: 'running', requestId: 'request-1', sourceGeneration: 0, rubricGeneration: 0,
+    })
+    resumed.resolve(success('request-1', 'essay-1'))
+    await flushMicrotasks()
+    expect(scheduler.getSnapshot('task-pause').status).toBe('settled')
+  })
+
+  it('pauses again without looping when the resumed auth trigger still fails', async () => {
+    const first = deferred<GradingClientResponse>()
+    const second = deferred<GradingClientResponse>()
+    const run = vi.fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise)
+    const scheduler = createTaskGradingScheduler({ mode: 'adaptive-v1', hardLimit: 1, stableSuccessWindow: 2 })
+    scheduler.startTask('task-auth-repeat', [job('task-auth-repeat', 'essay-1', 'stable-request', run)])
+    await flushMicrotasks()
+    first.resolve(failure('stable-request', 'provider_auth_failed', false))
+    await flushMicrotasks()
+
+    scheduler.resumeTask('task-auth-repeat')
+    await flushMicrotasks()
+    expect(run).toHaveBeenCalledTimes(2)
+    second.resolve(failure('stable-request', 'provider_auth_failed', false))
+    await flushMicrotasks()
+
+    expect(scheduler.getSnapshot('task-auth-repeat')).toMatchObject({
+      status: 'paused',
+      pauseReason: 'auth',
+      items: { 'essay-1': { phase: 'final_failure', requestId: 'stable-request' } },
+    })
+    await flushMicrotasks()
+    expect(run).toHaveBeenCalledTimes(2)
   })
 
   it('treats result-unknown as reattachment-only and checks the same request without fresh retry work', async () => {

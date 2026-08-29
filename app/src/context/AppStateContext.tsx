@@ -53,7 +53,7 @@ const terminalEssayStatuses = new Set<Essay['status']>(['completed', 'manual'])
 const activeEssayStatuses = new Set<Essay['status']>([
   'pending_ocr', 'ocr_running', 'pending_grading', 'grading', 'grading_ready',
 ])
-const STABLE_SUCCESS_WINDOW = 4
+const STABLE_SUCCESS_WINDOW = 8
 
 interface AppGradingJobRecord {
   captured: CapturedGradingQueueJob

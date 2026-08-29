@@ -809,6 +809,53 @@ describe('AppStateContext bounded whole-task grading queue', () => {
     expect(latestState.taskGradingQueues[taskId]).toMatchObject({ status: 'settled', activeCount: 0, queuedCount: 0 })
   })
 
+  it('uses the default eight-success window so the fifth and sixth essays stay serial until Gateway admission can grow', async () => {
+    vi.stubEnv('VITE_GRADING_MODE', 'mock')
+    vi.stubEnv('VITE_GRADING_QUEUE_MODE', 'adaptive-v1')
+    vi.stubEnv('VITE_GRADING_MAX_IN_FLIGHT', '2')
+    const fifth = deferred<ReturnType<typeof resultForImages>>()
+    const ninth = deferred<ReturnType<typeof resultForImages>>()
+    const tenth = deferred<ReturnType<typeof resultForImages>>()
+    let invocation = 0
+    const gradeImages = vi.fn((request: MultimodalGradingRequestV2) => {
+      invocation += 1
+      if (invocation === 5) return fifth.promise
+      if (invocation === 9) return ninth.promise
+      if (invocation === 10) return tenth.promise
+      return Promise.resolve(resultForImages(request))
+    })
+    const view = render(<AppStateProvider gradingClient={{ gradeImages }}><StateProbe /></AppStateProvider>)
+
+    try {
+      const { taskId, essayIds } = createQueuedImageEssays(10)
+      act(() => latestState.startTaskGrading(taskId))
+
+      await waitFor(() => expect(gradeImages).toHaveBeenCalledTimes(5))
+      expect(latestState.taskGradingQueues[taskId]).toMatchObject({
+        targetConcurrency: 1,
+        activeCount: 1,
+      })
+      expect(latestState.taskGradingQueues[taskId]?.items[essayIds[4]]?.phase).toBe('running')
+      expect(latestState.taskGradingQueues[taskId]?.items[essayIds[5]]?.phase).toBe('queued')
+
+      fifth.resolve(resultForImages(gradeImages.mock.calls[4][0]))
+      await waitFor(() => expect(gradeImages).toHaveBeenCalledTimes(10))
+      expect(latestState.taskGradingQueues[taskId]).toMatchObject({
+        targetConcurrency: 2,
+        activeCount: 2,
+      })
+
+      ninth.resolve(resultForImages(gradeImages.mock.calls[8][0]))
+      tenth.resolve(resultForImages(gradeImages.mock.calls[9][0]))
+      await waitFor(() => expect(essayIds.every((essayId) => (
+        latestState.essays.find((essay) => essay.id === essayId)?.status === 'grading_ready'
+      ))).toBe(true))
+    } finally {
+      view.unmount()
+      vi.unstubAllEnvs()
+    }
+  })
+
   it('isolates a retryable essay failure and reuses its stable caller ID on retry', async () => {
     const attempts = new Map<string, number>()
     const requests: MultimodalGradingRequestV2[] = []
@@ -877,7 +924,7 @@ describe('AppStateContext bounded whole-task grading queue', () => {
     expect(latestState.essays.find((essay) => essay.id === essayIds[0])?.status).toBe('grading_ready')
   })
 
-  it('pauses queued work after an auth failure and resumes only on explicit teacher action', async () => {
+  it('retries the auth-triggering job with the same identity before completing the remaining queue after explicit resume', async () => {
     const requests: MultimodalGradingRequestV2[] = []
     const gradeImages = vi.fn(async (request: MultimodalGradingRequestV2) => {
       requests.push(request)
@@ -895,15 +942,29 @@ describe('AppStateContext bounded whole-task grading queue', () => {
         <StateProbe />
       </AppStateProvider>,
     )
-    const { taskId } = createQueuedImageEssays(3)
+    const { taskId, essayIds } = createQueuedImageEssays(3)
     act(() => latestState.startTaskGrading(taskId))
     await waitFor(() => expect(latestState.taskGradingQueues[taskId]?.pauseReason).toBe('auth'))
     expect(gradeImages).toHaveBeenCalledTimes(1)
+    const triggerRequest = requests[0]
 
     await act(async () => { await Promise.resolve() })
     expect(gradeImages).toHaveBeenCalledTimes(1)
     act(() => latestState.resumeTaskGrading(taskId))
-    await waitFor(() => expect(gradeImages).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(gradeImages).toHaveBeenCalledTimes(4))
+    const triggerAttempts = requests.filter((request) => request.essayId === triggerRequest.essayId)
+    expect(triggerAttempts.map((request) => request.requestId)).toEqual([
+      triggerRequest.requestId,
+      triggerRequest.requestId,
+    ])
+    expect(latestState.taskGradingQueues[taskId]?.items[triggerRequest.essayId]).toMatchObject({
+      requestId: triggerRequest.requestId,
+      sourceGeneration: 0,
+      rubricGeneration: 0,
+      phase: 'succeeded',
+    })
+    expect(essayIds.map((essayId) => latestState.essays.find((essay) => essay.id === essayId)?.status))
+      .toEqual(['grading_ready', 'grading_ready', 'grading_ready'])
     expect(latestState.taskGradingQueues[taskId]?.status).toBe('settled')
   })
 

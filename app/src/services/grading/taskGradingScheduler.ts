@@ -76,6 +76,7 @@ interface TaskQueueState {
   items: Map<string, QueueItemState>
   activeCount: number
   pauseReason?: TaskQueueSnapshot['pauseReason']
+  pausedFailureEssayIds: Set<string>
 }
 
 const LONG_RETRY_AFTER_MS = 15 * 60 * 1_000
@@ -360,6 +361,7 @@ export function createTaskGradingScheduler(
       } else if (pauseReason) {
         setFailureItem(item, 'final_failure', clientFailure)
         task.pauseReason ??= pauseReason
+        task.pausedFailureEssayIds.add(item.essayId)
       } else if (clientFailure.error.retryable && retryAt !== undefined) {
         setFailureItem(item, 'rate_limit_wait', clientFailure)
         item.retryAt = retryAt
@@ -430,7 +432,14 @@ export function createTaskGradingScheduler(
       if (!taskId || jobs.some((entry) => entry.taskId !== taskId)) throw new Error(INVALID_CONFIG_MESSAGE)
       let task = tasks.get(taskId)
       if (!task) {
-        task = { taskId, started: true, order: [], items: new Map(), activeCount: 0 }
+        task = {
+          taskId,
+          started: true,
+          order: [],
+          items: new Map(),
+          activeCount: 0,
+          pausedFailureEssayIds: new Set(),
+        }
         tasks.set(taskId, task)
       }
       task.started = true
@@ -467,6 +476,13 @@ export function createTaskGradingScheduler(
       const task = tasks.get(taskId)
       if (!task?.pauseReason) return
       task.pauseReason = undefined
+      for (const essayId of task.pausedFailureEssayIds) {
+        const item = task.items.get(essayId)
+        if (item?.phase === 'final_failure' && item.errorCode && pauseReasonFor(item.errorCode)) {
+          resetToQueued(item)
+        }
+      }
+      task.pausedFailureEssayIds.clear()
       promoteEligibleWaits(currentTime())
       scheduleGateWake()
       emitAll()
