@@ -9,7 +9,14 @@
     "typecheck": "tsc --noEmit",
     "verify:shared-scoring-runtime": "tsx scripts/verifySharedScoringRuntime.ts",
     "eval:grading-policy": "tsx scripts/runPolicyGoldenEval.ts",
-    "verify:grading-policy-fixtures": "tsx scripts/verifyPolicyGoldenFixtures.ts"
+    "verify:grading-policy-fixtures": "tsx scripts/verifyPolicyGoldenFixtures.ts",
+    "test:grading-benchmark": "vitest run scripts/gradingBenchmark",
+    "eval:grading-baseline": "tsx scripts/gradingBenchmark/cli.ts --variant baseline",
+    "eval:grading-candidate": "tsx scripts/gradingBenchmark/cli.ts --variant candidate",
+    "eval:grading-soak": "tsx scripts/gradingBenchmark/cli.ts --mode soak --calls 100",
+    "eval:grading-throughput": "tsx scripts/gradingBenchmark/cli.ts --mode throughput --essays 30",
+    "eval:image-variants": "tsx scripts/gradingBenchmark/cli.ts --mode image-variants",
+    "dev:fake-acceptance-gateway": "tsx scripts/runFakeAcceptanceGateway.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",
