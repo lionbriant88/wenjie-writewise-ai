@@ -10,6 +10,24 @@ import type { GatewayExecutionTimers } from '../src/server.js'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const UPLOAD_UUID = '88781e92-1573-4429-9034-3670a9a518f7'
+const REMOTE_CLIENT_MODULE = '../../app/src/services/grading/remoteGradingClient.ts'
+const TASK_SCHEDULER_MODULE = '../../app/src/services/grading/taskGradingScheduler.ts'
+
+interface SyntheticRemoteRequest {
+  requestVersion: 'multimodal-grading-request-v2'
+  requestId: string
+  essayId: string
+  pageIds: readonly string[]
+  confirmedTranscript: string
+  task: ReturnType<typeof task>
+  pages: readonly []
+}
+
+interface SyntheticQueueSnapshot {
+  status: string
+  pauseReason?: string
+  items: Record<string, { phase: string; errorCode?: string; retryable: boolean }>
+}
 
 function uploadedEssayId(index: number): string {
   return `task-1787796179807-uploaded-upload-${UPLOAD_UUID}-${index}`
@@ -47,6 +65,51 @@ function grade(
   return request(app)
     .post('/grading/grade-images')
     .field('metadata', JSON.stringify(metadata(requestId, essayId, confirmedTranscript)))
+}
+
+function remoteRequest(requestId: string, essayId: string): SyntheticRemoteRequest {
+  return {
+    ...metadata(requestId, essayId),
+    requestVersion: 'multimodal-grading-request-v2',
+    pages: [],
+  }
+}
+
+function fetchThroughGateway(
+  app: ReturnType<typeof createFakeAcceptanceGateway>['app'],
+  receivedMetadata: Array<{ requestId: string; essayId: string }> = [],
+): typeof fetch {
+  return (async (_input: string | URL | Request, init?: RequestInit) => {
+    if (!(init?.body instanceof FormData)) throw new Error('Expected synthetic multipart body.')
+    const rawMetadata = init.body.get('metadata')
+    if (typeof rawMetadata !== 'string') throw new Error('Expected synthetic metadata field.')
+    const parsed = JSON.parse(rawMetadata) as { requestId: string; essayId: string }
+    receivedMetadata.push({ requestId: parsed.requestId, essayId: parsed.essayId })
+    const gatewayResponse = await request(app)
+      .post('/grading/grade-images')
+      .field('metadata', rawMetadata)
+    const headers = new Headers()
+    const retryAfter = gatewayResponse.headers['retry-after']
+    if (typeof retryAfter === 'string') headers.set('Retry-After', retryAfter)
+    return new Response(JSON.stringify(gatewayResponse.body), {
+      status: gatewayResponse.status,
+      headers,
+    })
+  }) as typeof fetch
+}
+
+function gradingJob(
+  requestValue: SyntheticRemoteRequest,
+  run: () => Promise<unknown>,
+) {
+  return {
+    taskId: requestValue.task.taskId,
+    essayId: requestValue.essayId,
+    requestId: requestValue.requestId,
+    sourceGeneration: 0,
+    rubricGeneration: 0,
+    run,
+  }
 }
 
 async function waitFor(check: () => boolean): Promise<void> {
@@ -243,7 +306,7 @@ describe('scripted fake acceptance Gateway', () => {
     })
   })
 
-  it('pauses admission after auth failure and resumes only through the explicit fake control', async () => {
+  it('simulates a Gateway execution-layer restart so the same auth-failed identity can run after explicit fake resume', async () => {
     const gateway = createFakeAcceptanceGateway({ scenario: 'pause-auth', successDelayMs: 0 })
 
     await grade(gateway.app, 'request-auth-1', 'sample-auth').expect(503, {
@@ -254,7 +317,7 @@ describe('scripted fake acceptance Gateway', () => {
     expect(gateway.snapshot()).toMatchObject({ providerCalls: 1, admission: { pauseReason: 'provider_auth_failed' } })
 
     await request(gateway.app).post('/fake-acceptance/resume').expect(200, { status: 'resumed' })
-    await grade(gateway.app, 'request-auth-resumed', 'sample-after-auth').expect(200)
+    await grade(gateway.app, 'request-auth-1', 'sample-auth').expect(200)
     expect(gateway.snapshot()).toMatchObject({
       providerCalls: 2, providerCompletions: 1, admission: { pauseReason: null },
       outcomes: { authFailed: 1, succeeded: 1 },
@@ -324,7 +387,7 @@ describe('scripted fake acceptance Gateway', () => {
     await grade(gateway.app, 'request-mixed-blocked', 'sample-after-auth').expect(503)
     expect(gateway.snapshot().providerCalls).toBe(5)
     gateway.resume()
-    await grade(gateway.app, 'request-mixed-resumed', 'sample-after-auth').expect(200)
+    await grade(gateway.app, 'request-mixed-auth', 'sample-auth').expect(200)
     const firstLateRequest = Promise.resolve(grade(gateway.app, 'request-mixed-late-1', 'sample-result-unknown'))
     await waitFor(() => gateway.snapshot().providerCalls === 7)
     clock.advanceBy(10)
@@ -363,21 +426,113 @@ describe('scripted fake acceptance Gateway', () => {
     const authFailed = await grade(gateway.app, 'request-browser-role-4', uploadedEssayId(4)).expect(503)
     expect(authFailed.body).toMatchObject({ error: { code: 'provider_auth_failed', retryable: false } })
     await request(gateway.app).post('/fake-acceptance/resume').expect(200, { status: 'resumed' })
+    await grade(gateway.app, 'request-browser-role-4', uploadedEssayId(4)).expect(200)
 
     const lateRequest = Promise.resolve(grade(gateway.app, 'request-browser-role-5-a', uploadedEssayId(5)))
-    await waitFor(() => gateway.snapshot().providerCalls === 6)
+    await waitFor(() => gateway.snapshot().providerCalls === 7)
     clock.advanceBy(10)
     const unknown = await lateRequest
     expect(unknown.status).toBe(503)
     expect(unknown.body).toMatchObject({ error: { code: 'provider_result_unknown', retryable: false } })
     clock.advanceBy(70)
-    await waitFor(() => gateway.snapshot().providerCompletions === 3)
+    await waitFor(() => gateway.snapshot().providerCompletions === 4)
     await grade(gateway.app, 'request-browser-role-5-b', uploadedEssayId(5)).expect(200)
     await grade(gateway.app, 'request-browser-role-6', uploadedEssayId(6)).expect(200)
 
     expect(gateway.snapshot()).toMatchObject({
-      providerCalls: 7, providerCompletions: 4, ignoredAbortSignals: 1,
-      outcomes: { rateLimited: 1, authFailed: 1, rejected: 1, succeeded: 4 },
+      providerCalls: 8, providerCompletions: 5, ignoredAbortSignals: 1,
+      outcomes: { rateLimited: 1, authFailed: 1, rejected: 1, succeeded: 5 },
+    })
+  })
+
+  it('runs the full mixed Gateway-client-scheduler queue through auth restart and same-ID resume', async () => {
+    const { createRemoteGradingClient } = await vi.importActual(REMOTE_CLIENT_MODULE) as {
+      createRemoteGradingClient(options: {
+        apiBase: string
+        fetchImpl: typeof fetch
+        now: () => number
+      }): { gradeImages(requestValue: SyntheticRemoteRequest): Promise<unknown> }
+    }
+    const { createTaskGradingScheduler } = await vi.importActual(TASK_SCHEDULER_MODULE) as {
+      createTaskGradingScheduler(options: {
+        mode: 'adaptive-v1'
+        hardLimit: number
+        stableSuccessWindow: number
+        now: () => number
+        timers: GatewayExecutionTimers
+      }): {
+        startTask(taskId: string, jobs: Array<ReturnType<typeof gradingJob>>): void
+        resumeTask(taskId: string): void
+        checkUnknownEssay(taskId: string, essayId: string): void
+        getSnapshot(taskId: string): SyntheticQueueSnapshot
+      }
+    }
+    const clock = new FakeAcceptanceClock()
+    const gateway = createFakeAcceptanceGateway({
+      scenario: 'mixed', hardLimit: 3, successDelayMs: 0, rateLimitRetryAfterMs: 5,
+      httpDeadlineMs: 10, providerFinalDeadlineMs: 20, settlementGraceMs: 5, lateSuccessDelayMs: 30,
+      monotonicNow: () => clock.now, executionTimers: clock,
+    })
+    const receivedMetadata: Array<{ requestId: string; essayId: string }> = []
+    const client = createRemoteGradingClient({
+      apiBase: 'http://gateway.test',
+      fetchImpl: fetchThroughGateway(gateway.app, receivedMetadata),
+      now: () => clock.now,
+    })
+    const scheduler = createTaskGradingScheduler({
+      mode: 'adaptive-v1', hardLimit: 1, stableSuccessWindow: 8,
+      now: () => clock.now, timers: clock,
+    })
+    const requests = Array.from({ length: 6 }, (_, index) => remoteRequest(
+      `request-browser-queue-${index + 1}`,
+      uploadedEssayId(index + 1),
+    ))
+    scheduler.startTask(task().taskId, requests.map((requestValue) => gradingJob(
+      requestValue,
+      () => client.gradeImages(requestValue),
+    )))
+
+    await waitFor(() => scheduler.getSnapshot(task().taskId).items[uploadedEssayId(2)]?.phase === 'rate_limit_wait')
+    clock.advanceBy(1_000)
+    await waitFor(() => scheduler.getSnapshot(task().taskId).pauseReason === 'auth')
+    expect(gateway.snapshot()).toMatchObject({
+      providerCalls: 5,
+      admission: { pauseReason: 'provider_auth_failed' },
+    })
+    expect(scheduler.getSnapshot(task().taskId).items[uploadedEssayId(5)]?.phase).toBe('queued')
+
+    await request(gateway.app).post('/fake-acceptance/resume').expect(200, { status: 'resumed' })
+    scheduler.resumeTask(task().taskId)
+    await waitFor(() => gateway.snapshot().providerCalls === 7)
+    expect(receivedMetadata.filter(({ essayId }) => essayId === uploadedEssayId(4))).toEqual([
+      { requestId: 'request-browser-queue-4', essayId: uploadedEssayId(4) },
+      { requestId: 'request-browser-queue-4', essayId: uploadedEssayId(4) },
+    ])
+    expect(scheduler.getSnapshot(task().taskId).items[uploadedEssayId(4)]?.phase).toBe('succeeded')
+
+    clock.advanceBy(10)
+    await waitFor(() => (
+      scheduler.getSnapshot(task().taskId).items[uploadedEssayId(5)]?.phase === 'result_unknown'
+      && scheduler.getSnapshot(task().taskId).items[uploadedEssayId(6)]?.phase === 'rate_limit_wait'
+    ))
+    clock.advanceBy(20)
+    await waitFor(() => gateway.snapshot().providerCompletions === 4)
+    scheduler.checkUnknownEssay(task().taskId, uploadedEssayId(5))
+    expect(scheduler.getSnapshot(task().taskId).items[uploadedEssayId(5)]?.phase).toBe('queued')
+    clock.advanceBy(980)
+    await waitFor(() => scheduler.getSnapshot(task().taskId).status === 'settled')
+
+    const snapshot = scheduler.getSnapshot(task().taskId)
+    expect(snapshot.items[uploadedEssayId(3)]).toMatchObject({
+      phase: 'final_failure', errorCode: 'provider_request_rejected', retryable: false,
+    })
+    for (const index of [1, 2, 4, 5, 6]) {
+      expect(snapshot.items[uploadedEssayId(index)]?.phase).toBe('succeeded')
+    }
+    expect(gateway.snapshot()).toMatchObject({
+      providerCalls: 8, providerCompletions: 5, maxActiveProviderCalls: 1,
+      outcomes: { rateLimited: 1, authFailed: 1, rejected: 1, succeeded: 5 },
+      admission: { pauseReason: null, activeLeases: 0 },
     })
   })
 

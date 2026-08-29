@@ -181,9 +181,10 @@ export class OneShotProviderExecutionTracker {
     } else {
       operation.lease.release({ kind: 'confirmed_failure' })
       if (error instanceof GradingProviderError) {
-        if (error.code === 'provider_auth_failed') this.#admission.pause('provider_auth_failed')
-        if (error.code === 'provider_balance_unavailable') this.#admission.pause('provider_balance_unavailable')
-        if (error.code === 'provider_not_configured') this.#admission.pause('provider_not_configured')
+        if (error.details?.pauseAdmission === true) this.#admission.pause('provider_access_denied')
+        else if (error.code === 'provider_auth_failed') this.#admission.pause('provider_auth_failed')
+        else if (error.code === 'provider_balance_unavailable') this.#admission.pause('provider_balance_unavailable')
+        else if (error.code === 'provider_not_configured') this.#admission.pause('provider_not_configured')
       }
     }
     this.#operations.delete(operation as TrackedOperation<unknown>)

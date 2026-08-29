@@ -40,7 +40,7 @@ describe('ProviderAdmissionController', () => {
     expect(controller.snapshot()).toMatchObject({ hardLimit: 3, target: 1, activeLeases: 0, stableSuccesses: 0 })
 
     const first = accepted(controller.tryAcquire())
-    expect(controller.tryAcquire()).toEqual({ accepted: false, reason: 'target_busy' })
+    expect(controller.tryAcquire()).toEqual({ accepted: false, reason: 'target_busy', retryAfterMs: 1_000 })
     first.release({ kind: 'success' })
     expect(controller.snapshot().target).toBe(1)
     accepted(controller.tryAcquire()).release({ kind: 'success' })
@@ -90,6 +90,7 @@ describe('ProviderAdmissionController', () => {
     'provider_auth_failed',
     'provider_balance_unavailable',
     'provider_not_configured',
+    'provider_access_denied',
     'long_retry_after',
   ] as const)('holds %s until explicit resume', (reason: AdmissionPauseReason) => {
     const controller = createController()
@@ -163,7 +164,7 @@ describe('ProviderAdmissionController', () => {
   it('shares one target and active count across otherwise unrelated tasks and callers', () => {
     const shared = createController()
     const taskACaller1 = accepted(shared.tryAcquire())
-    expect(shared.tryAcquire()).toEqual({ accepted: false, reason: 'target_busy' })
+    expect(shared.tryAcquire()).toEqual({ accepted: false, reason: 'target_busy', retryAfterMs: 1_000 })
     taskACaller1.release({ kind: 'confirmed_failure' })
     const taskBCaller9 = accepted(shared.tryAcquire())
     expect(shared.snapshot().activeLeases).toBe(1)

@@ -113,6 +113,48 @@ describe('provider telemetry', () => {
     })
   })
 
+  it('checked-adds each token dimension and downgrades only overflowing totals to partial', () => {
+    const recorder = createProviderTelemetryRecorder()
+    const nearLimitUsage: ProviderUsageSnapshot = {
+      promptTokens: { status: 'known', value: Number.MAX_SAFE_INTEGER - 5 },
+      completionTokens: { status: 'known', value: 5 },
+      totalTokens: { status: 'known', value: Number.MAX_SAFE_INTEGER },
+      cachedTokens: { status: 'known', value: Number.MAX_SAFE_INTEGER - 5 },
+    }
+    const smallUsage: ProviderUsageSnapshot = {
+      promptTokens: { status: 'known', value: 10 },
+      completionTokens: { status: 'known', value: 2 },
+      totalTokens: { status: 'known', value: 12 },
+      cachedTokens: { status: 'known', value: 0 },
+    }
+    const context = {
+      stage: 'essay_grading_images' as const,
+      model: 'kimi-k3',
+      reasoningEffort: 'low' as const,
+      outcome: 'success' as const,
+    }
+
+    recordUniqueProviderAttempts(recorder, context, [
+      observation('10101010-1010-4010-8010-101010101010', nearLimitUsage),
+      observation('20202020-2020-4020-8020-202020202020', smallUsage),
+    ])
+
+    expect(recorder.snapshot()).toEqual({
+      uniqueAttempts: 2,
+      usageCoverage: { knownAttempts: 2, unknownAttempts: 0 },
+      totals: {
+        promptTokens: {
+          status: 'partial', lowerBound: Number.MAX_SAFE_INTEGER - 5, knownAttempts: 1, unknownAttempts: 1,
+        },
+        completionTokens: { status: 'known', value: 7 },
+        totalTokens: {
+          status: 'partial', lowerBound: Number.MAX_SAFE_INTEGER, knownAttempts: 1, unknownAttempts: 1,
+        },
+        cachedTokens: { status: 'known', value: Number.MAX_SAFE_INTEGER - 5 },
+      },
+    })
+  })
+
   it('keeps operation and attachment timing metrics structurally unable to carry usage', () => {
     const metrics: unknown[] = []
     const recorder = createProviderTelemetryRecorder({

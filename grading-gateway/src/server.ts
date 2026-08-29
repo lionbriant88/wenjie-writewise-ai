@@ -280,8 +280,12 @@ function imageGradeRequestId(value: unknown) {
   return typeof record.metadata === 'string' ? parseImageGradeMetadata(record.metadata)?.requestId ?? 'unavailable' : 'unavailable'
 }
 
-function safeRuntimeSnapshot(config: GatewayRuntimeConfig | undefined) {
+function safeRuntimeSnapshot(
+  config: GatewayRuntimeConfig | undefined,
+  admission: ProviderAdmissionController | undefined,
+) {
   if (!config) return { status: 'unconfigured' as const }
+  const admissionSnapshot = admission?.snapshot()
   return {
     provider: config.provider,
     model: config.kimi.model,
@@ -303,7 +307,19 @@ function safeRuntimeSnapshot(config: GatewayRuntimeConfig | undefined) {
       essayPromptProfile: config.essayPromptProfile,
       executionRegistry: config.executionRegistry,
     },
-    admission: { paused: false },
+    admission: admissionSnapshot
+      ? {
+          managed: true,
+          paused: admissionSnapshot.pauseReason !== null || admissionSnapshot.rateLimitNotBeforeMs !== null,
+          pauseReason: admissionSnapshot.pauseReason
+            ?? (admissionSnapshot.rateLimitNotBeforeMs === null ? null : 'rate_limited'),
+          rateLimited: admissionSnapshot.rateLimitNotBeforeMs !== null,
+          hardLimit: admissionSnapshot.hardLimit,
+          target: admissionSnapshot.target,
+          active: admissionSnapshot.activeLeases,
+          stableSuccesses: admissionSnapshot.stableSuccesses,
+        }
+      : { managed: false },
   }
 }
 
@@ -401,7 +417,7 @@ function sendRegistryResult(response: Response, result: RegistryAttachResult): v
     : code === 'provider_rate_limited'
       ? 429
       : 503
-  if (status === 429) setTruthfulRetryAfter(response, result.retryAfterMs)
+  if (status === 429 || result.response.error.retryable) setTruthfulRetryAfter(response, result.retryAfterMs)
   response.status(status).json(result.response)
 }
 
@@ -417,6 +433,8 @@ function admissionFailure(
       ? 'provider_balance_unavailable'
       : pauseReason === 'provider_not_configured'
         ? 'provider_not_configured'
+        : pauseReason === 'provider_access_denied'
+          ? 'provider_request_rejected'
         : 'provider_rate_limited'
   return {
     status: code === 'provider_rate_limited' ? 429 : 503,
@@ -536,7 +554,11 @@ export function createServer(options: CreateServerOptions = {}) {
     exposedHeaders: ['Retry-After'],
   }))
   app.get('/health', (_request, response) => {
-    response.json({ ok: true, service: 'grading-gateway', runtime: safeRuntimeSnapshot(options.runtimeConfig) })
+    response.json({
+      ok: true,
+      service: 'grading-gateway',
+      runtime: safeRuntimeSnapshot(options.runtimeConfig, memoryExecution?.admission),
+    })
   })
   app.post('/tasks/material-context', captureRouteReceipt, taskMaterialUploadBoundary, async (request, response) => {
     const files = Array.isArray(request.files) ? request.files : undefined

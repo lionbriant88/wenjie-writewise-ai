@@ -247,7 +247,7 @@ function scriptedOutcome(
   if (isSampleFixture) {
     if (essayId.includes('rate-limit')) return essayCallOrdinal === 1 ? 'rate-limit' : 'success'
     if (essayId.includes('failure')) return 'rejected'
-    if (essayId === 'sample-auth') return 'auth-failure'
+    if (essayId === 'sample-auth') return essayCallOrdinal === 1 ? 'auth-failure' : 'success'
     if (essayId.includes('late') || essayId.includes('unknown')) return 'late-success'
     return 'success'
   }
@@ -261,7 +261,7 @@ function scriptedOutcome(
             : 'success'
     state.mixedRolesByEssay.set(essayId, role)
   }
-  return role === 'rate-limit' && essayCallOrdinal > 1 ? 'success' : role
+  return (role === 'rate-limit' || role === 'auth-failure') && essayCallOrdinal > 1 ? 'success' : role
 }
 
 function delayIgnoringAbort(
@@ -396,11 +396,12 @@ export function createFakeAcceptanceGateway(options: FakeAcceptanceGatewayOption
     nextMixedEssayOrdinal: 0,
   }
   const telemetry = createProviderTelemetryRecorder()
-  const executionServices = createGatewayExecutionServices(config, {
+  const createExecutionServices = () => createGatewayExecutionServices(config, {
     random: () => 0,
     ...(normalized.monotonicNow ? { now: normalized.monotonicNow } : {}),
     ...(normalized.executionTimers ? { timers: normalized.executionTimers } : {}),
   })
+  const executionServices = createExecutionServices()
   const gradingApp = createServer({
     multimodalProvider: createScriptedProvider(normalized, state),
     runtimeConfig: config,
@@ -411,7 +412,12 @@ export function createFakeAcceptanceGateway(options: FakeAcceptanceGatewayOption
     ...(normalized.monotonicNow ? { monotonicNow: normalized.monotonicNow } : {}),
     ...(normalized.executionTimers ? { executionTimers: normalized.executionTimers } : {}),
   })
-  const resume = () => executionServices.admission.resume()
+  const resume = () => {
+    const restarted = createExecutionServices()
+    executionServices.admission = restarted.admission
+    executionServices.registry = restarted.registry
+    executionServices.oneShot = restarted.oneShot
+  }
   const snapshot = (): FakeAcceptanceSnapshot => ({
     scenario: normalized.scenario,
     providerCalls: state.providerCalls,

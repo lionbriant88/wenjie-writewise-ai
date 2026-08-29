@@ -172,11 +172,23 @@ export function createProviderTelemetryRecorder(options: {
   const accounting = {
     uniqueAttempts: 0,
     usageKnownAttempts: 0,
-    cachedKnownAttempts: 0,
-    promptTokens: 0,
-    completionTokens: 0,
-    totalTokens: 0,
-    cachedTokens: 0,
+  }
+  const tokenAccounting = {
+    promptTokens: { value: 0, knownAttempts: 0, overflowed: false },
+    completionTokens: { value: 0, knownAttempts: 0, overflowed: false },
+    totalTokens: { value: 0, knownAttempts: 0, overflowed: false },
+    cachedTokens: { value: 0, knownAttempts: 0, overflowed: false },
+  }
+  const checkedAdd = (dimension: keyof typeof tokenAccounting, value: number) => {
+    const aggregate = tokenAccounting[dimension]
+    if (aggregate.overflowed) return
+    const next = aggregate.value + value
+    if (!safeInteger(next)) {
+      aggregate.overflowed = true
+      return
+    }
+    aggregate.value = next
+    aggregate.knownAttempts += 1
   }
   const emit = (metric: SafeProviderMetric) => {
     const sanitized = sanitizedMetric(metric)
@@ -192,12 +204,11 @@ export function createProviderTelemetryRecorder(options: {
         const usage = validUsage(observation.usage)
         if (usage) {
           accounting.usageKnownAttempts += 1
-          accounting.promptTokens += usage.promptTokens
-          accounting.completionTokens += usage.completionTokens
-          accounting.totalTokens += usage.totalTokens
+          checkedAdd('promptTokens', usage.promptTokens)
+          checkedAdd('completionTokens', usage.completionTokens)
+          checkedAdd('totalTokens', usage.totalTokens)
           if (usage.cachedTokens !== undefined) {
-            accounting.cachedKnownAttempts += 1
-            accounting.cachedTokens += usage.cachedTokens
+            checkedAdd('cachedTokens', usage.cachedTokens)
           }
         }
         emit({
@@ -211,7 +222,8 @@ export function createProviderTelemetryRecorder(options: {
       emit({ event: 'provider_operation', processDiagnosticId, ...metric })
     },
     snapshot() {
-      const aggregate = (value: number, knownAttempts: number): ProviderTokenTotalSnapshot => {
+      const aggregate = (dimension: keyof typeof tokenAccounting): ProviderTokenTotalSnapshot => {
+        const { value, knownAttempts } = tokenAccounting[dimension]
         const unknownAttempts = accounting.uniqueAttempts - knownAttempts
         if (knownAttempts === accounting.uniqueAttempts && accounting.uniqueAttempts > 0) return { status: 'known', value }
         if (knownAttempts > 0) return { status: 'partial', lowerBound: value, knownAttempts, unknownAttempts }
@@ -224,10 +236,10 @@ export function createProviderTelemetryRecorder(options: {
           unknownAttempts: accounting.uniqueAttempts - accounting.usageKnownAttempts,
         },
         totals: {
-          promptTokens: aggregate(accounting.promptTokens, accounting.usageKnownAttempts),
-          completionTokens: aggregate(accounting.completionTokens, accounting.usageKnownAttempts),
-          totalTokens: aggregate(accounting.totalTokens, accounting.usageKnownAttempts),
-          cachedTokens: aggregate(accounting.cachedTokens, accounting.cachedKnownAttempts),
+          promptTokens: aggregate('promptTokens'),
+          completionTokens: aggregate('completionTokens'),
+          totalTokens: aggregate('totalTokens'),
+          cachedTokens: aggregate('cachedTokens'),
         },
       }
     },

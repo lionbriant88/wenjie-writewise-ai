@@ -6,7 +6,12 @@ import {
   type ProviderTelemetryRecorder,
   type SafeProviderMetricSink,
 } from './providerTelemetry.js'
-import { ProviderAdmissionController, type AdmissionDecision, type AdmissionLease } from './providerAdmissionController.js'
+import {
+  ProviderAdmissionController,
+  type AdmissionDecision,
+  type AdmissionLease,
+  type AdmissionPauseReason,
+} from './providerAdmissionController.js'
 import { GradingProviderError, type ProviderAttemptObservation, type ProviderErrorCode } from './providers/providerTypes.js'
 
 export type RegistryState =
@@ -92,6 +97,7 @@ export interface RegistryEntrySnapshot {
   rateLimitRequeues: number
   retryAt: number | null
   hasActiveLease: boolean
+  hasRetainedExecutor: boolean
 }
 
 export interface RegistrySnapshot {
@@ -212,6 +218,14 @@ function observationsFromError(error: unknown): readonly ProviderAttemptObservat
   return error.details?.attemptObservations ?? []
 }
 
+function admissionPauseReason(error: GradingProviderError): AdmissionPauseReason | null {
+  if (error.details?.pauseAdmission === true) return 'provider_access_denied'
+  if (error.code === 'provider_auth_failed') return 'provider_auth_failed'
+  if (error.code === 'provider_balance_unavailable') return 'provider_balance_unavailable'
+  if (error.code === 'provider_not_configured') return 'provider_not_configured'
+  return null
+}
+
 export class EssayGradingRegistry {
   readonly #options: Required<Omit<EssayGradingRegistryOptions, 'onMetric'>>
   readonly #telemetry: ProviderTelemetryRecorder
@@ -261,7 +275,7 @@ export class EssayGradingRegistry {
           response: bindFailure(failureTemplate('invalid_request', FAILURE_MESSAGES.conflict, false), input.callerRequestId),
         }
       }
-      return this.#attachExisting(existing, input.callerRequestId, now)
+      return this.#attachExisting(existing, input, now)
     }
 
     if (this.#entries.size >= this.#options.maxEntries) {
@@ -298,6 +312,7 @@ export class EssayGradingRegistry {
       rateLimitRequeues: entry.counters.rateLimitRequeues,
       retryAt: entry.retryAt ?? null,
       hasActiveLease: entry.lease !== undefined,
+      hasRetainedExecutor: entry.execute !== undefined,
     } : null
   }
 
@@ -310,7 +325,8 @@ export class EssayGradingRegistry {
     return { entries: this.#entries.size, states }
   }
 
-  async #attachExisting(entry: RegistryEntry, requestId: string, now: number): Promise<RegistryAttachResult> {
+  async #attachExisting(entry: RegistryEntry, input: RegistryAttachInput, now: number): Promise<RegistryAttachResult> {
+    const requestId = input.callerRequestId
     if (entry.state === 'in_flight') {
       const transition = entry.transition
       if (!transition) throw new Error(INVALID_CONFIG_MESSAGE)
@@ -327,6 +343,7 @@ export class EssayGradingRegistry {
     }
     const admission = this.#options.admission.tryAcquire(now)
     if (!admission.accepted) return this.#admissionRejected(admission, requestId, entry.state)
+    entry.execute = input.execute
     const transition = this.#startAttempt(entry, admission.lease)
     await transition
     return this.#renderEntry(entry, requestId, 'executed')
@@ -400,6 +417,7 @@ export class EssayGradingRegistry {
       entry.successTemplate = template
       entry.failureTemplate = undefined
       entry.terminalAt = this.#now()
+      entry.execute = undefined
       this.#clearAttemptRuntime(entry, false)
       if (wasInFlight) this.#resolveTransition(entry)
     } catch (error) {
@@ -433,6 +451,8 @@ export class EssayGradingRegistry {
           this.#transitionFinal(entry, providerFailureTemplate(providerError, false), false, retryAt)
         } else {
           this.#releaseLease(entry, { kind: 'confirmed_failure' })
+          const pauseReason = admissionPauseReason(providerError)
+          if (pauseReason) this.#options.admission.pause(pauseReason)
           this.#transitionFinal(entry, providerFailureTemplate(providerError, false), false)
         }
         return
@@ -477,13 +497,7 @@ export class EssayGradingRegistry {
     }
 
     entry.counters.nonRateLimitedProviderAttempts += 1
-    const pauseReason = error.code === 'provider_auth_failed'
-      ? 'provider_auth_failed'
-      : error.code === 'provider_balance_unavailable'
-        ? 'provider_balance_unavailable'
-        : error.code === 'provider_not_configured'
-          ? 'provider_not_configured'
-          : null
+    const pauseReason = admissionPauseReason(error)
     this.#releaseLease(entry, { kind: 'confirmed_failure' })
     if (pauseReason) {
       this.#options.admission.pause(pauseReason)
@@ -508,6 +522,7 @@ export class EssayGradingRegistry {
     entry.successTemplate = undefined
     entry.retryAt = retryAt
     entry.terminalAt = undefined
+    entry.execute = undefined
     this.#clearAttemptRuntime(entry, false)
     this.#resolveTransition(entry)
   }
@@ -587,6 +602,8 @@ export class EssayGradingRegistry {
         ? 'provider_balance_unavailable'
         : pauseReason === 'provider_not_configured'
           ? 'provider_not_configured'
+          : pauseReason === 'provider_access_denied'
+            ? 'provider_request_rejected'
           : 'provider_rate_limited'
     const message = providerCode === 'provider_rate_limited'
       ? FAILURE_MESSAGES.rateLimited

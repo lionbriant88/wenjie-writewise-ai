@@ -151,6 +151,7 @@ describe('EssayGradingRegistry idempotency and cache', () => {
     const cached = await registry.attach(attachInput(execute, { callerRequestId: 'caller-three' }))
     expect(cached).toMatchObject({ disposition: 'cached', response: { requestId: 'caller-three', overallComment: 'Result A.' } })
     expect(calls).toBe(1)
+    expect(registry.inspect('logical-grade-v1:opaque-a')?.hasRetainedExecutor).toBe(false)
   })
 
   it('returns a content-free conflict for one logical ID with a different complete payload', async () => {
@@ -368,6 +369,39 @@ describe('EssayGradingRegistry deadlines and orphan lifecycle', () => {
 })
 
 describe('EssayGradingRegistry bounded retry state machine', () => {
+  it('drops retryable executors and atomically adopts only the post-delay attachment executor', async () => {
+    const clock = new ManualClock()
+    const registry = new EssayGradingRegistry(registryOptions(clock))
+    let originalCalls = 0
+    let prematureCalls = 0
+    let retryCalls = 0
+
+    const first = await registry.attach(attachInput(async () => {
+      originalCalls += 1
+      throw confirmedError()
+    }))
+    expect(first).toMatchObject({ state: 'failed_retryable', retryAfterMs: 5 })
+    expect(registry.inspect('logical-grade-v1:opaque-a')?.hasRetainedExecutor).toBe(false)
+
+    const waiting = await registry.attach(attachInput(async () => {
+      prematureCalls += 1
+      return success('premature')
+    }, { callerRequestId: 'caller-waiting' }))
+    expect(waiting).toMatchObject({ disposition: 'retry_wait', retryAfterMs: 5 })
+    expect(registry.inspect('logical-grade-v1:opaque-a')?.hasRetainedExecutor).toBe(false)
+
+    clock.advanceBy(5)
+    const retried = await registry.attach(attachInput(async () => {
+      retryCalls += 1
+      return success('reattached')
+    }, { callerRequestId: 'caller-retry' }))
+    expect(retried).toMatchObject({
+      disposition: 'executed', state: 'succeeded', response: { overallComment: 'Result reattached.' },
+    })
+    expect({ originalCalls, prematureCalls, retryCalls }).toEqual({ originalCalls: 1, prematureCalls: 0, retryCalls: 1 })
+    expect(registry.inspect('logical-grade-v1:opaque-a')?.hasRetainedExecutor).toBe(false)
+  })
+
   it('allows one attach-driven confirmed transient retry with full jitter and atomically shares it', async () => {
     const clock = new ManualClock()
     const registry = new EssayGradingRegistry(registryOptions(clock))
@@ -541,6 +575,41 @@ describe('EssayGradingRegistry bounded retry state machine', () => {
       logicalRequestId: 'logical-grade-v1:new', payloadHash: 'new-payload', callerRequestId: 'new-caller',
     }))).toMatchObject({ state: 'succeeded' })
     expect(calls).toBe(1)
+  })
+
+  it('pauses globally on the internal access-denied signal while plain request rejection remains item-local', async () => {
+    const clock = new ManualClock()
+    const admission = controller(clock)
+    const registry = new EssayGradingRegistry(registryOptions(clock, { admission }))
+    const accessDenied = new GradingProviderError(
+      'provider_request_rejected', 'SAFE', false, undefined,
+      { termination: 'confirmed', pauseAdmission: true },
+    )
+
+    const denied = await registry.attach(attachInput(async () => { throw accessDenied }))
+    expect(denied).toMatchObject({
+      state: 'failed_final', response: { error: { code: 'provider_request_rejected', retryable: false } },
+    })
+    expect(admission.snapshot()).toMatchObject({ activeLeases: 0, pauseReason: 'provider_access_denied' })
+    const blocked = await registry.attach(attachInput(async () => success('must-not-run'), {
+      logicalRequestId: 'logical-grade-v1:new', payloadHash: 'new-payload', callerRequestId: 'new-caller',
+    }))
+    expect(blocked).toMatchObject({
+      disposition: 'admission_rejected',
+      response: { error: { code: 'provider_request_rejected', retryable: false } },
+    })
+
+    const separateAdmission = controller(clock)
+    const separateRegistry = new EssayGradingRegistry(registryOptions(clock, { admission: separateAdmission }))
+    await separateRegistry.attach(attachInput(async () => {
+      throw new GradingProviderError(
+        'provider_request_rejected', 'SAFE', false, undefined, { termination: 'confirmed' },
+      )
+    }))
+    expect(separateAdmission.snapshot().pauseReason).toBeNull()
+    expect(await separateRegistry.attach(attachInput(async () => success('next'), {
+      logicalRequestId: 'logical-grade-v1:next', payloadHash: 'next-payload', callerRequestId: 'next-caller',
+    }))).toMatchObject({ state: 'succeeded' })
   })
 })
 

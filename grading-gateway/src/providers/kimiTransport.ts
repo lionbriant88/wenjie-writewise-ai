@@ -54,7 +54,7 @@ function unknownUsage(reason: 'absent' | 'invalid' | 'inconsistent'): ObservedTo
 
 function observedInteger(value: unknown): ObservedTokenCount {
   if (value === undefined) return unknownUsage('absent')
-  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value) || value < 0) return unknownUsage('invalid')
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) return unknownUsage('invalid')
   return { status: 'known', value }
 }
 
@@ -211,7 +211,13 @@ function invalidResponseError(diagnosticCode: ProviderDiagnosticCode, details?: 
 function mapKimiHttpStatus(status: number, details: ProviderErrorDetails) {
   if (status === 401) return new GradingProviderError('provider_auth_failed', '真实 AI Provider 认证失败。', false, undefined, details)
   if (status === 402) return new GradingProviderError('provider_balance_unavailable', '真实 AI Provider 额度不可用。', false, undefined, details)
-  if (status === 403) return new GradingProviderError('provider_request_rejected', '真实 AI Provider 拒绝了当前模型或接口访问。', false, undefined, details)
+  if (status === 403) return new GradingProviderError(
+    'provider_auth_failed',
+    '真实 AI Provider 权限验证失败。',
+    false,
+    undefined,
+    details,
+  )
   if (status === 429) return new GradingProviderError('provider_rate_limited', '真实 AI Provider 请求过于频繁。', true, undefined, details)
   if (status === 400 || status === 422) return new GradingProviderError('provider_request_rejected', '真实 AI Provider 拒绝了请求。', false, undefined, details)
   return unavailableError(details)

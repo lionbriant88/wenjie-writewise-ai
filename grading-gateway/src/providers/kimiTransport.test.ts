@@ -140,6 +140,7 @@ describe('createKimiTransport', () => {
     ['negative', { prompt_tokens: -1, completion_tokens: 2, total_tokens: 1 }, 'promptTokens', 'invalid'],
     ['fractional', { prompt_tokens: 1.5, completion_tokens: 2, total_tokens: 3.5 }, 'promptTokens', 'invalid'],
     ['non-finite', { prompt_tokens: 'Infinity', completion_tokens: 2, total_tokens: 2 }, 'promptTokens', 'invalid'],
+    ['unsafe integer', { prompt_tokens: Number.MAX_SAFE_INTEGER + 1, completion_tokens: 0, total_tokens: Number.MAX_SAFE_INTEGER + 1 }, 'promptTokens', 'invalid'],
     ['cached exceeds prompt', { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6, prompt_tokens_details: { cached_tokens: 5 } }, 'cachedTokens', 'inconsistent'],
     ['contradictory total', { prompt_tokens: 4, completion_tokens: 2, total_tokens: 7 }, 'totalTokens', 'inconsistent'],
   ] as const)('does not trust %s Kimi usage values', async (_caseName, usage, field, reason) => {
@@ -183,6 +184,22 @@ describe('createKimiTransport', () => {
         totalTokens: { status: 'known', value: 13 }, cachedTokens: { status: 'unknown', reason: 'absent' },
       },
     } })
+    expect(JSON.stringify(error)).not.toMatch(/SECRET|test-only-not-a-real-key|SGVsbG8/)
+  })
+
+  it.each([
+    [403, 'provider_auth_failed'],
+    [400, 'provider_request_rejected'],
+    [422, 'provider_request_rejected'],
+  ] as const)('maps HTTP %s to the safe queue-level failure %s', async (status, expectedCode) => {
+    const transport = createKimiTransport(controlledOptions(responseFetch(status, '{"error":"SECRET upstream body"}')))
+    const error = await caughtError(transport.complete(observedInput))
+
+    expect(error).toMatchObject({
+      code: expectedCode, retryable: false,
+      details: { termination: 'confirmed', providerElapsedMs: 17 },
+    })
+    expect((error as { details?: { pauseAdmission?: unknown } }).details?.pauseAdmission).toBeUndefined()
     expect(JSON.stringify(error)).not.toMatch(/SECRET|test-only-not-a-real-key|SGVsbG8/)
   })
 

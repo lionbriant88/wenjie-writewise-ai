@@ -13,7 +13,7 @@ import type { GeneratedRubricV1, TaskMaterialContextV1 } from './multimodal/type
 import type { GatewayRuntimeConfig } from './gatewayRuntimeConfig.js'
 import { createProviderTelemetryRecorder } from './providerTelemetry.js'
 import { KimiMultimodalProvider } from './providers/kimiMultimodalProvider.js'
-import type { KimiCompletionInput, KimiTransport } from './providers/kimiTransport.js'
+import { createKimiTransport, type KimiCompletionInput, type KimiTransport } from './providers/kimiTransport.js'
 
 interface RawMultimodalProvider {
   generateMaterialContext(input: Parameters<MultimodalProvider['generateMaterialContext']>[0]): Promise<TaskMaterialContextV1>
@@ -1145,10 +1145,85 @@ describe('grading gateway server boundary', () => {
         stageBudgets: { material_context: 16_384, rubric_generation: 16_384, essay_grading_images: 16_384, essay_regrading_text: 16_384 },
         hardLimit: 4,
         modes: { rubricStrategy: 'two-pass-legacy', essayPromptProfile: 'legacy', executionRegistry: 'direct-legacy' },
-        admission: { paused: false },
+        admission: { managed: false },
       },
     })
     expect(JSON.stringify(response.body)).not.toMatch(/key|secret|requestId|essayId|taskId|usage|token|content|digest/i)
+  })
+
+  it('reports the live redacted memory admission state and exposes no anonymous resume route', async () => {
+    const runtimeConfig = memoryRuntimeConfig()
+    const executionServices = createGatewayExecutionServices(runtimeConfig)
+    for (let successIndex = 0; successIndex < 8; successIndex += 1) {
+      const decision = executionServices.admission.tryAcquire()
+      if (!decision.accepted) throw new Error('Expected synthetic admission')
+      decision.lease.release({ kind: 'success' })
+    }
+    const active = executionServices.admission.tryAcquire()
+    if (!active.accepted) throw new Error('Expected synthetic active lease')
+    executionServices.admission.pause('provider_access_denied')
+
+    const app = createServer({ runtimeConfig, executionServices })
+    const response = await request(app).get('/health').expect(200)
+    expect(response.body.runtime.admission).toEqual({
+      managed: true,
+      paused: true,
+      pauseReason: 'provider_access_denied',
+      rateLimited: false,
+      hardLimit: 4,
+      target: 2,
+      active: 1,
+      stableSuccesses: 0,
+    })
+    expect(JSON.stringify(response.body)).not.toMatch(/key|secret|requestId|essayId|taskId|usage|token|content|digest/i)
+    await request(app).post('/health/resume').expect(404)
+    active.lease.release({ kind: 'confirmed_failure' })
+  })
+
+  it('maps a real Kimi HTTP 403 through registry admission to one public auth pause without dispatching later essays', async () => {
+    const runtimeConfig = memoryRuntimeConfig()
+    const executionServices = createGatewayExecutionServices(runtimeConfig)
+    let upstreamCalls = 0
+    const transport = createKimiTransport({
+      apiKey: 'test-only-not-a-real-key',
+      apiBase: 'https://provider.invalid/v1',
+      model: 'kimi-k3',
+      reasoningEffort: 'low',
+      maxCompletionTokens: 16_384,
+      monotonicNow: () => 0,
+      fetchImpl: async () => {
+        upstreamCalls += 1
+        return new Response('{"error":"PRIVATE-UPSTREAM-BODY"}', { status: 403 })
+      },
+    })
+    const provider = new KimiMultimodalProvider(
+      transport,
+      runtimeConfig.rubricStrategy,
+      runtimeConfig.essayPromptProfile,
+      'synthetic-cache-secret',
+    )
+    const app = createServer({ multimodalProvider: provider, runtimeConfig, executionServices })
+
+    const first = await request(app)
+      .post('/grading/grade-images')
+      .field('metadata', JSON.stringify(imageGradeMetadata('kimi-403-first', 'kimi-403-essay-1')))
+      .expect(503)
+    expect(first.body).toEqual({
+      requestId: 'kimi-403-first', status: 'failed',
+      error: { code: 'provider_auth_failed', message: 'AI 批改服务认证失败。', retryable: false },
+    })
+    expect(JSON.stringify(first.body)).not.toContain('PRIVATE-UPSTREAM-BODY')
+    expect(executionServices.admission.snapshot().pauseReason).toBe('provider_auth_failed')
+
+    const blocked = await request(app)
+      .post('/grading/grade-images')
+      .field('metadata', JSON.stringify(imageGradeMetadata('kimi-403-blocked', 'kimi-403-essay-2')))
+      .expect(503)
+    expect(blocked.body).toEqual({
+      requestId: 'kimi-403-blocked', status: 'failed',
+      error: { code: 'provider_auth_failed', message: 'AI 批改服务认证失败。', retryable: false },
+    })
+    expect(upstreamCalls).toBe(1)
   })
 
   it('projects nested health configuration through strict allowlists under hostile type escape', async () => {
@@ -1480,6 +1555,67 @@ describe('grading gateway server boundary', () => {
     })
     expect(response.body).not.toHaveProperty('retryAfterMs')
     expect(JSON.stringify(response.body)).not.toContain('PRIVATE-UPSTREAM-BODY')
+  })
+
+  it('projects retry timing for a retryable non-429 registry result into Retry-After', async () => {
+    const runtimeConfig = memoryRuntimeConfig()
+    const executionServices = createGatewayExecutionServices(runtimeConfig, { random: () => 0.5 })
+    const provider = fakeMultimodalProvider({
+      async gradeEssay() {
+        throw new GradingProviderError('provider_unavailable', 'PRIVATE-UPSTREAM-BODY', true, undefined, {
+          termination: 'confirmed',
+        })
+      },
+    })
+    const response = await request(createServer({
+      multimodalProvider: provider,
+      runtimeConfig,
+      executionServices,
+    }))
+      .post('/grading/grade-images')
+      .field('metadata', JSON.stringify(imageGradeMetadata('transient-retry-header')))
+      .expect(503)
+
+    expect(response.headers['retry-after']).toBe('1')
+    expect(response.body).toMatchObject({
+      requestId: 'transient-retry-header', status: 'failed',
+      error: { code: 'provider_unavailable', retryable: true },
+    })
+    expect(response.body).not.toHaveProperty('retryAfterMs')
+    expect(JSON.stringify(response.body)).not.toContain('PRIVATE-UPSTREAM-BODY')
+  })
+
+  it('preserves Retry-After on an exhausted final 429 registry result', async () => {
+    const runtimeConfig = memoryRuntimeConfig()
+    const executionServices = createGatewayExecutionServices(runtimeConfig, { random: () => 0 })
+    let calls = 0
+    const provider = fakeMultimodalProvider({
+      async gradeEssay() {
+        calls += 1
+        throw new GradingProviderError('provider_rate_limited', 'PRIVATE-UPSTREAM-BODY', true, undefined, {
+          termination: 'confirmed',
+          ...(calls === 6 ? { retryAfterMs: 2_500 } : {}),
+        })
+      },
+    })
+    const app = createServer({ multimodalProvider: provider, runtimeConfig, executionServices })
+
+    for (let attempt = 1; attempt < 6; attempt += 1) {
+      await request(app).post('/grading/grade-images')
+        .field('metadata', JSON.stringify(imageGradeMetadata(`rate-limit-requeue-${attempt}`)))
+        .expect(429)
+    }
+    const exhausted = await request(app).post('/grading/grade-images')
+      .field('metadata', JSON.stringify(imageGradeMetadata('rate-limit-exhausted')))
+      .expect(429)
+
+    expect(calls).toBe(6)
+    expect(exhausted.headers['retry-after']).toBe('3')
+    expect(exhausted.body).toMatchObject({
+      requestId: 'rate-limit-exhausted', status: 'failed',
+      error: { code: 'provider_rate_limited', retryable: false },
+    })
+    expect(JSON.stringify(exhausted.body)).not.toContain('PRIVATE-UPSTREAM-BODY')
   })
 
   it('tracks one-shot material work after HTTP timeout and shares its hard admission cap with rubric work', async () => {

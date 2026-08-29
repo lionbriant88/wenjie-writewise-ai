@@ -66,6 +66,7 @@ export interface ProviderErrorDetails {
   providerElapsedMs?: number
   usage?: ProviderUsageSnapshot
   attemptObservations?: readonly ProviderAttemptObservation[]
+  pauseAdmission?: true
 }
 
 export class GradingProviderError extends Error {

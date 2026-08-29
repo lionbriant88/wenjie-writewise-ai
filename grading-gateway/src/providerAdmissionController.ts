@@ -4,6 +4,7 @@ export type AdmissionPauseReason =
   | 'provider_auth_failed'
   | 'provider_balance_unavailable'
   | 'provider_not_configured'
+  | 'provider_access_denied'
   | 'long_retry_after'
 
 export type AdmissionReleaseOutcome =
@@ -37,10 +38,12 @@ export interface ProviderAdmissionControllerOptions {
 }
 
 const DEFAULT_STABLE_SUCCESS_WINDOW = 8
+const TARGET_BUSY_RETRY_AFTER_MS = 1_000
 const PAUSE_REASONS = new Set<AdmissionPauseReason>([
   'provider_auth_failed',
   'provider_balance_unavailable',
   'provider_not_configured',
+  'provider_access_denied',
   'long_retry_after',
 ])
 const INVALID_CONFIG_MESSAGE = 'Invalid provider admission configuration.'
@@ -92,7 +95,7 @@ export class ProviderAdmissionController {
       return { accepted: false, reason: 'hard_limit' }
     }
     if (this.#activeLeases.size >= this.#target) {
-      return { accepted: false, reason: 'target_busy' }
+      return { accepted: false, reason: 'target_busy', retryAfterMs: TARGET_BUSY_RETRY_AFTER_MS }
     }
 
     const id = this.#idFactory()

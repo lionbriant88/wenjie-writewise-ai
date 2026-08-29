@@ -176,6 +176,30 @@ describe('OneShotProviderExecutionTracker', () => {
     expect(controller.snapshot()).toMatchObject({ activeLeases: 0, pauseReason: reason })
   })
 
+  it('pauses on the internal access-denied signal but not on ordinary request rejection', async () => {
+    const clock = new ManualClock()
+    const controller = admission(clock)
+    const executions = tracker(clock, controller)
+    const accessDenied = new GradingProviderError(
+      'provider_request_rejected', 'SAFE', false, undefined,
+      { termination: 'confirmed', pauseAdmission: true },
+    )
+    expect(await executions.run({ receivedAt: 0, httpDeadlineMs: 200, execute: async () => { throw accessDenied } }))
+      .toEqual({ kind: 'failure', error: accessDenied })
+    expect(controller.snapshot()).toMatchObject({ activeLeases: 0, pauseReason: 'provider_access_denied' })
+    expect(await executions.run({ receivedAt: 0, httpDeadlineMs: 200, execute: async () => 'must-not-run' }))
+      .toMatchObject({ kind: 'admission_rejected', decision: { reason: 'paused' } })
+
+    const separateController = admission(clock)
+    const separateExecutions = tracker(clock, separateController)
+    const requestRejected = new GradingProviderError(
+      'provider_request_rejected', 'SAFE', false, undefined, { termination: 'confirmed' },
+    )
+    expect(await separateExecutions.run({ receivedAt: 0, httpDeadlineMs: 200, execute: async () => { throw requestRejected } }))
+      .toEqual({ kind: 'failure', error: requestRejected })
+    expect(separateController.snapshot().pauseReason).toBeNull()
+  })
+
   it('uses Provider Retry-After as the exact one-shot global gate and pauses long delays explicitly', async () => {
     const clock = new ManualClock()
     const controller = admission(clock)
