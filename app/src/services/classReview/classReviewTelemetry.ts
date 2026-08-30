@@ -78,76 +78,76 @@ export interface ClassReviewTelemetryEvent {
 export function createClassReviewTelemetry(emit: (event: ClassReviewTelemetryEvent) => void) {
   return {
     record(input: ClassReviewTelemetryEvent) {
-      const suppliedKeys = Object.keys(input)
+      let descriptors: PropertyDescriptorMap
+      let suppliedKeys: PropertyKey[]
+      try {
+        suppliedKeys = Reflect.ownKeys(input)
+        descriptors = Object.getOwnPropertyDescriptors(input)
+      } catch {
+        throw new Error('class_review_telemetry_invalid')
+      }
       const hasExactKeys = suppliedKeys.length === KEYS.length
-        && suppliedKeys.every((key) => (KEYS as readonly string[]).includes(key))
-      const hasValidEnums = input.stage === 'class_review_generation'
-        && LIFECYCLES.has(input.lifecycle)
-        && OUTCOMES.has(input.outcome)
-        && (input.safeFailureCode === null || FAILURES.has(input.safeFailureCode))
-      if (!hasExactKeys || !hasValidEnums) throw new Error('class_review_telemetry_invalid')
+        && suppliedKeys.every((key) => typeof key === 'string' && (KEYS as readonly string[]).includes(key))
+        && KEYS.every((key) => {
+          const descriptor = descriptors[key]
+          return descriptor !== undefined && descriptor.enumerable === true
+            && 'value' in descriptor && descriptor.get === undefined && descriptor.set === undefined
+        })
+      if (!hasExactKeys) throw new Error('class_review_telemetry_invalid')
+      const value = Object.fromEntries(KEYS.map((key) => [key, descriptors[key].value])) as ClassReviewTelemetryEvent
+      const hasValidEnums = value.stage === 'class_review_generation'
+        && LIFECYCLES.has(value.lifecycle)
+        && OUTCOMES.has(value.outcome)
+        && (value.safeFailureCode === null || FAILURES.has(value.safeFailureCode))
+      if (!hasValidEnums) throw new Error('class_review_telemetry_invalid')
 
       const countsAndDurations = [
-        input.includedEssayCount,
-        input.excludedEssayCount,
-        input.eligibleGroupCount,
-        input.projectedGroupCount,
-        input.eligibleDistinctEssaySupportSum,
-        input.projectedDistinctEssaySupportSum,
-        input.eligibleOccurrenceSum,
-        input.projectedOccurrenceSum,
-        input.queueMs,
-        input.providerMs,
-        input.validationMs,
-        input.totalMs,
+        value.includedEssayCount, value.excludedEssayCount,
+        value.eligibleGroupCount, value.projectedGroupCount,
+        value.eligibleDistinctEssaySupportSum, value.projectedDistinctEssaySupportSum,
+        value.eligibleOccurrenceSum, value.projectedOccurrenceSum,
+        value.queueMs, value.providerMs, value.validationMs, value.totalMs,
       ]
-      const durations = [input.queueMs, input.providerMs, input.validationMs, input.totalMs]
+      const durations = [value.queueMs, value.providerMs, value.validationMs, value.totalMs]
       const hasInvalidInteger = countsAndDurations.some(
         (value) => !Number.isSafeInteger(value) || value < 0,
       )
       const hasExcessiveDuration = durations.some((value) => value > 86_400_000)
-      const hasInvalidCoverage = input.projectedGroupCount > input.eligibleGroupCount
-        || input.projectedDistinctEssaySupportSum > input.eligibleDistinctEssaySupportSum
-        || input.projectedOccurrenceSum > input.eligibleOccurrenceSum
-      const hasInvalidStageDuration = input.queueMs > input.totalMs
-        || input.providerMs > input.totalMs
-        || input.validationMs > input.totalMs
-      const successfulOutcome = input.outcome === 'succeeded'
-        || input.outcome === 'succeeded_unapplied'
-        || input.outcome === 'discarded'
+      const hasInvalidCoverage = value.projectedGroupCount > value.eligibleGroupCount
+        || value.projectedDistinctEssaySupportSum > value.eligibleDistinctEssaySupportSum
+        || value.projectedOccurrenceSum > value.eligibleOccurrenceSum
+      const hasInvalidStageDuration = value.queueMs > value.totalMs
+        || value.providerMs > value.totalMs
+        || value.validationMs > value.totalMs
+      const successfulOutcome = value.outcome === 'succeeded'
+        || value.outcome === 'succeeded_unapplied'
+        || value.outcome === 'discarded'
       const hasInvalidFailure = successfulOutcome
-        ? input.safeFailureCode !== null
-        : input.outcome === 'result_unknown'
-          ? input.safeFailureCode !== 'provider_result_unknown'
-          : input.safeFailureCode === null
+        ? value.safeFailureCode !== null
+        : value.outcome === 'result_unknown'
+          ? value.safeFailureCode !== 'provider_result_unknown'
+          : value.safeFailureCode === null
+      const legalLifecycle = value.lifecycle === 'reserved'
+        ? value.outcome === 'failed'
+        : value.lifecycle === 'running'
+          ? value.outcome === 'failed' || value.outcome === 'result_unknown'
+          : value.lifecycle === 'completed'
+            ? true
+            : value.outcome === 'failed'
+              && (value.safeFailureCode === 'class_review_source_invalidated'
+                || value.safeFailureCode === 'class_review_task_invalidated')
       if (
         hasInvalidInteger
         || hasExcessiveDuration
         || hasInvalidCoverage
         || hasInvalidStageDuration
         || hasInvalidFailure
+        || !legalLifecycle
       ) {
         throw new Error('class_review_telemetry_invalid')
       }
 
-      emit({
-        stage: input.stage,
-        lifecycle: input.lifecycle,
-        outcome: input.outcome,
-        safeFailureCode: input.safeFailureCode,
-        includedEssayCount: input.includedEssayCount,
-        excludedEssayCount: input.excludedEssayCount,
-        eligibleGroupCount: input.eligibleGroupCount,
-        projectedGroupCount: input.projectedGroupCount,
-        eligibleDistinctEssaySupportSum: input.eligibleDistinctEssaySupportSum,
-        projectedDistinctEssaySupportSum: input.projectedDistinctEssaySupportSum,
-        eligibleOccurrenceSum: input.eligibleOccurrenceSum,
-        projectedOccurrenceSum: input.projectedOccurrenceSum,
-        queueMs: input.queueMs,
-        providerMs: input.providerMs,
-        validationMs: input.validationMs,
-        totalMs: input.totalMs,
-      })
+      emit(Object.freeze({ ...value }))
     },
   }
 }

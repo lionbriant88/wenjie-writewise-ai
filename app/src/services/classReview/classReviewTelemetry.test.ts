@@ -30,5 +30,58 @@ describe('class review telemetry', () => {
     expect(() => telemetry.record({ ...safe, safeFailureCode: 'provider_invalid_response' } as ClassReviewTelemetryEvent)).toThrow('class_review_telemetry_invalid')
     expect(() => telemetry.record({ ...safe, outcome: 'failed', safeFailureCode: null } as ClassReviewTelemetryEvent)).toThrow('class_review_telemetry_invalid')
     expect(() => telemetry.record({ ...safe, outcome: 'result_unknown', safeFailureCode: 'provider_auth_failed' } as ClassReviewTelemetryEvent)).toThrow('class_review_telemetry_invalid')
+    expect(() => telemetry.record({ ...safe, lifecycle: 'reserved', outcome: 'succeeded' } as ClassReviewTelemetryEvent)).toThrow('class_review_telemetry_invalid')
+    expect(() => telemetry.record({ ...safe, lifecycle: 'invalidated', outcome: 'discarded' } as ClassReviewTelemetryEvent)).toThrow('class_review_telemetry_invalid')
+    expect(() => telemetry.record({ ...safe, lifecycle: 'invalidated', outcome: 'failed', safeFailureCode: 'provider_auth_failed' } as ClassReviewTelemetryEvent)).toThrow('class_review_telemetry_invalid')
+  })
+
+  it('inspects own data descriptors without invoking accessors and emits one frozen plain snapshot', () => {
+    const emit = vi.fn()
+    const telemetry = createClassReviewTelemetry(emit)
+    let getterCalls = 0
+    const accessor = Object.defineProperty({}, 'stage', {
+      enumerable: true,
+      get() {
+        getterCalls += 1
+        return 'class_review_generation'
+      },
+    })
+    expect(() => telemetry.record(accessor as ClassReviewTelemetryEvent)).toThrow('class_review_telemetry_invalid')
+    expect(getterCalls).toBe(0)
+    expect(emit).not.toHaveBeenCalled()
+
+    const event: ClassReviewTelemetryEvent = { stage: 'class_review_generation', lifecycle: 'completed', outcome: 'succeeded', safeFailureCode: null, includedEssayCount: 4, excludedEssayCount: 1, eligibleGroupCount: 3, projectedGroupCount: 2, eligibleDistinctEssaySupportSum: 6, projectedDistinctEssaySupportSum: 4, eligibleOccurrenceSum: 9, projectedOccurrenceSum: 7, queueMs: 1, providerMs: 2, validationMs: 3, totalMs: 6 }
+    telemetry.record(event)
+    const emitted = emit.mock.calls[0][0] as ClassReviewTelemetryEvent
+    expect(emitted).toEqual(event)
+    expect(emitted).not.toBe(event)
+    expect(Object.isFrozen(emitted)).toBe(true)
+
+    const descriptorReads = new Map<PropertyKey, number>()
+    let directReads = 0
+    const guarded = new Proxy(event, {
+      ownKeys: (target) => Reflect.ownKeys(target),
+      getOwnPropertyDescriptor(target, key) {
+        descriptorReads.set(key, (descriptorReads.get(key) ?? 0) + 1)
+        return Reflect.getOwnPropertyDescriptor(target, key)
+      },
+      get(target, key, receiver) {
+        directReads += 1
+        return Reflect.get(target, key, receiver)
+      },
+    })
+    telemetry.record(guarded)
+    expect([...descriptorReads.values()]).toEqual(Array.from({ length: 16 }, () => 1))
+    expect(directReads).toBe(0)
+  })
+
+  it('fails closed on ownKeys or descriptor traps without emitting', () => {
+    const emit = vi.fn()
+    const telemetry = createClassReviewTelemetry(emit)
+    const ownKeysTrap = new Proxy({}, { ownKeys: () => { throw new Error('secret-own-keys') } })
+    const descriptorTrap = new Proxy({ stage: 'class_review_generation' }, { getOwnPropertyDescriptor: () => { throw new Error('secret-descriptor') } })
+    expect(() => telemetry.record(ownKeysTrap as ClassReviewTelemetryEvent)).toThrow('class_review_telemetry_invalid')
+    expect(() => telemetry.record(descriptorTrap as ClassReviewTelemetryEvent)).toThrow('class_review_telemetry_invalid')
+    expect(emit).not.toHaveBeenCalled()
   })
 })

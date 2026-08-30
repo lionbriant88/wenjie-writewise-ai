@@ -1,4 +1,5 @@
 import { parseClassReviewReport } from './classReviewContracts'
+import { classReviewSupportThreshold } from './aggregateClassReview'
 import type {
   ClassReviewProjectionHiddenStateV1,
   HiddenMustCoverFallbackV1,
@@ -14,7 +15,6 @@ import type {
   ClassReviewStatisticsV1,
   ClassReviewSynthesisRequestV1,
   EvidenceRefV1,
-  SemanticCoverageV1,
   Severity,
   SnapshotMetadataV1,
   SynthesisGroupV1,
@@ -114,7 +114,7 @@ async function materializeSystemIssueBlocks(input: {
   const consumedMustCover = new Set<string>()
   const issueBlocks: ClassReviewIssueBlockV1[] = []
   const systemEvidenceFacts: SystemEvidenceFact[] = []
-  const requiredSupport = Math.max(input.issueEligibleEssayCount < 10 ? 2 : 3, Math.ceil(input.issueEligibleEssayCount * 0.2))
+  const requiredSupport = classReviewSupportThreshold(input.issueEligibleEssayCount)
 
   for (const pattern of input.providerOutput.patterns) {
     const members: HiddenSelectedGroupV1[] = []
@@ -321,12 +321,27 @@ function validateGenerationBoundary(
   browser: ClassReviewStatisticsV1,
 ): void {
   const requestCounts = request.statistics
+  const browserScore = browser.scoreSummary
   if (requestCounts.totalEssayCount !== browser.totalEssayCount
     || requestCounts.includedEssayCount !== browser.includedEssayCount
     || requestCounts.issueEligibleEssayCount !== browser.issueEligibleEssayCount
     || requestCounts.excludedEssayCount !== browser.excludedEssayCount
-    || requestCounts.score.fullScore !== browser.fullScore) {
+    || requestCounts.score.fullScore !== browser.fullScore
+    || browserScore === null
+    || requestCounts.score.averageScore !== browserScore.averageScore
+    || requestCounts.score.highestScore !== browserScore.highestScore
+    || requestCounts.score.lowestScore !== browserScore.lowestScore) {
     fail('class_review_candidate_conflict')
+  }
+
+  if (requestCounts.scoreBands.length !== browser.scoreBands.length) fail('class_review_candidate_conflict')
+  for (let index = 0; index < requestCounts.scoreBands.length; index += 1) {
+    const projected = requestCounts.scoreBands[index]
+    const current = browser.scoreBands[index]
+    if (projected.bandId !== current.bandId
+      || projected.lowerInclusive !== current.lowerInclusive
+      || projected.upperInclusive !== current.upperInclusive
+      || projected.essayCount !== current.essayCount) fail('class_review_candidate_conflict')
   }
 
   const requestDimensions = new Map(requestCounts.dimensions.map((dimension) => [dimension.dimensionId, dimension]))
@@ -342,6 +357,7 @@ function validateGenerationBoundary(
     const projected = requestDimensions.get(alias)
     const current = originalDimensions.get(original)
     if (!projected || !current || seenOriginals.has(original)
+      || projected.label !== current.name
       || projected.averageScore !== current.averageScore
       || projected.maxScore !== current.maxScore
       || projected.normalizedPerformance !== current.normalizedPerformance) {
@@ -359,7 +375,10 @@ function validateGenerationBoundary(
     validateTopicIdentity(selected.atomicTopic)
     const identity = identityTuple(selected.atomicTopic)
     const essays = new Set(selected.essayIds)
-    if (!group || identityOwners.has(identity) || essays.size !== selected.essayIds.length || essays.size !== group.distinctEssaySupport
+    const expectedMustCover = group
+      ? group.distinctEssaySupport >= classReviewSupportThreshold(requestCounts.issueEligibleEssayCount)
+      : false
+    if (!group || group.mustCover !== expectedMustCover || identityOwners.has(identity) || essays.size !== selected.essayIds.length || essays.size !== group.distinctEssaySupport
       || selected.occurrenceCount !== group.occurrenceCount || selected.occurrenceCount < essays.size) {
       fail('class_review_candidate_conflict')
     }
@@ -382,6 +401,7 @@ function validateGenerationBoundary(
     if (identityOwners.has(identity)
       || (sharedScope !== null && fallback.atomicTopic.taskScope !== sharedScope)
       || fallback.distinctEssaySupport > requestCounts.issueEligibleEssayCount
+      || fallback.distinctEssaySupport < classReviewSupportThreshold(requestCounts.issueEligibleEssayCount)
       || !Number.isSafeInteger(fallback.distinctEssaySupport)
       || !Number.isSafeInteger(fallback.occurrenceCount)
       || fallback.distinctEssaySupport < 0
@@ -393,7 +413,7 @@ function validateGenerationBoundary(
   }
 }
 
-export interface GeneratedClassReviewPayload {
+interface GeneratedClassReviewPayload {
   generationId: string
   invalidationEpoch: number
   executionIdentity: string
@@ -407,15 +427,54 @@ export interface GeneratedClassReviewPayload {
   }
 }
 
+export interface MaterializedClassReviewCandidateHandle {
+  readonly __materializedClassReviewCandidateHandle: never
+}
+
+export interface MaterializedClassReviewCandidateMetadata {
+  readonly generationId: string
+  readonly invalidationEpoch: number
+  readonly executionIdentity: string
+  readonly payloadDigest: string
+}
+
+const payloadByHandle = new WeakMap<object, GeneratedClassReviewPayload>()
+
+function createMaterializedHandle(payload: GeneratedClassReviewPayload): MaterializedClassReviewCandidateHandle {
+  const handle: MaterializedClassReviewCandidateHandle = Object.freeze({
+    __materializedClassReviewCandidateHandle: undefined as never,
+    opaque: Symbol('class-review-candidate'),
+  })
+  payloadByHandle.set(handle, payload)
+  return handle
+}
+
+function requireMaterializedPayload(handle: MaterializedClassReviewCandidateHandle): GeneratedClassReviewPayload {
+  if (!handle || typeof handle !== 'object') fail('class_review_candidate_conflict')
+  const payload = payloadByHandle.get(handle as object)
+  if (!payload) fail('class_review_candidate_conflict')
+  return payload
+}
+
+export function getMaterializedClassReviewCandidateMetadata(
+  handle: MaterializedClassReviewCandidateHandle,
+): MaterializedClassReviewCandidateMetadata {
+  const payload = requireMaterializedPayload(handle)
+  return Object.freeze({
+    generationId: payload.generationId,
+    invalidationEpoch: payload.invalidationEpoch,
+    executionIdentity: payload.executionIdentity,
+    payloadDigest: payload.payloadDigest,
+  })
+}
+
 export async function materializeClassReviewCandidate(input: {
   snapshot: Readonly<GenerationSnapshot>
   untrustedResult: unknown
-  currentReport: ClassReviewReportV1
-  currentIssueWorkspace?: InternalIssueWorkspace
   topicHmac: TopicHmac
   createOpaqueId: () => string
   now: () => string
-}): Promise<{ generatedPayload: GeneratedClassReviewPayload; report: ClassReviewReportV1; issueWorkspace: InternalIssueWorkspace; semanticCoverage: SemanticCoverageV1 }> {
+}): Promise<MaterializedClassReviewCandidateHandle> {
   const parsed = parseClassReviewSynthesisResult(input.untrustedResult, input.snapshot.originalRequest)
   if (!parsed.ok || parsed.value.status !== 'succeeded') fail('provider_invalid_response')
   const admittedGroups = input.snapshot.originalRequest.groups.slice(0, parsed.value.semanticCoverage.projectedGroupCount)
@@ -424,7 +483,7 @@ export async function materializeClassReviewCandidate(input: {
     hidden: input.snapshot.hidden,
     issueEligibleEssayCount: input.snapshot.originalRequest.statistics.issueEligibleEssayCount,
     topicHmac: input.topicHmac,
-    createOpaqueId: () => 'pending-system-block',
+    createOpaqueId: input.createOpaqueId,
     admittedGroups,
     projectedGroups: input.snapshot.originalRequest.groups,
   })
@@ -459,13 +518,7 @@ export async function materializeClassReviewCandidate(input: {
       },
     },
   }
-  const merged = mergeGeneratedClassReviewPayloadIntoWorkspace({
-    payload,
-    currentReport: input.currentReport,
-    currentIssueWorkspace: input.currentIssueWorkspace ?? createInternalIssueWorkspace(input.currentReport.issueBlocks, { issueOrder: input.currentReport.issueOrder }),
-    createOpaqueId: input.createOpaqueId,
-  })
-  return { generatedPayload: payload, ...merged, semanticCoverage: parsed.value.semanticCoverage }
+  return createMaterializedHandle(payload)
 }
 
 export interface TeacherEvidenceFact {
@@ -520,20 +573,30 @@ export function createInternalIssueWorkspace(
     .filter((block) => !consumed.has(block.blockId))
     .sort((left, right) => compare(left.blockId, right.blockId))
   visible.push(...unlisted)
+  const teacherFacts = new Map<string, TeacherEvidenceFact>()
+  for (const sourceFact of options?.teacherEvidenceFacts ?? []) {
+    const fact = structuredClone(sourceFact)
+    const owner = visible.find((block) => block.origin === 'teacher'
+      && block.topicKey === fact.topicKey
+      && block.evidenceRefs.some((ref) => ref.evidenceId === fact.evidenceId
+        && ref.selectionOrigin === 'teacher_selected'))
+    const ownedRef = owner?.evidenceRefs.find((ref) => ref.evidenceId === fact.evidenceId)
+    const invalidFact = !owner || !ownedRef || teacherFacts.has(fact.evidenceId)
+      || !fact.evidenceId || !fact.essayIdentity
+      || !Number.isSafeInteger(fact.occurrenceCount) || fact.occurrenceCount <= 0
+      || (fact.evidenceRef !== undefined
+        && JSON.stringify(fact.evidenceRef) !== JSON.stringify(ownedRef))
+    if (invalidFact) fail('class_review_candidate_conflict')
+    fact.evidenceRef = structuredClone(ownedRef)
+    teacherFacts.set(fact.evidenceId, fact)
+  }
   return {
     visible,
     suppressed: new Map(
       [...(options?.suppressed ?? [])]
         .map(([key, value]) => [key, structuredClone(value)]),
     ),
-    teacherFacts: new Map((options?.teacherEvidenceFacts ?? []).map((fact) => {
-      const invalidFact = !fact.evidenceId
-        || !fact.essayIdentity
-        || !Number.isSafeInteger(fact.occurrenceCount)
-        || fact.occurrenceCount < 0
-      if (invalidFact) fail('class_review_candidate_conflict')
-      return [fact.evidenceId, { ...fact }]
-    })),
+    teacherFacts,
     systemFacts: new Map(
       (options?.systemEvidenceFacts ?? [])
         .map((fact) => [fact.topicKey, structuredClone(fact)]),
@@ -618,7 +681,7 @@ export function mergeInternalIssueWorkspace(input: {
   })
   for (const next of orderedSystem) {
     if (!used.has(next.topicKey) && !workspace.visible.some((block) => block.topicKey === next.topicKey)) {
-      workspace.visible.push({ ...next, blockId: input.createOpaqueId() })
+      workspace.visible.push(structuredClone(next))
     }
   }
   return workspace
@@ -685,30 +748,59 @@ export function removeTeacherEvidence(
   return result
 }
 
-export function invalidateInternalSystemVariants(workspace: InternalIssueWorkspace, _epoch: number): InternalIssueWorkspace {
-  return createInternalIssueWorkspace(
-    workspace.visible
-      .filter((block) => block.origin === 'teacher')
-      .map((block) => ({
-        ...block,
-        evidenceRefs: block.evidenceRefs.filter((ref) => ref.selectionOrigin === 'teacher_selected'),
-      })),
-    { teacherEvidenceFacts: [...workspace.teacherFacts.values()], issueOrder: workspace.visible.map((block) => block.blockId) },
-  )
+export function invalidateInternalSystemVariants(
+  workspace: InternalIssueWorkspace,
+  _epoch: number,
+  removedTeacherEvidenceIds: readonly string[] = [],
+): InternalIssueWorkspace {
+  const removed = new Set(removedTeacherEvidenceIds)
+  if (removed.size !== removedTeacherEvidenceIds.length) fail('class_review_candidate_conflict')
+  const teacherFacts = [...workspace.teacherFacts.values()]
+    .filter((fact) => !removed.has(fact.evidenceId))
+    .map((fact) => structuredClone(fact))
+  const factsByEvidence = new Map(teacherFacts.map((fact) => [fact.evidenceId, fact]))
+  const visible = workspace.visible.flatMap((block): ClassReviewIssueBlockV1[] => {
+    if (block.origin !== 'teacher') return []
+    const evidenceRefs = block.evidenceRefs.filter((ref) =>
+      ref.selectionOrigin === 'teacher_selected' && factsByEvidence.has(ref.evidenceId))
+    if (evidenceRefs.length === 0) return []
+    const facts = evidenceRefs.map((ref) => factsByEvidence.get(ref.evidenceId)!)
+    const teacherStudentCount = new Set(facts.map((fact) => fact.essayIdentity)).size
+    let occurrenceCount = 0
+    for (const fact of facts) occurrenceCount = checkedAdd(occurrenceCount, fact.occurrenceCount)
+    return [{
+      ...structuredClone(block),
+      teacherStudentCount,
+      systemStudentCount: 0,
+      combinedStudentCount: teacherStudentCount,
+      occurrenceCount,
+      supportDenominator: null,
+      anonymousExamples: evidenceRefs.flatMap((ref) => ref.anonymousExample ? [ref.anonymousExample] : []),
+      evidenceRefs,
+    }]
+  })
+  return createInternalIssueWorkspace(visible, {
+    teacherEvidenceFacts: teacherFacts,
+    issueOrder: visible.map((block) => block.blockId),
+  })
 }
 
-export function mergeGeneratedClassReviewPayloadIntoWorkspace(input: {
+function mergeGeneratedClassReviewPayloadIntoWorkspace(input: {
   payload: GeneratedClassReviewPayload
   currentReport: ClassReviewReportV1
   currentIssueWorkspace: InternalIssueWorkspace
-  createOpaqueId: () => string
 }): { report: ClassReviewReportV1; issueWorkspace: InternalIssueWorkspace } {
+  const currentDimensionIds = new Set(input.currentReport.statistics.dimensions.map((dimension) => dimension.dimensionId))
+  if (input.payload.generatedPayload.aiSummary.strengths.some((strength) =>
+    strength.dimensionIds.some((dimensionId) => !currentDimensionIds.has(dimensionId)))) {
+    fail('class_review_candidate_conflict')
+  }
   const issueWorkspace = mergeInternalIssueWorkspace({
     workspace: input.currentIssueWorkspace,
     nextSystem: input.payload.generatedPayload.systemIssueBlocks,
     generationId: input.payload.generationId,
     invalidationEpoch: input.payload.invalidationEpoch,
-    createOpaqueId: input.createOpaqueId,
+    createOpaqueId: () => fail('class_review_candidate_conflict'),
     systemEvidenceFacts: input.payload.generatedPayload.systemEvidenceFacts,
   })
   const issueBlocks = projectInternalIssueWorkspace(issueWorkspace)
@@ -728,4 +820,16 @@ export function mergeGeneratedClassReviewPayloadIntoWorkspace(input: {
   const parsed = parseClassReviewReport(candidate)
   if (!parsed.ok) fail('class_review_candidate_conflict')
   return { report: parsed.value, issueWorkspace }
+}
+
+export function applyMaterializedClassReviewCandidate(input: {
+  handle: MaterializedClassReviewCandidateHandle
+  currentReport: ClassReviewReportV1
+  currentIssueWorkspace: InternalIssueWorkspace
+}): { report: ClassReviewReportV1; issueWorkspace: InternalIssueWorkspace } {
+  return mergeGeneratedClassReviewPayloadIntoWorkspace({
+    payload: requireMaterializedPayload(input.handle),
+    currentReport: input.currentReport,
+    currentIssueWorkspace: input.currentIssueWorkspace,
+  })
 }

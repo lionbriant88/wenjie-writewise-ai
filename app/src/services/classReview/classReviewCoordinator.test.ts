@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AiSummaryV1, ClassReviewIssueBlockV1, ClassReviewReportAiAvailableV1, ClassReviewReportDraftV1, ClassReviewReportNoneV1, ClassReviewSynthesisRequestV1, ClassReviewSynthesisResultV1 } from './types'
+import type { AiSummaryV1, ClassReviewIssueBlockV1, ClassReviewReportAiAvailableV1, ClassReviewReportDraftV1, ClassReviewReportNoneV1, ClassReviewReportV1, ClassReviewSynthesisRequestV1, ClassReviewSynthesisResultV1 } from './types'
 import { buildClassReviewProjection, DEFAULT_CLASS_REVIEW_PROJECTION_LIMITS, type ClassReviewProjectionResult } from './classReviewProjection'
 import type { ClassReviewAggregate } from './aggregateClassReview'
 import { createLocalClassReviewCoordinator, type ClassReviewSynthesisClient } from './classReviewCoordinator'
@@ -137,7 +137,10 @@ function success(requestId: string): ClassReviewSynthesisResultV1 {
 }
 
 describe('local class review coordinator', () => {
-  afterEach(() => vi.useRealTimers())
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
 
   it('atomically creates draft from eligible none and makes one call; initial failure preserves an existing teacher draft', async () => {
     const fakeNone = createFakeClassReviewSynthesisClient({ scenario: 'success' })
@@ -171,7 +174,7 @@ describe('local class review coordinator', () => {
     const first = value.generate({ taskKey: 'task-1', generationId: 'browser-g1', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })
     await vi.waitFor(() => expect(deferred.calls()).toBe(1))
     value.applyIssueCommand('task-1', teacherAddCommand(teacherBlock('identity-change'), 'essay-change'))
-    value.noteOrdinaryResultRevisionAdvance('task-1')
+    ordinarySyncForTest(value, 'task-1', value.getSnapshot('task-1').report)
     await expect(value.generate({ taskKey: 'task-1', generationId: 'browser-g2', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 2 })).rejects.toThrow('active_generation_conflict')
     expect(deferred.calls()).toBe(1)
     deferred.resolve(success(value.getSnapshot('task-1').requestId as string)); await first
@@ -222,7 +225,7 @@ describe('local class review coordinator', () => {
     const conflict = coordinator(deferred.client)
     const completing = conflict.generate({ taskKey: 'task-1', generationId: 'browser-conflict', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })
     await vi.waitFor(() => expect(conflict.getSnapshot('task-1').generation?.state).toBe('running'))
-    conflict.syncExternalReport('task-1', { ...draft(1), reportRevision: 2 })
+    ordinarySyncForTest(conflict, 'task-1', { ...draft(1), reportRevision: 2 })
     deferred.resolve(success(conflict.getSnapshot('task-1').requestId as string))
     await completing
     const candidate = conflict.getSnapshot('task-1').generation
@@ -237,7 +240,7 @@ describe('local class review coordinator', () => {
     const value = coordinator(deferred.client)
     const pending = value.generate({ taskKey: 'task-1', generationId: 'browser-deferred', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })
     await vi.waitFor(() => expect(value.getSnapshot('task-1').generation?.state).toBe('running'))
-    value.syncExternalReport('task-1', { ...draft(1), reportRevision: 2 })
+    ordinarySyncForTest(value, 'task-1', { ...draft(1), reportRevision: 2 })
     deferred.resolve(success(value.getSnapshot('task-1').requestId as string))
     await pending
 
@@ -270,7 +273,7 @@ describe('local class review coordinator', () => {
       const conflict = coordinator(deferred.client)
       const run = conflict.generate({ taskKey: 'task-1', generationId: 'browser-unapplied', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })
       await vi.waitFor(() => expect(conflict.getSnapshot('task-1').generation?.state).toBe('running'))
-      conflict.syncExternalReport('task-1', { ...draft(1), reportRevision: 2 })
+      ordinarySyncForTest(conflict, 'task-1', { ...draft(1), reportRevision: 2 })
       deferred.resolve(success(conflict.getSnapshot('task-1').requestId as string)); await run
       const unapplied = conflict.getSnapshot('task-1').generation
       await expect(conflict.generate({ taskKey: 'task-1', generationId: 'browser-unapplied-replay', intent: 'regenerate', expectedTaskRevision: 1, expectedReportRevision: 2 })).resolves.toMatchObject({ state: 'succeeded_unapplied', generationId: unapplied?.generationId })
@@ -287,7 +290,7 @@ describe('local class review coordinator', () => {
     const pending = value.generate({ taskKey: 'task-1', generationId: 'browser-invalidate', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })
     await vi.waitFor(() => expect(value.getSnapshot('task-1').generation?.state).toBe('running'))
     const before = value.getSnapshot('task-1')
-    value.invalidateSources('task-1', 'class_review_source_invalidated')
+    sourceDeleteForTest(value, 'task-1')
     const after = value.getSnapshot('task-1')
     expect(after.generation).toMatchObject({ state: 'invalidated', generationRevision: before.generation!.generationRevision + 1 })
     expect(after.candidate).toBeNull()
@@ -341,7 +344,7 @@ describe('local class review coordinator', () => {
     const pending = value.generate({ taskKey: 'task-1', generationId: 'browser-ordinary', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })
     await vi.waitFor(() => expect(value.getSnapshot('task-1').generation?.state).toBe('running'))
     value.applyIssueCommand('task-1', teacherAddCommand(teacherBlock('ordinary-change'), 'essay-change'))
-    value.noteOrdinaryResultRevisionAdvance('task-1')
+    ordinarySyncForTest(value, 'task-1', value.getSnapshot('task-1').report)
     ordinary.resolve(success(value.getSnapshot('task-1').requestId as string)); await pending
     expect(value.getSnapshot('task-1').generation?.state).toBe('succeeded')
   })
@@ -532,13 +535,13 @@ describe('local class review coordinator', () => {
     const value = coordinator(deferred.client)
     const pending = value.generate({ taskKey: 'task-1', generationId: 'browser-unapplied-latest', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })
     await vi.waitFor(() => expect(deferred.calls()).toBe(1))
-    value.syncExternalReport('task-1', { ...draft(1), reportRevision: 2 })
+    ordinarySyncForTest(value, 'task-1', { ...draft(1), reportRevision: 2 })
     deferred.resolve(success(value.getSnapshot('task-1').requestId as string))
     await pending
     const unapplied = value.getSnapshot('task-1')
     expect(unapplied.generation?.state).toBe('succeeded_unapplied')
     expect(unapplied.candidate).not.toHaveProperty('contractVersion')
-    expect(unapplied.candidate).toHaveProperty('generatedPayload.aiSummary.overallComment', 'Summary')
+    expect(unapplied.candidate).toEqual({ available: true, generationId: unapplied.generation?.generationId })
 
     const latestTeacher = teacherBlock('teacher-after-candidate')
     value.applyIssueCommand('task-1', teacherAddCommand(latestTeacher, 'essay-after'))
@@ -558,7 +561,7 @@ describe('local class review coordinator', () => {
     value.registerWorkspace({ taskKey: 'task-2', taskRevision: 1, rubricRevisionDigest: validRubricDigest, report: draft(1), projection: projection() })
     const pending = value.generate({ taskKey: 'task-1', generationId: 'browser-owned-candidate', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })
     await vi.waitFor(() => expect(deferred.calls()).toBe(1))
-    value.syncExternalReport('task-1', { ...draft(1), reportRevision: 2 })
+    ordinarySyncForTest(value, 'task-1', { ...draft(1), reportRevision: 2 })
     deferred.resolve(success(value.getSnapshot('task-1').requestId as string))
     await pending
     const candidate = value.getSnapshot('task-1').generation!
@@ -575,7 +578,9 @@ describe('local class review coordinator', () => {
     const latest = draft()
     latest.reportRevision = 2
     latest.statistics = { ...latest.statistics, totalEssayCount: 7, includedEssayCount: 6, issueEligibleEssayCount: 5, excludedEssayCount: 1, issueCoverageRate: 5 / 6 }
-    value.syncExternalReport('task-1', latest)
+    const latestProjection = projection()
+    latestProjection.projection.statistics = { ...latestProjection.projection.statistics, totalEssayCount: 7, includedEssayCount: 6, issueEligibleEssayCount: 5, excludedEssayCount: 1 }
+    ordinarySyncForTest(value, 'task-1', latest, latestProjection)
     deferred.resolve(success(value.getSnapshot('task-1').requestId as string))
     await pending
     expect(value.getSnapshot('task-1').report.statistics).toEqual(latest.statistics)
@@ -591,7 +596,7 @@ describe('local class review coordinator', () => {
     value.registerWorkspace({ taskKey: 'task-system', taskRevision: 1, rubricRevisionDigest: validRubricDigest, report, projection: projectionWithGroup(), teacherEvidenceFacts: [{ topicKey: block.topicKey, evidenceId: block.evidenceRefs[0].evidenceId, essayIdentity: 'essay-a', occurrenceCount: 1 }] })
     await value.generate({ taskKey: 'task-system', generationId: 'browser-system', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })
     expect(value.getSnapshot('task-system').report.issueBlocks[0]).toMatchObject({ origin: 'teacher', systemStudentCount: 2 })
-    value.invalidateSources('task-system', 'class_review_source_invalidated')
+    sourceDeleteForTest(value, 'task-system')
     expect(value.getSnapshot('task-system').report.workspaceState).toBe('ai_removed')
     value.applyIssueCommand('task-system', { kind: 'remove', evidenceId: block.evidenceRefs[0].evidenceId })
     expect(value.getSnapshot('task-system').report.issueBlocks).toHaveLength(0)
@@ -669,5 +674,411 @@ describe('local class review coordinator', () => {
     value.registerWorkspace({ taskKey: 'task-clock', taskRevision: 1, rubricRevisionDigest: validRubricDigest, report: draft(), projection: projection() })
     await value.generate({ taskKey: 'task-clock', generationId: 'browser-clock', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })
     expect(value.getSnapshot('task-clock').generation).toMatchObject({ state: 'failed', safeFailureCode: 'class_review_candidate_conflict' })
+  })
+})
+
+type SourceReplacementForTest = {
+  taskRevision: number
+  rubricRevisionDigest: string
+  report: ClassReviewReportV1
+  projection: Extract<ClassReviewProjectionResult, { status: 'ready' }>
+}
+
+type SourceSyncCommandForTest =
+  | {
+      kind: 'ordinary_revision'
+      taskKey: string
+      expectedTaskRevision: number
+      expectedReportRevision: number | null
+      expectedSourceRevisionEpoch: number
+      replacement: SourceReplacementForTest
+    }
+  | {
+      kind: 'source_deleted'
+      taskKey: string
+      expectedTaskRevision: number
+      expectedReportRevision: number | null
+      expectedSourceRevisionEpoch: number
+      removedTeacherEvidenceIds: readonly string[]
+      replacement: SourceReplacementForTest | null
+    }
+  | {
+      kind: 'task_deleted'
+      taskKey: string
+      expectedTaskRevision: number
+      expectedReportRevision: number | null
+      expectedSourceRevisionEpoch: number
+    }
+
+function syncSourcesForTest(
+  coordinatorValue: ReturnType<typeof createLocalClassReviewCoordinator>,
+  command: SourceSyncCommandForTest,
+): void {
+  const next = coordinatorValue as unknown as {
+    syncSources?: (value: SourceSyncCommandForTest) => void
+    invalidateSources?: (
+      taskKey: string,
+      code: 'class_review_source_invalidated' | 'class_review_task_invalidated',
+    ) => void
+    syncExternalReport?: (taskKey: string, report: ClassReviewReportV1) => void
+    noteOrdinaryResultRevisionAdvance?: (taskKey: string) => void
+  }
+  if (next.syncSources) {
+    next.syncSources(command)
+    return
+  }
+  if (command.kind === 'task_deleted') {
+    next.invalidateSources?.(command.taskKey, 'class_review_task_invalidated')
+    return
+  }
+  if (command.kind === 'source_deleted') {
+    next.invalidateSources?.(command.taskKey, 'class_review_source_invalidated')
+    return
+  }
+  next.syncExternalReport?.(command.taskKey, command.replacement.report)
+  next.noteOrdinaryResultRevisionAdvance?.(command.taskKey)
+}
+
+function ordinarySyncForTest(
+  coordinatorValue: ReturnType<typeof createLocalClassReviewCoordinator>,
+  taskKey: string,
+  report: ClassReviewReportV1,
+  ready: Extract<ClassReviewProjectionResult, { status: 'ready' }> = projection(),
+): void {
+  const snapshot = coordinatorValue.getSnapshot(taskKey)
+  syncSourcesForTest(coordinatorValue, {
+    kind: 'ordinary_revision',
+    taskKey,
+    expectedTaskRevision: snapshot.report.taskRevision,
+    expectedReportRevision: snapshot.report.reportRevision,
+    expectedSourceRevisionEpoch: snapshot.sourceRevisionEpoch,
+    replacement: {
+      taskRevision: report.taskRevision,
+      rubricRevisionDigest: validRubricDigest,
+      report,
+      projection: ready,
+    },
+  })
+}
+
+function sourceDeleteForTest(
+  coordinatorValue: ReturnType<typeof createLocalClassReviewCoordinator>,
+  taskKey: string,
+  removedTeacherEvidenceIds: readonly string[] = [],
+): void {
+  const snapshot = coordinatorValue.getSnapshot(taskKey)
+  syncSourcesForTest(coordinatorValue, {
+    kind: 'source_deleted',
+    taskKey,
+    expectedTaskRevision: snapshot.report.taskRevision,
+    expectedReportRevision: snapshot.report.reportRevision,
+    expectedSourceRevisionEpoch: snapshot.sourceRevisionEpoch,
+    removedTeacherEvidenceIds,
+    replacement: null,
+  })
+}
+
+function gateRealSubtleSign(callToBlock: number) {
+  const originalSign = globalThis.crypto.subtle.sign.bind(globalThis.crypto.subtle)
+  let callCount = 0
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  vi.spyOn(globalThis.crypto.subtle, 'sign').mockImplementation(async (algorithm, key, data) => {
+    callCount += 1
+    if (callCount === callToBlock) await gate
+    return originalSign(algorithm, key, data)
+  })
+  return { calls: () => callCount, release }
+}
+
+describe('Task 8 round 2 coordinator safety contracts', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it('exposes one typed source-sync command and removes all legacy revision/invalidation bypasses', () => {
+    const value = coordinator(createFakeClassReviewSynthesisClient({ scenario: 'success' }))
+    expect(value).toHaveProperty('syncSources')
+    expect(value).not.toHaveProperty('invalidateSources')
+    expect(value).not.toHaveProperty('syncExternalReport')
+    expect(value).not.toHaveProperty('bumpAiTextRevision')
+    expect(value).not.toHaveProperty('noteOrdinaryResultRevisionAdvance')
+  })
+
+  it.each([1, 2, 3, 4])(
+    'fences source deletion during pre-reservation HMAC await %s before registry/provider mutation',
+    async (blockedSignCall) => {
+      const fake = createFakeClassReviewSynthesisClient({ scenario: 'success' })
+      const value = coordinator(fake)
+      const sign = gateRealSubtleSign(blockedSignCall)
+      const pending = value.generate({
+        taskKey: 'task-1', generationId: `browser-preflight-${blockedSignCall}`,
+        intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1,
+      })
+      await vi.waitFor(() => expect(sign.calls()).toBeGreaterThanOrEqual(blockedSignCall))
+      syncSourcesForTest(value, {
+        kind: 'source_deleted', taskKey: 'task-1', expectedTaskRevision: 1,
+        expectedReportRevision: 1, expectedSourceRevisionEpoch: 0,
+        removedTeacherEvidenceIds: [], replacement: null,
+      })
+      sign.release()
+      await expect(pending).rejects.toThrow('class_review_source_invalidated')
+      expect(fake.getCallCountForTest()).toBe(0)
+      const snapshot = value.getSnapshot('task-1') as ReturnType<typeof value.getSnapshot> & {
+        sourceReady?: boolean
+      }
+      expect(snapshot.generation).toBeNull()
+      expect(snapshot.sourceReady).toBe(false)
+    },
+  )
+
+  it('makes task deletion permanent and requires a validated replacement after source deletion', async () => {
+    const fake = createFakeClassReviewSynthesisClient({ scenario: 'success' })
+    const value = coordinator(fake)
+    syncSourcesForTest(value, {
+      kind: 'task_deleted', taskKey: 'task-1', expectedTaskRevision: 1,
+      expectedReportRevision: 1, expectedSourceRevisionEpoch: 0,
+    })
+    await expect(value.generate({ taskKey: 'task-1', generationId: 'after-task-delete', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 2 })).rejects.toThrow('class_review_task_invalidated')
+    expect(fake.getCallCountForTest()).toBe(0)
+
+    const sourceOnly = createLocalClassReviewCoordinator({ synthesisClient: fake, topicKeySecret: new Uint8Array(32).fill(7), now: () => '2026-08-30T00:00:00.000Z', createOpaqueId: () => 'opaque' })
+    sourceOnly.registerWorkspace({ taskKey: 'source-only', taskRevision: 1, rubricRevisionDigest: validRubricDigest, report: draft(), projection: projection() })
+    syncSourcesForTest(sourceOnly, { kind: 'source_deleted', taskKey: 'source-only', expectedTaskRevision: 1, expectedReportRevision: 1, expectedSourceRevisionEpoch: 0, removedTeacherEvidenceIds: [], replacement: null })
+    await expect(sourceOnly.generate({ taskKey: 'source-only', generationId: 'before-replacement', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 2 })).rejects.toThrow('class_review_source_invalidated')
+    syncSourcesForTest(sourceOnly, {
+      kind: 'ordinary_revision', taskKey: 'source-only', expectedTaskRevision: 1,
+      expectedReportRevision: 2, expectedSourceRevisionEpoch: 1,
+      replacement: { taskRevision: 2, rubricRevisionDigest: validRubricDigest, report: { ...draft(), taskRevision: 2, reportRevision: 3 }, projection: projection() },
+    })
+    await expect(sourceOnly.generate({ taskKey: 'source-only', generationId: 'after-replacement', intent: 'initial', expectedTaskRevision: 2, expectedReportRevision: 3 })).resolves.toMatchObject({ state: 'succeeded' })
+  })
+
+  it('validates a replacement projection before committing a deletion epoch', async () => {
+    const fake = createFakeClassReviewSynthesisClient({ scenario: 'success' })
+    const value = coordinator(fake)
+    const invalidProjection = projectionWithGroup()
+    invalidProjection.hidden.selectedGroups = new Map()
+    expect(() => syncSourcesForTest(value, {
+      kind: 'source_deleted', taskKey: 'task-1', expectedTaskRevision: 1,
+      expectedReportRevision: 1, expectedSourceRevisionEpoch: 0,
+      removedTeacherEvidenceIds: [],
+      replacement: { taskRevision: 2, rubricRevisionDigest: validRubricDigest, report: { ...draft(), taskRevision: 2, reportRevision: 2 }, projection: invalidProjection },
+    })).toThrow('class_review_candidate_conflict')
+    await expect(value.generate({ taskKey: 'task-1', generationId: 'still-original-source', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })).resolves.toMatchObject({ state: 'succeeded' })
+    expect(fake.getCallCountForTest()).toBe(1)
+  })
+
+  it('remerges teacher add/remove/move made after Provider success while composite-topic HMAC is pending', async () => {
+    const initial = draft()
+    const first = teacherBlock('teacher-first')
+    const second = teacherBlock('teacher-second')
+    initial.issueBlocks = [first, second]
+    initial.issueOrder = [first.blockId, second.blockId]
+    const client = createFakeClassReviewSynthesisClient({ scenario: 'success', variant: 'multi_group' })
+    let opaqueId = 0
+    const value = createLocalClassReviewCoordinator({ synthesisClient: client, topicKeySecret: new Uint8Array(32).fill(7), now: () => '2026-08-30T00:00:00.000Z', createOpaqueId: () => `opaque-${++opaqueId}` })
+    value.registerWorkspace({
+      taskKey: 'materializing', taskRevision: 1, rubricRevisionDigest: validRubricDigest,
+      report: initial, projection: projectionWithTwoGroups(),
+      teacherEvidenceFacts: [
+        { topicKey: first.topicKey, evidenceId: first.evidenceRefs[0].evidenceId, essayIdentity: 'essay-first', occurrenceCount: 1, evidenceRef: first.evidenceRefs[0] },
+        { topicKey: second.topicKey, evidenceId: second.evidenceRefs[0].evidenceId, essayIdentity: 'essay-second', occurrenceCount: 1, evidenceRef: second.evidenceRefs[0] },
+      ],
+    })
+    const sign = gateRealSubtleSign(5)
+    const pending = value.generate({ taskKey: 'materializing', generationId: 'during-materialization', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })
+    await vi.waitFor(() => expect(sign.calls()).toBeGreaterThanOrEqual(5))
+    const late = teacherBlock('teacher-late')
+    value.applyIssueCommand('materializing', teacherAddCommand(late, 'essay-late'))
+    value.applyIssueCommand('materializing', { kind: 'remove', evidenceId: first.evidenceRefs[0].evidenceId })
+    value.applyIssueCommand('materializing', { kind: 'move', blockId: late.blockId, toIndex: 0 })
+    sign.release()
+    await pending
+    const report = value.getSnapshot('materializing').report
+    expect(report.issueOrder[0]).toBe(late.blockId)
+    expect(report.issueBlocks).toContainEqual(late)
+    expect(report.issueBlocks.some((block) => block.blockId === first.blockId)).toBe(false)
+    expect(report.issueBlocks).toContainEqual(second)
+  })
+
+  it('preallocates system IDs before the synchronous final commit so createOpaqueId cannot re-enter mutable state', async () => {
+    const fake = createFakeClassReviewSynthesisClient({ scenario: 'success' })
+    let value!: ReturnType<typeof createLocalClassReviewCoordinator>
+    let allocations = 0
+    let attemptedReentry = false
+    value = createLocalClassReviewCoordinator({
+      synthesisClient: fake,
+      topicKeySecret: new Uint8Array(32).fill(7),
+      now: () => '2026-08-30T00:00:00.000Z',
+      createOpaqueId: () => {
+        allocations += 1
+        if (allocations >= 3 && !attemptedReentry) {
+          attemptedReentry = true
+          value.applyIssueCommand('reentrant', teacherAddCommand(teacherBlock('teacher-reentrant'), 'essay-reentrant'))
+        }
+        return `opaque-${allocations}`
+      },
+    })
+    value.registerWorkspace({ taskKey: 'reentrant', taskRevision: 1, rubricRevisionDigest: validRubricDigest, report: draft(), projection: projectionWithGroup() })
+    await value.generate({ taskKey: 'reentrant', generationId: 'reentrant-generation', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })
+    expect(attemptedReentry).toBe(true)
+    expect(value.getSnapshot('reentrant').report.issueBlocks).toContainEqual(teacherBlock('teacher-reentrant'))
+  })
+
+  it('replays the same proposed terminal ID at zero calls but starts one fresh run for a distinct proposed ID', async () => {
+    const fake = createFakeClassReviewSynthesisClient({ scenario: 'success' })
+    const value = coordinator(fake)
+    const first = await value.generate({ taskKey: 'task-1', generationId: 'browser-terminal', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })
+    const afterFirst = value.getSnapshot('task-1').report
+    const replay = await value.generate({ taskKey: 'task-1', generationId: 'browser-terminal', intent: 'regenerate', expectedTaskRevision: 1, expectedReportRevision: afterFirst.reportRevision })
+    expect(replay.generationId).toBe(first.generationId)
+    expect(fake.getCallCountForTest()).toBe(1)
+    const afterReplay = value.getSnapshot('task-1').report
+    const fresh = await value.generate({ taskKey: 'task-1', generationId: 'browser-terminal-new', intent: 'regenerate', expectedTaskRevision: 1, expectedReportRevision: afterReplay.reportRevision })
+    expect(fresh.generationId).not.toBe(first.generationId)
+    expect(fake.getCallCountForTest()).toBe(2)
+  })
+
+  it.each([
+    { name: 'average score', mutate: (report: ClassReviewReportDraftV1) => { report.statistics.scoreSummary!.averageScore += 1 } },
+    { name: 'highest score', mutate: (report: ClassReviewReportDraftV1) => { report.statistics.scoreSummary!.highestScore += 1 } },
+    { name: 'lowest score', mutate: (report: ClassReviewReportDraftV1) => { report.statistics.scoreSummary!.lowestScore += 1 } },
+    { name: 'score band essay count', mutate: (report: ClassReviewReportDraftV1) => { report.statistics.scoreBands[0].essayCount += 1 } },
+    { name: 'dimension name', mutate: (report: ClassReviewReportDraftV1) => { report.statistics.dimensions[0].name = 'Changed name' } },
+  ])('fails closed before Provider on full mappable-statistics drift: $name', async ({ mutate }) => {
+    const fake = createFakeClassReviewSynthesisClient({ scenario: 'success' })
+    const report = draft()
+    report.statistics.scoreBands = [{ bandId: 'band-1', lowerInclusive: 0, upperInclusive: 100, essayCount: 3 }]
+    report.statistics.dimensions = [{ dimensionId: 'language', name: 'Language', averageScore: 32, maxScore: 40, normalizedPerformance: 0.8 }]
+    const ready = projection()
+    ready.projection.statistics.scoreBands = [{ bandId: 'band-1', lowerInclusive: 0, upperInclusive: 100, essayCount: 3 }]
+    ready.projection.statistics.dimensions = [{ dimensionId: 'd1', label: 'Language', averageScore: 32, medianScore: 32, maxScore: 40, normalizedPerformance: 0.8 }]
+    ready.hidden.dimensionAliases = new Map([['d1', 'language']])
+    mutate(report)
+    const value = createLocalClassReviewCoordinator({ synthesisClient: fake, topicKeySecret: new Uint8Array(32).fill(7), now: () => '2026-08-30T00:00:00.000Z', createOpaqueId: () => 'opaque' })
+    value.registerWorkspace({ taskKey: 'stats-drift', taskRevision: 1, rubricRevisionDigest: validRubricDigest, report, projection: ready })
+    await expect(value.generate({ taskKey: 'stats-drift', generationId: 'stats-drift-generation', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })).rejects.toThrow('class_review_candidate_conflict')
+    expect(fake.getCallCountForTest()).toBe(0)
+    expect(value.getSnapshot('stats-drift').generation).toBeNull()
+  })
+
+  it.each([
+    { name: 'true below threshold', support: 1, mustCover: true },
+    { name: 'false at threshold', support: 2, mustCover: false },
+  ])('requires mustCover to equal the shared support-threshold decision: $name', async ({ support, mustCover }) => {
+    const fake = createFakeClassReviewSynthesisClient({ scenario: 'success' })
+    const ready = projectionWithGroup()
+    ready.projection.groups[0].mustCover = mustCover
+    ready.projection.groups[0].distinctEssaySupport = support
+    ready.projection.groups[0].occurrenceCount = support
+    ready.projection.semanticCoverage.projectedDistinctEssaySupportSum = support
+    ready.projection.semanticCoverage.eligibleDistinctEssaySupportSum = support
+    ready.projection.semanticCoverage.projectedOccurrenceSum = support
+    ready.projection.semanticCoverage.eligibleOccurrenceSum = support
+    const selected = ready.hidden.selectedGroups.get('g1')!
+    ready.hidden.selectedGroups = new Map([['g1', { ...selected, essayIds: selected.essayIds.slice(0, support), occurrenceCount: support }]])
+    const value = createLocalClassReviewCoordinator({ synthesisClient: fake, topicKeySecret: new Uint8Array(32).fill(7), now: () => '2026-08-30T00:00:00.000Z', createOpaqueId: () => 'opaque' })
+    value.registerWorkspace({ taskKey: 'threshold-drift', taskRevision: 1, rubricRevisionDigest: validRubricDigest, report: draft(), projection: ready })
+    await expect(value.generate({ taskKey: 'threshold-drift', generationId: 'threshold-drift-generation', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })).rejects.toThrow('class_review_candidate_conflict')
+    expect(fake.getCallCountForTest()).toBe(0)
+  })
+
+  it('validates teacher fact ownership/alignment/uniqueness and detaches nested caller data', () => {
+    const block = teacherBlock('teacher-fact')
+    const make = () => createLocalClassReviewCoordinator({ synthesisClient: createFakeClassReviewSynthesisClient({ scenario: 'success' }), topicKeySecret: new Uint8Array(32).fill(7), now: () => '2026-08-30T00:00:00.000Z', createOpaqueId: () => 'opaque' })
+    const bad = make()
+    expect(() => bad.registerWorkspace({
+      taskKey: 'bad-facts', taskRevision: 1, rubricRevisionDigest: validRubricDigest,
+      report: { ...draft(), issueBlocks: [block], issueOrder: [block.blockId] }, projection: projection(),
+      teacherEvidenceFacts: [{ topicKey: 'wrong-topic', evidenceId: block.evidenceRefs[0].evidenceId, essayIdentity: 'essay-a', occurrenceCount: 1, evidenceRef: { ...block.evidenceRefs[0], selectionOrigin: 'system_generation' } }],
+    })).toThrow('class_review_candidate_conflict')
+
+    const duplicate = make()
+    expect(() => duplicate.registerWorkspace({
+      taskKey: 'duplicate-facts', taskRevision: 1, rubricRevisionDigest: validRubricDigest,
+      report: { ...draft(), issueBlocks: [block], issueOrder: [block.blockId] }, projection: projection(),
+      teacherEvidenceFacts: [
+        { topicKey: block.topicKey, evidenceId: block.evidenceRefs[0].evidenceId, essayIdentity: 'essay-a', occurrenceCount: 1, evidenceRef: block.evidenceRefs[0] },
+        { topicKey: block.topicKey, evidenceId: block.evidenceRefs[0].evidenceId, essayIdentity: 'essay-b', occurrenceCount: 1, evidenceRef: block.evidenceRefs[0] },
+      ],
+    })).toThrow('class_review_candidate_conflict')
+
+    const fact = { topicKey: block.topicKey, evidenceId: block.evidenceRefs[0].evidenceId, essayIdentity: 'essay-a', occurrenceCount: 1, evidenceRef: structuredClone(block.evidenceRefs[0]) }
+    const detached = make()
+    detached.registerWorkspace({ taskKey: 'detached-fact', taskRevision: 1, rubricRevisionDigest: validRubricDigest, report: { ...draft(), issueBlocks: [block], issueOrder: [block.blockId] }, projection: projection(), teacherEvidenceFacts: [fact] })
+    fact.evidenceRef.evidenceId = 'caller-mutated'
+    fact.evidenceRef.sourceLocator = 'caller-mutated'
+    detached.applyIssueCommand('detached-fact', { kind: 'remove', evidenceId: block.evidenceRefs[0].evidenceId })
+    expect(detached.getSnapshot('detached-fact').report.issueBlocks).toHaveLength(0)
+  })
+
+  it('source deletion rebuilds surviving mixed teacher blocks from teacher facts only', async () => {
+    const block = teacherBlock('teacher-system', 'tk1.aaaaaaaaaaaaaaaa')
+    const report = { ...draft(), issueBlocks: [block], issueOrder: [block.blockId] }
+    const value = createLocalClassReviewCoordinator({ synthesisClient: createFakeClassReviewSynthesisClient({ scenario: 'success' }), topicKeySecret: new Uint8Array(32).fill(7), now: () => '2026-08-30T00:00:00.000Z', createOpaqueId: (() => { let id = 0; return () => `opaque-${++id}` })() })
+    value.registerWorkspace({ taskKey: 'source-rebuild', taskRevision: 1, rubricRevisionDigest: validRubricDigest, report, projection: projectionWithGroup(), teacherEvidenceFacts: [{ topicKey: block.topicKey, evidenceId: block.evidenceRefs[0].evidenceId, essayIdentity: 'essay-a', occurrenceCount: 1, evidenceRef: block.evidenceRefs[0] }] })
+    await value.generate({ taskKey: 'source-rebuild', generationId: 'source-rebuild-generation', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })
+    const replacementReport = { ...draft(), taskRevision: 2, reportRevision: 3 }
+    syncSourcesForTest(value, {
+      kind: 'source_deleted', taskKey: 'source-rebuild', expectedTaskRevision: 1,
+      expectedReportRevision: 2, expectedSourceRevisionEpoch: 0,
+      removedTeacherEvidenceIds: [],
+      replacement: { taskRevision: 2, rubricRevisionDigest: validRubricDigest, report: replacementReport, projection: projection() },
+    })
+    const rebuilt = value.getSnapshot('source-rebuild').report.issueBlocks[0]
+    expect(rebuilt).toMatchObject({
+      origin: 'teacher', teacherStudentCount: 1, systemStudentCount: 0,
+      combinedStudentCount: 1, occurrenceCount: 1, supportDenominator: null,
+      anonymousExamples: [], evidenceRefs: [block.evidenceRefs[0]],
+    })
+  })
+
+  it('removes affected teacher evidence IDs during source deletion and preserves only unaffected teacher facts', () => {
+    const removed = teacherBlock('teacher-removed')
+    const surviving = teacherBlock('teacher-surviving')
+    const report = draft()
+    report.issueBlocks = [removed, surviving]
+    report.issueOrder = [removed.blockId, surviving.blockId]
+    const value = createLocalClassReviewCoordinator({ synthesisClient: createFakeClassReviewSynthesisClient({ scenario: 'success' }), topicKeySecret: new Uint8Array(32).fill(7), now: () => '2026-08-30T00:00:00.000Z', createOpaqueId: () => 'opaque' })
+    value.registerWorkspace({
+      taskKey: 'teacher-source-delete', taskRevision: 1, rubricRevisionDigest: validRubricDigest,
+      report, projection: projection(),
+      teacherEvidenceFacts: [
+        { topicKey: removed.topicKey, evidenceId: removed.evidenceRefs[0].evidenceId, essayIdentity: 'essay-removed', occurrenceCount: 1, evidenceRef: removed.evidenceRefs[0] },
+        { topicKey: surviving.topicKey, evidenceId: surviving.evidenceRefs[0].evidenceId, essayIdentity: 'essay-surviving', occurrenceCount: 1, evidenceRef: surviving.evidenceRefs[0] },
+      ],
+    })
+    syncSourcesForTest(value, {
+      kind: 'source_deleted', taskKey: 'teacher-source-delete', expectedTaskRevision: 1,
+      expectedReportRevision: 1, expectedSourceRevisionEpoch: 0,
+      removedTeacherEvidenceIds: [removed.evidenceRefs[0].evidenceId],
+      replacement: { taskRevision: 2, rubricRevisionDigest: validRubricDigest, report: { ...draft(), taskRevision: 2, reportRevision: 2 }, projection: projection() },
+    })
+    const after = value.getSnapshot('teacher-source-delete').report
+    expect(after.issueOrder).toEqual([surviving.blockId])
+    expect(after.issueBlocks).toEqual([surviving])
+  })
+
+  it('public candidate snapshots expose frozen metadata only and never payloads, handles, or request bytes', async () => {
+    const deferred = deferredClient()
+    const value = coordinator(deferred.client)
+    const pending = value.generate({ taskKey: 'task-1', generationId: 'candidate-metadata', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })
+    await vi.waitFor(() => expect(deferred.calls()).toBe(1))
+    const beforeEdit = value.getSnapshot('task-1')
+    if (beforeEdit.report.workspaceState === 'none') throw new Error('expected editable report')
+    ordinarySyncForTest(value, 'task-1', {
+      ...beforeEdit.report,
+      reportRevision: beforeEdit.report.reportRevision! + 1,
+      aiTextEditRevision: beforeEdit.report.aiTextEditRevision + 1,
+    })
+    deferred.resolve(success(value.getSnapshot('task-1').requestId as string))
+    await pending
+    const snapshot = value.getSnapshot('task-1')
+    expect(snapshot.candidate).toEqual({ available: true, generationId: snapshot.generation?.generationId })
+    expect(snapshot.generation).not.toHaveProperty('candidate')
+    expect(snapshot.generation).not.toHaveProperty('requestBytes')
+    expect(Object.isFrozen(snapshot.candidate)).toBe(true)
   })
 })
