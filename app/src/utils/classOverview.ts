@@ -5,6 +5,7 @@ import {
   capTotalScoreForVisibleLegibilityDeduction,
   hasValidRubricWeights,
 } from '../services/grading/scoringRules'
+import { validateRubricForm } from '../services/taskRubric/rubricForm'
 import { getDynamicScoreBands } from './gradingDiagnostics'
 
 export interface ClassOverviewBand {
@@ -125,6 +126,11 @@ export function hasUsableClassReviewScoreChannel(
       !task.rubricDraft
       || task.rubricDraft.status !== 'confirmed'
       || !Array.isArray(task.rubricDraft.dimensions)
+      || !validateRubricForm({
+        fullScore: task.fullScore,
+        writingRequirement: task.rubricDraft.writingGoal,
+        dimensions: task.rubricDraft.dimensions,
+      }).valid
     )
   ) return false
   const rubricDimensions = requireRubricCorrespondence

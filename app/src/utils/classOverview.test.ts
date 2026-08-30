@@ -42,19 +42,32 @@ function successfulEssay(id: string, overrides: Partial<Essay> = {}): Essay {
 }
 
 function result(essayId: string, totalScore: number, fullScore = 15): GradingResult {
+  const legibilityMaxScore = Math.round(fullScore * 10) / 100
+  const legibilityScore = Math.min(totalScore, legibilityMaxScore)
   return {
     id: `${essayId}-result`,
     essayId,
     totalScore,
-    dimensionScores: [{
-      id: 'language',
-      name: 'Language',
-      score: Math.min(totalScore, fullScore),
-      maxScore: fullScore,
-      weight: 100,
-      reason: 'Synthetic score reason.',
-      evidence: 'Synthetic score evidence.',
-    }],
+    dimensionScores: [
+      {
+        id: 'language',
+        name: 'Language',
+        score: Math.min(totalScore, fullScore) - legibilityScore,
+        maxScore: Math.round(fullScore * 90) / 100,
+        weight: 90,
+        reason: 'Synthetic language score reason.',
+        evidence: 'Synthetic language score evidence.',
+      },
+      {
+        id: 'legibility',
+        name: 'Legibility',
+        score: legibilityScore,
+        maxScore: legibilityMaxScore,
+        weight: 10,
+        reason: 'Synthetic legibility score reason.',
+        evidence: 'Synthetic legibility score evidence.',
+      },
+    ],
     errorAnnotations: [],
     sentenceRevisions: [],
     upgradedExpressions: [],
@@ -79,13 +92,22 @@ function overviewTask(fullScore: number, rubricGeneration = 0): Pick<
       source: 'teacher',
       writingGoal: 'Synthetic goal.',
       offTopicCriteria: [],
-      dimensions: [{
-        id: 'language',
-        name: 'Language',
-        weight: 100,
-        description: 'Language quality.',
-        deductionFocus: [],
-      }],
+      dimensions: [
+        {
+          id: 'language',
+          name: 'Language',
+          weight: 90,
+          description: 'Language quality.',
+          deductionFocus: [],
+        },
+        {
+          id: 'legibility',
+          name: 'Legibility',
+          weight: 10,
+          description: 'Legibility quality.',
+          deductionFocus: [],
+        },
+      ],
       excellentFeatures: [],
       reviewTriggers: [],
       status: 'confirmed',
@@ -391,7 +413,8 @@ describe('getClassOverviewStats', () => {
         offTopicCriteria: [],
         dimensions: [
           { id: 'content', name: 'Content', weight: 40, description: 'Content.', deductionFocus: [] },
-          { id: 'language', name: 'Language', weight: 60, description: 'Language.', deductionFocus: [] },
+          { id: 'language', name: 'Language', weight: 55, description: 'Language.', deductionFocus: [] },
+          { id: 'legibility', name: 'Legibility', weight: 5, description: 'Legibility.', deductionFocus: [] },
         ],
         excellentFeatures: [],
         reviewTriggers: [],
@@ -402,7 +425,8 @@ describe('getClassOverviewStats', () => {
       ...result('modern', 12),
       dimensionScores: [
         { ...result('seed', 10).dimensionScores[0], id: 'content', name: 'Content', score: 5, maxScore: 6, weight: 40 },
-        { ...result('seed', 10).dimensionScores[0], id: 'language', name: 'Language', score: 7, maxScore: 9, weight: 60 },
+        { ...result('seed', 10).dimensionScores[0], id: 'language', name: 'Language', score: 6.25, maxScore: 8.25, weight: 55 },
+        { ...result('seed', 10).dimensionScores[1], id: 'legibility', name: 'Legibility', score: 0.75, maxScore: 0.75, weight: 5 },
       ],
     }
 
@@ -424,14 +448,15 @@ describe('getClassOverviewStats', () => {
   it.each([
     ['dimension order', (dimensions: GradingResult['dimensionScores']) => [...dimensions].reverse()],
     ['dimension name', (dimensions: GradingResult['dimensionScores']) => [
-      { ...dimensions[0], name: 'Different content name' }, dimensions[1],
+      { ...dimensions[0], name: 'Different content name' }, ...dimensions.slice(1),
     ]],
     ['dimension weight', (dimensions: GradingResult['dimensionScores']) => [
       { ...dimensions[0], maxScore: 7.5, weight: 50 },
-      { ...dimensions[1], maxScore: 7.5, weight: 50 },
+      { ...dimensions[1], maxScore: 6.75, weight: 45 },
+      dimensions[2],
     ]],
     ['dimension maximum', (dimensions: GradingResult['dimensionScores']) => [
-      { ...dimensions[0], maxScore: 5.99 }, dimensions[1],
+      { ...dimensions[0], maxScore: 5.99 }, ...dimensions.slice(1),
     ]],
   ])('rejects modern current-rubric mismatch in %s', (_label, mutate) => {
     const currentTask = {
@@ -442,7 +467,8 @@ describe('getClassOverviewStats', () => {
         offTopicCriteria: [],
         dimensions: [
           { id: 'content', name: 'Content', weight: 40, description: 'Content.', deductionFocus: [] },
-          { id: 'language', name: 'Language', weight: 60, description: 'Language.', deductionFocus: [] },
+          { id: 'language', name: 'Language', weight: 55, description: 'Language.', deductionFocus: [] },
+          { id: 'legibility', name: 'Legibility', weight: 5, description: 'Legibility.', deductionFocus: [] },
         ],
         excellentFeatures: [],
         reviewTriggers: [],
@@ -451,7 +477,8 @@ describe('getClassOverviewStats', () => {
     }
     const dimensions = [
       { ...result('seed', 10).dimensionScores[0], id: 'content', name: 'Content', score: 5, maxScore: 6, weight: 40 },
-      { ...result('seed', 10).dimensionScores[0], id: 'language', name: 'Language', score: 7, maxScore: 9, weight: 60 },
+      { ...result('seed', 10).dimensionScores[0], id: 'language', name: 'Language', score: 6.25, maxScore: 8.25, weight: 55 },
+      { ...result('seed', 10).dimensionScores[1], id: 'legibility', name: 'Legibility', score: 0.75, maxScore: 0.75, weight: 5 },
     ]
     const mismatched = { ...result('mismatch', 12), dimensionScores: mutate(dimensions) }
 

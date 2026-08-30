@@ -38,13 +38,22 @@ function task(overrides: Partial<Task> = {}): Task {
       source: 'teacher',
       writingGoal: 'Synthetic goal.',
       offTopicCriteria: [],
-      dimensions: [{
-        id: 'language',
-        name: 'Language',
-        weight: 100,
-        description: 'Language quality.',
-        deductionFocus: [],
-      }],
+      dimensions: [
+        {
+          id: 'language',
+          name: 'Language',
+          weight: 90,
+          description: 'Language quality.',
+          deductionFocus: [],
+        },
+        {
+          id: 'legibility',
+          name: 'Legibility',
+          weight: 10,
+          description: 'Legibility quality.',
+          deductionFocus: [],
+        },
+      ],
       excellentFeatures: [],
       reviewTriggers: [],
       status: 'confirmed',
@@ -121,6 +130,7 @@ function result(
   totalScore: number,
   errorAnnotations: ErrorAnnotation[] = [],
 ): GradingResult {
+  const legibilityScore = Math.min(totalScore, 1.5)
   return {
     id: `${essayId}-result`,
     essayId,
@@ -130,11 +140,20 @@ function result(
       {
         id: 'language',
         name: 'Language',
-        score: totalScore,
-        maxScore: 15,
-        weight: 100,
-        reason: 'Synthetic score reason.',
-        evidence: 'Synthetic score evidence.',
+        score: totalScore - legibilityScore,
+        maxScore: 13.5,
+        weight: 90,
+        reason: 'Synthetic language score reason.',
+        evidence: 'Synthetic language score evidence.',
+      },
+      {
+        id: 'legibility',
+        name: 'Legibility',
+        score: legibilityScore,
+        maxScore: 1.5,
+        weight: 10,
+        reason: 'Synthetic legibility score reason.',
+        evidence: 'Synthetic legibility score evidence.',
       },
     ],
     errorAnnotations: errorAnnotations.map((annotation) => ({
@@ -335,9 +354,16 @@ describe('aggregateClassReviewSnapshot', () => {
       {
         dimensionId: 'language',
         name: 'Language',
-        averageScore: 12,
-        maxScore: 15,
-        normalizedPerformance: 0.8,
+        averageScore: 10.5,
+        maxScore: 13.5,
+        normalizedPerformance: 0.777778,
+      },
+      {
+        dimensionId: 'legibility',
+        name: 'Legibility',
+        averageScore: 1.5,
+        maxScore: 1.5,
+        normalizedPerformance: 1,
       },
     ])
     expect(aggregate.exclusions).toEqual([
@@ -399,6 +425,91 @@ describe('aggregateClassReviewSnapshot', () => {
   })
 
   it.each([
+    ['missing', undefined, 0],
+    ['draft', { ...task().rubricDraft!, status: 'draft' as const }, 0],
+    ['valid confirmed', task().rubricDraft!, 1],
+  ])('isolates modern score eligibility with a %s rubric', (_label, rubricDraft, expected) => {
+    const aggregate = aggregateClassReviewSnapshot({
+      task: task({ rubricDraft }),
+      essays: [essay('modern-rubric-state')],
+      results: [result('modern-rubric-state', 12)],
+    })
+
+    expect(aggregate.includedEssayCount).toBe(expected)
+    expect(aggregate.excludedEssayCount).toBe(1 - expected)
+  })
+
+  it.each([
+    ['blank writing goal', () => ({
+      currentTask: task({
+        rubricDraft: { ...task().rubricDraft!, writingGoal: '   ' },
+      }),
+      currentResult: result('invalid-confirmed', 12),
+    })],
+    ['blank dimension description', () => ({
+      currentTask: task({
+        rubricDraft: {
+          ...task().rubricDraft!,
+          dimensions: task().rubricDraft!.dimensions.map((dimension, index) => (
+            index === 0 ? { ...dimension, description: ' ' } : dimension
+          )),
+        },
+      }),
+      currentResult: result('invalid-confirmed', 12),
+    })],
+    ['only one non-legibility dimension', () => ({
+      currentTask: task({
+        rubricDraft: {
+          ...task().rubricDraft!,
+          dimensions: [{
+            id: 'language',
+            name: 'Language',
+            weight: 100,
+            description: 'Language quality.',
+            deductionFocus: [],
+          }],
+        },
+      }),
+      currentResult: {
+        ...result('invalid-confirmed', 12),
+        dimensionScores: [{
+          ...result('invalid-confirmed', 12).dimensionScores[0],
+          score: 12,
+          maxScore: 15,
+          weight: 100,
+        }],
+      },
+    })],
+  ])('rejects a modern invalid-confirmed rubric: %s', (_label, makeCase) => {
+    const { currentTask, currentResult } = makeCase()
+    const aggregate = aggregateClassReviewSnapshot({
+      task: currentTask,
+      essays: [essay('invalid-confirmed')],
+      results: [currentResult],
+    })
+
+    expect(aggregate.includedEssayCount).toBe(0)
+    expect(aggregate.exclusions).toEqual([
+      { essayId: 'invalid-confirmed', reason: 'invalid_result' },
+    ])
+  })
+
+  it('keeps the explicit no-run generation-zero legacy route without a rubric', () => {
+    const aggregate = aggregateClassReviewSnapshot({
+      task: task({ rubricGeneration: 0, rubricDraft: undefined }),
+      essays: [essay('legacy-zero', 'legacy')],
+      results: [result('legacy-zero', 12)],
+    })
+
+    expect(aggregate).toMatchObject({
+      includedEssayCount: 1,
+      issueEligibleEssayCount: 0,
+      excludedEssayCount: 0,
+      partialIssueChannelCount: 1,
+    })
+  })
+
+  it.each([
     ['score below zero', { totalScore: -1 }],
     ['score above full score', { totalScore: 16 }],
     ['empty dimensions', { dimensionScores: [] }],
@@ -435,13 +546,22 @@ describe('aggregateClassReviewSnapshot', () => {
         source: 'teacher',
         writingGoal: 'Write clearly.',
         offTopicCriteria: [],
-        dimensions: [{
-          id: 'language',
-          name: 'Language',
-          weight: 100,
-          description: 'Language quality.',
-          deductionFocus: [],
-        }],
+        dimensions: [
+          {
+            id: 'language',
+            name: 'Language',
+            weight: 90,
+            description: 'Language quality.',
+            deductionFocus: [],
+          },
+          {
+            id: 'legibility',
+            name: 'Legibility',
+            weight: 10,
+            description: 'Legibility quality.',
+            deductionFocus: [],
+          },
+        ],
         excellentFeatures: [],
         reviewTriggers: [],
         status: 'confirmed',
