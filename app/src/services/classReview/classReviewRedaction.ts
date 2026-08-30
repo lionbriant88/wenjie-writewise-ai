@@ -59,9 +59,9 @@ type ScanResult = 'ok' | 'malformed' | 'too_long'
 const EMAIL_CANDIDATE = /[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/giu
 const URL_CANDIDATE = /(?:https?:\/\/|www\.)[^\s<>{}[\]"']+/giu
 const PHONE_CANDIDATE = /(?:\+?86[\s-]?)?1[3-9]\d(?:[\s-]?\d){8,}/gu
-const LABELLED_ID_CANDIDATE = /(?:学号|学生编号|身份证号|证件号|student\s*(?:id|number)|identity\s*(?:id|number))\s*[:：]?\s*[A-Za-z0-9-]+/giu
-const SOCIAL_ACCOUNT_CANDIDATE = /(?:微信|wechat|qq|社交账号|账号|account)\s*[:：]?\s*@?[\p{L}\p{N}_.+-]+(?:@[\p{L}\p{N}.-]+)?/giu
-const SOCIAL_HANDLE_CANDIDATE = /@[A-Za-z][A-Za-z0-9_.-]+/gu
+const LABELLED_ID_CANDIDATE = /(?:学号|学生编号|身份证号|证件号|student\s*(?:id|number)|identity\s*(?:id|number))\s*[:：]?\s*(?<identifier>[\p{L}\p{N}\p{M}_.+-]+)/giu
+const SOCIAL_ACCOUNT_CANDIDATE = /(?:微信|wechat|qq|社交账号|账号|account)\s*[:：]?\s*(?<account>[@\p{L}\p{N}\p{M}_.+-]+)/giu
+const SOCIAL_HANDLE_CANDIDATE = /@(?<handle>[\p{L}\p{N}\p{M}_.+-]+)/gu
 const CONTINUOUS_DIGITS_CANDIDATE = /\d{6,}/gu
 const FORMAT_CONTROL = /\p{Cf}/u
 const LETTER_OR_NUMBER = /[\p{L}\p{N}]/u
@@ -76,6 +76,16 @@ interface StructuredSpan {
 interface StructuredScan {
   spans: StructuredSpan[]
   overlong: boolean
+}
+
+interface FoldedSourceRange {
+  sourceStart: number
+  sourceEnd: number
+}
+
+interface FoldedText {
+  text: string
+  sourceRanges: FoldedSourceRange[]
 }
 
 function omitted(reason: RedactionOmissionReason): RedactionResult {
@@ -105,6 +115,26 @@ function asciiLower(value: string): string {
 
 function normalizeText(value: string): string {
   return value.normalize('NFKC').trim().replace(/\s+/gu, ' ')
+}
+
+function foldUnicodeWithSourceMap(value: string): FoldedText | null {
+  if (scanCodePoints(value, MAX_SOURCE_CODE_POINTS) !== 'ok') return null
+  let text = ''
+  const sourceRanges: FoldedSourceRange[] = []
+  for (let sourceStart = 0; sourceStart < value.length;) {
+    const sourceCodePoint = nextCodePoint(value, sourceStart)
+    if (sourceCodePoint === undefined) return null
+    const sourceEnd = sourceStart + sourceCodePoint.length
+    const foldedCodePoint = sourceCodePoint.toUpperCase().toLowerCase()
+    if (foldedCodePoint.length === 0 || scanCodePoints(foldedCodePoint, 8) !== 'ok') return null
+    text += foldedCodePoint
+    for (let index = 0; index < foldedCodePoint.length; index += 1) {
+      sourceRanges.push({ sourceStart, sourceEnd })
+    }
+    sourceStart = sourceEnd
+  }
+  if (sourceRanges.length !== text.length) return null
+  return { text, sourceRanges }
 }
 
 function hasPromptInjection(value: string): boolean {
@@ -147,33 +177,45 @@ function nextCodePoint(value: string, index: number): string | undefined {
   return value[index]
 }
 
-function replaceKnownName(value: string, rawName: string): string {
+function replaceKnownName(value: string, rawName: string): string | null {
   const name = normalizeText(rawName)
   if (name.length === 0) return value
-  const lowerValue = asciiLower(value)
-  const lowerName = asciiLower(name)
+  const foldedValue = foldUnicodeWithSourceMap(value)
+  const foldedName = foldUnicodeWithSourceMap(name)
+  if (!foldedValue || !foldedName || foldedName.text.length === 0) return null
   const usesLatinBoundary = LATIN_SCRIPT.test(name)
-  let cursor = 0
+  let foldedCursor = 0
+  let sourceCursor = 0
   let output = ''
   let changed = false
-  while (cursor < value.length) {
-    const match = lowerValue.indexOf(lowerName, cursor)
+  while (foldedCursor < foldedValue.text.length) {
+    const match = foldedValue.text.indexOf(foldedName.text, foldedCursor)
     if (match < 0) break
-    const end = match + name.length
+    const foldedEnd = match + foldedName.text.length
+    const firstRange = foldedValue.sourceRanges[match]
+    const lastRange = foldedValue.sourceRanges[foldedEnd - 1]
+    if (!firstRange || !lastRange) return null
+    const startsAtSourceBoundary = match === 0
+      || foldedValue.sourceRanges[match - 1].sourceEnd <= firstRange.sourceStart
+    const endsAtSourceBoundary = foldedEnd === foldedValue.text.length
+      || foldedValue.sourceRanges[foldedEnd].sourceStart >= lastRange.sourceEnd
+    if (!startsAtSourceBoundary || !endsAtSourceBoundary) return null
+    const start = firstRange.sourceStart
+    const end = lastRange.sourceEnd
     const boundarySafe = !usesLatinBoundary || (
-      !isLatinTokenContinuation(previousCodePoint(value, match))
+      !isLatinTokenContinuation(previousCodePoint(value, start))
       && !isLatinTokenContinuation(nextCodePoint(value, end))
     )
     if (!boundarySafe) {
-      output += value.slice(cursor, match + 1)
-      cursor = match + 1
+      foldedCursor = match + 1
       continue
     }
-    output += value.slice(cursor, match) + PLACEHOLDER
-    cursor = end
+    output += value.slice(sourceCursor, start) + PLACEHOLDER
+    sourceCursor = end
+    foldedCursor = foldedEnd
     changed = true
   }
-  return changed ? output + value.slice(cursor) : value
+  return changed ? output + value.slice(sourceCursor) : value
 }
 
 function normalizedKnownNames(input: RedactionKnownNames): string[] | null {
@@ -207,14 +249,14 @@ function codePointLength(value: string): number {
 function collectCandidates(
   value: string,
   pattern: RegExp,
-  isSafe: (matched: string) => boolean,
+  isSafe: (match: RegExpMatchArray) => boolean,
   spans: StructuredSpan[],
 ): boolean {
   let overlong = false
   pattern.lastIndex = 0
   for (const match of value.matchAll(pattern)) {
     if (match.index === undefined) continue
-    if (!isSafe(match[0])) {
+    if (!isSafe(match)) {
       overlong = true
       continue
     }
@@ -230,19 +272,20 @@ function scanStructuredPii(value: string): StructuredScan {
   overlong = collectCandidates(
     value,
     URL_CANDIDATE,
-    (matched) => codePointLength(matched) <= 256,
+    (match) => codePointLength(match[0]) <= 256,
     spans,
   ) || overlong
   overlong = collectCandidates(
     value,
     EMAIL_CANDIDATE,
-    (matched) => codePointLength(matched.slice(0, matched.indexOf('@'))) <= 64,
+    (match) => codePointLength(match[0].slice(0, match[0].indexOf('@'))) <= 64,
     spans,
   ) || overlong
   overlong = collectCandidates(
     value,
     PHONE_CANDIDATE,
-    (matched) => {
+    (match) => {
+      const matched = match[0]
       const digits = matched.replace(/\D/gu, '')
       const subscriberDigits = /^\+?86/u.test(matched) ? digits.slice(2) : digits
       return subscriberDigits.length === 11
@@ -252,31 +295,42 @@ function scanStructuredPii(value: string): StructuredScan {
   overlong = collectCandidates(
     value,
     LABELLED_ID_CANDIDATE,
-    (matched) => {
-      const token = matched.match(/[A-Za-z0-9-]+$/u)?.[0] ?? ''
-      return token.length >= 4 && token.length <= 32
+    (match) => {
+      const token = match.groups?.identifier ?? ''
+      return codePointLength(token) >= 4
+        && codePointLength(token) <= 32
+        && LETTER_OR_NUMBER.test(token)
     },
     spans,
   ) || overlong
   overlong = collectCandidates(
     value,
     SOCIAL_ACCOUNT_CANDIDATE,
-    (matched) => {
-      const token = matched.match(/@?[\p{L}\p{N}_.+-]+(?:@[\p{L}\p{N}.-]+)?$/u)?.[0] ?? ''
-      return codePointLength(token) >= 3 && codePointLength(token) <= 64
+    (match) => {
+      const token = match.groups?.account ?? ''
+      const atCount = token.match(/@/gu)?.length ?? 0
+      return codePointLength(token) >= 3
+        && codePointLength(token) <= 64
+        && LETTER_OR_NUMBER.test(token)
+        && atCount <= 1
     },
     spans,
   ) || overlong
   overlong = collectCandidates(
     value,
     SOCIAL_HANDLE_CANDIDATE,
-    (matched) => codePointLength(matched.slice(1)) <= 64,
+    (match) => {
+      const token = match.groups?.handle ?? ''
+      return codePointLength(token) >= 3
+        && codePointLength(token) <= 64
+        && LETTER_OR_NUMBER.test(token)
+    },
     spans,
   ) || overlong
   overlong = collectCandidates(
     value,
     CONTINUOUS_DIGITS_CANDIDATE,
-    (matched) => matched.length <= 32,
+    (match) => match[0].length <= 32,
     spans,
   ) || overlong
 
@@ -347,8 +401,13 @@ function replaceEntityHits(
   return { text: output + text.slice(cursor), cutIdentifier }
 }
 
-function containsKnownName(value: string, names: readonly string[]): boolean {
-  return names.some((name) => replaceKnownName(value, name) !== value)
+function containsKnownName(value: string, names: readonly string[]): boolean | null {
+  for (const name of names) {
+    const replaced = replaceKnownName(value, name)
+    if (replaced === null) return null
+    if (replaced !== value) return true
+  }
+  return false
 }
 
 function hasEnoughMeaning(value: string): boolean {
@@ -381,7 +440,11 @@ export function redactClassReviewExcerpt(input: RedactionInput): RedactionResult
   if (!names) return omitted('malformed_input')
 
   let scrubbed = text
-  for (const name of names) scrubbed = replaceKnownName(scrubbed, name)
+  for (const name of names) {
+    const replaced = replaceKnownName(scrubbed, name)
+    if (replaced === null) return omitted('malformed_input')
+    scrubbed = replaced
+  }
   const structured = scanStructuredPii(scrubbed)
   if (structured.overlong) return omitted('residual_identifier')
   scrubbed = replaceStructuredPii(scrubbed, structured.spans)
@@ -405,9 +468,11 @@ export function redactClassReviewExcerpt(input: RedactionInput): RedactionResult
   if (replacedEntities.cutIdentifier) return omitted('residual_identifier')
 
   if (hasPromptInjection(scrubbed)) return omitted('prompt_injection')
+  const residualKnownName = containsKnownName(scrubbed, names)
+  if (residualKnownName === null) return omitted('malformed_input')
   if (
     FORMAT_CONTROL.test(scrubbed)
-    || containsKnownName(scrubbed, names)
+    || residualKnownName
     || containsStructuredPii(scrubbed)
   ) return omitted('residual_identifier')
   let residualHits: readonly PersonEntityHit[]

@@ -85,6 +85,37 @@ describe('class review excerpt redaction', () => {
   })
 
   it.each([
+    ['composed upper source at Han boundary', 'JOSÉ同学 explains the claim, but the evidence remains incomplete.', 'José', '[REDACTED]同学 explains the claim, but the evidence remains incomplete.'],
+    ['decomposed known name normalized to composed', 'JOSÉ同学 explains the claim, but the evidence remains incomplete.', 'Jose\u0301', '[REDACTED]同学 explains the claim, but the evidence remains incomplete.'],
+    ['decomposed source normalized to composed', 'JOSE\u0301同学 explains the claim, but the evidence remains incomplete.', 'José', '[REDACTED]同学 explains the claim, but the evidence remains incomplete.'],
+    ['Unicode case-fold expansion with exact source span', 'STRASSE同学 explains the claim, but the evidence remains incomplete.', 'Straße', '[REDACTED]同学 explains the claim, but the evidence remains incomplete.'],
+    ['Unicode source expansion with exact source span', 'Straße同学 explains the claim, but the evidence remains incomplete.', 'STRASSE', '[REDACTED]同学 explains the claim, but the evidence remains incomplete.'],
+    ['Unicode case equivalence at punctuation', '(JOSÉ) explains the claim, but the evidence remains incomplete.', 'josé', '([REDACTED]) explains the claim, but the evidence remains incomplete.'],
+  ])('maps Unicode case-folded known-name spans exactly: %s', (_label, sourceText, name, expectedText) => {
+    expect(redactClassReviewExcerpt(input(sourceText, {
+      knownNames: { ...knownNames, students: [name] },
+    }))).toMatchObject({ status: 'kept', text: expectedText })
+  })
+
+  it.each([
+    'JOSÉ2 presents a claim, but the conclusion lacks supporting evidence.',
+    '_JOSÉ_ presents a claim, but the conclusion lacks supporting evidence.',
+    'ÉJOSÉ presents a claim, but the conclusion lacks supporting evidence.',
+  ])('does not redact a Unicode-folded name inside a Latin/digit/underscore token', (sourceText) => {
+    expect(redactClassReviewExcerpt(input(sourceText, {
+      knownNames: { ...knownNames, students: ['José'] },
+    }))).toMatchObject({ status: 'kept', text: sourceText })
+  })
+
+  it('does not strip accents or fuzzy-match a different normalized name', () => {
+    const sourceText = 'JOSE presents a claim, but the conclusion lacks supporting evidence.'
+
+    expect(redactClassReviewExcerpt(input(sourceText, {
+      knownNames: { ...knownNames, students: ['José'] },
+    }))).toMatchObject({ status: 'kept', text: sourceText })
+  })
+
+  it.each([
     ['email', 'Contact learner.name＠school.example and revise the topic sentence.'],
     ['phone', 'Call +86 138-1234-5678 because the supporting reason is incomplete.'],
     ['student number', '学号：A20260017 should not appear; the paragraph needs a connector.'],
@@ -310,6 +341,79 @@ describe('class review excerpt redaction', () => {
     if (result.status === 'kept') {
       expect(result.text.match(/\[REDACTED\]/g)).toHaveLength(1)
     }
+  })
+
+  it.each([
+    ['underscore', '学号:A20260017_EXTRA is private, while the conclusion lacks supporting evidence.'],
+    ['period', '学号:A20260017.EXTRA is private, while the conclusion lacks supporting evidence.'],
+    ['plus', '学号:A20260017+EXTRA is private, while the conclusion lacks supporting evidence.'],
+    ['hyphen', '学号:A20260017-EXTRA is private, while the conclusion lacks supporting evidence.'],
+  ])('consumes the complete labelled identifier through an adjacent %s continuation', (_label, sourceText) => {
+    const result = redactClassReviewExcerpt(input(sourceText))
+
+    expect(result).toMatchObject({
+      status: 'kept',
+      text: '[REDACTED] is private, while the conclusion lacks supporting evidence.',
+    })
+  })
+
+  it.each([
+    ['leading continuation', '学号:_A20260017 is private, while the conclusion lacks supporting evidence.', '[REDACTED] is private, while the conclusion lacks supporting evidence.'],
+    ['trailing continuation', '学号:A20260017_ is private, while the conclusion lacks supporting evidence.', '[REDACTED] is private, while the conclusion lacks supporting evidence.'],
+    ['social mixed token', '账号:.writer_2026+class-tag is private, while the conclusion lacks supporting evidence.', '[REDACTED] is private, while the conclusion lacks supporting evidence.'],
+    ['safe comma boundary', '学号:A20260017, the identifier is private and the conclusion lacks evidence.', '[REDACTED], the identifier is private and the conclusion lacks evidence.'],
+    ['safe Han punctuation boundary', '账号:writer_2026。该段结论仍然缺少充分论据。', '[REDACTED]。该段结论仍然缺少充分论据。'],
+  ])('redacts one maximal labelled/social token at safe boundaries: %s', (_label, sourceText, expectedText) => {
+    const result = redactClassReviewExcerpt(input(sourceText))
+
+    expect(result).toMatchObject({ status: 'kept', text: expectedText })
+    if (result.status === 'kept') {
+      expect(result.text.match(/\[REDACTED\]/g)).toHaveLength(1)
+      expect(result.text).not.toContain('A20260017')
+      expect(result.text).not.toContain('writer_2026')
+    }
+  })
+
+  it.each([
+    ['labelled token +1 through underscore', `学号:${`${'A'.repeat(31)}_B`} must be omitted without an orphan suffix.`],
+    ['social token +1 through plus', `账号:${`${'a'.repeat(63)}+b`} must be omitted without an orphan suffix.`],
+  ])('omits a maximal labelled/social token that crosses its v1 bound: %s', (_label, sourceText) => {
+    expect(redactClassReviewExcerpt(input(sourceText))).toEqual({
+      status: 'omitted',
+      reason: 'residual_identifier',
+      redactionVersion: 'class-review-redaction-v1',
+    })
+  })
+
+  it('merges a maximal labelled social token with an overlapping email span', () => {
+    const result = redactClassReviewExcerpt(input(
+      '账号:writer_extra@example.com is private, while the conclusion lacks supporting evidence.',
+    ))
+
+    expect(result).toMatchObject({
+      status: 'kept',
+      text: '[REDACTED] is private, while the conclusion lacks supporting evidence.',
+    })
+  })
+
+  it.each([
+    ['plus continuation', '@writer_2026+class-tag is private, while the conclusion lacks supporting evidence.'],
+    ['Unicode continuation', '@josé_writer is private, while the conclusion lacks supporting evidence.'],
+  ])('consumes one complete standalone social-handle token: %s', (_label, sourceText) => {
+    expect(redactClassReviewExcerpt(input(sourceText))).toMatchObject({
+      status: 'kept',
+      text: '[REDACTED] is private, while the conclusion lacks supporting evidence.',
+    })
+  })
+
+  it('omits an over-bound standalone handle without projecting a continuation suffix', () => {
+    expect(redactClassReviewExcerpt(input(
+      `@${'a'.repeat(63)}+b must be omitted without an orphan suffix.`,
+    ))).toEqual({
+      status: 'omitted',
+      reason: 'residual_identifier',
+      redactionVersion: 'class-review-redaction-v1',
+    })
   })
 
   it.each([
