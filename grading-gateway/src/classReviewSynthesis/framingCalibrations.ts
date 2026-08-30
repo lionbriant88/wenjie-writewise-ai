@@ -36,8 +36,8 @@ export function isExactClassReviewFramingCalibration(
 export function parseClassReviewFramingCalibration(
   value: unknown,
 ): ClassReviewFramingCalibration | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
   try {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
     const prototype = Object.getPrototypeOf(value)
     if (prototype !== Object.prototype && prototype !== null) return null
 

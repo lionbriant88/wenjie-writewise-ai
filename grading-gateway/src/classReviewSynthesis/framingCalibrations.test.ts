@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   PRODUCTION_CLASS_REVIEW_FRAMING_CALIBRATION,
   isExactClassReviewFramingCalibration,
+  parseClassReviewFramingCalibration,
   type ClassReviewFramingCalibration,
 } from './framingCalibrations.js'
+import { preflightClassReviewPrompt } from './promptBudget.js'
 
 export const syntheticCalibration: ClassReviewFramingCalibration = {
   apiBase: 'https://api.moonshot.cn/v1',
@@ -67,5 +69,40 @@ describe('class-review framing calibration', () => {
     expect(getterReads).toBe(0)
     expect(() => isExactClassReviewFramingCalibration(throwingProxy)).not.toThrow()
     expect(isExactClassReviewFramingCalibration(throwingProxy)).toBe(false)
+  })
+
+  it('returns null instead of throwing when the calibration Proxy is revoked', () => {
+    const revoked = Proxy.revocable(syntheticCalibration, {})
+    revoked.revoke()
+    let parsed: ReturnType<typeof parseClassReviewFramingCalibration> | undefined
+
+    expect(() => {
+      parsed = parseClassReviewFramingCalibration(revoked.proxy)
+    }).not.toThrow()
+    expect(parsed).toBeNull()
+  })
+
+  it('fails preflight safely when the calibration Proxy is revoked', () => {
+    const revoked = Proxy.revocable(syntheticCalibration, {})
+    revoked.revoke()
+    let result: ReturnType<typeof preflightClassReviewPrompt> | undefined
+
+    expect(() => {
+      result = preflightClassReviewPrompt({
+        messages: [
+          { role: 'system', content: 'policy' },
+          { role: 'user', content: '{}' },
+        ],
+        schema: {},
+        calibration: revoked.proxy,
+      })
+    }).not.toThrow()
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'class_review_prompt_calibration_missing',
+      reason: 'calibration',
+      framingTokens: null,
+      totalPromptTokens: null,
+    })
   })
 })
