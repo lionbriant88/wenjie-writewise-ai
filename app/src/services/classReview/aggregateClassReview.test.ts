@@ -302,6 +302,96 @@ describe('classReviewSupportThreshold', () => {
 })
 
 describe('aggregateClassReviewSnapshot', () => {
+  it('retains authoritative full-score and exact score medians for projection', () => {
+    const essays = [essay('median-a'), essay('median-b'), essay('median-c')]
+    const aggregate = aggregateClassReviewSnapshot({
+      task: task({ fullScore: 15 }),
+      essays,
+      results: [
+        result('median-a', 3),
+        result('median-b', 13),
+        result('median-c', 12),
+      ],
+    })
+
+    expect(aggregate.fullScore).toBe(15)
+    expect(aggregate.scoreMedian).toBe(12)
+    expect(aggregate.dimensions).toEqual([
+      {
+        dimensionId: 'language',
+        name: 'Language',
+        averageScore: 7.8,
+        medianScore: 10.5,
+        maxScore: 13.5,
+        normalizedPerformance: 0.577778,
+      },
+      {
+        dimensionId: 'legibility',
+        name: 'Legibility',
+        averageScore: 1.5,
+        medianScore: 1.5,
+        maxScore: 1.5,
+        normalizedPerformance: 1,
+      },
+    ])
+  })
+
+  it('counts only fixed nonzero issue counters before clear-spelling extraction', () => {
+    const directIssues: ErrorAnnotation[] = [
+      issue('grammar-counter'),
+      {
+        ...issue('spelling-counter', 'feelling', 'feeling'),
+        type: 'spelling',
+        severity: 'low',
+      },
+      {
+        ...issue('word-choice-counter', 'filling', 'feeling'),
+        type: 'word_choice',
+        severity: 'high',
+      },
+      {
+        ...issue('structure-counter', 'First. Second.', 'First, then second.'),
+        type: 'structure',
+        severity: 'low',
+      },
+    ]
+    const clearSpellingBase = spellingResult('counter-a', [
+      { id: 'spelling-counter', original: 'feelling', corrected: 'feeling' },
+    ])
+    const countedResult = {
+      ...clearSpellingBase,
+      errorAnnotations: directIssues,
+    }
+    const structuralBase = result('counter-b', 11)
+    const structuralResult = {
+      ...structuralBase,
+      fullTextRevision: {
+        ...structuralBase.fullTextRevision!,
+        logicIssues: [logicItem('logic-counter')],
+      },
+      legibilityIssues: [legibilityItem('legibility-counter')],
+    }
+    const aggregate = aggregateClassReviewSnapshot({
+      task: task(),
+      essays: [essay('counter-a'), essay('counter-b')],
+      results: [countedResult, structuralResult],
+    })
+
+    expect(aggregate.clearSpellingItems).toHaveLength(1)
+    expect(aggregate.fixedIssueCounters).toEqual([
+      { counterId: 'grammar', count: 1 },
+      { counterId: 'spelling', count: 1 },
+      { counterId: 'word_choice', count: 1 },
+      { counterId: 'structure', count: 1 },
+      { counterId: 'legibility', count: 1 },
+      { counterId: 'logic_unclear_logic', count: 1 },
+      { counterId: 'severity_low', count: 2 },
+      { counterId: 'severity_medium', count: 2 },
+      { counterId: 'severity_high', count: 1 },
+    ])
+    expect(aggregate.fixedIssueCounters.some(({ counterId }) => counterId === 'other')).toBe(false)
+  })
+
   it('counts duplicate evidence once per essay while retaining every occurrence', () => {
     const essays = [essay('essay-1'), essay('essay-2')]
     const aggregate = aggregateClassReviewSnapshot({
@@ -355,6 +445,7 @@ describe('aggregateClassReviewSnapshot', () => {
         dimensionId: 'language',
         name: 'Language',
         averageScore: 10.5,
+        medianScore: 10.5,
         maxScore: 13.5,
         normalizedPerformance: 0.777778,
       },
@@ -362,6 +453,7 @@ describe('aggregateClassReviewSnapshot', () => {
         dimensionId: 'legibility',
         name: 'Legibility',
         averageScore: 1.5,
+        medianScore: 1.5,
         maxScore: 1.5,
         normalizedPerformance: 1,
       },

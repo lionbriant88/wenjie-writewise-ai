@@ -16,6 +16,7 @@ import {
   type CurrentClassReviewExclusionReason,
 } from '../../utils/classOverview'
 import { classifyDefiniteSpellingCandidate } from './classReviewSpelling'
+import type { IssueCounterIdV1, SynthesisIssueCounterV1 } from './types'
 
 export type ClassReviewExclusionReason = CurrentClassReviewExclusionReason
 
@@ -28,6 +29,7 @@ export interface ClassReviewDimensionAggregate {
   dimensionId: string
   name: string
   averageScore: number
+  medianScore: number
   maxScore: number
   normalizedPerformance: number
 }
@@ -72,6 +74,8 @@ export interface ClassReviewAggregate {
   excludedEssayCount: number
   partialIssueChannelCount: number
   exclusions: ClassReviewEssayExclusion[]
+  fullScore: number
+  scoreMedian: number | null
   scoreSummary: {
     averageScore: number
     highestScore: number
@@ -79,6 +83,7 @@ export interface ClassReviewAggregate {
   } | null
   scoreBands: ClassReviewScoreBandAggregate[]
   dimensions: ClassReviewDimensionAggregate[]
+  fixedIssueCounters: SynthesisIssueCounterV1[]
   issueGroups: ClassReviewIssueAggregate[]
   commonIssueGroups: ClassReviewIssueAggregate[]
   clearSpellingItems: ClassReviewClearSpellingAggregate[]
@@ -144,6 +149,26 @@ const LOGIC_ACTIONS = new Set([
   'clarify_reference',
   'ask_student_to_explain',
 ])
+const ISSUE_COUNTER_ORDER: readonly IssueCounterIdV1[] = [
+  'grammar',
+  'spelling',
+  'word_choice',
+  'structure',
+  'legibility',
+  'logic_weak_connection',
+  'logic_unclear_logic',
+  'logic_missing_cause_effect',
+  'logic_unclear_transition',
+  'logic_topic_drift',
+  'logic_irrelevant_sentence',
+  'logic_unclear_reference',
+  'logic_missing_motivation',
+  'logic_plot_gap',
+  'severity_low',
+  'severity_medium',
+  'severity_high',
+  'other',
+]
 
 function roundToOneDecimal(value: number): number {
   return Math.round(value * 10) / 10
@@ -151,6 +176,15 @@ function roundToOneDecimal(value: number): number {
 
 function roundRatio(value: number): number {
   return Math.round(value * 1_000_000) / 1_000_000
+}
+
+function median(values: readonly number[]): number | null {
+  if (values.length === 0) return null
+  const sorted = [...values].sort((left, right) => left - right)
+  const middle = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 1
+    ? sorted[middle]
+    : (sorted[middle - 1] + sorted[middle]) / 2
 }
 
 function compareCodePoints(left: string, right: string): number {
@@ -445,6 +479,7 @@ function scoreDimensions(results: readonly GradingResult[]): ClassReviewDimensio
         dimensionId,
         name: dimension.name,
         averageScore,
+        medianScore: median(scores) as number,
         maxScore: dimension.maxScore,
         normalizedPerformance: roundRatio(averageScore / dimension.maxScore),
       }
@@ -553,10 +588,16 @@ export function aggregateClassReviewSnapshot(input: {
 
   const issueGroups = new Map<string, MutableIssueAggregate>()
   const spellingGroups = new Map<string, MutableSpellingAggregate>()
+  const issueCounters = new Map<IssueCounterIdV1, number>()
+  const incrementCounter = (counterId: IssueCounterIdV1, count = 1): void => {
+    issueCounters.set(counterId, (issueCounters.get(counterId) ?? 0) + count)
+  }
   for (const { essay, result } of issueEligible) {
     const sentencePairs = result.fullTextRevision?.sentencePairs ?? []
     const logicIssues = result.fullTextRevision?.logicIssues ?? []
     for (const issue of result.errorAnnotations) {
+      incrementCounter(issue.type)
+      incrementCounter(`severity_${issue.severity}`)
       const definiteSpelling = classifyDefiniteSpellingCandidate({
         candidate: issue,
         errorAnnotations: result.errorAnnotations,
@@ -611,6 +652,8 @@ export function aggregateClassReviewSnapshot(input: {
       })
     }
     for (const logicIssue of logicIssues) {
+      incrementCounter(`logic_${logicIssue.subType}`)
+      incrementCounter(`severity_${logicIssue.severity}`)
       const title = normalizeVisible(logicIssue.diagnosis)
       const originalText = normalizeVisible(logicIssue.original)
       const suggestionOrDiagnosis = normalizeVisible(logicIssue.conservativeSuggestion)
@@ -625,6 +668,9 @@ export function aggregateClassReviewSnapshot(input: {
         changeTypes: [],
         representativeKey: stableTextKey(title, originalText, suggestionOrDiagnosis),
       })
+    }
+    if (result.legibilityIssues.length > 0) {
+      incrementCounter('legibility', result.legibilityIssues.length)
     }
   }
 
@@ -663,6 +709,8 @@ export function aggregateClassReviewSnapshot(input: {
     excludedEssayCount: exclusions.length,
     partialIssueChannelCount,
     exclusions,
+    fullScore: input.task.fullScore,
+    scoreMedian: median(includedResults.map((result) => result.totalScore)),
     scoreSummary: overview.averageScore === null
       ? null
       : {
@@ -672,6 +720,10 @@ export function aggregateClassReviewSnapshot(input: {
         },
     scoreBands,
     dimensions: scoreDimensions(includedResults),
+    fixedIssueCounters: ISSUE_COUNTER_ORDER.flatMap((counterId) => {
+      const count = issueCounters.get(counterId) ?? 0
+      return count > 0 ? [{ counterId, count }] : []
+    }),
     issueGroups: finalizedIssueGroups,
     commonIssueGroups: finalizedIssueGroups.filter((group) => group.mustCover),
     clearSpellingItems,

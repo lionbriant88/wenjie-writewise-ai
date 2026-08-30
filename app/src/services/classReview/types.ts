@@ -364,6 +364,12 @@ export interface SynthesisStatisticsV1 {
   issueCounters: SynthesisIssueCounterV1[]
 }
 
+export interface ClassReviewSynthesisProjectionV1 {
+  statistics: SynthesisStatisticsV1
+  groups: SynthesisGroupV1[]
+  semanticCoverage: SemanticCoverageV1
+}
+
 export type SynthesisGroupTypeV1 =
   | 'grammar'
   | 'spelling'
