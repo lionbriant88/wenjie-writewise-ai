@@ -298,6 +298,9 @@ function parseGroup(
   if (distinctSupport.value > issueEligibleEssayCount) return fail('invalid_value', pointer(path, 'distinctEssaySupport'))
   const occurrenceCount = safeIntegerAt(record.value.occurrenceCount, pointer(path, 'occurrenceCount'))
   if (!occurrenceCount.ok) return occurrenceCount
+  if (occurrenceCount.value < distinctSupport.value) {
+    return fail('invalid_value', pointer(path, 'occurrenceCount'))
+  }
 
   let excerpt: SynthesisGroupV1['excerpt']
   if (record.value.excerpt === null) excerpt = null
@@ -334,6 +337,19 @@ function parseGroup(
     occurrenceCount: occurrenceCount.value,
     excerpt,
   })
+}
+
+function safeGroupSum(
+  groups: readonly SynthesisGroupV1[],
+  field: 'distinctEssaySupport' | 'occurrenceCount',
+): number | null {
+  let total = 0
+  for (const group of groups) {
+    const next = total + group[field]
+    if (!Number.isSafeInteger(next)) return null
+    total = next
+  }
+  return total
 }
 
 export function validateClassReviewSynthesisRequest(
@@ -383,6 +399,23 @@ export function validateClassReviewSynthesisRequest(
   if (jsonUtf8ByteLength(groups.value) > 32 * 1024) return fail('limit_exceeded', '/groups')
   const semanticCoverage = parseSemanticCoverage(record.value.semanticCoverage, '/semanticCoverage')
   if (!semanticCoverage.ok) return semanticCoverage
+  if (semanticCoverage.value.projectedGroupCount !== groups.value.length) {
+    return fail('invalid_value', '/semanticCoverage/projectedGroupCount')
+  }
+  const projectedSupport = safeGroupSum(groups.value, 'distinctEssaySupport')
+  if (
+    projectedSupport === null
+    || semanticCoverage.value.projectedDistinctEssaySupportSum !== projectedSupport
+  ) {
+    return fail('invalid_value', '/semanticCoverage/projectedDistinctEssaySupportSum')
+  }
+  const projectedOccurrences = safeGroupSum(groups.value, 'occurrenceCount')
+  if (
+    projectedOccurrences === null
+    || semanticCoverage.value.projectedOccurrenceSum !== projectedOccurrences
+  ) {
+    return fail('invalid_value', '/semanticCoverage/projectedOccurrenceSum')
+  }
 
   const outputLimits = hasOnlyKeys(record.value.outputLimits, '/outputLimits', [
     'maxCompletionTokens', 'maxVisibleCodePoints', 'maxJsonUtf8Bytes',

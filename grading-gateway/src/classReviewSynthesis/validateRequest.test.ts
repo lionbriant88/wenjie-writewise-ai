@@ -65,6 +65,39 @@ function groupsOf(request: JsonObject): JsonObject[] {
   )
 }
 
+function semanticCoverageOf(request: JsonObject): JsonObject {
+  return object(property(request, 'semanticCoverage'), 'request.semanticCoverage')
+}
+
+function setGroupsWithExactCoverage(request: JsonObject, groups: JsonObject[]) {
+  const projectedDistinctEssaySupportSum = groups.reduce(
+    (sum, item) => sum + Number(property(item, 'distinctEssaySupport')),
+    0,
+  )
+  const projectedOccurrenceSum = groups.reduce(
+    (sum, item) => sum + Number(property(item, 'occurrenceCount')),
+    0,
+  )
+  if (
+    !Number.isSafeInteger(projectedDistinctEssaySupportSum)
+    || !Number.isSafeInteger(projectedOccurrenceSum)
+  ) {
+    throw new Error('Exact-coverage test fixture sums must be safe integers.')
+  }
+  request.groups = groups
+  Object.assign(semanticCoverageOf(request), {
+    projectedGroupCount: groups.length,
+    eligibleGroupCount: groups.length,
+    groupCoverage: 1,
+    projectedDistinctEssaySupportSum,
+    eligibleDistinctEssaySupportSum: projectedDistinctEssaySupportSum,
+    supportWeightedCoverage: 1,
+    projectedOccurrenceSum,
+    eligibleOccurrenceSum: projectedOccurrenceSum,
+    occurrenceWeightedCoverage: 1,
+  })
+}
+
 function utf8JsonBytes(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value), 'utf8')
 }
@@ -155,7 +188,7 @@ function requestWithGroupBytes(targetBytes: number): JsonObject {
   const groups = Array.from({ length: 64 }, (_, index) =>
     group(index, { originalText: 'o', suggestionOrDiagnosis: 's' }),
   )
-  request.groups = groups
+  setGroupsWithExactCoverage(request, groups)
   const slots: Array<{ owner: JsonObject; key: string; maximumCodePoints: number }> = []
   for (const item of groups) {
     slots.push({ owner: item, key: 'groupId', maximumCodePoints: 128 })
@@ -310,9 +343,122 @@ describe('validateClassReviewSynthesisRequest', () => {
     expectInvalid(longLabel, 'limit_exceeded', '/statistics/dimensions/0/label')
   })
 
+  it('rejects ratio-consistent projected totals that disagree with reconstructed groups', () => {
+    for (const mismatch of [
+      {
+        projected: 'projectedGroupCount',
+        eligible: 'eligibleGroupCount',
+        ratio: 'groupCoverage',
+        value: 1,
+        path: '/semanticCoverage/projectedGroupCount',
+      },
+      {
+        projected: 'projectedDistinctEssaySupportSum',
+        eligible: 'eligibleDistinctEssaySupportSum',
+        ratio: 'supportWeightedCoverage',
+        value: 2,
+        path: '/semanticCoverage/projectedDistinctEssaySupportSum',
+      },
+      {
+        projected: 'projectedOccurrenceSum',
+        eligible: 'eligibleOccurrenceSum',
+        ratio: 'occurrenceWeightedCoverage',
+        value: 3,
+        path: '/semanticCoverage/projectedOccurrenceSum',
+      },
+    ] as const) {
+      const request = requestFixture('withGroups')
+      const coverage = semanticCoverageOf(request)
+      coverage[mismatch.projected] = mismatch.value
+      coverage[mismatch.eligible] = mismatch.value
+      coverage[mismatch.ratio] = 1
+      expectInvalid(request, 'invalid_value', mismatch.path)
+    }
+  })
+
+  it('accepts exact projected totals for both populated and zero-group projections', () => {
+    for (const name of ['withGroups', 'pureStatistics'] as const) {
+      const request = requestFixture(name)
+      expect(validateClassReviewSynthesisRequest(request)).toEqual({ ok: true, value: request })
+    }
+  })
+
+  it('rejects projected support and occurrence sums that overflow safe integers', () => {
+    const supportOverflow = requestFixture('withGroups')
+    Object.assign(statisticsOf(supportOverflow), {
+      includedEssayCount: Number.MAX_SAFE_INTEGER,
+      issueEligibleEssayCount: Number.MAX_SAFE_INTEGER,
+      totalEssayCount: Number.MAX_SAFE_INTEGER,
+      excludedEssayCount: 0,
+    })
+    supportOverflow.groups = [
+      { ...group(0), distinctEssaySupport: Number.MAX_SAFE_INTEGER, occurrenceCount: Number.MAX_SAFE_INTEGER },
+      group(1),
+    ]
+    Object.assign(semanticCoverageOf(supportOverflow), {
+      projectedGroupCount: 2,
+      eligibleGroupCount: 2,
+      groupCoverage: 1,
+      projectedDistinctEssaySupportSum: Number.MAX_SAFE_INTEGER,
+      eligibleDistinctEssaySupportSum: Number.MAX_SAFE_INTEGER,
+      supportWeightedCoverage: 1,
+      projectedOccurrenceSum: Number.MAX_SAFE_INTEGER,
+      eligibleOccurrenceSum: Number.MAX_SAFE_INTEGER,
+      occurrenceWeightedCoverage: 1,
+    })
+    expectInvalid(
+      supportOverflow,
+      'invalid_value',
+      '/semanticCoverage/projectedDistinctEssaySupportSum',
+    )
+
+    const occurrenceOverflow = requestFixture('withGroups')
+    occurrenceOverflow.groups = [
+      { ...group(0), occurrenceCount: Number.MAX_SAFE_INTEGER },
+      group(1),
+    ]
+    Object.assign(semanticCoverageOf(occurrenceOverflow), {
+      projectedGroupCount: 2,
+      eligibleGroupCount: 2,
+      groupCoverage: 1,
+      projectedDistinctEssaySupportSum: 2,
+      eligibleDistinctEssaySupportSum: 2,
+      supportWeightedCoverage: 1,
+      projectedOccurrenceSum: Number.MAX_SAFE_INTEGER,
+      eligibleOccurrenceSum: Number.MAX_SAFE_INTEGER,
+      occurrenceWeightedCoverage: 1,
+    })
+    expectInvalid(
+      occurrenceOverflow,
+      'invalid_value',
+      '/semanticCoverage/projectedOccurrenceSum',
+    )
+  })
+
+  it('rejects occurrence counts below distinct support and accepts equality', () => {
+    const invalid = requestFixture('withGroups')
+    groupsOf(invalid)[0].occurrenceCount = 1
+    expectInvalid(invalid, 'invalid_value', '/groups/0/occurrenceCount')
+
+    const exact = requestFixture('pureStatistics')
+    exact.groups = [group(0)]
+    Object.assign(semanticCoverageOf(exact), {
+      projectedGroupCount: 1,
+      eligibleGroupCount: 1,
+      groupCoverage: 1,
+      projectedDistinctEssaySupportSum: 1,
+      eligibleDistinctEssaySupportSum: 1,
+      supportWeightedCoverage: 1,
+      projectedOccurrenceSum: 1,
+      eligibleOccurrenceSum: 1,
+      occurrenceWeightedCoverage: 1,
+    })
+    expect(validateClassReviewSynthesisRequest(exact).ok).toBe(true)
+  })
+
   it('accepts 64 unique groups and rejects 65, duplicate aliases, and unknown group enums', () => {
     const exact = requestFixture('withGroups')
-    exact.groups = Array.from({ length: 64 }, (_, index) => group(index))
+    setGroupsWithExactCoverage(exact, Array.from({ length: 64 }, (_, index) => group(index)))
     expect(validateClassReviewSynthesisRequest(exact).ok).toBe(true)
 
     const excessive = structuredClone(exact)
@@ -339,10 +485,10 @@ describe('validateClassReviewSynthesisRequest', () => {
 
     for (const field of ['originalText', 'suggestionOrDiagnosis'] as const) {
       const exact = requestFixture('withGroups')
-      exact.groups = [group(0, {
+      setGroupsWithExactCoverage(exact, [group(0, {
         originalText: field === 'originalText' ? '😀'.repeat(160) : 'x',
         suggestionOrDiagnosis: field === 'suggestionOrDiagnosis' ? '😀'.repeat(160) : 'x',
-      })]
+      })])
       expect(validateClassReviewSynthesisRequest(exact).ok).toBe(true)
       const over = structuredClone(exact)
       object(property(groupsOf(over)[0], 'excerpt'), 'excerpt')[field] = '😀'.repeat(161)
@@ -350,18 +496,18 @@ describe('validateClassReviewSynthesisRequest', () => {
     }
 
     const titleExact = requestFixture('withGroups')
-    titleExact.groups = [{ ...group(0), title: '😀'.repeat(48) }]
+    setGroupsWithExactCoverage(titleExact, [{ ...group(0), title: '😀'.repeat(48) }])
     expect(validateClassReviewSynthesisRequest(titleExact).ok).toBe(true)
     const titleOver = structuredClone(titleExact)
     groupsOf(titleOver)[0].title = '😀'.repeat(49)
     expectInvalid(titleOver, 'limit_exceeded', '/groups/0/title')
 
     const visibleExact = requestFixture('withGroups')
-    visibleExact.groups = [{
+    setGroupsWithExactCoverage(visibleExact, [{
       ...group(0),
       title: '😀'.repeat(40),
       excerpt: { originalText: '😀'.repeat(160), suggestionOrDiagnosis: '😀'.repeat(160) },
-    }]
+    }])
     expect(validateClassReviewSynthesisRequest(visibleExact).ok).toBe(true)
     const visibleOver = structuredClone(visibleExact)
     groupsOf(visibleOver)[0].title = '😀'.repeat(41)

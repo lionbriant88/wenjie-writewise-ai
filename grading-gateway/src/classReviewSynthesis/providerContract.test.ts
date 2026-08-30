@@ -85,6 +85,17 @@ function requestWithAliases(options: { longAliases?: boolean } = {}) {
     const prefix = `g${index}.`
     return group(index, options.longAliases ? `${prefix}${'g'.repeat(128 - prefix.length)}` : `g${index}`)
   })
+  Object.assign(object(property(request, 'semanticCoverage'), 'semanticCoverage'), {
+    projectedGroupCount: 64,
+    eligibleGroupCount: 64,
+    groupCoverage: 1,
+    projectedDistinctEssaySupportSum: 64,
+    eligibleDistinctEssaySupportSum: 64,
+    supportWeightedCoverage: 1,
+    projectedOccurrenceSum: 64,
+    eligibleOccurrenceSum: 64,
+    occurrenceWeightedCoverage: 1,
+  })
   const result = validateClassReviewSynthesisRequest(request)
   expect(result.ok).toBe(true)
   if (!result.ok) throw new Error(`Alias request failed at ${result.error.path}.`)
