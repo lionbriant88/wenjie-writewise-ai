@@ -1,9 +1,15 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 import type { GatewayRuntimeConfig } from '../gatewayRuntimeConfig.js'
 import { KimiMultimodalProvider } from './kimiMultimodalProvider.js'
 import type { MultimodalProvider } from './multimodalProviderTypes.js'
 import type { KimiCompletionInput, KimiTransport } from './kimiTransport.js'
-import { createStageBudgetedTransport, getMultimodalProvider, getProvider } from './index.js'
+import {
+  type ClassReviewSynthesisMode,
+  createStageBudgetedTransport,
+  getClassReviewSynthesisProvider,
+  getMultimodalProvider,
+  getProvider,
+} from './index.js'
 import { GradingProviderError } from './providerTypes.js'
 
 function runtimeConfig(
@@ -66,6 +72,77 @@ function completion(value: unknown, attempt: number) {
 }
 
 describe('provider selection', () => {
+  it('keeps the class-review factory independent, exact, and fail closed', () => {
+    const fakeProvider = {
+      async synthesize() {
+        return {
+          value: {
+            overallComment: 'Synthetic overview.',
+            strengths: [{ title: 'Clarity', detail: 'Readable.', dimensionIds: [] }],
+            patterns: [],
+            learningRecommendations: [{ title: 'Practice', action: 'Review.' }],
+          },
+          attempts: [],
+        }
+      },
+    }
+    const kimiProvider = { ...fakeProvider }
+    const fakeFactory = vi.fn(() => fakeProvider)
+    const kimiFactory = vi.fn(() => kimiProvider)
+
+    expect(getClassReviewSynthesisProvider('disabled', { fakeFactory, kimiFactory })).toBeNull()
+    expect(fakeFactory).not.toHaveBeenCalled()
+    expect(kimiFactory).not.toHaveBeenCalled()
+    expect(getClassReviewSynthesisProvider('fake', { fakeFactory, kimiFactory })).toBe(fakeProvider)
+    expect(getClassReviewSynthesisProvider('kimi', { fakeFactory, kimiFactory })).toBe(kimiProvider)
+    expect(fakeFactory).toHaveBeenCalledTimes(1)
+    expect(kimiFactory).toHaveBeenCalledTimes(1)
+
+    expect(() => getClassReviewSynthesisProvider(undefined, { fakeFactory, kimiFactory })).toThrowError(GradingProviderError)
+    expect(() => getClassReviewSynthesisProvider('unknown' as ClassReviewSynthesisMode, {
+      fakeFactory,
+      kimiFactory,
+    })).toThrowError(GradingProviderError)
+    expect(() => getClassReviewSynthesisProvider('fake')).toThrowError(GradingProviderError)
+    expect(() => getClassReviewSynthesisProvider('kimi')).toThrowError(GradingProviderError)
+
+    type Selected = Exclude<ReturnType<typeof getClassReviewSynthesisProvider>, null>
+    type SynthesisInput = Parameters<Selected['synthesize']>[0]
+    type SynthesisMode = Parameters<typeof getClassReviewSynthesisProvider>[0]
+    expectTypeOf<SynthesisMode>().toEqualTypeOf<ClassReviewSynthesisMode | undefined>()
+    expectTypeOf<keyof SynthesisInput>().toEqualTypeOf<'request' | 'signal'>()
+    expectTypeOf<SynthesisInput['signal']>().toEqualTypeOf<AbortSignal>()
+    expectTypeOf<SynthesisInput['request']['contractVersion']>().toEqualTypeOf<'class-review-synthesis-request-v1'>()
+    expectTypeOf<keyof MultimodalProvider>().toEqualTypeOf<
+      'generateMaterialContext' | 'generateRubric' | 'gradeEssay'
+    >()
+  })
+
+  it('does not infer class-review mode from the existing multimodal runtime configuration', () => {
+    const classProvider = {
+      async synthesize() {
+        return {
+          value: {
+            overallComment: 'Synthetic overview.',
+            strengths: [{ title: 'Clarity', detail: 'Readable.', dimensionIds: [] }],
+            patterns: [],
+            learningRecommendations: [{ title: 'Practice', action: 'Review.' }],
+          },
+          attempts: [],
+        }
+      },
+    }
+    const multimodal = getMultimodalProvider(runtimeConfig('mock'))
+
+    expect(() => getClassReviewSynthesisProvider(runtimeConfig('mock') as unknown as ClassReviewSynthesisMode, {
+      fakeFactory: () => classProvider,
+    })).toThrowError(GradingProviderError)
+    expect('synthesize' in multimodal).toBe(false)
+    expect(typeof multimodal.generateMaterialContext).toBe('function')
+    expect(typeof multimodal.generateRubric).toBe('function')
+    expect(typeof multimodal.gradeEssay).toBe('function')
+  })
+
   it('selects only the explicit legacy mock and failure providers', () => {
     expect(getProvider('mock').publicName).toBe('mock')
     expect(getProvider('mock_failure').publicName).toBe('remote')

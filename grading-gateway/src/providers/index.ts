@@ -4,6 +4,7 @@ import { FailureGradingProvider } from './failureGradingProvider.js'
 import { KimiMultimodalProvider } from './kimiMultimodalProvider.js'
 import { createKimiTransport, type KimiTransport, type KimiTransportOptions } from './kimiTransport.js'
 import { MockGradingProvider } from './mockGradingProvider.js'
+import type { ClassReviewSynthesisProvider } from './classReviewSynthesisProviderTypes.js'
 import type { MultimodalProvider } from './multimodalProviderTypes.js'
 import { GradingProviderError, type GradingProvider, type ProviderCallStage } from './providerTypes.js'
 
@@ -11,6 +12,13 @@ export interface MultimodalProviderDependencies {
   apiKey?: string
   mockFactory?: () => MultimodalProvider
   kimiTransportFactory?: (options: KimiTransportOptions) => KimiTransport
+}
+
+export type ClassReviewSynthesisMode = 'disabled' | 'fake' | 'kimi'
+
+export interface ClassReviewSynthesisProviderDependencies {
+  fakeFactory?: () => ClassReviewSynthesisProvider
+  kimiFactory?: () => ClassReviewSynthesisProvider
 }
 
 function providerConfigurationError() {
@@ -89,6 +97,25 @@ class ExplicitMultimodalMockProvider implements MultimodalProvider {
 export function getProvider(name: string | undefined): GradingProvider {
   if (name === 'mock') return new MockGradingProvider()
   if (name === 'mock_failure') return new FailureGradingProvider()
+  throw providerConfigurationError()
+}
+
+function explicitlyConstructClassReviewProvider(
+  factory: (() => ClassReviewSynthesisProvider) | undefined,
+): ClassReviewSynthesisProvider {
+  if (!factory) throw providerConfigurationError()
+  const provider = factory()
+  if (!provider || typeof provider.synthesize !== 'function') throw providerConfigurationError()
+  return provider
+}
+
+export function getClassReviewSynthesisProvider(
+  mode: ClassReviewSynthesisMode | undefined,
+  dependencies: ClassReviewSynthesisProviderDependencies = {},
+): ClassReviewSynthesisProvider | null {
+  if (mode === 'disabled') return null
+  if (mode === 'fake') return explicitlyConstructClassReviewProvider(dependencies.fakeFactory)
+  if (mode === 'kimi') return explicitlyConstructClassReviewProvider(dependencies.kimiFactory)
   throw providerConfigurationError()
 }
 
