@@ -75,7 +75,7 @@ describe('getClassOverviewStats', () => {
     expect(stats.bands.every((band) => band.count === 0 && band.percent === 0)).toBe(true)
   })
 
-  it('includes only teacher-confirmed results and scales the distribution', () => {
+  it('includes current grading-ready results without requiring teacher confirmation', () => {
     const confirmed = essay('confirmed')
     const ready = {
       ...essay('ready'),
@@ -89,14 +89,29 @@ describe('getClassOverviewStats', () => {
       30,
     )
 
-    expect(stats.scoredEssayCount).toBe(1)
-    expect(stats.averageScore).toBe(26)
+    expect(stats.scoredEssayCount).toBe(2)
+    expect(stats.averageScore).toBe(28)
     expect(stats.bands).toEqual([
       { label: '0-7', count: 0, percent: 0 },
       { label: '8-13', count: 0, percent: 0 },
       { label: '14-19', count: 0, percent: 0 },
       { label: '20-25', count: 0, percent: 0 },
-      { label: '26-30', count: 1, percent: 100 },
+      { label: '26-30', count: 2, percent: 100 },
     ])
+  })
+
+  it('excludes manual and in-progress essays even when stale results are present', () => {
+    const stats = getClassOverviewStats(
+      [
+        { ...essay('ready'), status: 'grading_ready', teacherReviewed: false },
+        { ...essay('manual'), status: 'manual', teacherReviewed: false },
+        { ...essay('grading'), status: 'grading', teacherReviewed: false },
+      ],
+      [result('ready', 12), result('manual', 15), result('grading', 14)],
+      15,
+    )
+
+    expect(stats.scoredEssayCount).toBe(1)
+    expect(stats.averageScore).toBe(12)
   })
 })

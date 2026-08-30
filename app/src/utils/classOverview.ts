@@ -25,14 +25,36 @@ export function getClassOverviewStats(
   gradingResults: GradingResult[],
   fullScore: number,
 ): ClassOverviewStats {
-  const confirmedEssayIds = new Set(
+  const eligibleEssayIds = new Set(
     essays
-      .filter((essay) => essay.status === 'completed' && essay.teacherReviewed)
+      .filter((essay) => essay.status === 'grading_ready' || essay.status === 'completed')
       .map((essay) => essay.id),
   )
-  const scores = gradingResults
-    .filter((result) => confirmedEssayIds.has(result.essayId) && Number.isFinite(result.totalScore))
-    .map((result) => result.totalScore)
+  const resultsByEssayId = new Map<string, GradingResult[]>()
+  for (const result of gradingResults) {
+    if (!eligibleEssayIds.has(result.essayId) || !Number.isFinite(result.totalScore)) continue
+    const current = resultsByEssayId.get(result.essayId)
+    if (current) current.push(result)
+    else resultsByEssayId.set(result.essayId, [result])
+  }
+  const scores: number[] = []
+  for (const essay of essays) {
+    if (!eligibleEssayIds.has(essay.id)) continue
+    const candidates = resultsByEssayId.get(essay.id) ?? []
+    const matching = essay.aiResultId
+      ? candidates.filter((result) => result.id === essay.aiResultId)
+      : candidates
+    if (matching.length === 1) scores.push(matching[0].totalScore)
+  }
+
+  return getClassOverviewStatsFromScores(essays.length, scores, fullScore)
+}
+
+export function getClassOverviewStatsFromScores(
+  totalEssayCount: number,
+  scores: readonly number[],
+  fullScore: number,
+): ClassOverviewStats {
 
   const bands = getDynamicScoreBands(fullScore).map<ClassOverviewBand>((band) => {
     const count = scores.filter((score) => {
@@ -49,7 +71,7 @@ export function getClassOverviewStats(
 
   if (scores.length === 0) {
     return {
-      totalEssayCount: essays.length,
+      totalEssayCount,
       scoredEssayCount: 0,
       averageScore: null,
       highestScore: null,
@@ -59,7 +81,7 @@ export function getClassOverviewStats(
   }
 
   return {
-    totalEssayCount: essays.length,
+    totalEssayCount,
     scoredEssayCount: scores.length,
     averageScore: roundToOneDecimal(scores.reduce((sum, score) => sum + score, 0) / scores.length),
     highestScore: roundToOneDecimal(Math.max(...scores)),
