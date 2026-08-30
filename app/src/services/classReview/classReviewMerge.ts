@@ -25,7 +25,15 @@ function fail(code: string): never {
 }
 
 function compare(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0
+  const leftScalars = [...left]
+  const rightScalars = [...right]
+  const length = Math.min(leftScalars.length, rightScalars.length)
+  for (let index = 0; index < length; index += 1) {
+    const leftCodePoint = leftScalars[index].codePointAt(0)!
+    const rightCodePoint = rightScalars[index].codePointAt(0)!
+    if (leftCodePoint !== rightCodePoint) return leftCodePoint - rightCodePoint
+  }
+  return leftScalars.length - rightScalars.length
 }
 
 function checkedAdd(left: number, right: number): number {
@@ -237,6 +245,7 @@ async function materializeSystemIssueBlocks(input: {
       topicKey: item.atomicTopic.key,
       essayIdentities: selected ? [...selected.essayIds].sort(compare) : [],
       occurrenceCount: item.occurrenceCount,
+      identityMode: selected ? 'exact' : 'unavailable_fallback',
     })
   }
   issueBlocks.sort((left, right) => severityRank[left.severity] - severityRank[right.severity]
@@ -518,6 +527,29 @@ export async function materializeClassReviewCandidate(input: {
       },
     },
   }
+  const blockIds = payload.generatedPayload.systemIssueBlocks.map((block) => block.blockId)
+  if (blockIds.some((blockId) => blockId.length === 0) || new Set(blockIds).size !== blockIds.length) {
+    fail('class_review_candidate_conflict')
+  }
+  const syntheticReport: ClassReviewReportV1 = {
+    contractVersion: 'class-review-report-v1',
+    workspaceState: 'ai_available',
+    taskRevision: input.snapshot.taskRevision,
+    reportRevision: checkedAdd(input.snapshot.reportRevision ?? 0, 1),
+    aiTextEditRevision: input.snapshot.aiTextEditRevision,
+    currentGeneration: null,
+    statistics: structuredClone(input.snapshot.browserStatistics),
+    issueBlocks: structuredClone(payload.generatedPayload.systemIssueBlocks),
+    issueOrder: blockIds,
+    clearSpellingItems: [],
+    selectedMaterials: [],
+    appliedGenerationId: input.snapshot.generationId,
+    generatedAt,
+    snapshotMetadata: structuredClone(payload.generatedPayload.snapshotMetadata),
+    aiSummary: structuredClone(aiSummary),
+  }
+  if (!parseClassReviewReport(syntheticReport).ok) fail('class_review_candidate_conflict')
+  deepFreeze(payload)
   return createMaterializedHandle(payload)
 }
 
@@ -533,6 +565,7 @@ export interface SystemEvidenceFact {
   topicKey: string
   essayIdentities: readonly string[]
   occurrenceCount: number
+  identityMode?: 'exact' | 'unavailable_fallback'
 }
 
 interface SuppressedSystemVariant {
@@ -547,6 +580,37 @@ export interface InternalIssueWorkspace {
   suppressed: Map<string, SuppressedSystemVariant>
   teacherFacts: Map<string, TeacherEvidenceFact>
   systemFacts: Map<string, SystemEvidenceFact>
+}
+
+function canonicalTeacherEvidenceRefs(facts: readonly TeacherEvidenceFact[]): EvidenceRefV1[] {
+  return facts
+    .map((fact) => structuredClone(fact.evidenceRef!))
+    .sort((left, right) => compare(left.evidenceId, right.evidenceId))
+}
+
+function canonicalTeacherExamples(refs: readonly EvidenceRefV1[]): string[] {
+  const examples = refs.flatMap((ref) => ref.anonymousExample === null ? [] : [ref.anonymousExample])
+  return [...new Set(examples)].sort(compare).slice(0, 3)
+}
+
+function canonicalSystemFact(source: SystemEvidenceFact): SystemEvidenceFact {
+  const identities = [...source.essayIdentities]
+  if (new Set(identities).size !== identities.length
+    || identities.some((identity) => identity.length === 0)
+    || !Number.isSafeInteger(source.occurrenceCount)
+    || source.occurrenceCount <= 0) {
+    fail('class_review_candidate_conflict')
+  }
+  const identityMode = source.identityMode
+    ?? (identities.length === 0 ? 'unavailable_fallback' : 'exact')
+  if (identityMode === 'exact' && identities.length === 0) fail('class_review_candidate_conflict')
+  if (identityMode === 'unavailable_fallback' && identities.length !== 0) fail('class_review_candidate_conflict')
+  return {
+    topicKey: source.topicKey,
+    essayIdentities: identities.sort(compare),
+    occurrenceCount: source.occurrenceCount,
+    identityMode,
+  }
 }
 
 export function createInternalIssueWorkspace(
@@ -574,14 +638,21 @@ export function createInternalIssueWorkspace(
     .sort((left, right) => compare(left.blockId, right.blockId))
   visible.push(...unlisted)
   const teacherFacts = new Map<string, TeacherEvidenceFact>()
+  const teacherRefOwners = new Map<string, { topicKey: string; ref: EvidenceRefV1 }>()
+  for (const block of visible) {
+    for (const ref of block.evidenceRefs) {
+      if (ref.selectionOrigin !== 'teacher_selected') continue
+      if (block.origin !== 'teacher' || teacherRefOwners.has(ref.evidenceId)) {
+        fail('class_review_candidate_conflict')
+      }
+      teacherRefOwners.set(ref.evidenceId, { topicKey: block.topicKey, ref })
+    }
+  }
   for (const sourceFact of options?.teacherEvidenceFacts ?? []) {
     const fact = structuredClone(sourceFact)
-    const owner = visible.find((block) => block.origin === 'teacher'
-      && block.topicKey === fact.topicKey
-      && block.evidenceRefs.some((ref) => ref.evidenceId === fact.evidenceId
-        && ref.selectionOrigin === 'teacher_selected'))
-    const ownedRef = owner?.evidenceRefs.find((ref) => ref.evidenceId === fact.evidenceId)
-    const invalidFact = !owner || !ownedRef || teacherFacts.has(fact.evidenceId)
+    const owner = teacherRefOwners.get(fact.evidenceId)
+    const ownedRef = owner?.ref
+    const invalidFact = !owner || owner.topicKey !== fact.topicKey || !ownedRef || teacherFacts.has(fact.evidenceId)
       || !fact.evidenceId || !fact.essayIdentity
       || !Number.isSafeInteger(fact.occurrenceCount) || fact.occurrenceCount <= 0
       || (fact.evidenceRef !== undefined
@@ -590,6 +661,70 @@ export function createInternalIssueWorkspace(
     fact.evidenceRef = structuredClone(ownedRef)
     teacherFacts.set(fact.evidenceId, fact)
   }
+  if (teacherFacts.size !== teacherRefOwners.size) fail('class_review_candidate_conflict')
+
+  const systemFacts = new Map<string, SystemEvidenceFact>()
+  for (const sourceFact of options?.systemEvidenceFacts ?? []) {
+    if (systemFacts.has(sourceFact.topicKey)) fail('class_review_candidate_conflict')
+    systemFacts.set(sourceFact.topicKey, canonicalSystemFact(sourceFact))
+  }
+  for (let index = 0; index < visible.length; index += 1) {
+    const block = visible[index]
+    const facts = [...teacherFacts.values()].filter((fact) => fact.topicKey === block.topicKey)
+    const teacherRefs = canonicalTeacherEvidenceRefs(facts)
+    const systemRefs = block.evidenceRefs
+      .filter((ref) => ref.selectionOrigin === 'system_generation')
+      .sort((left, right) => compare(left.evidenceId, right.evidenceId))
+    const systemFact = systemFacts.get(block.topicKey)
+    if (systemFact) {
+      if (systemFact.occurrenceCount !== block.occurrenceCount && block.origin === 'ai') {
+        fail('class_review_candidate_conflict')
+      }
+      if (systemFact.identityMode === 'exact' && systemFact.essayIdentities.length !== block.systemStudentCount) {
+        fail('class_review_candidate_conflict')
+      }
+      if (systemFact.identityMode === 'unavailable_fallback' && block.origin === 'teacher') {
+        fail('class_review_candidate_conflict')
+      }
+    } else if ((options?.systemEvidenceFacts?.length ?? 0) > 0 && block.systemStudentCount > 0) {
+      fail('class_review_candidate_conflict')
+    }
+    if (facts.length > 0) {
+      const teacherEssays = new Set(facts.map((fact) => fact.essayIdentity))
+      const systemEssays = new Set(systemFact?.essayIdentities ?? [])
+      let teacherOnlyOccurrences = 0
+      for (const fact of facts) {
+        if (!systemEssays.has(fact.essayIdentity)) {
+          teacherOnlyOccurrences = checkedAdd(teacherOnlyOccurrences, fact.occurrenceCount)
+        }
+      }
+      const expectedTeacher = teacherEssays.size
+      const expectedSystem = systemFact?.identityMode === 'exact'
+        ? systemEssays.size
+        : block.systemStudentCount
+      const expectedCombined = systemFact?.identityMode === 'exact'
+        ? new Set([...teacherEssays, ...systemEssays]).size
+        : expectedTeacher
+      const expectedOccurrence = checkedAdd(systemFact?.occurrenceCount ?? 0, teacherOnlyOccurrences)
+      const expectedExamples = canonicalTeacherExamples(teacherRefs)
+      if (block.teacherStudentCount !== expectedTeacher
+        || block.systemStudentCount !== expectedSystem
+        || block.combinedStudentCount !== expectedCombined
+        || block.occurrenceCount !== expectedOccurrence
+        || (block.systemStudentCount === 0 && block.supportDenominator !== null)
+        || (block.systemStudentCount === 0
+          && JSON.stringify(block.anonymousExamples) !== JSON.stringify(expectedExamples))) {
+        fail('class_review_candidate_conflict')
+      }
+      visible[index] = {
+        ...block,
+        evidenceRefs: [...teacherRefs, ...systemRefs],
+        anonymousExamples: block.systemStudentCount === 0
+          ? expectedExamples
+          : [...new Set([...expectedExamples, ...block.anonymousExamples])].sort(compare).slice(0, 3),
+      }
+    }
+  }
   return {
     visible,
     suppressed: new Map(
@@ -597,10 +732,7 @@ export function createInternalIssueWorkspace(
         .map(([key, value]) => [key, structuredClone(value)]),
     ),
     teacherFacts,
-    systemFacts: new Map(
-      (options?.systemEvidenceFacts ?? [])
-        .map((fact) => [fact.topicKey, structuredClone(fact)]),
-    ),
+    systemFacts,
   }
 }
 
@@ -614,7 +746,7 @@ export function mergeInternalIssueWorkspace(input: {
 }): InternalIssueWorkspace {
   const workspace = createInternalIssueWorkspace(input.workspace.visible, {
     teacherEvidenceFacts: [...input.workspace.teacherFacts.values()],
-    systemEvidenceFacts: input.systemEvidenceFacts ?? [],
+    systemEvidenceFacts: [...input.workspace.systemFacts.values()],
     issueOrder: input.workspace.visible.map((block) => block.blockId),
     suppressed: input.workspace.suppressed,
   })
@@ -631,19 +763,32 @@ export function mergeInternalIssueWorkspace(input: {
     if (old.origin === 'teacher') {
       if (!next) {
         workspace.suppressed.delete(old.topicKey)
+        const teacherFacts = [...workspace.teacherFacts.values()]
+          .filter((fact) => fact.topicKey === old.topicKey)
+        const teacherRefs = canonicalTeacherEvidenceRefs(teacherFacts)
+        const teacherEssays = new Set(teacherFacts.map((fact) => fact.essayIdentity))
+        let teacherOccurrences = 0
+        for (const fact of teacherFacts) {
+          teacherOccurrences = checkedAdd(teacherOccurrences, fact.occurrenceCount)
+        }
         return [{
           ...old,
+          teacherStudentCount: teacherEssays.size,
           systemStudentCount: 0,
-          combinedStudentCount: old.teacherStudentCount,
+          combinedStudentCount: teacherEssays.size,
+          occurrenceCount: teacherOccurrences,
           supportDenominator: null,
-          evidenceRefs: old.evidenceRefs.filter(
-            (ref) => ref.selectionOrigin === 'teacher_selected',
-          ),
+          anonymousExamples: canonicalTeacherExamples(teacherRefs),
+          evidenceRefs: teacherRefs,
         }]
       }
       used.add(old.topicKey)
       const systemFact = input.systemEvidenceFacts?.find((fact) => fact.topicKey === old.topicKey)
       if (!systemFact && next.systemStudentCount > 0) fail('class_review_candidate_conflict')
+      if (systemFact?.identityMode === 'unavailable_fallback'
+        || (systemFact?.essayIdentities.length === 0 && next.systemStudentCount > 0)) {
+        fail('class_review_candidate_conflict')
+      }
       const teacherFacts = [...workspace.teacherFacts.values()].filter((fact) => fact.topicKey === old.topicKey)
       const teacherEssays = new Set(teacherFacts.map((fact) => fact.essayIdentity))
       const systemEssays = new Set(systemFact?.essayIdentities ?? [])
@@ -684,6 +829,10 @@ export function mergeInternalIssueWorkspace(input: {
       workspace.visible.push(structuredClone(next))
     }
   }
+  workspace.systemFacts = new Map(
+    (input.systemEvidenceFacts ?? [])
+      .map((fact) => [fact.topicKey, canonicalSystemFact(fact)]),
+  )
   return workspace
 }
 
@@ -696,7 +845,11 @@ export function removeTeacherEvidence(
   evidenceId: string,
   options?: { generationId: string; invalidationEpoch: number },
 ): InternalIssueWorkspace {
-  const result = createInternalIssueWorkspace(workspace.visible, {
+  const visibleWithoutEvidence = workspace.visible.map((block) => ({
+    ...structuredClone(block),
+    evidenceRefs: block.evidenceRefs.filter((ref) => ref.evidenceId !== evidenceId),
+  }))
+  const result = createInternalIssueWorkspace(visibleWithoutEvidence, {
     teacherEvidenceFacts: [...workspace.teacherFacts.values()].filter((fact) => fact.evidenceId !== evidenceId),
     issueOrder: workspace.visible.map((block) => block.blockId),
     suppressed: workspace.suppressed,
@@ -763,6 +916,7 @@ export function invalidateInternalSystemVariants(
     if (block.origin !== 'teacher') return []
     const evidenceRefs = block.evidenceRefs.filter((ref) =>
       ref.selectionOrigin === 'teacher_selected' && factsByEvidence.has(ref.evidenceId))
+      .sort((left, right) => compare(left.evidenceId, right.evidenceId))
     if (evidenceRefs.length === 0) return []
     const facts = evidenceRefs.map((ref) => factsByEvidence.get(ref.evidenceId)!)
     const teacherStudentCount = new Set(facts.map((fact) => fact.essayIdentity)).size
@@ -775,7 +929,7 @@ export function invalidateInternalSystemVariants(
       combinedStudentCount: teacherStudentCount,
       occurrenceCount,
       supportDenominator: null,
-      anonymousExamples: evidenceRefs.flatMap((ref) => ref.anonymousExample ? [ref.anonymousExample] : []),
+      anonymousExamples: canonicalTeacherExamples(evidenceRefs),
       evidenceRefs,
     }]
   })

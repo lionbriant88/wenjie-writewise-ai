@@ -15,14 +15,19 @@ function reserve(
   registry: ReturnType<typeof createLocalClassReviewRegistry>,
   input: { generationId: string; executionIdentity: string; payloadDigest: string; state: 'queued' | 'running'; scope?: string; proposedGenerationId?: string },
 ) {
+  const proposedGenerationId = input.proposedGenerationId ?? input.generationId
+  const actionableIdentity = `snapshot|revisions|${input.payloadDigest}`
   return registry.reserveOrAttach({
     opaqueTaskScope: input.scope ?? scopeA,
-    proposedGenerationId: input.proposedGenerationId ?? input.generationId,
+    proposedGenerationId,
     serviceGenerationId: input.generationId,
     requestId: `request-${input.generationId}`,
     requestBytes: `bytes-${input.payloadDigest}`,
     snapshotTuple: 'snapshot',
     fixedRevisions: 'revisions',
+    commandIdentity: `${proposedGenerationId}|${actionableIdentity}`,
+    actionableIdentity,
+    commandCore: `${proposedGenerationId}|${actionableIdentity}`,
     generationRevision: 0,
     ...input,
   }).record
@@ -71,20 +76,21 @@ describe('local class review generation registry', () => {
     expect(() => reserve(registry, { generationId: 'g3', executionIdentity: 'x', payloadDigest: 'changed', state: 'queued' })).toThrow('active_generation_conflict')
   })
 
-  it('replays the same proposed terminal alias but allows a distinct proposed ID to reserve', () => {
+  it('replays only an exact same proposed terminal command and allows a distinct proposed ID to reserve', () => {
     const registry = createLocalClassReviewRegistry()
     reserve(registry, { generationId: 'g1', executionIdentity: 'x', payloadDigest: 'h', state: 'running', proposedGenerationId: 'client-1' })
     registry.markFailed({ ...scoped('g1'), expectedRevision: 0, expectedState: 'running', safeFailureCode: 'provider_auth_failed' })
-    const replay = reserve(registry, { generationId: 'ignored', executionIdentity: 'new', payloadDigest: 'new', state: 'queued', proposedGenerationId: 'client-1' })
+    const replay = reserve(registry, { generationId: 'ignored', executionIdentity: 'new', payloadDigest: 'h', state: 'queued', proposedGenerationId: 'client-1' })
     expect(replay).toMatchObject({ generationId: 'g1', state: 'failed' })
+    expect(() => reserve(registry, { generationId: 'ignored-again', executionIdentity: 'new', payloadDigest: 'drifted', state: 'queued', proposedGenerationId: 'client-1' })).toThrow('active_generation_conflict')
     const fresh = reserve(registry, { generationId: 'g2', executionIdentity: 'new', payloadDigest: 'new', state: 'queued', proposedGenerationId: 'client-2' })
     expect(fresh.generationId).toBe('g2')
   })
 
   it('treats hidden snapshot/source epoch identity changes as active conflicts', () => {
     const registry = createLocalClassReviewRegistry()
-    registry.reserveOrAttach({ opaqueTaskScope: scopeA, proposedGenerationId: 'g1', serviceGenerationId: 'g1', requestId: 'r1', executionIdentity: 'e1', requestBytes: 'bytes', snapshotTuple: 'snapshot-a', fixedRevisions: 'epoch-0', payloadDigest: 'digest-a', state: 'queued', generationRevision: 0 })
-    expect(() => registry.reserveOrAttach({ opaqueTaskScope: scopeA, proposedGenerationId: 'g2', serviceGenerationId: 'g2', requestId: 'r2', executionIdentity: 'e2', requestBytes: 'bytes', snapshotTuple: 'snapshot-b', fixedRevisions: 'epoch-1', payloadDigest: 'digest-b', state: 'queued', generationRevision: 0 })).toThrow('active_generation_conflict')
+    registry.reserveOrAttach({ opaqueTaskScope: scopeA, proposedGenerationId: 'g1', serviceGenerationId: 'g1', requestId: 'r1', executionIdentity: 'e1', requestBytes: 'bytes', snapshotTuple: 'snapshot-a', fixedRevisions: 'epoch-0', payloadDigest: 'digest-a', commandIdentity: 'command-a', actionableIdentity: 'action-a', commandCore: 'core-a', state: 'queued', generationRevision: 0 })
+    expect(() => registry.reserveOrAttach({ opaqueTaskScope: scopeA, proposedGenerationId: 'g2', serviceGenerationId: 'g2', requestId: 'r2', executionIdentity: 'e2', requestBytes: 'bytes', snapshotTuple: 'snapshot-b', fixedRevisions: 'epoch-1', payloadDigest: 'digest-b', commandIdentity: 'command-b', actionableIdentity: 'action-b', commandCore: 'core-b', state: 'queued', generationRevision: 0 })).toThrow('active_generation_conflict')
   })
 
   it('uses revision CAS and invalidation fences late settlement', async () => {
@@ -123,7 +129,7 @@ describe('local class review generation registry', () => {
 
   it('returns deep-frozen detached content-free snapshots and transitions failure atomically', () => {
     const registry = createLocalClassReviewRegistry()
-    const reservation = registry.reserveOrAttach({ opaqueTaskScope: scopeA, proposedGenerationId: 'g1', serviceGenerationId: 'g1', requestId: 'request-g1', requestBytes: 'secret-bytes', snapshotTuple: 'snapshot', fixedRevisions: 'revisions', payloadDigest: 'h', executionIdentity: 'x', state: 'running', generationRevision: 0 })
+    const reservation = registry.reserveOrAttach({ opaqueTaskScope: scopeA, proposedGenerationId: 'g1', serviceGenerationId: 'g1', requestId: 'request-g1', requestBytes: 'secret-bytes', snapshotTuple: 'snapshot', fixedRevisions: 'revisions', payloadDigest: 'h', commandIdentity: 'command-g1', actionableIdentity: 'action-g1', commandCore: 'core-g1', executionIdentity: 'x', state: 'running', generationRevision: 0 })
     expect(Object.isFrozen(reservation.record)).toBe(true)
     expect(reservation.record).not.toHaveProperty('requestBytes')
     expect(reservation.record).not.toHaveProperty('candidate')
@@ -164,5 +170,53 @@ describe('local class review generation registry', () => {
     expect(() => registry.markRunning({ ...scoped('shared-generation', `scope_v1_${'c'.repeat(32)}`), expectedRevision: 0 })).toThrow('generation_not_found')
     expect(registry.readGeneration(scoped('shared-generation', scopeA))).toMatchObject({ state: 'queued' })
     expect(registry.readGeneration(scoped('shared-generation', scopeB))).toMatchObject({ state: 'queued' })
+  })
+
+  it('persists a secondary actionable proposed alias through real candidate discard and terminal replay', async () => {
+    const registry = createLocalClassReviewRegistry()
+    reserve(registry, {
+      generationId: 'candidate-owner', executionIdentity: 'execution-owner',
+      payloadDigest: 'digest-owner', state: 'running', proposedGenerationId: 'browser-primary',
+    })
+    registry.commitSucceeded({
+      ...scoped('candidate-owner'), expectedRevision: 0, expectedFence: 0,
+      candidate: await candidate('candidate-owner', 'execution-owner', 'digest-owner'),
+      unapplied: true,
+    })
+    const attached = reserve(registry, {
+      generationId: 'ignored-secondary', executionIdentity: 'execution-owner',
+      payloadDigest: 'digest-owner', state: 'queued', proposedGenerationId: 'browser-secondary',
+    })
+    expect(attached).toMatchObject({ generationId: 'candidate-owner', state: 'succeeded_unapplied' })
+    registry.discardCandidate({ ...scoped('candidate-owner'), expectedRevision: 1 })
+    expect(registry.readProposed({
+      opaqueTaskScope: scopeA,
+      proposedGenerationId: 'browser-secondary',
+    })).toMatchObject({ generationId: 'candidate-owner', state: 'discarded' })
+  })
+
+  it('clears public request identity for result-unknown, unapplied and discarded terminal records', async () => {
+    const registry = createLocalClassReviewRegistry()
+    reserve(registry, {
+      generationId: 'unknown-owner', executionIdentity: 'unknown-execution',
+      payloadDigest: 'unknown-digest', state: 'running',
+    })
+    expect(registry.markResultUnknown({
+      ...scoped('unknown-owner'), expectedRevision: 0,
+      safeFailureCode: 'provider_result_unknown',
+    })).toMatchObject({ state: 'result_unknown', requestId: null })
+
+    reserve(registry, {
+      generationId: 'candidate-owner', executionIdentity: 'candidate-execution',
+      payloadDigest: 'candidate-digest', state: 'running', scope: scopeB,
+    })
+    expect(registry.commitSucceeded({
+      ...scoped('candidate-owner', scopeB), expectedRevision: 0, expectedFence: 0,
+      candidate: await candidate('candidate-owner', 'candidate-execution', 'candidate-digest'),
+      unapplied: true,
+    })).toMatchObject({ state: 'succeeded_unapplied', requestId: null })
+    expect(registry.discardCandidate({
+      ...scoped('candidate-owner', scopeB), expectedRevision: 1,
+    })).toMatchObject({ state: 'discarded', requestId: null })
   })
 })

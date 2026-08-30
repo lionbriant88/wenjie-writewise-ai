@@ -5,7 +5,6 @@ import {
   createInternalIssueWorkspace,
   invalidateInternalSystemVariants,
   materializeClassReviewCandidate,
-  mergeInternalIssueWorkspace,
   projectInternalIssueWorkspace,
   removeTeacherEvidence,
   type GenerationSnapshot,
@@ -27,6 +26,7 @@ import type {
   AiSummaryV1,
   ClassReviewIssueBlockV1,
   ClassReviewReportV1,
+  ClassReviewStatisticsV1,
   ClassReviewSynthesisRequestV1,
   EvidenceRefV1,
   SafeFailureCode,
@@ -60,6 +60,12 @@ interface ActiveExecution {
   startAiTextEditRevision: number
 }
 
+interface InFlightOwner {
+  opaqueTaskScope: string
+  generationId: string
+  promise: Promise<LocalGenerationRecord>
+}
+
 interface Workspace {
   taskKey: string
   taskRevision: number
@@ -70,7 +76,7 @@ interface Workspace {
   opaqueTaskScope: string | null
   lastGenerationId: string | null
   activeExecution: ActiveExecution | null
-  inFlight: Promise<LocalGenerationRecord> | null
+  inFlight: InFlightOwner | null
   providerSettlementKnown: boolean
   sourceRevisionEpoch: number
   invalidationEpoch: number
@@ -90,6 +96,9 @@ interface PreparedReservation {
   executionIdentity: string
   fixedRevisions: string
   snapshotTuple: string
+  commandIdentity: string
+  actionableIdentity: string
+  commandCore: string
   snapshot: Readonly<GenerationSnapshot>
 }
 
@@ -139,7 +148,7 @@ export interface LocalClassReviewCoordinator {
 export interface ClassReviewSourceReplacement {
   taskRevision: number
   rubricRevisionDigest: string
-  report: ClassReviewReportV1
+  statistics: ClassReviewStatisticsV1
   projection: ReadyProjection
 }
 
@@ -163,8 +172,16 @@ function fail(code: string): never {
   throw new Error(code)
 }
 const encoder = new TextEncoder()
-const compareCodePoints = (left: string, right: string): number =>
-  left < right ? -1 : left > right ? 1 : 0
+const compareCodePoints = (left: string, right: string): number => {
+  const leftScalars = [...left]
+  const rightScalars = [...right]
+  const length = Math.min(leftScalars.length, rightScalars.length)
+  for (let index = 0; index < length; index += 1) {
+    const difference = leftScalars[index].codePointAt(0)! - rightScalars[index].codePointAt(0)!
+    if (difference !== 0) return difference
+  }
+  return leftScalars.length - rightScalars.length
+}
 const bytesToHex = (bytes: Uint8Array): string =>
   Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('')
 function checkedAdd(left: number, right: number): number {
@@ -317,10 +334,36 @@ export function createLocalClassReviewCoordinator(options: {
     }
   }
 
+  function buildCommandCore(
+    workspace: Workspace,
+    command: {
+      generationId: string
+      intent: 'initial' | 'regenerate'
+      expectedTaskRevision: number
+      expectedReportRevision: number | null
+    },
+  ): string {
+    return JSON.stringify({
+      proposedGenerationId: command.generationId,
+      intent: command.intent,
+      expectedTaskRevision: command.expectedTaskRevision,
+      expectedReportRevision: command.expectedReportRevision,
+      taskRevision: workspace.taskRevision,
+      rubricRevisionDigest: workspace.rubricRevisionDigest,
+      aiTextEditRevision: workspace.report.aiTextEditRevision,
+      sourceRevisionEpoch: workspace.sourceRevisionEpoch,
+      invalidationEpoch: workspace.invalidationEpoch,
+    })
+  }
+
   async function prepareReservation(
     workspace: Workspace,
-    proposedGenerationId: string,
-    expectedReportRevision: number | null,
+    command: {
+      generationId: string
+      intent: 'initial' | 'regenerate'
+      expectedTaskRevision: number
+      expectedReportRevision: number | null
+    },
   ): Promise<PreparedReservation> {
     if (workspace.taskDeleted) fail('class_review_task_invalidated')
     if (!workspace.sourceReady || workspace.projection === null) fail('class_review_source_invalidated')
@@ -329,12 +372,16 @@ export function createLocalClassReviewCoordinator(options: {
     const capturedRubricRevisionDigest = workspace.rubricRevisionDigest
     const capturedAiTextEditRevision = workspace.report.aiTextEditRevision
     const capturedSourceRevisionEpoch = workspace.sourceRevisionEpoch
+    const commandCore = buildCommandCore(workspace, command)
     const capturedStatistics = structuredClone(workspace.report.statistics)
     const capturedProjection = cloneReadyProjection(workspace.projection)
     const assertSourceFence = (): void => {
       if (workspace.taskDeleted) fail('class_review_task_invalidated')
       if (!workspace.sourceReady || workspace.projection === null
-        || workspace.invalidationEpoch !== capturedInvalidationEpoch) {
+        || workspace.invalidationEpoch !== capturedInvalidationEpoch
+        || workspace.taskRevision !== capturedTaskRevision
+        || workspace.rubricRevisionDigest !== capturedRubricRevisionDigest
+        || workspace.sourceRevisionEpoch !== capturedSourceRevisionEpoch) {
         fail('class_review_source_invalidated')
       }
     }
@@ -354,14 +401,14 @@ export function createLocalClassReviewCoordinator(options: {
       executionIdentity: 'pending',
       payloadDigest: 'pending',
       taskRevision: capturedTaskRevision,
-      reportRevision: expectedReportRevision,
+      reportRevision: command.expectedReportRevision,
       aiTextEditRevision: capturedAiTextEditRevision,
       sourceRevisionEpoch: capturedSourceRevisionEpoch,
       browserStatistics: capturedStatistics,
     })
     const fixedRevisions = JSON.stringify({
       taskRevision: capturedTaskRevision,
-      reportRevision: expectedReportRevision,
+      reportRevision: command.expectedReportRevision,
       aiTextEditRevision: capturedAiTextEditRevision,
       sourceRevisionEpoch: capturedSourceRevisionEpoch,
       rubricRevisionDigest: capturedRubricRevisionDigest,
@@ -383,6 +430,25 @@ export function createLocalClassReviewCoordinator(options: {
       encoder.encode(payloadDigest),
     )
     const executionIdentity = `execution_v1_${bytesToHex(executionDigest)}`
+    const actionableCoreBytes = encoder.encode(JSON.stringify({
+      intent: command.intent,
+      expectedTaskRevision: command.expectedTaskRevision,
+      expectedReportRevision: command.expectedReportRevision,
+      fixedRevisions,
+      snapshotTuple,
+      payloadDigest,
+    }))
+    const actionableIdentity = bytesToHex(await guardedHmac(
+      'class-review-actionable-command-v1',
+      actionableCoreBytes,
+    ))
+    const commandIdentity = bytesToHex(await guardedHmac(
+      'class-review-proposed-command-v1',
+      encoder.encode(JSON.stringify({
+        proposedGenerationId: command.generationId,
+        actionableIdentity,
+      })),
+    ))
     const snapshot = cloneAndFreezeClassReviewGenerationSnapshot({
       ...preliminary,
       executionIdentity,
@@ -390,7 +456,7 @@ export function createLocalClassReviewCoordinator(options: {
     })
     assertSourceFence()
     return {
-      proposedGenerationId,
+      proposedGenerationId: command.generationId,
       serviceGenerationId,
       requestId,
       request: snapshot.originalRequest,
@@ -400,6 +466,9 @@ export function createLocalClassReviewCoordinator(options: {
       executionIdentity,
       fixedRevisions,
       snapshotTuple,
+      commandIdentity,
+      actionableIdentity,
+      commandCore,
       snapshot,
     }
   }
@@ -445,7 +514,6 @@ export function createLocalClassReviewCoordinator(options: {
       }
       return current ?? record
     }
-    workspace.providerSettlementKnown = true
     const current = registry.readGeneration(scopedGeneration)
     if (
       !current
@@ -455,6 +523,7 @@ export function createLocalClassReviewCoordinator(options: {
     ) {
       return current ?? record
     }
+    workspace.providerSettlementKnown = true
     const parsed = parseClassReviewSynthesisResult(untrusted, execution.request)
     if (!parsed.ok) {
       return registry.markFailed({
@@ -556,25 +625,42 @@ export function createLocalClassReviewCoordinator(options: {
     expectedReportRevision: number | null
   }): Promise<LocalGenerationRecord> {
     const workspace = getWorkspace(command.taskKey)
-    if (workspace.opaqueTaskScope) {
-      const replay = registry.readProposed({
-        opaqueTaskScope: workspace.opaqueTaskScope,
-        proposedGenerationId: command.generationId,
-      })
-      if (replay) return workspace.inFlight ?? Promise.resolve(replay)
-    }
     if (workspace.taskDeleted) return Promise.reject(new Error('class_review_task_invalidated'))
     if (!workspace.sourceReady || workspace.projection === null) {
       return Promise.reject(new Error('class_review_source_invalidated'))
     }
-    const actionable = workspace.opaqueTaskScope ? registry.readActionable(workspace.opaqueTaskScope) : null
-    if (actionable?.state === 'succeeded_unapplied') return Promise.resolve(actionable)
-    if (!actionable) {
+    const commandCore = buildCommandCore(workspace, command)
+    if (workspace.opaqueTaskScope) {
+      try {
+        const replay = registry.replayExactProposed({
+          opaqueTaskScope: workspace.opaqueTaskScope,
+          proposedGenerationId: command.generationId,
+          commandCore,
+        })
+        if (replay) {
+          const owner = workspace.inFlight
+          const ownsReplay = owner !== null
+            && owner.opaqueTaskScope === workspace.opaqueTaskScope
+            && owner.generationId === replay.generationId
+          return ownsReplay ? owner.promise : Promise.resolve(replay)
+        }
+      } catch (error) {
+        return Promise.reject(error)
+      }
+    }
+    const knownProposed = workspace.opaqueTaskScope
+      ? registry.readProposed({
+          opaqueTaskScope: workspace.opaqueTaskScope,
+          proposedGenerationId: command.generationId,
+        })
+      : null
+    const knownActionable = workspace.opaqueTaskScope
+      ? registry.readActionable(workspace.opaqueTaskScope)
+      : null
+    if (!knownProposed && !knownActionable) {
       const revisionsMatch = command.expectedTaskRevision === workspace.taskRevision
         && command.expectedReportRevision === workspace.report.reportRevision
-      if (!revisionsMatch) {
-        return Promise.reject(new Error('active_generation_conflict'))
-      }
+      if (!revisionsMatch) return Promise.reject(new Error('active_generation_conflict'))
       try {
         checkEligibility(workspace, command.intent)
       } catch (error) {
@@ -582,7 +668,18 @@ export function createLocalClassReviewCoordinator(options: {
       }
     }
     return (async () => {
-      const prepared = await prepareReservation(workspace, command.generationId, command.expectedReportRevision)
+      const prepared = await prepareReservation(workspace, command)
+      const proposed = registry.readProposed({
+        opaqueTaskScope: prepared.opaqueTaskScope,
+        proposedGenerationId: command.generationId,
+      })
+      const actionable = registry.readActionable(prepared.opaqueTaskScope)
+      if (!proposed && !actionable) {
+        const revisionsMatch = command.expectedTaskRevision === workspace.taskRevision
+          && command.expectedReportRevision === workspace.report.reportRevision
+        if (!revisionsMatch) fail('active_generation_conflict')
+        checkEligibility(workspace, command.intent)
+      }
       const reservation = registry.reserveOrAttach({
         opaqueTaskScope: prepared.opaqueTaskScope,
         proposedGenerationId: prepared.proposedGenerationId,
@@ -593,11 +690,20 @@ export function createLocalClassReviewCoordinator(options: {
         snapshotTuple: prepared.snapshotTuple,
         fixedRevisions: prepared.fixedRevisions,
         payloadDigest: prepared.payloadDigest,
+        commandIdentity: prepared.commandIdentity,
+        actionableIdentity: prepared.actionableIdentity,
+        commandCore: prepared.commandCore,
         state: 'queued',
         generationRevision: 0,
-        attachmentGenerationId: actionable?.generationId,
+        attachmentGenerationId: knownActionable?.generationId,
       })
-      if (reservation.kind === 'attached') return workspace.inFlight ?? reservation.record
+      if (reservation.kind === 'attached') {
+        const owner = workspace.inFlight
+        const ownsAttachedRun = owner !== null
+          && owner.opaqueTaskScope === prepared.opaqueTaskScope
+          && owner.generationId === reservation.record.generationId
+        return ownsAttachedRun ? owner.promise : reservation.record
+      }
       workspace.opaqueTaskScope = prepared.opaqueTaskScope
       workspace.lastGenerationId = reservation.record.generationId
       workspace.report = asDraft(workspace.report)
@@ -610,10 +716,16 @@ export function createLocalClassReviewCoordinator(options: {
       }
       workspace.activeExecution = execution
       workspace.providerSettlementKnown = false
-      const owner = dispatch(workspace, execution)
+      const ownerPromise = dispatch(workspace, execution)
+      const owner: InFlightOwner = {
+        opaqueTaskScope: prepared.opaqueTaskScope,
+        generationId: reservation.record.generationId,
+        promise: ownerPromise,
+      }
       workspace.inFlight = owner
-      return owner.finally(() => {
+      return ownerPromise.finally(() => {
         if (workspace.inFlight === owner) workspace.inFlight = null
+        if (workspace.activeExecution === execution) workspace.activeExecution = null
       })
     })()
   }
@@ -636,23 +748,6 @@ export function createLocalClassReviewCoordinator(options: {
     workspace.report = parsed.value
   }
 
-  function collectCurrentSystemBlocks(
-    issueWorkspace: InternalIssueWorkspace,
-    pendingSuppressedBlock?: ClassReviewIssueBlockV1,
-  ): ClassReviewIssueBlockV1[] {
-    const byTopic = new Map<string, ClassReviewIssueBlockV1>()
-    for (const block of issueWorkspace.visible) {
-      if (block.origin === 'ai') byTopic.set(block.topicKey, block)
-    }
-    for (const variant of issueWorkspace.suppressed.values()) {
-      byTopic.set(variant.block.topicKey, variant.block)
-    }
-    if (pendingSuppressedBlock) {
-      byTopic.set(pendingSuppressedBlock.topicKey, pendingSuppressedBlock)
-    }
-    return [...byTopic.values()]
-  }
-
   function addTeacherIssue(workspace: Workspace, command: Extract<TeacherIssueCommand, { kind: 'add' }>): void {
     if (
       !command.blockId
@@ -668,9 +763,10 @@ export function createLocalClassReviewCoordinator(options: {
     const facts: TeacherEvidenceFact[] = command.evidence.map((item) => {
       const invalidEvidence = item.ref.selectionOrigin !== 'teacher_selected'
         || evidenceIds.has(item.ref.evidenceId)
+        || workspace.issueWorkspace.teacherFacts.has(item.ref.evidenceId)
         || !item.essayIdentity
         || !Number.isSafeInteger(item.occurrenceCount)
-        || item.occurrenceCount < 0
+        || item.occurrenceCount <= 0
       if (invalidEvidence) fail('class_review_candidate_conflict')
       evidenceIds.add(item.ref.evidenceId)
       return {
@@ -681,16 +777,37 @@ export function createLocalClassReviewCoordinator(options: {
         evidenceRef: structuredClone(item.ref),
       }
     })
-    facts.forEach((fact) => workspace.issueWorkspace.teacherFacts.set(fact.evidenceId, fact))
+    const allTeacherFacts = [
+      ...workspace.issueWorkspace.teacherFacts.values(),
+      ...facts,
+    ]
     const existing = workspace.issueWorkspace.visible.find((block) => block.topicKey === command.topicKey)
-    const topicFacts = [...workspace.issueWorkspace.teacherFacts.values()]
+    const topicFacts = allTeacherFacts
       .filter((fact) => fact.topicKey === command.topicKey)
     const teacherEssays = new Set(topicFacts.map((fact) => fact.essayIdentity))
-    const teacherRefs = topicFacts.flatMap((fact) => fact.evidenceRef ? [fact.evidenceRef] : [])
-    const occurrenceCount = topicFacts.reduce(
-      (sum, fact) => checkedAdd(sum, fact.occurrenceCount),
-      0,
-    )
+    const teacherRefs = topicFacts
+      .flatMap((fact) => fact.evidenceRef ? [structuredClone(fact.evidenceRef)] : [])
+      .sort((left, right) => compareCodePoints(left.evidenceId, right.evidenceId))
+    const teacherExamples = [...new Set(teacherRefs.flatMap((ref) =>
+      ref.anonymousExample === null ? [] : [ref.anonymousExample]))]
+      .sort(compareCodePoints)
+      .slice(0, 3)
+    const systemFact = workspace.issueWorkspace.systemFacts.get(command.topicKey)
+    const suppressed = workspace.issueWorkspace.suppressed.get(command.topicKey)
+    const systemBlock = existing?.origin === 'ai' ? existing : suppressed?.block
+    const systemIdentities = new Set(systemFact?.essayIdentities ?? [])
+    if (systemFact && systemIdentities.size === 0) fail('class_review_candidate_conflict')
+    let teacherOnlyOccurrences = 0
+    for (const fact of topicFacts) {
+      if (!systemIdentities.has(fact.essayIdentity)) {
+        teacherOnlyOccurrences = checkedAdd(teacherOnlyOccurrences, fact.occurrenceCount)
+      }
+    }
+    const systemOccurrences = systemFact?.occurrenceCount ?? 0
+    const occurrenceCount = checkedAdd(systemOccurrences, teacherOnlyOccurrences)
+    const systemRefs = systemBlock?.evidenceRefs.filter(
+      (ref) => ref.selectionOrigin === 'system_generation',
+    ) ?? []
     const teacherBlock: ClassReviewIssueBlockV1 = {
       blockId: existing?.blockId ?? command.blockId,
       topicKey: command.topicKey,
@@ -700,60 +817,50 @@ export function createLocalClassReviewCoordinator(options: {
       teachingAction: command.teachingAction,
       severity: command.severity,
       teacherStudentCount: teacherEssays.size,
-      systemStudentCount: 0,
-      combinedStudentCount: teacherEssays.size,
+      systemStudentCount: systemIdentities.size,
+      combinedStudentCount: new Set([...teacherEssays, ...systemIdentities]).size,
       occurrenceCount,
-      supportDenominator: null,
-      anonymousExamples: existing?.anonymousExamples ?? [],
-      evidenceRefs: teacherRefs,
+      supportDenominator: systemBlock?.supportDenominator ?? null,
+      anonymousExamples: [...new Set([
+        ...teacherExamples,
+        ...(systemBlock?.anonymousExamples ?? []),
+      ])].sort(compareCodePoints).slice(0, 3),
+      evidenceRefs: [...teacherRefs, ...systemRefs],
     }
-    if (existing) {
-      workspace.issueWorkspace.visible = workspace.issueWorkspace.visible.map((block) =>
+    const visible = existing
+      ? workspace.issueWorkspace.visible.map((block) =>
         block.blockId === existing.blockId ? teacherBlock : block,
       )
-    } else {
-      workspace.issueWorkspace.visible.push(teacherBlock)
-    }
+      : [...workspace.issueWorkspace.visible, teacherBlock]
+    const suppressedVariants = new Map(workspace.issueWorkspace.suppressed)
     if (existing?.origin === 'ai') {
       const generation = readWorkspaceGeneration(workspace)
-      const systemFact = workspace.issueWorkspace.systemFacts.get(existing.topicKey)
       if (!generation || !systemFact) fail('class_review_candidate_conflict')
-      workspace.issueWorkspace = mergeInternalIssueWorkspace({
-        workspace: workspace.issueWorkspace,
-        nextSystem: collectCurrentSystemBlocks(workspace.issueWorkspace, existing),
+      suppressedVariants.set(existing.topicKey, {
+        block: structuredClone(existing),
         generationId: generation.generationId,
         invalidationEpoch: generation.invalidationFence,
-        createOpaqueId: options.createOpaqueId,
-        systemEvidenceFacts: [...workspace.issueWorkspace.systemFacts.values()],
+        systemEvidenceFact: structuredClone(systemFact),
       })
-    } else if (existing?.origin === 'teacher') {
-      const generation = readWorkspaceGeneration(workspace)
-      const systemFact = workspace.issueWorkspace.systemFacts.get(existing.topicKey)
-      const suppressed = workspace.issueWorkspace.suppressed.get(existing.topicKey)
-      if (generation && systemFact && suppressed) {
-        workspace.issueWorkspace = mergeInternalIssueWorkspace({
-          workspace: workspace.issueWorkspace,
-          nextSystem: collectCurrentSystemBlocks(
-            workspace.issueWorkspace,
-            suppressed.block,
-          ),
-          generationId: generation.generationId,
-          invalidationEpoch: generation.invalidationFence,
-          createOpaqueId: options.createOpaqueId,
-          systemEvidenceFacts: [...workspace.issueWorkspace.systemFacts.values()],
-        })
-      }
     }
+    workspace.issueWorkspace = createInternalIssueWorkspace(visible, {
+      issueOrder: visible.map((block) => block.blockId),
+      teacherEvidenceFacts: allTeacherFacts,
+      systemEvidenceFacts: [...workspace.issueWorkspace.systemFacts.values()],
+      suppressed: suppressedVariants,
+    })
   }
 
   function validateSourceReplacement(input: ClassReviewSourceReplacement): {
     taskRevision: number
     rubricRevisionDigest: string
-    report: ClassReviewReportV1
+    statistics: ClassReviewStatisticsV1
     projection: ReadyProjection
   } {
-    const parsed = parseClassReviewReport(input.report)
-    if (!parsed.ok || parsed.value.taskRevision !== input.taskRevision) fail('class_review_candidate_conflict')
+    if (!input || typeof input !== 'object'
+      || Object.keys(input).sort().join(',') !== 'projection,rubricRevisionDigest,statistics,taskRevision') {
+      fail('class_review_candidate_conflict')
+    }
     const projection = cloneReadyProjection(input.projection)
     const request = buildRequest(input.rubricRevisionDigest, projection, 'source-sync-validation')
     cloneAndFreezeClassReviewGenerationSnapshot({
@@ -764,15 +871,15 @@ export function createLocalClassReviewCoordinator(options: {
       executionIdentity: 'source-sync-validation',
       payloadDigest: 'source-sync-validation',
       taskRevision: input.taskRevision,
-      reportRevision: parsed.value.reportRevision,
-      aiTextEditRevision: parsed.value.aiTextEditRevision,
+      reportRevision: null,
+      aiTextEditRevision: 0,
       sourceRevisionEpoch: 0,
-      browserStatistics: parsed.value.statistics,
+      browserStatistics: input.statistics,
     })
     return {
       taskRevision: input.taskRevision,
       rubricRevisionDigest: input.rubricRevisionDigest,
-      report: structuredClone(parsed.value),
+      statistics: structuredClone(input.statistics),
       projection,
     }
   }
@@ -801,103 +908,115 @@ export function createLocalClassReviewCoordinator(options: {
 
     if (command.kind === 'ordinary_revision') {
       if (!validatedReplacement) fail('class_review_candidate_conflict')
-      const issueWorkspace = createInternalIssueWorkspace(validatedReplacement.report.issueBlocks, {
-        issueOrder: validatedReplacement.report.issueOrder,
-        teacherEvidenceFacts: [...workspace.issueWorkspace.teacherFacts.values()],
-        systemEvidenceFacts: [...workspace.issueWorkspace.systemFacts.values()],
-        suppressed: workspace.issueWorkspace.suppressed,
+      const report = parsedReport({
+        ...workspace.report,
+        taskRevision: validatedReplacement.taskRevision,
+        statistics: validatedReplacement.statistics,
       })
       workspace.taskRevision = validatedReplacement.taskRevision
       workspace.rubricRevisionDigest = validatedReplacement.rubricRevisionDigest
-      workspace.report = validatedReplacement.report
+      workspace.report = report
       workspace.projection = validatedReplacement.projection
-      workspace.issueWorkspace = issueWorkspace
       workspace.sourceReady = true
       workspace.sourceRevisionEpoch += 1
       return
     }
 
-    workspace.invalidationEpoch += 1
-    workspace.sourceRevisionEpoch += 1
-    workspace.activeExecution = null
-    workspace.providerSettlementKnown = false
-    if (workspace.opaqueTaskScope) {
-      registry.invalidateTaskScope({
-        opaqueTaskScope: workspace.opaqueTaskScope,
-        safeFailureCode: command.kind === 'task_deleted'
-          ? 'class_review_task_invalidated'
-          : 'class_review_source_invalidated',
-      })
-    }
     if (command.kind === 'task_deleted') {
+      const tombstoneStatistics: ClassReviewStatisticsV1 = {
+        totalEssayCount: 0,
+        includedEssayCount: 0,
+        issueEligibleEssayCount: 0,
+        excludedEssayCount: 0,
+        issueCoverageRate: 1,
+        fullScore: 1,
+        scoreSummary: null,
+        scoreBands: [],
+        dimensions: [],
+      }
+      const tombstone = parsedReport({
+        contractVersion: 'class-review-report-v1',
+        workspaceState: 'none',
+        taskRevision: workspace.taskRevision,
+        reportRevision: null,
+        aiTextEditRevision: 0,
+        currentGeneration: null,
+        statistics: tombstoneStatistics,
+        issueBlocks: [],
+        issueOrder: [],
+        clearSpellingItems: [],
+        selectedMaterials: [],
+      })
+      const emptyIssues = createInternalIssueWorkspace([])
+      if (workspace.opaqueTaskScope) {
+        registry.invalidateTaskScope({
+          opaqueTaskScope: workspace.opaqueTaskScope,
+          safeFailureCode: 'class_review_task_invalidated',
+        })
+      }
+      workspace.invalidationEpoch += 1
+      workspace.sourceRevisionEpoch += 1
+      workspace.activeExecution = null
+      workspace.inFlight = null
+      workspace.providerSettlementKnown = false
       workspace.taskDeleted = true
       workspace.sourceReady = false
       workspace.projection = null
-      workspace.issueWorkspace = invalidateInternalSystemVariants(
-        workspace.issueWorkspace,
-        workspace.invalidationEpoch,
-      )
+      workspace.report = tombstone
+      workspace.issueWorkspace = emptyIssues
       workspace.undoIssueWorkspace = null
+      workspace.lastGenerationId = null
       return
     }
 
-    workspace.issueWorkspace = invalidateInternalSystemVariants(
+    const removed = new Set(command.removedTeacherEvidenceIds)
+    if (removed.size !== command.removedTeacherEvidenceIds.length
+      || command.removedTeacherEvidenceIds.some((id) => !workspace.issueWorkspace.teacherFacts.has(id))) {
+      fail('class_review_candidate_conflict')
+    }
+    const nextInvalidationEpoch = checkedAdd(workspace.invalidationEpoch, 1)
+    const issueWorkspace = invalidateInternalSystemVariants(
       workspace.issueWorkspace,
-      workspace.invalidationEpoch,
+      nextInvalidationEpoch,
       command.removedTeacherEvidenceIds,
     )
-    workspace.undoIssueWorkspace = null
-    const issueBlocks = projectInternalIssueWorkspace(workspace.issueWorkspace)
+    const issueBlocks = projectInternalIssueWorkspace(issueWorkspace)
     const issueOrder = issueBlocks.map((block) => block.blockId)
-    if (validatedReplacement) {
-      workspace.taskRevision = validatedReplacement.taskRevision
-      workspace.rubricRevisionDigest = validatedReplacement.rubricRevisionDigest
-      workspace.projection = validatedReplacement.projection
-      workspace.sourceReady = true
-      const replacementReport = validatedReplacement.report.workspaceState === 'ai_available'
-        ? {
-            contractVersion: 'class-review-report-v1' as const,
-            workspaceState: 'ai_removed' as const,
-            taskRevision: validatedReplacement.report.taskRevision,
-            reportRevision: validatedReplacement.report.reportRevision + 1,
-            aiTextEditRevision: validatedReplacement.report.aiTextEditRevision,
-            currentGeneration: null,
-            statistics: validatedReplacement.report.statistics,
-            issueBlocks,
-            issueOrder,
-            clearSpellingItems: validatedReplacement.report.clearSpellingItems,
-            selectedMaterials: validatedReplacement.report.selectedMaterials,
-          }
-        : {
-            ...validatedReplacement.report,
-            currentGeneration: null,
-            issueBlocks,
-            issueOrder,
-          }
-      workspace.report = parsedReport(replacementReport)
-      return
+    const wasAiWorkspace = workspace.report.workspaceState === 'ai_available'
+      || workspace.report.workspaceState === 'ai_removed'
+    const unavailableReport = parsedReport({
+      contractVersion: 'class-review-report-v1',
+      workspaceState: wasAiWorkspace ? 'ai_removed' : 'draft',
+      taskRevision: validatedReplacement?.taskRevision ?? workspace.taskRevision,
+      reportRevision: workspace.report.reportRevision === null
+        ? 0
+        : checkedAdd(workspace.report.reportRevision, 1),
+      aiTextEditRevision: workspace.report.aiTextEditRevision,
+      currentGeneration: null,
+      statistics: validatedReplacement?.statistics ?? workspace.report.statistics,
+      issueBlocks,
+      issueOrder,
+      clearSpellingItems: [],
+      selectedMaterials: workspace.report.selectedMaterials,
+    })
+    if (workspace.opaqueTaskScope) {
+      registry.invalidateTaskScope({
+        opaqueTaskScope: workspace.opaqueTaskScope,
+        safeFailureCode: 'class_review_source_invalidated',
+      })
     }
-
-    workspace.sourceReady = false
-    workspace.projection = null
-    if (workspace.report.workspaceState === 'none') return
-    const nextRevision = workspace.report.reportRevision + 1
-    const unavailableReport = workspace.report.workspaceState === 'ai_available'
-      ? {
-          contractVersion: 'class-review-report-v1' as const,
-          workspaceState: 'ai_removed' as const,
-          taskRevision: workspace.report.taskRevision,
-          reportRevision: nextRevision,
-          aiTextEditRevision: workspace.report.aiTextEditRevision,
-          currentGeneration: null,
-          statistics: workspace.report.statistics,
-          issueBlocks,
-          issueOrder,
-          clearSpellingItems: workspace.report.clearSpellingItems,
-          selectedMaterials: workspace.report.selectedMaterials,
-        }
-      : { ...workspace.report, currentGeneration: null, reportRevision: nextRevision, issueBlocks, issueOrder }
-    workspace.report = parsedReport(unavailableReport)
+    workspace.invalidationEpoch = nextInvalidationEpoch
+    workspace.sourceRevisionEpoch = checkedAdd(workspace.sourceRevisionEpoch, 1)
+    workspace.activeExecution = null
+    workspace.inFlight = null
+    workspace.providerSettlementKnown = false
+    workspace.issueWorkspace = issueWorkspace
+    workspace.undoIssueWorkspace = null
+    workspace.report = unavailableReport
+    workspace.taskRevision = validatedReplacement?.taskRevision ?? workspace.taskRevision
+    workspace.rubricRevisionDigest = validatedReplacement?.rubricRevisionDigest ?? workspace.rubricRevisionDigest
+    workspace.projection = validatedReplacement?.projection ?? null
+    workspace.sourceReady = validatedReplacement !== null
   }
 
   return {

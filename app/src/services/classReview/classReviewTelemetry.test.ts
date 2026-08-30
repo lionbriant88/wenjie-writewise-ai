@@ -58,9 +58,13 @@ describe('class review telemetry', () => {
     expect(Object.isFrozen(emitted)).toBe(true)
 
     const descriptorReads = new Map<PropertyKey, number>()
+    let ownKeyReads = 0
     let directReads = 0
     const guarded = new Proxy(event, {
-      ownKeys: (target) => Reflect.ownKeys(target),
+      ownKeys: (target) => {
+        ownKeyReads += 1
+        return Reflect.ownKeys(target)
+      },
       getOwnPropertyDescriptor(target, key) {
         descriptorReads.set(key, (descriptorReads.get(key) ?? 0) + 1)
         return Reflect.getOwnPropertyDescriptor(target, key)
@@ -71,8 +75,53 @@ describe('class review telemetry', () => {
       },
     })
     telemetry.record(guarded)
+    expect(ownKeyReads).toBe(1)
     expect([...descriptorReads.values()]).toEqual(Array.from({ length: 16 }, () => 1))
     expect(directReads).toBe(0)
+  })
+
+  it.each([
+    {
+      name: 'completed result-unknown',
+      lifecycle: 'completed' as const,
+      outcome: 'result_unknown' as const,
+      safeFailureCode: 'provider_result_unknown' as const,
+    },
+    {
+      name: 'running source invalidation',
+      lifecycle: 'running' as const,
+      outcome: 'failed' as const,
+      safeFailureCode: 'class_review_source_invalidated' as const,
+    },
+    {
+      name: 'completed task invalidation',
+      lifecycle: 'completed' as const,
+      outcome: 'failed' as const,
+      safeFailureCode: 'class_review_task_invalidated' as const,
+    },
+  ])('rejects illegal bidirectional lifecycle tuple: $name', (tuple) => {
+    const emit = vi.fn()
+    const telemetry = createClassReviewTelemetry(emit)
+    const event: ClassReviewTelemetryEvent = {
+      stage: 'class_review_generation',
+      lifecycle: tuple.lifecycle,
+      outcome: tuple.outcome,
+      safeFailureCode: tuple.safeFailureCode,
+      includedEssayCount: 4,
+      excludedEssayCount: 0,
+      eligibleGroupCount: 2,
+      projectedGroupCount: 2,
+      eligibleDistinctEssaySupportSum: 4,
+      projectedDistinctEssaySupportSum: 4,
+      eligibleOccurrenceSum: 5,
+      projectedOccurrenceSum: 5,
+      queueMs: 1,
+      providerMs: 2,
+      validationMs: 1,
+      totalMs: 4,
+    }
+    expect(() => telemetry.record(event)).toThrow('class_review_telemetry_invalid')
+    expect(emit).not.toHaveBeenCalled()
   })
 
   it('fails closed on ownKeys or descriptor traps without emitting', () => {

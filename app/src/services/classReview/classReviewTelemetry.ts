@@ -78,23 +78,27 @@ export interface ClassReviewTelemetryEvent {
 export function createClassReviewTelemetry(emit: (event: ClassReviewTelemetryEvent) => void) {
   return {
     record(input: ClassReviewTelemetryEvent) {
-      let descriptors: PropertyDescriptorMap
+      const descriptors = new Map<PropertyKey, PropertyDescriptor>()
       let suppliedKeys: PropertyKey[]
       try {
         suppliedKeys = Reflect.ownKeys(input)
-        descriptors = Object.getOwnPropertyDescriptors(input)
+        for (const key of suppliedKeys) {
+          const descriptor = Object.getOwnPropertyDescriptor(input, key)
+          if (!descriptor) throw new Error('class_review_telemetry_invalid')
+          descriptors.set(key, descriptor)
+        }
       } catch {
         throw new Error('class_review_telemetry_invalid')
       }
       const hasExactKeys = suppliedKeys.length === KEYS.length
         && suppliedKeys.every((key) => typeof key === 'string' && (KEYS as readonly string[]).includes(key))
         && KEYS.every((key) => {
-          const descriptor = descriptors[key]
+          const descriptor = descriptors.get(key)
           return descriptor !== undefined && descriptor.enumerable === true
             && 'value' in descriptor && descriptor.get === undefined && descriptor.set === undefined
         })
       if (!hasExactKeys) throw new Error('class_review_telemetry_invalid')
-      const value = Object.fromEntries(KEYS.map((key) => [key, descriptors[key].value])) as ClassReviewTelemetryEvent
+      const value = Object.fromEntries(KEYS.map((key) => [key, descriptors.get(key)!.value])) as ClassReviewTelemetryEvent
       const hasValidEnums = value.stage === 'class_review_generation'
         && LIFECYCLES.has(value.lifecycle)
         && OUTCOMES.has(value.outcome)
@@ -127,15 +131,20 @@ export function createClassReviewTelemetry(emit: (event: ClassReviewTelemetryEve
         : value.outcome === 'result_unknown'
           ? value.safeFailureCode !== 'provider_result_unknown'
           : value.safeFailureCode === null
+      const isInvalidationFailure = value.safeFailureCode === 'class_review_source_invalidated'
+        || value.safeFailureCode === 'class_review_task_invalidated'
       const legalLifecycle = value.lifecycle === 'reserved'
-        ? value.outcome === 'failed'
+        ? value.outcome === 'failed' && !isInvalidationFailure
         : value.lifecycle === 'running'
-          ? value.outcome === 'failed' || value.outcome === 'result_unknown'
+          ? (value.outcome === 'failed' || value.outcome === 'result_unknown')
+            && !isInvalidationFailure
           : value.lifecycle === 'completed'
-            ? true
-            : value.outcome === 'failed'
-              && (value.safeFailureCode === 'class_review_source_invalidated'
-                || value.safeFailureCode === 'class_review_task_invalidated')
+            ? (value.outcome === 'succeeded'
+              || value.outcome === 'succeeded_unapplied'
+              || value.outcome === 'discarded'
+              || value.outcome === 'failed')
+              && !isInvalidationFailure
+            : value.outcome === 'failed' && isInvalidationFailure
       if (
         hasInvalidInteger
         || hasExcessiveDuration

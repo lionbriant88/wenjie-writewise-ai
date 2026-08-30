@@ -287,7 +287,15 @@ describe('internal mixed teacher/system workspace', () => {
 
   it('preserves teacher order and surviving block IDs while deterministic new system order allocates IDs only for new visible blocks', () => {
     const createOpaqueId = (() => { let n = 0; return () => `new-${++n}` })()
-    const workspace = createInternalIssueWorkspace([teacher('t1', 'teacher.1'), ai('old-a', 'tk1.a'), teacher('t2', 'teacher.2'), ai('vanished', 'tk1.z')], { issueOrder: ['t1', 'old-a', 't2', 'vanished'] })
+    const firstTeacher = teacher('t1', 'teacher.1')
+    const secondTeacher = teacher('t2', 'teacher.2')
+    const workspace = createInternalIssueWorkspace([firstTeacher, ai('old-a', 'tk1.a'), secondTeacher, ai('vanished', 'tk1.z')], {
+      issueOrder: ['t1', 'old-a', 't2', 'vanished'],
+      teacherEvidenceFacts: [
+        { topicKey: firstTeacher.topicKey, evidenceId: 't-t1', essayIdentity: 'essay-t1', occurrenceCount: 1 },
+        { topicKey: secondTeacher.topicKey, evidenceId: 't-t2', essayIdentity: 'essay-t2', occurrenceCount: 1 },
+      ],
+    })
     const merged = mergeInternalIssueWorkspace({ workspace, nextSystem: [ai('new-c', 'tk1.c'), ai('new-a', 'tk1.a'), ai('new-b', 'tk1.b')], generationId: 'generation-1', invalidationEpoch: 0, createOpaqueId })
     expect(projectInternalIssueWorkspace(merged).map((item) => [item.topicKey, item.blockId])).toEqual([['teacher.1', 't1'], ['tk1.a', 'old-a'], ['teacher.2', 't2'], ['tk1.b', 'new-b'], ['tk1.c', 'new-c']])
   })
@@ -295,6 +303,7 @@ describe('internal mixed teacher/system workspace', () => {
   it('retains teacher-first/system evidence and identity-union counts, restores at the same slot, but never after invalidation', () => {
     const teacherBlock = teacher('t', 'tk1.a')
     teacherBlock.evidenceRefs = [{ evidenceId: 'teacher-evidence', selectionOrigin: 'teacher_selected', sourceLocator: 'teacher-source', sourceResultRevision: 1, anonymousExample: null }]
+    teacherBlock.occurrenceCount = 2
     const system = ai('system', 'tk1.a')
     system.evidenceRefs = [{ evidenceId: 'system-evidence', selectionOrigin: 'system_generation', sourceLocator: 'system-source', sourceResultRevision: 1, anonymousExample: null }]
     const base = createInternalIssueWorkspace([teacherBlock], { issueOrder: ['t'], teacherEvidenceFacts: [{ topicKey: 'tk1.a', evidenceId: 'teacher-evidence', essayIdentity: 'essay-overlap', occurrenceCount: 2 }] })
@@ -306,5 +315,279 @@ describe('internal mixed teacher/system workspace', () => {
     expect(restored.suppressed.size).toBe(0)
     const invalidated = invalidateInternalSystemVariants(mixed, 1)
     expect(projectInternalIssueWorkspace(removeTeacherEvidence(invalidated, 'teacher-evidence'))).toHaveLength(0)
+  })
+})
+
+function materializationFixture(groupCount: 1 | 2) {
+  const request = frozenRequest()
+  request.groups = request.groups.slice(0, groupCount)
+  const projectedSupport = groupCount === 1 ? 2 : 4
+  const projectedOccurrences = groupCount === 1 ? 3 : 5
+  request.semanticCoverage = {
+    projectedGroupCount: groupCount,
+    eligibleGroupCount: groupCount,
+    groupCoverage: 1,
+    projectedDistinctEssaySupportSum: projectedSupport,
+    eligibleDistinctEssaySupportSum: projectedSupport,
+    supportWeightedCoverage: 1,
+    projectedOccurrenceSum: projectedOccurrences,
+    eligibleOccurrenceSum: projectedOccurrences,
+    occurrenceWeightedCoverage: 1,
+  }
+  const sourceHidden = hidden()
+  sourceHidden.selectedGroups = new Map(
+    [...sourceHidden.selectedGroups].filter(([alias]) => request.groups.some((group) => group.groupId === alias)),
+  )
+  sourceHidden.unprojectedMustCover = []
+  const current = browserReport()
+  const snapshot = cloneAndFreezeClassReviewGenerationSnapshot({
+    originalRequest: request,
+    hidden: sourceHidden,
+    generationId: `admission-${groupCount}`,
+    invalidationEpoch: 0,
+    executionIdentity: `execution-${groupCount}`,
+    payloadDigest: `digest-${groupCount}`,
+    taskRevision: 1,
+    reportRevision: 1,
+    aiTextEditRevision: 0,
+    sourceRevisionEpoch: 0,
+    browserStatistics: current.statistics,
+  })
+  const patterns = request.groups.map((group) => ({
+    groupIds: [group.groupId],
+    title: group.title,
+    diagnosis: `Diagnosis ${group.groupId}`,
+    teachingAction: `Action ${group.groupId}`,
+    severity: group.severity,
+  }))
+  const result: ClassReviewSynthesisResultV1 = {
+    contractVersion: 'class-review-synthesis-result-v1',
+    requestId: request.requestId,
+    status: 'succeeded',
+    output: output(patterns),
+    semanticCoverage: request.semanticCoverage,
+    finishReason: 'stop',
+    usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2, cachedTokens: 0 },
+    timingsMs: { queueMs: 0, providerMs: 1, validationMs: 0, totalMs: 1 },
+  }
+  return { snapshot, result, current }
+}
+
+describe('Task 8 round 3 candidate and canonical fact admission', () => {
+  it('rejects a non-RFC3339 generated timestamp before creating an opaque candidate handle', async () => {
+    const fixture = materializationFixture(1)
+    await expect(materializeClassReviewCandidateHandle({
+      snapshot: fixture.snapshot,
+      untrustedResult: fixture.result,
+      topicHmac: hmac(),
+      createOpaqueId: () => 'valid-system-block',
+      now: () => 'not-rfc3339',
+    })).rejects.toThrow('class_review_candidate_conflict')
+  })
+
+  it.each([
+    { name: 'empty generated block ID', groupCount: 1 as const, createOpaqueId: (): string => '' },
+    { name: 'duplicate generated block IDs', groupCount: 2 as const, createOpaqueId: (): string => 'duplicate-system-block' },
+  ])('rejects $name before creating an opaque candidate handle', async ({ groupCount, createOpaqueId }) => {
+    const fixture = materializationFixture(groupCount)
+    await expect(materializeClassReviewCandidateHandle({
+      snapshot: fixture.snapshot,
+      untrustedResult: fixture.result,
+      topicHmac: hmac(),
+      createOpaqueId,
+      now: () => '2026-08-30T00:00:00.000Z',
+    })).rejects.toThrow('class_review_candidate_conflict')
+  })
+
+  it.each([
+    {
+      name: 'visible teacher ref without a fact',
+      build: () => {
+        const first = { evidenceId: 'evidence-a', selectionOrigin: 'teacher_selected' as const, sourceLocator: 'source-a', sourceResultRevision: 1, anonymousExample: 'A' }
+        const second = { evidenceId: 'evidence-b', selectionOrigin: 'teacher_selected' as const, sourceLocator: 'source-b', sourceResultRevision: 1, anonymousExample: 'B' }
+        const block: ClassReviewIssueBlockV1 = {
+          blockId: 'teacher-bijection', topicKey: 'teacher.bijection', origin: 'teacher',
+          title: 'Teacher', diagnosis: 'Teacher', teachingAction: 'Teacher', severity: 'medium',
+          teacherStudentCount: 2, systemStudentCount: 0, combinedStudentCount: 2,
+          occurrenceCount: 2, supportDenominator: null, anonymousExamples: ['A', 'B'],
+          evidenceRefs: [first, second],
+        }
+        return { blocks: [block], facts: [{ topicKey: block.topicKey, evidenceId: first.evidenceId, essayIdentity: 'essay-a', occurrenceCount: 1, evidenceRef: first }] }
+      },
+    },
+    {
+      name: 'caller counts and examples that disagree with facts',
+      build: () => {
+        const ref = { evidenceId: 'evidence-count', selectionOrigin: 'teacher_selected' as const, sourceLocator: 'source-count', sourceResultRevision: 1, anonymousExample: 'Derived example' }
+        const block: ClassReviewIssueBlockV1 = {
+          blockId: 'teacher-count', topicKey: 'teacher.count', origin: 'teacher',
+          title: 'Teacher', diagnosis: 'Teacher', teachingAction: 'Teacher', severity: 'medium',
+          teacherStudentCount: 9, systemStudentCount: 0, combinedStudentCount: 9,
+          occurrenceCount: 9, supportDenominator: null, anonymousExamples: ['Caller injected'],
+          evidenceRefs: [ref],
+        }
+        return { blocks: [block], facts: [{ topicKey: block.topicKey, evidenceId: ref.evidenceId, essayIdentity: 'essay-count', occurrenceCount: 2, evidenceRef: ref }] }
+      },
+    },
+    {
+      name: 'workspace-duplicate evidence ID across blocks',
+      build: () => {
+        const ref = { evidenceId: 'evidence-shared', selectionOrigin: 'teacher_selected' as const, sourceLocator: 'source-shared', sourceResultRevision: 1, anonymousExample: null }
+        const makeBlock = (blockId: string, topicKey: string): ClassReviewIssueBlockV1 => ({
+          blockId, topicKey, origin: 'teacher', title: blockId, diagnosis: blockId,
+          teachingAction: blockId, severity: 'medium', teacherStudentCount: 1,
+          systemStudentCount: 0, combinedStudentCount: 1, occurrenceCount: 1,
+          supportDenominator: null, anonymousExamples: [], evidenceRefs: [ref],
+        })
+        const first = makeBlock('teacher-first', 'teacher.first')
+        const second = makeBlock('teacher-second', 'teacher.second')
+        return { blocks: [first, second], facts: [{ topicKey: first.topicKey, evidenceId: ref.evidenceId, essayIdentity: 'essay-shared', occurrenceCount: 1, evidenceRef: ref }] }
+      },
+    },
+  ])('fails closed on non-bijective teacher evidence: $name', ({ build }) => {
+    const { blocks, facts } = build()
+    expect(() => createInternalIssueWorkspace(blocks, {
+      issueOrder: blocks.map((block) => block.blockId),
+      teacherEvidenceFacts: facts,
+    })).toThrow('class_review_candidate_conflict')
+  })
+
+  it('rejects a positive-support system fact whose exact essay identity set disagrees with the visible system block', () => {
+    const block: ClassReviewIssueBlockV1 = {
+      blockId: 'system-count', topicKey: 'tk1.aaaaaaaaaaaaaaaa', origin: 'ai',
+      title: 'System', diagnosis: 'System', teachingAction: 'System', severity: 'medium',
+      teacherStudentCount: 0, systemStudentCount: 2, combinedStudentCount: 2,
+      occurrenceCount: 2, supportDenominator: 3, anonymousExamples: [], evidenceRefs: [],
+    }
+    expect(() => createInternalIssueWorkspace([block], {
+      issueOrder: [block.blockId],
+      systemEvidenceFacts: [{ topicKey: block.topicKey, essayIdentities: ['essay-only-one'], occurrenceCount: 2 }],
+    })).toThrow('class_review_candidate_conflict')
+  })
+
+  it('recomputes vanished system contributions from teacher facts and removes stale system occurrences/examples', () => {
+    const teacherRef = { evidenceId: 'teacher-evidence', selectionOrigin: 'teacher_selected' as const, sourceLocator: 'teacher-source', sourceResultRevision: 1, anonymousExample: 'Teacher example' }
+    const systemRef = { evidenceId: 'system-evidence', selectionOrigin: 'system_generation' as const, sourceLocator: 'system-source', sourceResultRevision: 1, anonymousExample: 'System example' }
+    const mixed: ClassReviewIssueBlockV1 = {
+      blockId: 'mixed', topicKey: 'tk1.aaaaaaaaaaaaaaaa', origin: 'teacher',
+      title: 'Mixed', diagnosis: 'Mixed', teachingAction: 'Mixed', severity: 'medium',
+      teacherStudentCount: 1, systemStudentCount: 2, combinedStudentCount: 2,
+      occurrenceCount: 3, supportDenominator: 3,
+      anonymousExamples: ['System example', 'Teacher example'], evidenceRefs: [teacherRef, systemRef],
+    }
+    const workspace = createInternalIssueWorkspace([mixed], {
+      issueOrder: [mixed.blockId],
+      teacherEvidenceFacts: [{
+        topicKey: mixed.topicKey, evidenceId: teacherRef.evidenceId,
+        essayIdentity: 'essay-teacher', occurrenceCount: 2, evidenceRef: teacherRef,
+      }],
+      systemEvidenceFacts: [{
+        topicKey: mixed.topicKey, essayIdentities: ['essay-teacher', 'essay-system'], occurrenceCount: 3,
+      }],
+    })
+    const vanished = mergeInternalIssueWorkspace({
+      workspace, nextSystem: [], generationId: 'next-generation', invalidationEpoch: 0,
+      createOpaqueId: () => 'unused', systemEvidenceFacts: [],
+    })
+    expect(projectInternalIssueWorkspace(vanished)).toEqual([{
+      ...mixed,
+      teacherStudentCount: 1,
+      systemStudentCount: 0,
+      combinedStudentCount: 1,
+      occurrenceCount: 2,
+      supportDenominator: null,
+      anonymousExamples: ['Teacher example'],
+      evidenceRefs: [teacherRef],
+    }])
+  })
+
+  it('fails closed when an identity-less positive-support fallback collides with teacher evidence', () => {
+    const teacherRef = { evidenceId: 'teacher-fallback', selectionOrigin: 'teacher_selected' as const, sourceLocator: 'teacher-source', sourceResultRevision: 1, anonymousExample: null }
+    const teacherBlock: ClassReviewIssueBlockV1 = {
+      blockId: 'teacher-fallback-block', topicKey: 'tk1.aaaaaaaaaaaaaaaa', origin: 'teacher',
+      title: 'Teacher', diagnosis: 'Teacher', teachingAction: 'Teacher', severity: 'medium',
+      teacherStudentCount: 1, systemStudentCount: 0, combinedStudentCount: 1,
+      occurrenceCount: 1, supportDenominator: null, anonymousExamples: [], evidenceRefs: [teacherRef],
+    }
+    const fallback: ClassReviewIssueBlockV1 = {
+      ...teacherBlock,
+      blockId: 'fallback-system',
+      origin: 'ai',
+      teacherStudentCount: 0,
+      systemStudentCount: 2,
+      combinedStudentCount: 2,
+      occurrenceCount: 2,
+      supportDenominator: 3,
+      evidenceRefs: [],
+    }
+    const workspace = createInternalIssueWorkspace([teacherBlock], {
+      issueOrder: [teacherBlock.blockId],
+      teacherEvidenceFacts: [{
+        topicKey: teacherBlock.topicKey, evidenceId: teacherRef.evidenceId,
+        essayIdentity: 'essay-teacher', occurrenceCount: 1, evidenceRef: teacherRef,
+      }],
+    })
+    expect(() => mergeInternalIssueWorkspace({
+      workspace,
+      nextSystem: [fallback],
+      generationId: 'fallback-generation',
+      invalidationEpoch: 0,
+      createOpaqueId: () => 'unused',
+      systemEvidenceFacts: [{ topicKey: fallback.topicKey, essayIdentities: [], occurrenceCount: 2 }],
+    })).toThrow('class_review_candidate_conflict')
+  })
+
+  it('canonicalizes opaque identities by Unicode scalar value rather than UTF-16 code-unit order', () => {
+    const bmp = '\uE000'
+    const astral = '\u{10000}'
+    const block: ClassReviewIssueBlockV1 = {
+      blockId: 'unicode-system', topicKey: 'tk1.aaaaaaaaaaaaaaaa', origin: 'ai',
+      title: 'System', diagnosis: 'System', teachingAction: 'System', severity: 'medium',
+      teacherStudentCount: 0, systemStudentCount: 2, combinedStudentCount: 2,
+      occurrenceCount: 2, supportDenominator: 3, anonymousExamples: [], evidenceRefs: [],
+    }
+    const workspace = createInternalIssueWorkspace([block], {
+      issueOrder: [block.blockId],
+      systemEvidenceFacts: [{ topicKey: block.topicKey, essayIdentities: [astral, bmp], occurrenceCount: 2 }],
+    })
+    expect(workspace.systemFacts.get(block.topicKey)?.essayIdentities).toEqual([bmp, astral])
+  })
+
+  it('rebuilds teacher refs and unique examples in Unicode-scalar order and caps examples at three', () => {
+    const bmp = '\uE000'
+    const astral = '\u{10000}'
+    const facts = [
+      { evidenceId: `e-${astral}`, example: astral, essayIdentity: 'essay-astral' },
+      { evidenceId: `e-${bmp}`, example: bmp, essayIdentity: 'essay-bmp' },
+      { evidenceId: 'e-B', example: 'B', essayIdentity: 'essay-b' },
+      { evidenceId: 'e-A', example: 'A', essayIdentity: 'essay-a' },
+    ]
+    const refs = facts.map((fact) => ({
+      evidenceId: fact.evidenceId,
+      selectionOrigin: 'teacher_selected' as const,
+      sourceLocator: `source-${fact.essayIdentity}`,
+      sourceResultRevision: 1,
+      anonymousExample: fact.example,
+    }))
+    const block: ClassReviewIssueBlockV1 = {
+      blockId: 'teacher-canonical', topicKey: 'teacher.canonical', origin: 'teacher',
+      title: 'Teacher', diagnosis: 'Teacher', teachingAction: 'Teacher', severity: 'medium',
+      teacherStudentCount: 4, systemStudentCount: 0, combinedStudentCount: 4,
+      occurrenceCount: 4, supportDenominator: null,
+      anonymousExamples: ['A', 'B', bmp], evidenceRefs: refs,
+    }
+    const workspace = createInternalIssueWorkspace([block], {
+      issueOrder: [block.blockId],
+      teacherEvidenceFacts: facts.map((fact, index) => ({
+        topicKey: block.topicKey,
+        evidenceId: fact.evidenceId,
+        essayIdentity: fact.essayIdentity,
+        occurrenceCount: 1,
+        evidenceRef: refs[index],
+      })),
+    })
+    const rebuilt = projectInternalIssueWorkspace(invalidateInternalSystemVariants(workspace, 1))[0]
+    expect(rebuilt.evidenceRefs.map((ref) => ref.evidenceId)).toEqual(['e-A', 'e-B', `e-${bmp}`, `e-${astral}`])
+    expect(rebuilt.anonymousExamples).toEqual(['A', 'B', bmp])
   })
 })

@@ -18,6 +18,9 @@ export interface ReservationInput {
   snapshotTuple: string
   fixedRevisions: string
   payloadDigest: string
+  commandIdentity: string
+  actionableIdentity: string
+  commandCore: string
   state: 'queued' | 'running'
   generationRevision: number
   attachmentGenerationId?: string
@@ -26,7 +29,7 @@ export interface ReservationInput {
 export interface LocalGenerationRecord {
   readonly opaqueTaskScope: string
   readonly generationId: string
-  readonly requestId: string
+  readonly requestId: string | null
   readonly executionIdentity: string
   readonly snapshotTuple: string
   readonly fixedRevisions: string
@@ -42,12 +45,15 @@ export interface LocalGenerationRecord {
 interface MutableGenerationRecord {
   opaqueTaskScope: string
   generationId: string
-  requestId: string
+  requestId: string | null
   executionIdentity: string
   requestBytes: string | null
   snapshotTuple: string
   fixedRevisions: string
   payloadDigest: string
+  commandIdentity: string
+  actionableIdentity: string
+  commandCore: string
   state: LocalGenerationState
   generationRevision: number
   invalidationFence: number
@@ -82,7 +88,11 @@ function frozenValue<T>(value: T): T {
 
 export function createLocalClassReviewRegistry() {
   const recordsByScope = new Map<string, Map<string, MutableGenerationRecord>>()
-  const proposedAliasesByScope = new Map<string, Map<string, string>>()
+  const proposedAliasesByScope = new Map<string, Map<string, {
+    generationId: string
+    commandIdentity: string
+    commandCore: string
+  }>>()
   const actionableByScope = new Map<string, string>()
   const candidateByRecord = new WeakMap<MutableGenerationRecord, MaterializedClassReviewCandidateHandle>()
 
@@ -93,10 +103,18 @@ export function createLocalClassReviewRegistry() {
     recordsByScope.set(scope, created)
     return created
   }
-  const scopedAliases = (scope: string, create = false): Map<string, string> | null => {
+  const scopedAliases = (scope: string, create = false): Map<string, {
+    generationId: string
+    commandIdentity: string
+    commandCore: string
+  }> | null => {
     const existing = proposedAliasesByScope.get(scope)
     if (existing || !create) return existing ?? null
-    const created = new Map<string, string>()
+    const created = new Map<string, {
+      generationId: string
+      commandIdentity: string
+      commandCore: string
+    }>()
     proposedAliasesByScope.set(scope, created)
     return created
   }
@@ -126,8 +144,18 @@ export function createLocalClassReviewRegistry() {
     return record ? snapshot(record) : null
   }
   const readProposed = (input: { opaqueTaskScope: string; proposedGenerationId: string }): LocalGenerationRecord | null => {
-    const generationId = scopedAliases(input.opaqueTaskScope)?.get(input.proposedGenerationId)
-    return generationId ? readGeneration({ opaqueTaskScope: input.opaqueTaskScope, generationId }) : null
+    const alias = scopedAliases(input.opaqueTaskScope)?.get(input.proposedGenerationId)
+    return alias ? readGeneration({ opaqueTaskScope: input.opaqueTaskScope, generationId: alias.generationId }) : null
+  }
+  const replayExactProposed = (input: {
+    opaqueTaskScope: string
+    proposedGenerationId: string
+    commandCore: string
+  }): LocalGenerationRecord | null => {
+    const alias = scopedAliases(input.opaqueTaskScope)?.get(input.proposedGenerationId)
+    if (!alias) return null
+    if (alias.commandCore !== input.commandCore) fail('active_generation_conflict')
+    return readGeneration({ opaqueTaskScope: input.opaqueTaskScope, generationId: alias.generationId })
   }
   const readActionable = (opaqueTaskScope: string): LocalGenerationRecord | null => {
     const record = mutableActionable(opaqueTaskScope)
@@ -138,20 +166,24 @@ export function createLocalClassReviewRegistry() {
     const aliases = scopedAliases(input.opaqueTaskScope, true)!
     const proposedOwner = aliases.get(input.proposedGenerationId)
     if (proposedOwner) {
-      const record = mutable({ opaqueTaskScope: input.opaqueTaskScope, generationId: proposedOwner })
+      if (proposedOwner.commandCore !== input.commandCore
+        || proposedOwner.commandIdentity !== input.commandIdentity) fail('active_generation_conflict')
+      const record = mutable({ opaqueTaskScope: input.opaqueTaskScope, generationId: proposedOwner.generationId })
       if (!record) fail('generation_not_found')
       return frozenValue({ kind: 'attached' as const, record: snapshot(record) })
     }
     const active = mutableActionable(input.opaqueTaskScope)
     if (active) {
-      const sameIdentity = active.snapshotTuple === input.snapshotTuple
-        && active.fixedRevisions === input.fixedRevisions
-        && active.payloadDigest === input.payloadDigest
+      const sameIdentity = active.actionableIdentity === input.actionableIdentity
       if (!sameIdentity) {
         if (active.state === 'succeeded_unapplied') fail('class_review_candidate_conflict')
         fail('active_generation_conflict')
       }
-      aliases.set(input.proposedGenerationId, active.generationId)
+      aliases.set(input.proposedGenerationId, {
+        generationId: active.generationId,
+        commandIdentity: input.commandIdentity,
+        commandCore: input.commandCore,
+      })
       return frozenValue({ kind: 'attached' as const, record: snapshot(active) })
     }
     if (input.attachmentGenerationId) {
@@ -160,11 +192,13 @@ export function createLocalClassReviewRegistry() {
         generationId: input.attachmentGenerationId,
       })
       const samePriorIdentity = prior !== null
-        && prior.snapshotTuple === input.snapshotTuple
-        && prior.fixedRevisions === input.fixedRevisions
-        && prior.payloadDigest === input.payloadDigest
+        && prior.actionableIdentity === input.actionableIdentity
       if (samePriorIdentity) {
-        aliases.set(input.proposedGenerationId, prior.generationId)
+        aliases.set(input.proposedGenerationId, {
+          generationId: prior.generationId,
+          commandIdentity: input.commandIdentity,
+          commandCore: input.commandCore,
+        })
         return frozenValue({ kind: 'attached' as const, record: snapshot(prior) })
       }
     }
@@ -179,13 +213,20 @@ export function createLocalClassReviewRegistry() {
       snapshotTuple: input.snapshotTuple,
       fixedRevisions: input.fixedRevisions,
       payloadDigest: input.payloadDigest,
+      commandIdentity: input.commandIdentity,
+      actionableIdentity: input.actionableIdentity,
+      commandCore: input.commandCore,
       state: input.state,
       generationRevision: input.generationRevision,
       invalidationFence: 0,
       boundedRequeueCount: 0,
     }
     records.set(record.generationId, record)
-    aliases.set(input.proposedGenerationId, record.generationId)
+    aliases.set(input.proposedGenerationId, {
+      generationId: record.generationId,
+      commandIdentity: input.commandIdentity,
+      commandCore: input.commandCore,
+    })
     actionableByScope.set(record.opaqueTaskScope, record.generationId)
     return frozenValue({ kind: 'reserved' as const, record: snapshot(record) })
   }
@@ -210,6 +251,7 @@ export function createLocalClassReviewRegistry() {
     record.generationRevision += 1
     record.safeFailureCode = input.safeFailureCode
     record.requestBytes = null
+    record.requestId = null
     return snapshot(record)
   }
   function markFailed(input: ScopedGenerationInput & { expectedRevision: number; expectedState: 'queued' | 'running' | 'result_unknown'; safeFailureCode: SafeFailureCode }): LocalGenerationRecord {
@@ -218,6 +260,7 @@ export function createLocalClassReviewRegistry() {
     record.generationRevision += 1
     record.safeFailureCode = input.safeFailureCode
     record.requestBytes = null
+    record.requestId = null
     candidateByRecord.delete(record)
     actionableByScope.delete(record.opaqueTaskScope)
     return snapshot(record)
@@ -236,6 +279,7 @@ export function createLocalClassReviewRegistry() {
     record.generationRevision += 1
     record.safeFailureCode = undefined
     record.requestBytes = null
+    record.requestId = null
     if (!input.unapplied) actionableByScope.delete(record.opaqueTaskScope)
     return snapshot(record)
   }
@@ -247,6 +291,7 @@ export function createLocalClassReviewRegistry() {
     record.generationRevision += 1
     record.invalidationFence += 1
     record.requestBytes = null
+    record.requestId = null
     candidateByRecord.delete(record)
     actionableByScope.delete(input.opaqueTaskScope)
     return snapshot(record)
@@ -268,6 +313,7 @@ export function createLocalClassReviewRegistry() {
     const value = input.apply(handle)
     candidateByRecord.delete(record)
     record.state = 'succeeded'
+    record.requestId = null
     record.generationRevision += 1
     actionableByScope.delete(record.opaqueTaskScope)
     return frozenValue({ record: snapshot(record), value })
@@ -277,10 +323,11 @@ export function createLocalClassReviewRegistry() {
     if (!record || record.state !== 'succeeded_unapplied' || record.generationRevision !== input.expectedRevision || !candidateByRecord.has(record)) fail('class_review_candidate_conflict')
     candidateByRecord.delete(record)
     record.state = 'discarded'
+    record.requestId = null
     record.generationRevision += 1
     actionableByScope.delete(record.opaqueTaskScope)
     return snapshot(record)
   }
 
-  return { reserveOrAttach, readGeneration, readProposed, readActionable, markRunning, markResultUnknown, markFailed, commitSucceeded, invalidateTaskScope, requeueConfirmedZero, applyCandidate, discardCandidate }
+  return { reserveOrAttach, readGeneration, readProposed, replayExactProposed, readActionable, markRunning, markResultUnknown, markFailed, commitSucceeded, invalidateTaskScope, requeueConfirmedZero, applyCandidate, discardCandidate }
 }
