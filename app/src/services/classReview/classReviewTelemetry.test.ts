@@ -124,6 +124,35 @@ describe('class review telemetry', () => {
     expect(emit).not.toHaveBeenCalled()
   })
 
+  it.each(['reserved', 'running', 'completed'] as const)(
+    'never accepts provider_result_unknown as a failed code in %s lifecycle',
+    (lifecycle) => {
+      const emit = vi.fn()
+      const telemetry = createClassReviewTelemetry(emit)
+      const event: ClassReviewTelemetryEvent = {
+        stage: 'class_review_generation',
+        lifecycle,
+        outcome: 'failed',
+        safeFailureCode: 'provider_result_unknown',
+        includedEssayCount: 4,
+        excludedEssayCount: 0,
+        eligibleGroupCount: 2,
+        projectedGroupCount: 2,
+        eligibleDistinctEssaySupportSum: 4,
+        projectedDistinctEssaySupportSum: 4,
+        eligibleOccurrenceSum: 5,
+        projectedOccurrenceSum: 5,
+        queueMs: 1,
+        providerMs: 2,
+        validationMs: 1,
+        totalMs: 4,
+      }
+
+      expect(() => telemetry.record(event)).toThrow('class_review_telemetry_invalid')
+      expect(emit).not.toHaveBeenCalled()
+    },
+  )
+
   it('fails closed on ownKeys or descriptor traps without emitting', () => {
     const emit = vi.fn()
     const telemetry = createClassReviewTelemetry(emit)

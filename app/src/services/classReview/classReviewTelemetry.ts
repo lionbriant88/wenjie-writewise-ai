@@ -130,7 +130,7 @@ export function createClassReviewTelemetry(emit: (event: ClassReviewTelemetryEve
         ? value.safeFailureCode !== null
         : value.outcome === 'result_unknown'
           ? value.safeFailureCode !== 'provider_result_unknown'
-          : value.safeFailureCode === null
+          : value.safeFailureCode === null || value.safeFailureCode === 'provider_result_unknown'
       const isInvalidationFailure = value.safeFailureCode === 'class_review_source_invalidated'
         || value.safeFailureCode === 'class_review_task_invalidated'
       const legalLifecycle = value.lifecycle === 'reserved'

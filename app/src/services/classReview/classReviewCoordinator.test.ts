@@ -143,11 +143,17 @@ describe('local class review coordinator', () => {
   })
 
   it('atomically creates draft from eligible none and makes one call; initial failure preserves an existing teacher draft', async () => {
-    const fakeNone = createFakeClassReviewSynthesisClient({ scenario: 'success' })
-    const empty = createLocalClassReviewCoordinator({ synthesisClient: fakeNone, topicKeySecret: new Uint8Array(32), now: () => '2026-08-30T00:00:00.000Z', createOpaqueId: () => 'id' })
+    const deferredNone = deferredClient()
+    const empty = createLocalClassReviewCoordinator({ synthesisClient: deferredNone.client, topicKeySecret: new Uint8Array(32), now: () => '2026-08-30T00:00:00.000Z', createOpaqueId: () => 'id' })
     empty.registerWorkspace({ taskKey: 'task-none', taskRevision: 1, rubricRevisionDigest: validRubricDigest, report: none(), projection: projection() })
-    await empty.generate({ taskKey: 'task-none', generationId: 'browser-none', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: null })
-    expect(fakeNone.getCallCountForTest()).toBe(1)
+    const firstNone = empty.generate({ taskKey: 'task-none', generationId: 'browser-none-1', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: null })
+    const secondNone = empty.generate({ taskKey: 'task-none', generationId: 'browser-none-2', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: null })
+    const bothNone = Promise.all([firstNone, secondNone])
+    await vi.waitFor(() => expect(deferredNone.calls()).toBe(1))
+    deferredNone.resolve(success(empty.getSnapshot('task-none').requestId as string))
+    const [firstNoneResult, secondNoneResult] = await bothNone
+    expect(secondNoneResult).toEqual(firstNoneResult)
+    expect(deferredNone.calls()).toBe(1)
     expect(empty.getSnapshot('task-none').report.workspaceState).not.toBe('none')
     const value = coordinator(createFakeClassReviewSynthesisClient({ scenario: 'auth_failed' }))
     await value.generate({ taskKey: 'task-1', generationId: 'browser-failed', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })
@@ -165,8 +171,95 @@ describe('local class review coordinator', () => {
     expect(value.getSnapshot('task-1').generation?.state).toBe('running')
     const requestId = value.getSnapshot('task-1').requestId as string
     deferred.resolve(success(requestId))
-    expect(await replay).toEqual(await first)
+    const settled = await first
+    expect(await replay).toEqual(settled)
+    await expect(value.generate({
+      taskKey: 'task-1', generationId: 'browser-g2', intent: 'initial',
+      expectedTaskRevision: 1, expectedReportRevision: 1,
+    })).resolves.toEqual(settled)
     expect(deferred.calls()).toBe(1)
+
+    let reentrant!: Promise<Awaited<ReturnType<typeof value.generate>>>
+    let resolveProvider!: (result: ClassReviewSynthesisResultV1) => void
+    let reentrantCalls = 0
+    let reentrantValue!: ReturnType<typeof createLocalClassReviewCoordinator>
+    const reentrantCommand = {
+      taskKey: 'task-reentrant-owner', generationId: 'browser-reentrant-owner',
+      intent: 'initial' as const, expectedTaskRevision: 1, expectedReportRevision: 1,
+    }
+    const reentrantClient: ClassReviewSynthesisClient = {
+      synthesize: () => {
+        reentrantCalls += 1
+        reentrant = reentrantValue.generate(reentrantCommand)
+        return new Promise<ClassReviewSynthesisResultV1>((resolve) => {
+          resolveProvider = resolve
+        })
+      },
+    }
+    reentrantValue = createLocalClassReviewCoordinator({
+      synthesisClient: reentrantClient,
+      topicKeySecret: new Uint8Array(32).fill(7),
+      now: () => '2026-08-30T00:00:00.000Z',
+      createOpaqueId: (() => { let id = 0; return () => `reentrant-${++id}` })(),
+    })
+    reentrantValue.registerWorkspace({
+      taskKey: reentrantCommand.taskKey, taskRevision: 1, rubricRevisionDigest: validRubricDigest,
+      report: draft(), projection: projection(),
+    })
+    const reentrantOwner = reentrantValue.generate(reentrantCommand)
+    await vi.waitFor(() => expect(reentrantCalls).toBe(1))
+    let reentrantSettled = false
+    void reentrant.then(() => { reentrantSettled = true })
+    await Promise.resolve()
+    expect(reentrantSettled).toBe(false)
+    resolveProvider(success(reentrantValue.getSnapshot(reentrantCommand.taskKey).requestId as string))
+    expect(await reentrant).toEqual(await reentrantOwner)
+    expect(reentrantCalls).toBe(1)
+
+    const commandValue = coordinator(createFakeClassReviewSynthesisClient({ scenario: 'success' }))
+    const commandBefore = commandValue.getSnapshot('task-1')
+    let commandGetterReads = 0
+    const accessorCommand = {
+      taskKey: 'task-1', generationId: 'browser-command-accessor', intent: 'initial' as const,
+      expectedTaskRevision: 1, expectedReportRevision: commandBefore.report.reportRevision,
+    }
+    Object.defineProperty(accessorCommand, 'taskKey', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        commandGetterReads += 1
+        commandValue.applyIssueCommand('task-1', teacherAddCommand(
+          teacherBlock('generate-command-getter'),
+          'essay-generate-command-getter',
+        ))
+        return 'task-1'
+      },
+    })
+    await expect(commandValue.generate(accessorCommand)).rejects
+      .toThrow('class_review_candidate_conflict')
+    expect(commandGetterReads).toBe(0)
+    expect(commandValue.getSnapshot('task-1')).toEqual(commandBefore)
+    const exactEnvelopeBase = {
+      taskKey: 'task-1', generationId: 'browser-exact-envelope', intent: 'initial' as const,
+      expectedTaskRevision: 1, expectedReportRevision: commandBefore.report.reportRevision,
+    }
+    const invalidEnvelopes = [
+      Object.assign({ ...exactEnvelopeBase }, { [Symbol('private-extra')]: 'forbidden' }),
+      Object.defineProperty({ ...exactEnvelopeBase }, 'privateExtra', {
+        enumerable: false,
+        value: 'forbidden',
+      }),
+      new Proxy({ ...exactEnvelopeBase }, {
+        ownKeys() {
+          throw new Error('generate-private-own-keys')
+        },
+      }),
+    ]
+    for (const invalidEnvelope of invalidEnvelopes) {
+      await expect(commandValue.generate(invalidEnvelope)).rejects
+        .toThrow('class_review_candidate_conflict')
+      expect(commandValue.getSnapshot('task-1')).toEqual(commandBefore)
+    }
   })
 
   it('conflicts an in-flight command whose report/source identity changed without a second call', async () => {
@@ -207,7 +300,22 @@ describe('local class review coordinator', () => {
     const fake = createFakeClassReviewSynthesisClient({ scenario: 'success' }); let id = 0
     const value = createLocalClassReviewCoordinator({ synthesisClient: fake, topicKeySecret: new Uint8Array(32).fill(7), now: () => '2026-08-30T00:00:00.000Z', createOpaqueId: () => `opaque-${++id}` })
     value.registerWorkspace({ taskKey: 'task-built', taskRevision: 1, rubricRevisionDigest: validRubricDigest, report: draft(), projection: built })
-    await value.generate({ taskKey: 'task-built', generationId: 'browser-built', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })
+    const registered = value.getSnapshot('task-built')
+    syncRound3Sources(value, {
+      kind: 'ordinary_revision',
+      taskKey: 'task-built',
+      expectedTaskRevision: 1,
+      expectedReportRevision: registered.report.reportRevision,
+      expectedSourceRevisionEpoch: 0,
+      replacement: {
+        taskRevision: 2,
+        rubricRevisionDigest: validRubricDigest,
+        statistics: structuredClone(registered.report.statistics),
+        projection: built,
+      },
+    })
+    expect(value.getSnapshot('task-built').sourceRevisionEpoch).toBe(1)
+    await value.generate({ taskKey: 'task-built', generationId: 'browser-built', intent: 'initial', expectedTaskRevision: 2, expectedReportRevision: 1 })
     expect(fake.getCallCountForTest()).toBe(1)
     expect(value.getSnapshot('task-built').report.issueBlocks[0]).toMatchObject({ occurrenceCount: 3, anonymousExamples: ['She go home.'] })
   })
@@ -448,6 +556,25 @@ describe('local class review coordinator', () => {
     const next: AiSummaryV1 = { overallComment: 'Saved summary', strengths: [{ title: 'Saved strength', detail: 'Saved detail', dimensionIds: [] }], learningRecommendations: [{ title: 'Saved next', action: 'Saved action' }] }
     value.saveAiTextEdit('task-edit', next)
     expect(value.getSnapshot('task-edit').report).toMatchObject({ aiSummary: next, reportRevision: 2, aiTextEditRevision: 1 })
+    const beforeAccessor = value.getSnapshot('task-edit')
+    let summaryGetterReads = 0
+    const accessorSummary = structuredClone(next)
+    Object.defineProperty(accessorSummary.strengths[0], 'title', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        summaryGetterReads += 1
+        value.applyIssueCommand('task-edit', teacherAddCommand(
+          teacherBlock('save-summary-getter'),
+          'essay-save-summary-getter',
+        ))
+        return 'Accessor strength'
+      },
+    })
+    expect(() => value.saveAiTextEdit('task-edit', accessorSummary))
+      .toThrow('class_review_candidate_conflict')
+    expect(summaryGetterReads).toBe(0)
+    expect(value.getSnapshot('task-edit')).toEqual(beforeAccessor)
   })
 
   it('cancels AI summary editing without changing content or any revision', () => {
@@ -510,6 +637,25 @@ describe('local class review coordinator', () => {
       evidenceId: 'missing-evidence',
     })).toThrow('class_review_candidate_conflict')
     expect(value.getSnapshot('task-1').report).toEqual(before)
+
+    let issueGetterReads = 0
+    const accessorIssue = { kind: 'undo' as const }
+    Object.defineProperty(accessorIssue, 'kind', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        issueGetterReads += 1
+        value.applyIssueCommand('task-1', teacherAddCommand(
+          teacherBlock('issue-command-getter'),
+          'essay-issue-command-getter',
+        ))
+        return 'undo'
+      },
+    })
+    expect(() => value.applyIssueCommand('task-1', accessorIssue))
+      .toThrow('class_review_candidate_conflict')
+    expect(issueGetterReads).toBe(0)
+    expect(value.getSnapshot('task-1').report).toEqual(before)
   })
 
   it('merges a deferred AI payload against latest teacher operations and never overwrites their order', async () => {
@@ -550,6 +696,28 @@ describe('local class review coordinator', () => {
     deferred.resolve(success(value.getSnapshot('task-1').requestId as string))
     await pending
     const candidate = value.getSnapshot('task-1').generation!
+    const taskTwoBeforeAccessor = value.getSnapshot('task-2')
+    let applyGetterReads = 0
+    const accessorApply = {
+      taskKey: 'task-2', generationId: candidate.generationId,
+      expectedTaskRevision: 1, expectedReportRevision: 1,
+      expectedGenerationRevision: candidate.generationRevision, expectedAiTextEditRevision: 1,
+    }
+    Object.defineProperty(accessorApply, 'taskKey', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        applyGetterReads += 1
+        value.applyIssueCommand('task-2', teacherAddCommand(
+          teacherBlock('apply-command-getter'),
+          'essay-apply-command-getter',
+        ))
+        return 'task-2'
+      },
+    })
+    expect(() => value.applyCandidate(accessorApply)).toThrow('class_review_candidate_conflict')
+    expect(applyGetterReads).toBe(0)
+    expect(value.getSnapshot('task-2')).toEqual(taskTwoBeforeAccessor)
     expect(() => value.applyCandidate({ taskKey: 'task-2', generationId: candidate.generationId, expectedTaskRevision: 1, expectedReportRevision: 1, expectedGenerationRevision: candidate.generationRevision, expectedAiTextEditRevision: 1 })).toThrow('class_review_candidate_conflict')
     expect(() => value.discardCandidate({ taskKey: 'task-2', generationId: candidate.generationId, expectedGenerationRevision: candidate.generationRevision })).toThrow('class_review_candidate_conflict')
     expect(value.getSnapshot('task-1').generation?.state).toBe('succeeded')
@@ -598,6 +766,18 @@ describe('local class review coordinator', () => {
     value.applyIssueCommand('task-restore', { kind: 'remove', evidenceId: block.evidenceRefs[0].evidenceId })
     expect(value.getSnapshot('task-restore').report.issueBlocks[0]).toMatchObject({ blockId: block.blockId, origin: 'ai', title: 'Common issue', systemStudentCount: 2 })
     expect(value.getSnapshot('task-restore').report.issueOrder).toEqual([block.blockId])
+    const restoredGeneration = value.getSnapshot('task-restore').report
+    await value.generate({
+      taskKey: 'task-restore',
+      generationId: 'browser-restore-next',
+      intent: 'regenerate',
+      expectedTaskRevision: 1,
+      expectedReportRevision: restoredGeneration.reportRevision,
+    })
+    const afterNextGeneration = value.getSnapshot('task-restore').report
+    expect(() => value.applyIssueCommand('task-restore', { kind: 'undo' }))
+      .toThrow('class_review_candidate_conflict')
+    expect(value.getSnapshot('task-restore').report).toEqual(afterNextGeneration)
   })
 
   it('suppresses one generated topic without dropping other generated topics or their restoration facts', async () => {
@@ -987,6 +1167,34 @@ describe('Task 8 round 2 coordinator safety contracts', () => {
         { topicKey: block.topicKey, evidenceId: block.evidenceRefs[0].evidenceId, essayIdentity: 'essay-b', occurrenceCount: 1, evidenceRef: block.evidenceRefs[0] },
       ],
     })).toThrow('class_review_candidate_conflict')
+
+    const guarded = make()
+    const accessorReport = draft()
+    const totalEssayCount = accessorReport.statistics.totalEssayCount
+    let registerGetterReads = 0
+    Object.defineProperty(accessorReport.statistics, 'totalEssayCount', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        registerGetterReads += 1
+        guarded.registerWorkspace({
+          taskKey: 'register-reentered', taskRevision: 1,
+          rubricRevisionDigest: validRubricDigest, report: draft(), projection: projection(),
+        })
+        return totalEssayCount
+      },
+    })
+    expect(() => guarded.registerWorkspace({
+      taskKey: 'register-accessor', taskRevision: 1,
+      rubricRevisionDigest: validRubricDigest, report: accessorReport, projection: projection(),
+    })).toThrow('class_review_candidate_conflict')
+    expect(registerGetterReads).toBe(0)
+    expect(() => guarded.getSnapshot('register-accessor')).toThrow('class_review_not_eligible')
+    expect(() => guarded.getSnapshot('register-reentered')).toThrow('class_review_not_eligible')
+    guarded.registerWorkspace({
+      taskKey: 'register-accessor', taskRevision: 1,
+      rubricRevisionDigest: validRubricDigest, report: draft(), projection: projection(),
+    })
 
     const fact = { topicKey: block.topicKey, evidenceId: block.evidenceRefs[0].evidenceId, essayIdentity: 'essay-a', occurrenceCount: 1, evidenceRef: structuredClone(block.evidenceRefs[0]) }
     const detached = make()
@@ -1411,5 +1619,586 @@ describe('Task 8 round 3 coordinator state and privacy contracts', () => {
       teacherAddCommand(conflicting, 'essay-conflicting'),
     )).toThrow('class_review_candidate_conflict')
     expect(value.getSnapshot('teacher-overwrite')).toEqual(before)
+  })
+})
+
+describe('Task 8 round 4 reservation, source-capture, and imported-fact contracts', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it('rechecks the complete captured source fence synchronously after final identity preparation and before reservation', async () => {
+    let providerCalls = 0
+    let sourceSyncRan = false
+    let interleaveError: unknown = null
+    const client: ClassReviewSynthesisClient = {
+      synthesize: async (request) => {
+        providerCalls += 1
+        return success(request.requestId)
+      },
+    }
+    let value!: ReturnType<typeof createLocalClassReviewCoordinator>
+    const originalSign = globalThis.crypto.subtle.sign.bind(globalThis.crypto.subtle)
+    let signCalls = 0
+    vi.spyOn(globalThis.crypto.subtle, 'sign').mockImplementation((algorithm, key, data) => {
+      signCalls += 1
+      const signed = originalSign(algorithm, key, data)
+      if (signCalls !== 6) return signed
+      return signed.then((result) => {
+        queueMicrotask(() => queueMicrotask(() => queueMicrotask(() => queueMicrotask(() => {
+          try {
+            const before = value.getSnapshot('final-fence')
+            const changedStatistics = {
+              ...before.report.statistics,
+              totalEssayCount: 4,
+              excludedEssayCount: 1,
+            }
+            const changedProjection = projection()
+            changedProjection.projection.statistics = {
+              ...changedProjection.projection.statistics,
+              totalEssayCount: 4,
+              excludedEssayCount: 1,
+            }
+            syncRound3Sources(value, {
+              kind: 'ordinary_revision',
+              taskKey: 'final-fence',
+              expectedTaskRevision: 1,
+              expectedReportRevision: before.report.reportRevision,
+              expectedSourceRevisionEpoch: before.sourceRevisionEpoch,
+              replacement: {
+                taskRevision: 1,
+                rubricRevisionDigest: validRubricDigest,
+                statistics: changedStatistics,
+                projection: changedProjection,
+              },
+            })
+            sourceSyncRan = true
+          } catch (error) {
+            interleaveError = error
+          }
+        }))))
+        return result
+      })
+    })
+    value = createLocalClassReviewCoordinator({
+      synthesisClient: client,
+      topicKeySecret: new Uint8Array(32).fill(7),
+      now: () => '2026-08-30T00:00:00.000Z',
+      createOpaqueId: (() => { let id = 0; return () => `opaque-${++id}` })(),
+    })
+    value.registerWorkspace({
+      taskKey: 'final-fence',
+      taskRevision: 1,
+      rubricRevisionDigest: validRubricDigest,
+      report: draft(),
+      projection: projection(),
+    })
+
+    await expect(value.generate({
+      taskKey: 'final-fence',
+      generationId: 'browser-final-fence',
+      intent: 'initial',
+      expectedTaskRevision: 1,
+      expectedReportRevision: 1,
+    })).rejects.toThrow('class_review_source_invalidated')
+    expect(interleaveError).toBeNull()
+    expect(sourceSyncRan).toBe(true)
+    expect(signCalls).toBe(6)
+    expect(providerCalls).toBe(0)
+    expect(value.getSnapshot('final-fence')).toMatchObject({
+      generation: null,
+      requestId: null,
+      sourceRevisionEpoch: 1,
+    })
+  })
+
+  it('does not terminal-replay a proposed alias after current report identity changes', async () => {
+    const fake = createFakeClassReviewSynthesisClient({ scenario: 'success' })
+    const value = coordinator(fake)
+    const command = {
+      taskKey: 'task-1',
+      generationId: 'terminal-full-identity',
+      intent: 'initial' as const,
+      expectedTaskRevision: 1,
+      expectedReportRevision: 1,
+    }
+    await value.generate(command)
+    value.applyIssueCommand('task-1', teacherAddCommand(
+      teacherBlock('terminal-report-drift'),
+      'essay-terminal-drift',
+    ))
+
+    await expect(value.generate(command)).rejects.toThrow('active_generation_conflict')
+    expect(fake.getCallCountForTest()).toBe(1)
+
+    let changeAtTerminalTransition: () => void = () => undefined
+    let racedCalls = 0
+    const raced = coordinator({
+      synthesize: (request) => {
+        racedCalls += 1
+        queueMicrotask(changeAtTerminalTransition)
+        return Promise.resolve(success(request.requestId))
+      },
+    })
+    const racedCommand = {
+      taskKey: 'task-1', generationId: 'terminal-commit-race', intent: 'initial' as const,
+      expectedTaskRevision: 1, expectedReportRevision: 1,
+    }
+    let changedAfterCommit = false
+    changeAtTerminalTransition = (): void => {
+      const state = raced.getSnapshot('task-1').generation?.state
+      if (state === null || state === undefined || state === 'queued' || state === 'running') {
+        queueMicrotask(changeAtTerminalTransition)
+        return
+      }
+      raced.applyIssueCommand('task-1', teacherAddCommand(
+        teacherBlock('terminal-commit-race-drift'),
+        'essay-terminal-commit-race',
+      ))
+      changedAfterCommit = true
+    }
+    await raced.generate(racedCommand)
+    expect(changedAfterCommit).toBe(true)
+    await expect(raced.generate(racedCommand)).rejects.toThrow('active_generation_conflict')
+    expect(racedCalls).toBe(1)
+  })
+
+  it.each([
+    {
+      name: 'accessor property',
+      create(base: Round3SourceReplacement, noteRead: () => void): unknown {
+        const value = { ...base }
+        Object.defineProperty(value, 'statistics', {
+          enumerable: true,
+          configurable: true,
+          get() {
+            noteRead()
+            return base.statistics
+          },
+        })
+        return value
+      },
+    },
+    {
+      name: 'symbol extra property',
+      create(base: Round3SourceReplacement): unknown {
+        return Object.assign({ ...base }, { [Symbol('private-extra')]: 'forbidden' })
+      },
+    },
+    {
+      name: 'non-enumerable extra property',
+      create(base: Round3SourceReplacement): unknown {
+        return Object.defineProperty({ ...base }, 'privateExtra', {
+          enumerable: false,
+          configurable: true,
+          value: 'forbidden',
+        })
+      },
+    },
+    {
+      name: 'throwing ownKeys Proxy',
+      create(base: Round3SourceReplacement): unknown {
+        return new Proxy(base, {
+          ownKeys() {
+            throw new Error('private-own-keys')
+          },
+        })
+      },
+    },
+  ])('rejects a source replacement $name without invoking or mutating it', ({ create, name }) => {
+    const value = coordinator(createFakeClassReviewSynthesisClient({ scenario: 'success' }))
+    const before = value.getSnapshot('task-1')
+    let getterReads = 0
+    const replacement = create({
+      taskRevision: 2,
+      rubricRevisionDigest: validRubricDigest,
+      statistics: structuredClone(before.report.statistics),
+      projection: projection(),
+    }, () => { getterReads += 1 })
+
+    expect(() => syncRound3Sources(value, {
+      kind: 'ordinary_revision',
+      taskKey: 'task-1',
+      expectedTaskRevision: 1,
+      expectedReportRevision: before.report.reportRevision,
+      expectedSourceRevisionEpoch: 0,
+      replacement: replacement as Round3SourceReplacement,
+    })).toThrow('class_review_candidate_conflict')
+    expect(getterReads).toBe(0)
+    expect(value.getSnapshot('task-1')).toEqual(before)
+
+    if (name === 'accessor property') {
+      const nestedValue = coordinator(createFakeClassReviewSynthesisClient({ scenario: 'success' }))
+      const nestedBefore = nestedValue.getSnapshot('task-1')
+      const nestedStatistics = structuredClone(nestedBefore.report.statistics)
+      const totalEssayCount = nestedStatistics.totalEssayCount
+      let nestedGetterReads = 0
+      Object.defineProperty(nestedStatistics, 'totalEssayCount', {
+        enumerable: true,
+        configurable: true,
+        get() {
+          nestedGetterReads += 1
+          nestedValue.applyIssueCommand('task-1', teacherAddCommand(
+            teacherBlock('nested-source-getter'),
+            'essay-nested-source-getter',
+          ))
+          return totalEssayCount
+        },
+      })
+      const nestedReplacement = {
+        taskRevision: 2,
+        rubricRevisionDigest: validRubricDigest,
+        statistics: nestedStatistics,
+        projection: projection(),
+      }
+
+      expect(() => syncRound3Sources(nestedValue, {
+        kind: 'ordinary_revision',
+        taskKey: 'task-1',
+        expectedTaskRevision: 1,
+        expectedReportRevision: nestedBefore.report.reportRevision,
+        expectedSourceRevisionEpoch: 0,
+        replacement: nestedReplacement,
+      })).toThrow('class_review_candidate_conflict')
+      expect(nestedGetterReads).toBe(0)
+      expect(nestedValue.getSnapshot('task-1')).toEqual(nestedBefore)
+
+      const nestedProxyValue = coordinator(createFakeClassReviewSynthesisClient({ scenario: 'success' }))
+      const nestedProxyBefore = nestedProxyValue.getSnapshot('task-1')
+      let nestedProxyTrapReads = 0
+      const nestedProjection = projection()
+      nestedProjection.projection.statistics = new Proxy(nestedProjection.projection.statistics, {
+        ownKeys() {
+          nestedProxyTrapReads += 1
+          try {
+            nestedProxyValue.applyIssueCommand('task-1', teacherAddCommand(
+              teacherBlock('nested-source-proxy'),
+              'essay-nested-source-proxy',
+            ))
+          } catch {
+            // Source capture owns the coordinator mutation barrier for this stack.
+          }
+          throw new Error('nested-private-own-keys')
+        },
+      })
+      expect(() => syncRound3Sources(nestedProxyValue, {
+        kind: 'ordinary_revision',
+        taskKey: 'task-1',
+        expectedTaskRevision: 1,
+        expectedReportRevision: nestedProxyBefore.report.reportRevision,
+        expectedSourceRevisionEpoch: 0,
+        replacement: {
+          taskRevision: 2,
+          rubricRevisionDigest: validRubricDigest,
+          statistics: structuredClone(nestedProxyBefore.report.statistics),
+          projection: nestedProjection,
+        },
+      })).toThrow('class_review_candidate_conflict')
+      expect(nestedProxyTrapReads).toBeLessThanOrEqual(1)
+      expect(nestedProxyValue.getSnapshot('task-1')).toEqual(nestedProxyBefore)
+
+      const commandValue = coordinator(createFakeClassReviewSynthesisClient({ scenario: 'success' }))
+      const commandBefore = commandValue.getSnapshot('task-1')
+      let commandGetterReads = 0
+      const commandWithAccessor = {
+        kind: 'ordinary_revision' as const,
+        taskKey: 'task-1',
+        expectedTaskRevision: 1,
+        expectedReportRevision: commandBefore.report.reportRevision,
+        expectedSourceRevisionEpoch: 0,
+        replacement: {
+          taskRevision: 2,
+          rubricRevisionDigest: validRubricDigest,
+          statistics: structuredClone(commandBefore.report.statistics),
+          projection: projection(),
+        },
+      }
+      Object.defineProperty(commandWithAccessor, 'taskKey', {
+        enumerable: true,
+        configurable: true,
+        get() {
+          commandGetterReads += 1
+          commandValue.applyIssueCommand('task-1', teacherAddCommand(
+            teacherBlock('source-command-getter'),
+            'essay-source-command-getter',
+          ))
+          return 'task-1'
+        },
+      })
+      expect(() => syncRound3Sources(
+        commandValue,
+        commandWithAccessor as Round3SourceSyncCommand,
+      )).toThrow('class_review_candidate_conflict')
+      expect(commandGetterReads).toBe(0)
+      expect(commandValue.getSnapshot('task-1')).toEqual(commandBefore)
+    }
+  })
+
+  it.each([
+    {
+      name: 'accessor element',
+      create(evidenceId: string, noteRead: () => void): readonly string[] {
+        const removals: string[] = []
+        Object.defineProperty(removals, '0', {
+          enumerable: true,
+          configurable: true,
+          get() {
+            noteRead()
+            return evidenceId
+          },
+        })
+        return removals
+      },
+    },
+    {
+      name: 'symbol extra property',
+      create(evidenceId: string): readonly string[] {
+        return Object.assign([evidenceId], { [Symbol('private-extra')]: 'forbidden' })
+      },
+    },
+    {
+      name: 'throwing ownKeys Proxy',
+      create(evidenceId: string): readonly string[] {
+        return new Proxy([evidenceId], {
+          ownKeys() {
+            throw new Error('private-removal-own-keys')
+          },
+        })
+      },
+    },
+  ])('rejects a removed-evidence $name from one detached array snapshot', ({ create }) => {
+    const block = teacherBlock('removed-descriptor')
+    const report = draft()
+    report.issueBlocks = [block]
+    report.issueOrder = [block.blockId]
+    const value = createLocalClassReviewCoordinator({
+      synthesisClient: createFakeClassReviewSynthesisClient({ scenario: 'success' }),
+      topicKeySecret: new Uint8Array(32).fill(7),
+      now: () => '2026-08-30T00:00:00.000Z',
+      createOpaqueId: () => 'opaque',
+    })
+    value.registerWorkspace({
+      taskKey: 'removed-descriptor',
+      taskRevision: 1,
+      rubricRevisionDigest: validRubricDigest,
+      report,
+      projection: projection(),
+      teacherEvidenceFacts: [{
+        topicKey: block.topicKey,
+        evidenceId: block.evidenceRefs[0].evidenceId,
+        essayIdentity: 'essay-teacher',
+        occurrenceCount: 1,
+        evidenceRef: block.evidenceRefs[0],
+      }],
+    })
+    const before = value.getSnapshot('removed-descriptor')
+    let getterReads = 0
+    const removals = create(block.evidenceRefs[0].evidenceId, () => { getterReads += 1 })
+
+    expect(() => syncRound3Sources(value, {
+      kind: 'source_deleted',
+      taskKey: 'removed-descriptor',
+      expectedTaskRevision: 1,
+      expectedReportRevision: before.report.reportRevision,
+      expectedSourceRevisionEpoch: 0,
+      removedTeacherEvidenceIds: removals,
+      replacement: null,
+    })).toThrow('class_review_candidate_conflict')
+    expect(getterReads).toBe(0)
+    expect(value.getSnapshot('removed-descriptor')).toEqual(before)
+  })
+
+  it('rejects imported positive-support AI blocks unless authorized system facts are supplied', () => {
+    const systemBlock: ClassReviewIssueBlockV1 = {
+      blockId: 'imported-system',
+      topicKey: 'tk1.aaaaaaaaaaaaaaaa',
+      origin: 'ai',
+      title: 'Imported system',
+      diagnosis: 'Imported diagnosis',
+      teachingAction: 'Imported action',
+      severity: 'medium',
+      teacherStudentCount: 0,
+      systemStudentCount: 2,
+      combinedStudentCount: 2,
+      occurrenceCount: 2,
+      supportDenominator: 3,
+      anonymousExamples: [],
+      evidenceRefs: [],
+    }
+    const report = aiAvailable()
+    report.issueBlocks = [systemBlock]
+    report.issueOrder = [systemBlock.blockId]
+    const value = createLocalClassReviewCoordinator({
+      synthesisClient: createFakeClassReviewSynthesisClient({ scenario: 'success' }),
+      topicKeySecret: new Uint8Array(32).fill(7),
+      now: () => '2026-08-30T00:00:00.000Z',
+      createOpaqueId: () => 'opaque',
+    })
+    expect(() => value.registerWorkspace({
+      taskKey: 'missing-imported-system-facts',
+      taskRevision: 1,
+      rubricRevisionDigest: validRubricDigest,
+      report,
+      projection: projection(),
+    })).toThrow('class_review_candidate_conflict')
+  })
+
+  it('imports authorized system facts and can suppress that applied variant with teacher evidence', () => {
+    const systemBlock: ClassReviewIssueBlockV1 = {
+      blockId: 'authorized-system',
+      topicKey: 'tk1.aaaaaaaaaaaaaaaa',
+      origin: 'ai',
+      title: 'Authorized system',
+      diagnosis: 'Authorized diagnosis',
+      teachingAction: 'Authorized action',
+      severity: 'medium',
+      teacherStudentCount: 0,
+      systemStudentCount: 2,
+      combinedStudentCount: 2,
+      occurrenceCount: 2,
+      supportDenominator: 3,
+      anonymousExamples: [],
+      evidenceRefs: [],
+    }
+    const report = aiAvailable()
+    report.issueBlocks = [systemBlock]
+    report.issueOrder = [systemBlock.blockId]
+    const value = createLocalClassReviewCoordinator({
+      synthesisClient: createFakeClassReviewSynthesisClient({ scenario: 'success' }),
+      topicKeySecret: new Uint8Array(32).fill(7),
+      now: () => '2026-08-30T00:00:00.000Z',
+      createOpaqueId: () => 'opaque',
+    })
+    const registerWithSystemFacts = value.registerWorkspace as unknown as (input: Parameters<typeof value.registerWorkspace>[0] & {
+      systemEvidenceFacts: readonly {
+        topicKey: string
+        essayIdentities: readonly string[]
+        occurrenceCount: number
+      }[]
+    }) => void
+    registerWithSystemFacts({
+      taskKey: 'authorized-imported-system-facts',
+      taskRevision: 1,
+      rubricRevisionDigest: validRubricDigest,
+      report,
+      projection: projection(),
+      systemEvidenceFacts: [{
+        topicKey: systemBlock.topicKey,
+        essayIdentities: ['essay-system-a', 'essay-system-b'],
+        occurrenceCount: 2,
+      }],
+    })
+    const teacher = teacherBlock('authorized-teacher', systemBlock.topicKey)
+    value.applyIssueCommand(
+      'authorized-imported-system-facts',
+      teacherAddCommand(teacher, 'essay-teacher'),
+    )
+    expect(value.getSnapshot('authorized-imported-system-facts').report.issueBlocks).toMatchObject([{
+      blockId: systemBlock.blockId,
+      origin: 'teacher',
+      teacherStudentCount: 1,
+      systemStudentCount: 2,
+      combinedStudentCount: 3,
+    }])
+
+    const mixedTeacher = teacherBlock('imported-mixed-teacher', systemBlock.topicKey)
+    const mixedBlock: ClassReviewIssueBlockV1 = {
+      ...mixedTeacher,
+      systemStudentCount: 2,
+      combinedStudentCount: 3,
+      occurrenceCount: 3,
+      supportDenominator: 3,
+    }
+    const mixedReport = aiAvailable()
+    mixedReport.issueBlocks = [mixedBlock]
+    mixedReport.issueOrder = [mixedBlock.blockId]
+    const mixedValue = createLocalClassReviewCoordinator({
+      synthesisClient: createFakeClassReviewSynthesisClient({ scenario: 'success' }),
+      topicKeySecret: new Uint8Array(32).fill(7),
+      now: () => '2026-08-30T00:00:00.000Z',
+      createOpaqueId: () => 'opaque',
+    })
+    const mixedRegistration = {
+      taskKey: 'authorized-imported-mixed',
+      taskRevision: 1,
+      rubricRevisionDigest: validRubricDigest,
+      report: mixedReport,
+      projection: projection(),
+      teacherEvidenceFacts: [{
+        topicKey: mixedBlock.topicKey,
+        evidenceId: mixedTeacher.evidenceRefs[0].evidenceId,
+        essayIdentity: 'essay-teacher',
+        occurrenceCount: 1,
+        evidenceRef: mixedTeacher.evidenceRefs[0],
+      }],
+      systemEvidenceFacts: [{
+        topicKey: mixedBlock.topicKey,
+        essayIdentities: ['essay-system-a', 'essay-system-b'],
+        occurrenceCount: 2,
+      }],
+    }
+    expect(() => mixedValue.registerWorkspace(mixedRegistration)).toThrow('class_review_candidate_conflict')
+    expect(() => mixedValue.getSnapshot(mixedRegistration.taskKey)).toThrow('class_review_not_eligible')
+    expect(() => mixedValue.registerWorkspace({
+      ...mixedRegistration,
+      suppressedSystemVariants: new Map([[mixedBlock.topicKey, {
+        block: systemBlock,
+        generationId: 'wrong-generation',
+        invalidationEpoch: 0,
+        systemEvidenceFact: mixedRegistration.systemEvidenceFacts[0],
+      }]]),
+    })).toThrow('class_review_candidate_conflict')
+    expect(() => mixedValue.getSnapshot(mixedRegistration.taskKey)).toThrow('class_review_not_eligible')
+    expect(() => mixedValue.registerWorkspace({
+      ...mixedRegistration,
+      suppressedSystemVariants: new Map([[mixedBlock.topicKey, {
+        block: systemBlock,
+        generationId: mixedReport.appliedGenerationId,
+        invalidationEpoch: 1,
+        systemEvidenceFact: mixedRegistration.systemEvidenceFacts[0],
+      }]]),
+    })).toThrow('class_review_candidate_conflict')
+    expect(() => mixedValue.getSnapshot(mixedRegistration.taskKey)).toThrow('class_review_not_eligible')
+    mixedValue.registerWorkspace({
+      ...mixedRegistration,
+      suppressedSystemVariants: new Map([[mixedBlock.topicKey, {
+        block: systemBlock,
+        generationId: mixedReport.appliedGenerationId,
+        invalidationEpoch: 0,
+        systemEvidenceFact: mixedRegistration.systemEvidenceFacts[0],
+      }]]),
+    })
+    expect(mixedValue.getSnapshot(mixedRegistration.taskKey).report.issueBlocks).toEqual([mixedBlock])
+  })
+
+  it('computes the next source epoch before registry invalidation so overflow is a byte-for-byte no-op', async () => {
+    const deferred = deferredClient()
+    const value = coordinator(deferred.client)
+    const pending = value.generate({
+      taskKey: 'task-1',
+      generationId: 'overflow-owner',
+      intent: 'initial',
+      expectedTaskRevision: 1,
+      expectedReportRevision: 1,
+    })
+    await vi.waitFor(() => expect(deferred.calls()).toBe(1))
+    const before = value.getSnapshot('task-1')
+    const originalIsSafeInteger = Number.isSafeInteger.bind(Number)
+    let coordinatorCheckedAdds = 0
+    vi.spyOn(Number, 'isSafeInteger').mockImplementation((candidate) => {
+      const stack = new Error().stack ?? ''
+      if (stack.includes('classReviewCoordinator.ts') && stack.includes('checkedAdd')) {
+        coordinatorCheckedAdds += 1
+        if (coordinatorCheckedAdds === 3) return false
+      }
+      return originalIsSafeInteger(candidate)
+    })
+
+    expect(() => sourceDeleteForTest(value, 'task-1')).toThrow('class_review_candidate_conflict')
+    expect(coordinatorCheckedAdds).toBe(3)
+    expect(value.getSnapshot('task-1')).toEqual(before)
+    deferred.resolve(success(before.requestId as string))
+    await pending
   })
 })

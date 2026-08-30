@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   cloneAndFreezeClassReviewGenerationSnapshot,
+  createInternalIssueWorkspace,
   materializeClassReviewCandidate,
   type MaterializedClassReviewCandidateHandle,
 } from './classReviewMerge'
@@ -51,9 +52,10 @@ async function candidate(
     outputLimits: { maxCompletionTokens: 3072, maxVisibleCodePoints: 2200, maxJsonUtf8Bytes: 16384 },
   }
   const browserStatistics = { totalEssayCount: 2, includedEssayCount: 2, issueEligibleEssayCount: 2, excludedEssayCount: 0, issueCoverageRate: 1, fullScore: 100, scoreSummary: { averageScore: 80, highestScore: 90, lowestScore: 70 }, scoreBands: [], dimensions: [] }
+  const currentReport = { contractVersion: 'class-review-report-v1' as const, workspaceState: 'draft' as const, taskRevision: 1, reportRevision: 1, aiTextEditRevision: 0, currentGeneration: null, statistics: browserStatistics, issueBlocks: [], issueOrder: [], clearSpellingItems: [], selectedMaterials: [] }
   const snapshot = cloneAndFreezeClassReviewGenerationSnapshot({ originalRequest: request, hidden: { dimensionAliases: new Map(), selectedGroups: new Map(), unprojectedMustCover: [] }, generationId, invalidationEpoch, executionIdentity, payloadDigest, taskRevision: 1, reportRevision: 1, aiTextEditRevision: 0, sourceRevisionEpoch: 0, browserStatistics })
   const result: ClassReviewSynthesisResultV1 = { contractVersion: 'class-review-synthesis-result-v1', requestId: request.requestId, status: 'succeeded', output: { overallComment: 'Class summary', strengths: [{ title: 'Strength', detail: 'Students completed the task.', dimensionIds: [] }], patterns: [], learningRecommendations: [{ title: 'Next step', action: 'Revise with examples.' }] }, semanticCoverage: request.semanticCoverage, finishReason: 'stop', usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2, cachedTokens: 0 }, timingsMs: { queueMs: 0, providerMs: 1, validationMs: 0, totalMs: 1 } }
-  return materializeClassReviewCandidate({ snapshot, untrustedResult: result, topicHmac: { registry: createInMemoryTopicKeyRegistry(), digest: async () => new Uint8Array(32) }, createOpaqueId: () => 'unused', now: () => '2026-08-30T00:00:00.000Z' })
+  return materializeClassReviewCandidate({ snapshot, untrustedResult: result, currentReport, currentIssueWorkspace: createInternalIssueWorkspace([], { issueOrder: [] }), topicHmac: { registry: createInMemoryTopicKeyRegistry(), digest: async () => new Uint8Array(32) }, createOpaqueId: () => 'unused', now: () => '2026-08-30T00:00:00.000Z' })
 }
 
 describe('local class review generation registry', () => {
@@ -218,5 +220,41 @@ describe('local class review generation registry', () => {
     expect(registry.discardCandidate({
       ...scoped('candidate-owner', scopeB), expectedRevision: 1,
     })).toMatchObject({ state: 'discarded', requestId: null })
+  })
+
+  it('lets reentrant invalidation win over an outer candidate-apply transition', async () => {
+    const registry = createLocalClassReviewRegistry()
+    reserve(registry, {
+      generationId: 'reentrant-apply',
+      executionIdentity: 'reentrant-execution',
+      payloadDigest: 'reentrant-digest',
+      state: 'running',
+    })
+    registry.commitSucceeded({
+      ...scoped('reentrant-apply'),
+      expectedRevision: 0,
+      expectedFence: 0,
+      candidate: await candidate('reentrant-apply', 'reentrant-execution', 'reentrant-digest'),
+      unapplied: true,
+    })
+
+    expect(() => registry.applyCandidate({
+      ...scoped('reentrant-apply'),
+      expectedRevision: 1,
+      apply: () => {
+        registry.invalidateTaskScope({
+          opaqueTaskScope: scopeA,
+          safeFailureCode: 'class_review_source_invalidated',
+        })
+        return 'must-not-commit'
+      },
+    })).toThrow('class_review_candidate_conflict')
+    expect(registry.readGeneration(scoped('reentrant-apply'))).toMatchObject({
+      state: 'invalidated',
+      generationRevision: 2,
+      invalidationFence: 1,
+      candidateAvailable: false,
+      safeFailureCode: 'class_review_source_invalidated',
+    })
   })
 })

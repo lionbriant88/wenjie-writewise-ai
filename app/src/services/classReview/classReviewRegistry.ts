@@ -151,11 +151,27 @@ export function createLocalClassReviewRegistry() {
     opaqueTaskScope: string
     proposedGenerationId: string
     commandCore: string
+    commandIdentity: string
+    actionableIdentity: string
+    executionIdentity: string
+    snapshotTuple: string
+    fixedRevisions: string
+    payloadDigest: string
   }): LocalGenerationRecord | null => {
     const alias = scopedAliases(input.opaqueTaskScope)?.get(input.proposedGenerationId)
     if (!alias) return null
-    if (alias.commandCore !== input.commandCore) fail('active_generation_conflict')
-    return readGeneration({ opaqueTaskScope: input.opaqueTaskScope, generationId: alias.generationId })
+    const record = mutable({ opaqueTaskScope: input.opaqueTaskScope, generationId: alias.generationId })
+    if (!record) fail('generation_not_found')
+    if (alias.commandCore !== input.commandCore
+      || alias.commandIdentity !== input.commandIdentity
+      || record.actionableIdentity !== input.actionableIdentity
+      || record.executionIdentity !== input.executionIdentity
+      || record.snapshotTuple !== input.snapshotTuple
+      || record.fixedRevisions !== input.fixedRevisions
+      || record.payloadDigest !== input.payloadDigest) {
+      fail('active_generation_conflict')
+    }
+    return snapshot(record)
   }
   const readActionable = (opaqueTaskScope: string): LocalGenerationRecord | null => {
     const record = mutableActionable(opaqueTaskScope)
@@ -310,7 +326,16 @@ export function createLocalClassReviewRegistry() {
     const record = mutable(input)
     const handle = record ? candidateByRecord.get(record) : undefined
     if (!record || record.state !== 'succeeded_unapplied' || record.generationRevision !== input.expectedRevision || !handle) fail('class_review_candidate_conflict')
+    const expectedFence = record.invalidationFence
     const value = input.apply(handle)
+    if (mutable(input) !== record
+      || record.state !== 'succeeded_unapplied'
+      || record.generationRevision !== input.expectedRevision
+      || record.invalidationFence !== expectedFence
+      || candidateByRecord.get(record) !== handle
+      || actionableByScope.get(record.opaqueTaskScope) !== record.generationId) {
+      fail('class_review_candidate_conflict')
+    }
     candidateByRecord.delete(record)
     record.state = 'succeeded'
     record.requestId = null
