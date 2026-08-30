@@ -7,6 +7,7 @@ import {
   finiteAt,
   hasOnlyKeys,
   jsonUtf8ByteLength,
+  literalAt,
   opaqueAt,
   parseSemanticCoverage,
   pass,
@@ -491,9 +492,12 @@ export function parseClassReviewSynthesisRequest(
     'outputLimits',
   ])
   if (!record.ok) return record
-  if (record.value.contractVersion !== 'class-review-synthesis-request-v1') {
-    return fail('invalid_value', '/contractVersion')
-  }
+  const contractVersion = literalAt(
+    record.value.contractVersion,
+    '/contractVersion',
+    'class-review-synthesis-request-v1',
+  )
+  if (!contractVersion.ok) return contractVersion
   const requestId = opaqueAt(record.value.requestId, '/requestId')
   if (!requestId.ok) return requestId
   const rubricRevisionDigest = stringAt(
@@ -505,18 +509,30 @@ export function parseClassReviewSynthesisRequest(
   if (!/^[A-Za-z0-9_-]{43}$/.test(rubricRevisionDigest.value)) {
     return fail('invalid_value', '/rubricRevisionDigest')
   }
-  if (record.value.policyVersion !== 'class-review-policy-v1') {
-    return fail('invalid_value', '/policyVersion')
-  }
-  if (record.value.schemaVersion !== 'kimi-class-review-output-v1') {
-    return fail('invalid_value', '/schemaVersion')
-  }
-  if (record.value.projectionVersion !== 'class-review-projection-v1') {
-    return fail('invalid_value', '/projectionVersion')
-  }
-  if (record.value.budgetVersion !== 'class-review-prompt-budget-v1') {
-    return fail('invalid_value', '/budgetVersion')
-  }
+  const policyVersion = literalAt(
+    record.value.policyVersion,
+    '/policyVersion',
+    'class-review-policy-v1',
+  )
+  if (!policyVersion.ok) return policyVersion
+  const schemaVersion = literalAt(
+    record.value.schemaVersion,
+    '/schemaVersion',
+    'kimi-class-review-output-v1',
+  )
+  if (!schemaVersion.ok) return schemaVersion
+  const projectionVersion = literalAt(
+    record.value.projectionVersion,
+    '/projectionVersion',
+    'class-review-projection-v1',
+  )
+  if (!projectionVersion.ok) return projectionVersion
+  const budgetVersion = literalAt(
+    record.value.budgetVersion,
+    '/budgetVersion',
+    'class-review-prompt-budget-v1',
+  )
+  if (!budgetVersion.ok) return budgetVersion
 
   const statistics = parseSynthesisStatistics(record.value.statistics, '/statistics')
   if (!statistics.ok) return statistics
@@ -826,11 +842,15 @@ export function parseClassReviewSynthesisResult(
     'completionDisposition',
   ])
   if (!record.ok) return record
-  if (record.value.contractVersion !== 'class-review-synthesis-result-v1') {
-    return fail('invalid_value', '/contractVersion')
-  }
+  const contractVersion = literalAt(
+    record.value.contractVersion,
+    '/contractVersion',
+    'class-review-synthesis-result-v1',
+  )
+  if (!contractVersion.ok) return contractVersion
   const requestId = opaqueAt(record.value.requestId, '/requestId')
   if (!requestId.ok) return requestId
+  if (requestId.value !== request.requestId) return fail('invalid_value', '/requestId')
   const status = enumAt(record.value.status, '/status', [
     'succeeded',
     'failed',
@@ -851,7 +871,8 @@ export function parseClassReviewSynthesisResult(
     if (!exact.ok) return exact
     const output = parseProviderOutput(record.value.output, request)
     if (!output.ok) return output
-    if (record.value.finishReason !== 'stop') return fail('invalid_value', '/finishReason')
+    const finishReason = literalAt(record.value.finishReason, '/finishReason', 'stop')
+    if (!finishReason.ok) return finishReason
     const usage = parseUsage(record.value.usage, '/usage')
     if (!usage.ok) return usage
     const timingsMs = parseTimings(record.value.timingsMs, '/timingsMs')
@@ -877,12 +898,18 @@ export function parseClassReviewSynthesisResult(
       'timingsMs',
     ])
     if (!exact.ok) return exact
-    if (record.value.safeFailureCode !== 'provider_result_unknown') {
-      return fail('invalid_value', '/safeFailureCode')
-    }
-    if (record.value.completionDisposition !== 'unknown') {
-      return fail('invalid_value', '/completionDisposition')
-    }
+    const safeFailureCode = literalAt(
+      record.value.safeFailureCode,
+      '/safeFailureCode',
+      'provider_result_unknown',
+    )
+    if (!safeFailureCode.ok) return safeFailureCode
+    const completionDisposition = literalAt(
+      record.value.completionDisposition,
+      '/completionDisposition',
+      'unknown',
+    )
+    if (!completionDisposition.ok) return completionDisposition
     const timingsMs = parseTimings(record.value.timingsMs, '/timingsMs')
     if (!timingsMs.ok) return timingsMs
     return pass({

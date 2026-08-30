@@ -44,6 +44,62 @@ describe('class review browser contracts', () => {
     ).toEqual({ ok: false, error: { code: 'unknown_key', path: '/extra' } })
   })
 
+  it('does not satisfy required fields from an object prototype', () => {
+    const prototypeBackedCommand = Object.assign(
+      Object.create({ contractVersion: 'class-review-generation-command-v1' }),
+      {
+        intent: 'initial',
+        generationId: 'gen.initial',
+        expectedTaskRevision: 4,
+        expectedReportRevision: null,
+      },
+    )
+
+    expect(parseClassReviewGenerationCommand(prototypeBackedCommand)).toEqual({
+      ok: false,
+      error: { code: 'missing_key', path: '/contractVersion' },
+    })
+  })
+
+  it('reports non-string browser contract discriminators as invalid_type', () => {
+    expect(
+      parseClassReviewGenerationCommand({
+        ...browserFixtures.commands.initial,
+        contractVersion: 1,
+      }),
+    ).toEqual({ ok: false, error: { code: 'invalid_type', path: '/contractVersion' } })
+    expect(
+      parseClassReviewGenerationStatus({
+        ...browserFixtures.statuses.queued,
+        contractVersion: false,
+      }),
+    ).toEqual({ ok: false, error: { code: 'invalid_type', path: '/contractVersion' } })
+    expect(
+      parseClassReviewReport({
+        ...browserFixtures.reports.none,
+        contractVersion: null,
+      }),
+    ).toEqual({ ok: false, error: { code: 'invalid_type', path: '/contractVersion' } })
+    expect(
+      parseClassReviewGenerationStatus({
+        ...browserFixtures.statuses.result_unknown,
+        safeFailureCode: false,
+      }),
+    ).toEqual({ ok: false, error: { code: 'invalid_type', path: '/safeFailureCode' } })
+    expect(
+      parseClassReviewReport({
+        ...browserFixtures.reports.draft,
+        currentGeneration: {
+          ...browserFixtures.actionableGenerations.result_unknown,
+          safeFailureCode: 1,
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      error: { code: 'invalid_type', path: '/currentGeneration/safeFailureCode' },
+    })
+  })
+
   it('enforces generation revision, count, and state-specific fields', () => {
     expect(
       parseClassReviewGenerationStatus({

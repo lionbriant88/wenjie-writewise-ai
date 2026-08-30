@@ -5,6 +5,7 @@ import {
   fail,
   finiteAt,
   hasOnlyKeys,
+  literalAt,
   nullableStringAt,
   opaqueAt,
   parseSemanticCoverage,
@@ -106,9 +107,12 @@ export function parseClassReviewGenerationCommand(
     'expectedAiTextEditRevision',
   ])
   if (!record.ok) return record
-  if (record.value.contractVersion !== 'class-review-generation-command-v1') {
-    return fail('invalid_value', '/contractVersion')
-  }
+  const contractVersion = literalAt(
+    record.value.contractVersion,
+    '/contractVersion',
+    'class-review-generation-command-v1',
+  )
+  if (!contractVersion.ok) return contractVersion
   const intent = enumAt(record.value.intent, '/intent', [
     'initial',
     'regenerate',
@@ -252,9 +256,12 @@ export function parseClassReviewGenerationStatus(
     'completedAt',
   ])
   if (!record.ok) return record
-  if (record.value.contractVersion !== 'class-review-generation-status-v1') {
-    return fail('invalid_value', '/contractVersion')
-  }
+  const contractVersion = literalAt(
+    record.value.contractVersion,
+    '/contractVersion',
+    'class-review-generation-status-v1',
+  )
+  if (!contractVersion.ok) return contractVersion
   const state = enumAt(record.value.state, '/state', [
     'queued',
     'running',
@@ -286,9 +293,12 @@ export function parseClassReviewGenerationStatus(
     return pass({ ...common.value, state: state.value })
   }
   if (state.value === 'result_unknown') {
-    if (record.value.safeFailureCode !== 'provider_result_unknown') {
-      return fail('invalid_value', '/safeFailureCode')
-    }
+    const safeFailureCode = literalAt(
+      record.value.safeFailureCode,
+      '/safeFailureCode',
+      'provider_result_unknown',
+    )
+    if (!safeFailureCode.ok) return safeFailureCode
     return pass({ ...common.value, state: 'result_unknown', safeFailureCode: 'provider_result_unknown' })
   }
 
@@ -396,9 +406,12 @@ export function parseActionableGenerationSummary(
     })
   }
   if (state.value === 'result_unknown') {
-    if (record.value.safeFailureCode !== 'provider_result_unknown') {
-      return fail('invalid_value', pointer(path, 'safeFailureCode'))
-    }
+    const safeFailureCode = literalAt(
+      record.value.safeFailureCode,
+      pointer(path, 'safeFailureCode'),
+      'provider_result_unknown',
+    )
+    if (!safeFailureCode.ok) return safeFailureCode
     return pass({
       generationId: generationId.value,
       generationRevision: generationRevision.value,
@@ -947,9 +960,12 @@ export function parseClassReviewReport(value: unknown): ParseResult<ClassReviewR
     'aiSummary',
   ])
   if (!record.ok) return record
-  if (record.value.contractVersion !== 'class-review-report-v1') {
-    return fail('invalid_value', '/contractVersion')
-  }
+  const contractVersion = literalAt(
+    record.value.contractVersion,
+    '/contractVersion',
+    'class-review-report-v1',
+  )
+  if (!contractVersion.ok) return contractVersion
   const workspaceState = enumAt(record.value.workspaceState, '/workspaceState', [
     'none',
     'draft',

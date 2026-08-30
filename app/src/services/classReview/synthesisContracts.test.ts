@@ -36,6 +36,38 @@ describe('class review synthesis request contract', () => {
     })
   })
 
+  it('reports non-string synthesis request discriminators as invalid_type', () => {
+    const cases = [
+      {
+        value: { ...synthesisFixtures.requests.pureStatistics, contractVersion: 1 },
+        path: '/contractVersion',
+      },
+      {
+        value: { ...synthesisFixtures.requests.pureStatistics, policyVersion: false },
+        path: '/policyVersion',
+      },
+      {
+        value: { ...synthesisFixtures.requests.pureStatistics, schemaVersion: null },
+        path: '/schemaVersion',
+      },
+      {
+        value: { ...synthesisFixtures.requests.pureStatistics, projectionVersion: 1 },
+        path: '/projectionVersion',
+      },
+      {
+        value: { ...synthesisFixtures.requests.pureStatistics, budgetVersion: false },
+        path: '/budgetVersion',
+      },
+    ]
+
+    for (const testCase of cases) {
+      expect(parseClassReviewSynthesisRequest(testCase.value)).toEqual({
+        ok: false,
+        error: { code: 'invalid_type', path: testCase.path },
+      })
+    }
+  })
+
   it('accepts projected coverage below every eligible denominator', () => {
     expect(parseClassReviewSynthesisRequest(synthesisFixtures.requests.withGroups).ok).toBe(true)
 
@@ -81,6 +113,32 @@ describe('class review synthesis request contract', () => {
     })
   })
 
+  it('requires ratio one for every zero semanticCoverage denominator', () => {
+    const groupCoverage = structuredClone(synthesisFixtures.requests.pureStatistics)
+    groupCoverage.semanticCoverage.groupCoverage = 0
+    expect(parseClassReviewSynthesisRequest(groupCoverage)).toEqual({
+      ok: false,
+      error: { code: 'invalid_value', path: '/semanticCoverage/groupCoverage' },
+    })
+
+    const supportCoverage = structuredClone(synthesisFixtures.requests.pureStatistics)
+    supportCoverage.semanticCoverage.supportWeightedCoverage = 0
+    expect(parseClassReviewSynthesisRequest(supportCoverage)).toEqual({
+      ok: false,
+      error: { code: 'invalid_value', path: '/semanticCoverage/supportWeightedCoverage' },
+    })
+
+    const occurrenceCoverage = structuredClone(synthesisFixtures.requests.pureStatistics)
+    occurrenceCoverage.semanticCoverage.occurrenceWeightedCoverage = 0
+    expect(parseClassReviewSynthesisRequest(occurrenceCoverage)).toEqual({
+      ok: false,
+      error: {
+        code: 'invalid_value',
+        path: '/semanticCoverage/occurrenceWeightedCoverage',
+      },
+    })
+  })
+
   it('reports deep nested failures as one RFC 6901 segment at a time', () => {
     const invalidScore = {
       ...synthesisFixtures.requests.withGroups,
@@ -92,6 +150,21 @@ describe('class review synthesis request contract', () => {
     expect(parseClassReviewSynthesisRequest(invalidScore)).toEqual({
       ok: false,
       error: { code: 'invalid_type', path: '/statistics/score/fullScore' },
+    })
+
+    const escapedUnknownKey = {
+      ...synthesisFixtures.requests.withGroups,
+      statistics: {
+        ...synthesisFixtures.requests.withGroups.statistics,
+        score: {
+          ...synthesisFixtures.requests.withGroups.statistics.score,
+          'a/b~c': true,
+        },
+      },
+    }
+    expect(parseClassReviewSynthesisRequest(escapedUnknownKey)).toEqual({
+      ok: false,
+      error: { code: 'unknown_key', path: '/statistics/score/a~1b~0c' },
     })
   })
 
@@ -309,6 +382,73 @@ describe('class review synthesis result contract', () => {
         request.value,
       ).ok,
     ).toBe(true)
+  })
+
+  it.each([
+    ['succeeded', synthesisFixtures.results.succeeded],
+    ['failed', synthesisFixtures.results.completedFailure],
+    ['result_unknown', synthesisFixtures.results.resultUnknown],
+  ])('rejects a requestId mismatch for %s', (_status, result) => {
+    const request = parseClassReviewSynthesisRequest(synthesisFixtures.requests.withGroups)
+    if (!request.ok) throw new Error('request fixture rejected')
+
+    expect(
+      parseClassReviewSynthesisResult(
+        { ...result, requestId: 'request.mismatch' },
+        request.value,
+      ),
+    ).toEqual({ ok: false, error: { code: 'invalid_value', path: '/requestId' } })
+  })
+
+  it('parses result requestId type and grammar before checking correlation', () => {
+    const request = parseClassReviewSynthesisRequest(synthesisFixtures.requests.withGroups)
+    if (!request.ok) throw new Error('request fixture rejected')
+
+    expect(
+      parseClassReviewSynthesisResult(
+        { ...synthesisFixtures.results.succeeded, requestId: false },
+        request.value,
+      ),
+    ).toEqual({ ok: false, error: { code: 'invalid_type', path: '/requestId' } })
+    expect(
+      parseClassReviewSynthesisResult(
+        { ...synthesisFixtures.results.succeeded, requestId: 'contains space' },
+        request.value,
+      ),
+    ).toEqual({ ok: false, error: { code: 'invalid_value', path: '/requestId' } })
+  })
+
+  it('reports non-string synthesis result discriminators as invalid_type', () => {
+    const request = parseClassReviewSynthesisRequest(synthesisFixtures.requests.withGroups)
+    if (!request.ok) throw new Error('request fixture rejected')
+
+    expect(
+      parseClassReviewSynthesisResult(
+        { ...synthesisFixtures.results.succeeded, contractVersion: 1 },
+        request.value,
+      ),
+    ).toEqual({ ok: false, error: { code: 'invalid_type', path: '/contractVersion' } })
+    expect(
+      parseClassReviewSynthesisResult(
+        { ...synthesisFixtures.results.succeeded, finishReason: false },
+        request.value,
+      ),
+    ).toEqual({ ok: false, error: { code: 'invalid_type', path: '/finishReason' } })
+    expect(
+      parseClassReviewSynthesisResult(
+        { ...synthesisFixtures.results.resultUnknown, safeFailureCode: null },
+        request.value,
+      ),
+    ).toEqual({ ok: false, error: { code: 'invalid_type', path: '/safeFailureCode' } })
+    expect(
+      parseClassReviewSynthesisResult(
+        { ...synthesisFixtures.results.resultUnknown, completionDisposition: 1 },
+        request.value,
+      ),
+    ).toEqual({
+      ok: false,
+      error: { code: 'invalid_type', path: '/completionDisposition' },
+    })
   })
 
   it('fully parses provider output exact keys and string/count bounds', () => {

@@ -516,7 +516,9 @@ export function hasOnlyKeys(
 ): ParseResult<Record<string, unknown>> {
   if (!isRecord(value)) return fail('not_object', path)
   for (const key of required) {
-    if (!(key in value)) return fail('missing_key', pointer(path, key))
+    if (!Object.prototype.hasOwnProperty.call(value, key)) {
+      return fail('missing_key', pointer(path, key))
+    }
   }
   const allowed = new Set([...required, ...optional])
   const unknownKeys = Object.keys(value)
@@ -610,6 +612,15 @@ export function enumAt<T extends string>(
     if (value === choice) return pass(choice)
   }
   return fail('invalid_value', path)
+}
+
+export function literalAt<T extends string>(
+  value: unknown,
+  path: string,
+  expected: T,
+): ParseResult<T> {
+  if (typeof value !== 'string') return fail('invalid_type', path)
+  return value === expected ? pass(expected) : fail('invalid_value', path)
 }
 
 export function opaqueAt(value: unknown, path: string): ParseResult<string> {
