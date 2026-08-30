@@ -1,14 +1,65 @@
 import type { SafeFailureCode } from './types'
 
-const KEYS = ['stage', 'lifecycle', 'outcome', 'safeFailureCode', 'includedEssayCount', 'excludedEssayCount', 'eligibleGroupCount', 'projectedGroupCount', 'eligibleDistinctEssaySupportSum', 'projectedDistinctEssaySupportSum', 'eligibleOccurrenceSum', 'projectedOccurrenceSum', 'queueMs', 'providerMs', 'validationMs', 'totalMs'] as const
-const LIFECYCLES = new Set(['reserved', 'running', 'completed', 'invalidated'])
-const OUTCOMES = new Set(['succeeded', 'failed', 'result_unknown', 'succeeded_unapplied', 'discarded'])
-const FAILURES = new Set<SafeFailureCode>(['class_review_not_eligible', 'active_generation_conflict', 'class_review_candidate_conflict', 'class_review_source_invalidated', 'class_review_task_invalidated', 'class_review_projection_too_large', 'class_review_prompt_too_large', 'class_review_prompt_calibration_missing', 'class_review_prompt_contract_drift', 'provider_not_configured', 'provider_request_rejected', 'provider_auth_failed', 'provider_balance_unavailable', 'provider_rate_limited', 'provider_timeout', 'provider_result_unknown', 'provider_unavailable', 'provider_content_filtered', 'provider_unexpected_tool_call', 'provider_invalid_response'])
+const KEYS = [
+  'stage',
+  'lifecycle',
+  'outcome',
+  'safeFailureCode',
+  'includedEssayCount',
+  'excludedEssayCount',
+  'eligibleGroupCount',
+  'projectedGroupCount',
+  'eligibleDistinctEssaySupportSum',
+  'projectedDistinctEssaySupportSum',
+  'eligibleOccurrenceSum',
+  'projectedOccurrenceSum',
+  'queueMs',
+  'providerMs',
+  'validationMs',
+  'totalMs',
+] as const
+type ClassReviewTelemetryLifecycle = 'reserved' | 'running' | 'completed' | 'invalidated'
+type ClassReviewTelemetryOutcome = 'succeeded' | 'failed' | 'result_unknown' | 'succeeded_unapplied' | 'discarded'
+const LIFECYCLES = new Set<ClassReviewTelemetryLifecycle>([
+  'reserved',
+  'running',
+  'completed',
+  'invalidated',
+])
+const OUTCOMES = new Set<ClassReviewTelemetryOutcome>([
+  'succeeded',
+  'failed',
+  'result_unknown',
+  'succeeded_unapplied',
+  'discarded',
+])
+const FAILURES = new Set<SafeFailureCode>([
+  'class_review_not_eligible',
+  'active_generation_conflict',
+  'class_review_candidate_conflict',
+  'class_review_source_invalidated',
+  'class_review_task_invalidated',
+  'class_review_projection_too_large',
+  'class_review_prompt_too_large',
+  'class_review_prompt_calibration_missing',
+  'class_review_prompt_contract_drift',
+  'provider_not_configured',
+  'provider_request_rejected',
+  'provider_auth_failed',
+  'provider_balance_unavailable',
+  'provider_rate_limited',
+  'provider_timeout',
+  'provider_result_unknown',
+  'provider_unavailable',
+  'provider_content_filtered',
+  'provider_unexpected_tool_call',
+  'provider_invalid_response',
+])
 
 export interface ClassReviewTelemetryEvent {
   stage: 'class_review_generation'
-  lifecycle: string
-  outcome: string
+  lifecycle: ClassReviewTelemetryLifecycle
+  outcome: ClassReviewTelemetryOutcome
   safeFailureCode: SafeFailureCode | null
   includedEssayCount: number
   excludedEssayCount: number
@@ -51,9 +102,33 @@ export function createClassReviewTelemetry(emit: (event: ClassReviewTelemetryEve
         input.totalMs,
       ]
       const durations = [input.queueMs, input.providerMs, input.validationMs, input.totalMs]
-      const hasInvalidInteger = countsAndDurations.some((value) => !Number.isSafeInteger(value) || value < 0)
+      const hasInvalidInteger = countsAndDurations.some(
+        (value) => !Number.isSafeInteger(value) || value < 0,
+      )
       const hasExcessiveDuration = durations.some((value) => value > 86_400_000)
-      if (hasInvalidInteger || hasExcessiveDuration) throw new Error('class_review_telemetry_invalid')
+      const hasInvalidCoverage = input.projectedGroupCount > input.eligibleGroupCount
+        || input.projectedDistinctEssaySupportSum > input.eligibleDistinctEssaySupportSum
+        || input.projectedOccurrenceSum > input.eligibleOccurrenceSum
+      const hasInvalidStageDuration = input.queueMs > input.totalMs
+        || input.providerMs > input.totalMs
+        || input.validationMs > input.totalMs
+      const successfulOutcome = input.outcome === 'succeeded'
+        || input.outcome === 'succeeded_unapplied'
+        || input.outcome === 'discarded'
+      const hasInvalidFailure = successfulOutcome
+        ? input.safeFailureCode !== null
+        : input.outcome === 'result_unknown'
+          ? input.safeFailureCode !== 'provider_result_unknown'
+          : input.safeFailureCode === null
+      if (
+        hasInvalidInteger
+        || hasExcessiveDuration
+        || hasInvalidCoverage
+        || hasInvalidStageDuration
+        || hasInvalidFailure
+      ) {
+        throw new Error('class_review_telemetry_invalid')
+      }
 
       emit({
         stage: input.stage,

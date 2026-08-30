@@ -1,8 +1,24 @@
 import { parseClassReviewReport } from './classReviewContracts'
-import type { ClassReviewProjectionHiddenStateV1, HiddenMustCoverFallbackV1, HiddenSelectedGroupV1 } from './classReviewProjection'
+import type {
+  ClassReviewProjectionHiddenStateV1,
+  HiddenMustCoverFallbackV1,
+  HiddenSelectedGroupV1,
+} from './classReviewProjection'
 import { deriveCompositeTopicKey, type TopicHmac, type TopicIdentity } from './classReviewTopicKey'
-import { parseClassReviewSynthesisResult } from './synthesisContracts'
-import type { ClassReviewIssueBlockV1, ClassReviewProviderOutputV1, ClassReviewReportV1, ClassReviewStatisticsV1, ClassReviewSynthesisRequestV1, Severity, SynthesisGroupV1 } from './types'
+import { parseClassReviewSynthesisRequest, parseClassReviewSynthesisResult } from './synthesisContracts'
+import type {
+  AiSummaryV1,
+  ClassReviewIssueBlockV1,
+  ClassReviewProviderOutputV1,
+  ClassReviewReportV1,
+  ClassReviewStatisticsV1,
+  ClassReviewSynthesisRequestV1,
+  EvidenceRefV1,
+  SemanticCoverageV1,
+  Severity,
+  SnapshotMetadataV1,
+  SynthesisGroupV1,
+} from './types'
 
 function fail(code: string): never {
   throw new Error(code)
@@ -16,6 +32,28 @@ function checkedAdd(left: number, right: number): number {
   const sum = left + right
   if (!Number.isSafeInteger(sum) || sum < 0) fail('hidden_snapshot_invalid')
   return sum
+}
+
+class ImmutableMapView<K, V> implements ReadonlyMap<K, V> {
+  readonly #map: Map<K, V>
+  constructor(entries: Iterable<readonly [K, V]>) {
+    this.#map = new Map(entries)
+    for (const [key, value] of this.#map) {
+      deepFreeze(key)
+      deepFreeze(value)
+    }
+    Object.freeze(this)
+  }
+  get size(): number { return this.#map.size }
+  get(key: K): V | undefined { return this.#map.get(key) }
+  has(key: K): boolean { return this.#map.has(key) }
+  entries(): MapIterator<[K, V]> { return this.#map.entries() }
+  keys(): MapIterator<K> { return this.#map.keys() }
+  values(): MapIterator<V> { return this.#map.values() }
+  forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: unknown): void {
+    this.#map.forEach((value, key) => callbackfn.call(thisArg, value, key, this))
+  }
+  [Symbol.iterator](): MapIterator<[K, V]> { return this.#map[Symbol.iterator]() }
 }
 const severityRank: Record<Severity, number> = { high: 0, medium: 1, low: 2 }
 const identityTuple = (identity: TopicIdentity): string => JSON.stringify([
@@ -32,7 +70,17 @@ const TYPE_COPY = {
   structure: ['篇章结构', '多篇作文出现同类结构组织问题。', '示范段落组织方法，并练习信息排序与衔接。'],
   legibility: ['卷面与可读性', '多篇作文出现同类卷面可读性问题。', '明确书写与版面规范，并安排限时誊写检查。'],
 } as const
-const LOGIC_LABEL = { weak_connection: '衔接薄弱', unclear_logic: '逻辑不清', missing_cause_effect: '因果缺失', unclear_transition: '过渡不清', topic_drift: '偏离主题', irrelevant_sentence: '无关句', unclear_reference: '指代不清', missing_motivation: '动机缺失', plot_gap: '情节断裂' } as const
+const LOGIC_LABEL = {
+  weak_connection: '衔接薄弱',
+  unclear_logic: '逻辑不清',
+  missing_cause_effect: '因果缺失',
+  unclear_transition: '过渡不清',
+  topic_drift: '偏离主题',
+  irrelevant_sentence: '无关句',
+  unclear_reference: '指代不清',
+  missing_motivation: '动机缺失',
+  plot_gap: '情节断裂',
+} as const
 
 function fallbackCopy(item: HiddenMustCoverFallbackV1): { title: string; diagnosis: string; teachingAction: string } {
   const action = item.type === 'logic' ? '结合上下文梳理关系，并安排衔接与因果表达练习。' : TYPE_COPY[item.type][2]
@@ -45,7 +93,7 @@ function fallbackCopy(item: HiddenMustCoverFallbackV1): { title: string; diagnos
   return { title: copy[0], diagnosis: copy[1], teachingAction: copy[2] }
 }
 
-export async function materializeSystemIssueBlocks(input: {
+async function materializeSystemIssueBlocks(input: {
   providerOutput: ClassReviewProviderOutputV1
   hidden: ClassReviewProjectionHiddenStateV1
   issueEligibleEssayCount: number
@@ -53,7 +101,7 @@ export async function materializeSystemIssueBlocks(input: {
   createOpaqueId: () => string
   admittedGroups?: readonly SynthesisGroupV1[]
   projectedGroups?: readonly SynthesisGroupV1[]
-}) {
+}): Promise<{ issueBlocks: ClassReviewIssueBlockV1[]; consumedMustCover: Set<string>; systemEvidenceFacts: SystemEvidenceFact[] }> {
   const projected = new Map((input.projectedGroups ?? input.admittedGroups ?? []).map((group) => [group.groupId, group]))
   const identityOwners = new Map<string, string>()
   for (const [alias, group] of input.hidden.selectedGroups) {
@@ -65,6 +113,7 @@ export async function materializeSystemIssueBlocks(input: {
   const ownedAliases = new Set<string>()
   const consumedMustCover = new Set<string>()
   const issueBlocks: ClassReviewIssueBlockV1[] = []
+  const systemEvidenceFacts: SystemEvidenceFact[] = []
   const requiredSupport = Math.max(input.issueEligibleEssayCount < 10 ? 2 : 3, Math.ceil(input.issueEligibleEssayCount * 0.2))
 
   for (const pattern of input.providerOutput.patterns) {
@@ -86,8 +135,19 @@ export async function materializeSystemIssueBlocks(input: {
     const identities = [...new Map(members.map((member) => [identityTuple(member.atomicTopic), member.atomicTopic])).values()]
     const topic = identities.length === 1 ? identities[0] : await deriveCompositeTopicKey(identities, input.topicHmac)
     members.forEach((member) => consumedMustCover.add(identityTuple(member.atomicTopic)))
-    const examples = members.flatMap((member) => member.excerpt?.originalText.status === 'kept' ? [{ topicKey: member.atomicTopic.key, evidenceKey: member.excerpt.originalText.scrubbedEvidenceKey, text: member.excerpt.originalText.text }] : [])
-      .sort((a, b) => compare(a.topicKey, b.topicKey) || compare(a.evidenceKey, b.evidenceKey) || compare(a.text, b.text))
+    const examples = members
+      .flatMap((member) => member.excerpt?.originalText.status === 'kept'
+        ? [{
+            topicKey: member.atomicTopic.key,
+            evidenceKey: member.excerpt.originalText.scrubbedEvidenceKey,
+            text: member.excerpt.originalText.text,
+          }]
+        : [])
+      .sort((a, b) =>
+        compare(a.topicKey, b.topicKey)
+        || compare(a.evidenceKey, b.evidenceKey)
+        || compare(a.text, b.text),
+      )
     const anonymousExamples = [...new Map(examples.map((example) => [example.text, example.text])).values()].slice(0, 3)
     issueBlocks.push({
       blockId: input.createOpaqueId(),
@@ -105,6 +165,11 @@ export async function materializeSystemIssueBlocks(input: {
       anonymousExamples,
       evidenceRefs: [],
     })
+    systemEvidenceFacts.push({
+      topicKey: topic.key,
+      essayIdentities: [...essayIds].sort(compare),
+      occurrenceCount,
+    })
   }
 
   const fallbacks = new Map<string, HiddenMustCoverFallbackV1>()
@@ -116,12 +181,44 @@ export async function materializeSystemIssueBlocks(input: {
   for (const [alias, member] of input.hidden.selectedGroups) {
     const group = projected.get(alias)
     if (!group?.mustCover || consumedMustCover.has(identityTuple(member.atomicTopic))) continue
-    const content: HiddenMustCoverFallbackV1['content'] = member.title.status === 'kept' && member.excerpt?.suggestionOrDiagnosis.status === 'kept'
-      ? { kind: 'scrubbed', title: { text: member.title.text, scrubbedEvidenceKey: member.title.scrubbedEvidenceKey }, diagnosis: { text: member.excerpt.suggestionOrDiagnosis.text, scrubbedEvidenceKey: member.excerpt.suggestionOrDiagnosis.scrubbedEvidenceKey }, teachingTemplate: group.type }
-      : { kind: 'template', template: group.type === 'logic' ? `logic_${group.subtype ?? 'unclear_logic'}` : group.type }
-    fallbacks.set(identityTuple(member.atomicTopic), { atomicTopic: member.atomicTopic, type: group.type, subtype: group.subtype, severity: group.severity, distinctEssaySupport: member.essayIds.length, occurrenceCount: member.occurrenceCount, content, anonymousExample: null })
+    let content: HiddenMustCoverFallbackV1['content']
+    if (
+      member.title.status === 'kept'
+      && member.excerpt?.suggestionOrDiagnosis.status === 'kept'
+    ) {
+      content = {
+        kind: 'scrubbed',
+        title: {
+          text: member.title.text,
+          scrubbedEvidenceKey: member.title.scrubbedEvidenceKey,
+        },
+        diagnosis: {
+          text: member.excerpt.suggestionOrDiagnosis.text,
+          scrubbedEvidenceKey: member.excerpt.suggestionOrDiagnosis.scrubbedEvidenceKey,
+        },
+        teachingTemplate: group.type,
+      }
+    } else {
+      content = {
+        kind: 'template',
+        template: group.type === 'logic'
+          ? `logic_${group.subtype ?? 'unclear_logic'}`
+          : group.type,
+      }
+    }
+    fallbacks.set(identityTuple(member.atomicTopic), {
+      atomicTopic: member.atomicTopic,
+      type: group.type,
+      subtype: group.subtype,
+      severity: group.severity,
+      distinctEssaySupport: member.essayIds.length,
+      occurrenceCount: member.occurrenceCount,
+      content,
+      anonymousExample: null,
+    })
   }
   for (const item of fallbacks.values()) {
+    const selected = [...input.hidden.selectedGroups.values()].find((group) => identityTuple(group.atomicTopic) === identityTuple(item.atomicTopic))
     issueBlocks.push({
       blockId: input.createOpaqueId(),
       topicKey: item.atomicTopic.key,
@@ -136,12 +233,17 @@ export async function materializeSystemIssueBlocks(input: {
       anonymousExamples: [],
       evidenceRefs: [],
     })
+    systemEvidenceFacts.push({
+      topicKey: item.atomicTopic.key,
+      essayIdentities: selected ? [...selected.essayIds].sort(compare) : [],
+      occurrenceCount: item.occurrenceCount,
+    })
   }
   issueBlocks.sort((left, right) => severityRank[left.severity] - severityRank[right.severity]
     || right.systemStudentCount - left.systemStudentCount
     || right.occurrenceCount - left.occurrenceCount
     || compare(left.topicKey, right.topicKey))
-  return { issueBlocks, consumedMustCover }
+  return { issueBlocks, consumedMustCover, systemEvidenceFacts }
 }
 
 export interface GenerationSnapshot {
@@ -174,19 +276,146 @@ function deepFreeze(value: unknown): void {
 }
 
 export function cloneAndFreezeClassReviewGenerationSnapshot(input: GenerationSnapshot): Readonly<GenerationSnapshot> {
-  const clone = structuredClone(input)
+  const parsedRequest = parseClassReviewSynthesisRequest(structuredClone(input.originalRequest))
+  if (!parsedRequest.ok) fail('class_review_candidate_conflict')
+  const selectedEntries = [...input.hidden.selectedGroups].map(([alias, group]) => [alias, structuredClone(group)] as const)
+  const aliasEntries = [...input.hidden.dimensionAliases].map(([alias, original]) => [alias, original] as const)
+  const hidden: ClassReviewProjectionHiddenStateV1 = {
+    dimensionAliases: new ImmutableMapView(aliasEntries),
+    selectedGroups: new ImmutableMapView(selectedEntries),
+    unprojectedMustCover: structuredClone([...input.hidden.unprojectedMustCover]),
+  }
+  validateGenerationBoundary(parsedRequest.value, hidden, input.browserStatistics)
+  const clone: GenerationSnapshot = {
+    ...structuredClone({
+      generationId: input.generationId,
+      invalidationEpoch: input.invalidationEpoch,
+      executionIdentity: input.executionIdentity,
+      payloadDigest: input.payloadDigest,
+      taskRevision: input.taskRevision,
+      reportRevision: input.reportRevision,
+      aiTextEditRevision: input.aiTextEditRevision,
+      sourceRevisionEpoch: input.sourceRevisionEpoch,
+      browserStatistics: input.browserStatistics,
+    }),
+    originalRequest: parsedRequest.value,
+    hidden,
+  }
   deepFreeze(clone)
   return clone
+}
+
+function validateTopicIdentity(identity: TopicIdentity): void {
+  if (identity.kind !== 'atomic'
+    || identity.keyVersion !== 'topic-key-v1'
+    || !/^scope_v1_[0-9a-f]{32,64}$/u.test(identity.taskScope)
+    || !/^tk1\.[0-9a-f]{16}(?:\.[0-9a-f]{8}(?:\.(?:[2-9]|[1-9]\d+))?)?$/u.test(identity.key)
+    || !/^fp1\.[0-9a-f]{64}$/u.test(identity.fingerprintDigest)) {
+    fail('class_review_candidate_conflict')
+  }
+}
+
+function validateGenerationBoundary(
+  request: ClassReviewSynthesisRequestV1,
+  hidden: ClassReviewProjectionHiddenStateV1,
+  browser: ClassReviewStatisticsV1,
+): void {
+  const requestCounts = request.statistics
+  if (requestCounts.totalEssayCount !== browser.totalEssayCount
+    || requestCounts.includedEssayCount !== browser.includedEssayCount
+    || requestCounts.issueEligibleEssayCount !== browser.issueEligibleEssayCount
+    || requestCounts.excludedEssayCount !== browser.excludedEssayCount
+    || requestCounts.score.fullScore !== browser.fullScore) {
+    fail('class_review_candidate_conflict')
+  }
+
+  const requestDimensions = new Map(requestCounts.dimensions.map((dimension) => [dimension.dimensionId, dimension]))
+  if (requestDimensions.size !== requestCounts.dimensions.length
+    || hidden.dimensionAliases.size !== requestDimensions.size
+    || browser.dimensions.length !== requestDimensions.size) {
+    fail('class_review_candidate_conflict')
+  }
+  const originalDimensions = new Map(browser.dimensions.map((dimension) => [dimension.dimensionId, dimension]))
+  if (originalDimensions.size !== browser.dimensions.length) fail('class_review_candidate_conflict')
+  const seenOriginals = new Set<string>()
+  for (const [alias, original] of hidden.dimensionAliases) {
+    const projected = requestDimensions.get(alias)
+    const current = originalDimensions.get(original)
+    if (!projected || !current || seenOriginals.has(original)
+      || projected.averageScore !== current.averageScore
+      || projected.maxScore !== current.maxScore
+      || projected.normalizedPerformance !== current.normalizedPerformance) {
+      fail('class_review_candidate_conflict')
+    }
+    seenOriginals.add(original)
+  }
+
+  const requestGroups = new Map(request.groups.map((group) => [group.groupId, group]))
+  if (requestGroups.size !== request.groups.length || hidden.selectedGroups.size !== requestGroups.size) fail('class_review_candidate_conflict')
+  const identityOwners = new Set<string>()
+  let sharedScope: string | null = null
+  for (const [alias, selected] of hidden.selectedGroups) {
+    const group = requestGroups.get(alias)
+    validateTopicIdentity(selected.atomicTopic)
+    const identity = identityTuple(selected.atomicTopic)
+    const essays = new Set(selected.essayIds)
+    if (!group || identityOwners.has(identity) || essays.size !== selected.essayIds.length || essays.size !== group.distinctEssaySupport
+      || selected.occurrenceCount !== group.occurrenceCount || selected.occurrenceCount < essays.size) {
+      fail('class_review_candidate_conflict')
+    }
+    if (sharedScope !== null && sharedScope !== selected.atomicTopic.taskScope) fail('class_review_candidate_conflict')
+    sharedScope = selected.atomicTopic.taskScope
+    identityOwners.add(identity)
+    const selectedTitle = selected.title.status === 'kept' ? selected.title.text : null
+    if (selectedTitle !== null && selectedTitle !== group.title) fail('class_review_candidate_conflict')
+    if (group.excerpt) {
+      if (!selected.excerpt || selected.excerpt.originalText.status !== 'kept' || selected.excerpt.suggestionOrDiagnosis.status !== 'kept'
+        || selected.excerpt.originalText.text !== group.excerpt.originalText
+        || selected.excerpt.suggestionOrDiagnosis.text !== group.excerpt.suggestionOrDiagnosis) fail('class_review_candidate_conflict')
+    } else if (selected.excerpt?.originalText.status === 'kept' || selected.excerpt?.suggestionOrDiagnosis.status === 'kept') {
+      fail('class_review_candidate_conflict')
+    }
+  }
+  for (const fallback of hidden.unprojectedMustCover) {
+    validateTopicIdentity(fallback.atomicTopic)
+    const identity = identityTuple(fallback.atomicTopic)
+    if (identityOwners.has(identity)
+      || (sharedScope !== null && fallback.atomicTopic.taskScope !== sharedScope)
+      || fallback.distinctEssaySupport > requestCounts.issueEligibleEssayCount
+      || !Number.isSafeInteger(fallback.distinctEssaySupport)
+      || !Number.isSafeInteger(fallback.occurrenceCount)
+      || fallback.distinctEssaySupport < 0
+      || fallback.occurrenceCount < fallback.distinctEssaySupport) {
+      fail('class_review_candidate_conflict')
+    }
+    sharedScope ??= fallback.atomicTopic.taskScope
+    identityOwners.add(identity)
+  }
+}
+
+export interface GeneratedClassReviewPayload {
+  generationId: string
+  invalidationEpoch: number
+  executionIdentity: string
+  payloadDigest: string
+  generatedPayload: {
+    aiSummary: AiSummaryV1
+    systemIssueBlocks: ClassReviewIssueBlockV1[]
+    systemEvidenceFacts: SystemEvidenceFact[]
+    snapshotMetadata: SnapshotMetadataV1
+    generatedAt: string
+  }
 }
 
 export async function materializeClassReviewCandidate(input: {
   snapshot: Readonly<GenerationSnapshot>
   untrustedResult: unknown
   currentReport: ClassReviewReportV1
+  currentIssueWorkspace?: InternalIssueWorkspace
   topicHmac: TopicHmac
   createOpaqueId: () => string
   now: () => string
-}) {
+}): Promise<{ generatedPayload: GeneratedClassReviewPayload; report: ClassReviewReportV1; issueWorkspace: InternalIssueWorkspace; semanticCoverage: SemanticCoverageV1 }> {
   const parsed = parseClassReviewSynthesisResult(input.untrustedResult, input.snapshot.originalRequest)
   if (!parsed.ok || parsed.value.status !== 'succeeded') fail('provider_invalid_response')
   const admittedGroups = input.snapshot.originalRequest.groups.slice(0, parsed.value.semanticCoverage.projectedGroupCount)
@@ -199,45 +428,44 @@ export async function materializeClassReviewCandidate(input: {
     admittedGroups,
     projectedGroups: input.snapshot.originalRequest.groups,
   })
-  const issueWorkspace = mergeInternalIssueWorkspace({
-    workspace: createInternalIssueWorkspace(input.currentReport.issueBlocks),
-    nextSystem: system.issueBlocks,
+  const generatedAt = input.now()
+  const aiSummary: AiSummaryV1 = {
+    overallComment: parsed.value.output.overallComment,
+    strengths: parsed.value.output.strengths.map((strength) => ({
+      ...strength,
+      dimensionIds: strength.dimensionIds.map((alias) => {
+        const original = input.snapshot.hidden.dimensionAliases.get(alias)
+        if (!original) return fail('class_review_candidate_conflict')
+        return original
+      }),
+    })),
+    learningRecommendations: parsed.value.output.learningRecommendations,
+  }
+  const payload: GeneratedClassReviewPayload = {
     generationId: input.snapshot.generationId,
     invalidationEpoch: input.snapshot.invalidationEpoch,
-    createOpaqueId: input.createOpaqueId,
-  })
-  const reverseAliases = new Map([...input.snapshot.hidden.dimensionAliases].map(([dimensionId, alias]) => [alias, dimensionId]))
-  const allBlocks = projectInternalIssueWorkspace(issueWorkspace)
-  const generatedAt = input.now()
-  const candidate: ClassReviewReportV1 = {
-    ...input.currentReport,
-    workspaceState: 'ai_available',
-    taskRevision: input.snapshot.taskRevision,
-    reportRevision: (input.currentReport.reportRevision ?? 0) + 1,
-    currentGeneration: null,
-    statistics: input.snapshot.browserStatistics,
-    issueBlocks: allBlocks,
-    issueOrder: allBlocks.map((block) => block.blockId),
-    appliedGenerationId: input.snapshot.generationId,
-    generatedAt,
-    snapshotMetadata: {
+    executionIdentity: input.snapshot.executionIdentity,
+    payloadDigest: input.snapshot.payloadDigest,
+    generatedPayload: {
+      aiSummary,
+      systemIssueBlocks: system.issueBlocks,
+      systemEvidenceFacts: system.systemEvidenceFacts,
+      generatedAt,
+      snapshotMetadata: {
       includedEssayCount: input.snapshot.originalRequest.statistics.includedEssayCount,
       issueEligibleEssayCount: input.snapshot.originalRequest.statistics.issueEligibleEssayCount,
       totalEssayCount: input.snapshot.originalRequest.statistics.totalEssayCount,
       semanticCoverage: parsed.value.semanticCoverage,
-    },
-    aiSummary: {
-      overallComment: parsed.value.output.overallComment,
-      strengths: parsed.value.output.strengths.map((strength) => ({
-        ...strength,
-        dimensionIds: strength.dimensionIds.map((alias) => reverseAliases.get(alias) ?? alias),
-      })),
-      learningRecommendations: parsed.value.output.learningRecommendations,
+      },
     },
   }
-  const validated = parseClassReviewReport(candidate)
-  if (!validated.ok) fail('class_review_candidate_invalid')
-  return { report: validated.value, semanticCoverage: parsed.value.semanticCoverage }
+  const merged = mergeGeneratedClassReviewPayloadIntoWorkspace({
+    payload,
+    currentReport: input.currentReport,
+    currentIssueWorkspace: input.currentIssueWorkspace ?? createInternalIssueWorkspace(input.currentReport.issueBlocks, { issueOrder: input.currentReport.issueOrder }),
+    createOpaqueId: input.createOpaqueId,
+  })
+  return { generatedPayload: payload, ...merged, semanticCoverage: parsed.value.semanticCoverage }
 }
 
 export interface TeacherEvidenceFact {
@@ -245,6 +473,7 @@ export interface TeacherEvidenceFact {
   evidenceId: string
   essayIdentity: string
   occurrenceCount: number
+  evidenceRef?: EvidenceRefV1
 }
 
 export interface SystemEvidenceFact {
@@ -257,22 +486,58 @@ interface SuppressedSystemVariant {
   block: ClassReviewIssueBlockV1
   generationId: string
   invalidationEpoch: number
+  systemEvidenceFact: SystemEvidenceFact
 }
 
 export interface InternalIssueWorkspace {
   visible: ClassReviewIssueBlockV1[]
   suppressed: Map<string, SuppressedSystemVariant>
   teacherFacts: Map<string, TeacherEvidenceFact>
+  systemFacts: Map<string, SystemEvidenceFact>
 }
 
 export function createInternalIssueWorkspace(
   blocks: readonly ClassReviewIssueBlockV1[],
-  options?: { teacherEvidenceFacts?: readonly TeacherEvidenceFact[] },
+  options?: {
+    teacherEvidenceFacts?: readonly TeacherEvidenceFact[]
+    systemEvidenceFacts?: readonly SystemEvidenceFact[]
+    issueOrder?: readonly string[]
+    suppressed?: ReadonlyMap<string, SuppressedSystemVariant>
+  },
 ): InternalIssueWorkspace {
+  const byId = new Map(blocks.map((block) => [block.blockId, structuredClone(block)]))
+  if (byId.size !== blocks.length) fail('class_review_candidate_conflict')
+  const visible: ClassReviewIssueBlockV1[] = []
+  const consumed = new Set<string>()
+  for (const blockId of options?.issueOrder ?? []) {
+    const block = byId.get(blockId)
+    if (block && !consumed.has(blockId)) {
+      visible.push(block)
+      consumed.add(blockId)
+    }
+  }
+  const unlisted = [...byId.values()]
+    .filter((block) => !consumed.has(block.blockId))
+    .sort((left, right) => compare(left.blockId, right.blockId))
+  visible.push(...unlisted)
   return {
-    visible: structuredClone([...blocks]),
-    suppressed: new Map(),
-    teacherFacts: new Map((options?.teacherEvidenceFacts ?? []).map((fact) => [fact.evidenceId, { ...fact }])),
+    visible,
+    suppressed: new Map(
+      [...(options?.suppressed ?? [])]
+        .map(([key, value]) => [key, structuredClone(value)]),
+    ),
+    teacherFacts: new Map((options?.teacherEvidenceFacts ?? []).map((fact) => {
+      const invalidFact = !fact.evidenceId
+        || !fact.essayIdentity
+        || !Number.isSafeInteger(fact.occurrenceCount)
+        || fact.occurrenceCount < 0
+      if (invalidFact) fail('class_review_candidate_conflict')
+      return [fact.evidenceId, { ...fact }]
+    })),
+    systemFacts: new Map(
+      (options?.systemEvidenceFacts ?? [])
+        .map((fact) => [fact.topicKey, structuredClone(fact)]),
+    ),
   }
 }
 
@@ -284,20 +549,38 @@ export function mergeInternalIssueWorkspace(input: {
   createOpaqueId: () => string
   systemEvidenceFacts?: readonly SystemEvidenceFact[]
 }): InternalIssueWorkspace {
-  const workspace = createInternalIssueWorkspace(input.workspace.visible, { teacherEvidenceFacts: [...input.workspace.teacherFacts.values()] })
-  workspace.suppressed = new Map(input.workspace.suppressed)
-  const orderedSystem = [...input.nextSystem].sort((left, right) => severityRank[left.severity] - severityRank[right.severity]
+  const workspace = createInternalIssueWorkspace(input.workspace.visible, {
+    teacherEvidenceFacts: [...input.workspace.teacherFacts.values()],
+    systemEvidenceFacts: input.systemEvidenceFacts ?? [],
+    issueOrder: input.workspace.visible.map((block) => block.blockId),
+    suppressed: input.workspace.suppressed,
+  })
+  const orderedSystem = [...input.nextSystem].sort((left, right) =>
+    severityRank[left.severity] - severityRank[right.severity]
     || right.systemStudentCount - left.systemStudentCount
     || right.occurrenceCount - left.occurrenceCount
-    || compare(left.topicKey, right.topicKey))
+    || compare(left.topicKey, right.topicKey),
+  )
   const byTopic = new Map(orderedSystem.map((block) => [block.topicKey, block]))
   const used = new Set<string>()
   workspace.visible = workspace.visible.flatMap((old) => {
     const next = byTopic.get(old.topicKey)
     if (old.origin === 'teacher') {
-      if (!next) return [old]
+      if (!next) {
+        workspace.suppressed.delete(old.topicKey)
+        return [{
+          ...old,
+          systemStudentCount: 0,
+          combinedStudentCount: old.teacherStudentCount,
+          supportDenominator: null,
+          evidenceRefs: old.evidenceRefs.filter(
+            (ref) => ref.selectionOrigin === 'teacher_selected',
+          ),
+        }]
+      }
       used.add(old.topicKey)
       const systemFact = input.systemEvidenceFacts?.find((fact) => fact.topicKey === old.topicKey)
+      if (!systemFact && next.systemStudentCount > 0) fail('class_review_candidate_conflict')
       const teacherFacts = [...workspace.teacherFacts.values()].filter((fact) => fact.topicKey === old.topicKey)
       const teacherEssays = new Set(teacherFacts.map((fact) => fact.essayIdentity))
       const systemEssays = new Set(systemFact?.essayIdentities ?? [])
@@ -312,13 +595,17 @@ export function mergeInternalIssueWorkspace(input: {
         block: { ...next, blockId: old.blockId },
         generationId: input.generationId,
         invalidationEpoch: input.invalidationEpoch,
+        systemEvidenceFact: structuredClone(systemFact!),
       })
       return [{
         ...old,
         teacherStudentCount: teacherEssays.size,
         systemStudentCount: systemEssays.size,
         combinedStudentCount: combinedEssays.size,
-        occurrenceCount: checkedAdd(systemFact?.occurrenceCount ?? next.occurrenceCount, extraOccurrences),
+        occurrenceCount: checkedAdd(
+          systemFact?.occurrenceCount ?? next.occurrenceCount,
+          extraOccurrences,
+        ),
         evidenceRefs: [
           ...old.evidenceRefs.filter((ref) => ref.selectionOrigin === 'teacher_selected'),
           ...next.evidenceRefs.filter((ref) => ref.selectionOrigin === 'system_generation'),
@@ -337,22 +624,63 @@ export function mergeInternalIssueWorkspace(input: {
   return workspace
 }
 
-export const projectInternalIssueWorkspace = (workspace: InternalIssueWorkspace): ClassReviewIssueBlockV1[] => structuredClone(workspace.visible)
+export const projectInternalIssueWorkspace = (
+  workspace: InternalIssueWorkspace,
+): ClassReviewIssueBlockV1[] => structuredClone(workspace.visible)
 
-export function removeTeacherEvidence(workspace: InternalIssueWorkspace, evidenceId: string): InternalIssueWorkspace {
+export function removeTeacherEvidence(
+  workspace: InternalIssueWorkspace,
+  evidenceId: string,
+  options?: { generationId: string; invalidationEpoch: number },
+): InternalIssueWorkspace {
   const result = createInternalIssueWorkspace(workspace.visible, {
     teacherEvidenceFacts: [...workspace.teacherFacts.values()].filter((fact) => fact.evidenceId !== evidenceId),
+    issueOrder: workspace.visible.map((block) => block.blockId),
+    suppressed: workspace.suppressed,
+    systemEvidenceFacts: [...workspace.systemFacts.values()],
   })
-  result.suppressed = new Map(workspace.suppressed)
   result.visible = result.visible.flatMap((block) => {
     const evidenceRefs = block.evidenceRefs.filter((ref) => ref.evidenceId !== evidenceId)
+    if (block.origin === 'ai') return [block]
     if (evidenceRefs.some((ref) => ref.selectionOrigin === 'teacher_selected')) {
-      return [{ ...block, evidenceRefs }]
+      const facts = [...result.teacherFacts.values()].filter((fact) => fact.topicKey === block.topicKey)
+      const teacherEssays = new Set(facts.map((fact) => fact.essayIdentity))
+      const systemFact = result.systemFacts.get(block.topicKey)
+      const systemEssays = new Set(systemFact?.essayIdentities ?? [])
+      let teacherOnlyOccurrences = 0
+      for (const fact of facts) {
+        if (!systemEssays.has(fact.essayIdentity)) {
+          teacherOnlyOccurrences = checkedAdd(
+            teacherOnlyOccurrences,
+            fact.occurrenceCount,
+          )
+        }
+      }
+      return [{
+        ...block,
+        teacherStudentCount: teacherEssays.size,
+        systemStudentCount: systemEssays.size,
+        combinedStudentCount: new Set([...teacherEssays, ...systemEssays]).size,
+        occurrenceCount: checkedAdd(systemFact?.occurrenceCount ?? 0, teacherOnlyOccurrences),
+        evidenceRefs,
+      }]
     }
     const variant = result.suppressed.get(block.topicKey)
-    return variant
-      ? [{ ...variant.block, evidenceRefs: variant.block.evidenceRefs.filter((ref) => ref.selectionOrigin === 'system_generation') }]
-      : []
+    const current = variant && (
+      !options
+      || (
+        variant.generationId === options.generationId
+        && variant.invalidationEpoch === options.invalidationEpoch
+      )
+    )
+    if (!current) return []
+    result.suppressed.delete(block.topicKey)
+    return [{
+      ...variant.block,
+      evidenceRefs: variant.block.evidenceRefs.filter(
+        (ref) => ref.selectionOrigin === 'system_generation',
+      ),
+    }]
   })
   return result
 }
@@ -365,6 +693,39 @@ export function invalidateInternalSystemVariants(workspace: InternalIssueWorkspa
         ...block,
         evidenceRefs: block.evidenceRefs.filter((ref) => ref.selectionOrigin === 'teacher_selected'),
       })),
-    { teacherEvidenceFacts: [...workspace.teacherFacts.values()] },
+    { teacherEvidenceFacts: [...workspace.teacherFacts.values()], issueOrder: workspace.visible.map((block) => block.blockId) },
   )
+}
+
+export function mergeGeneratedClassReviewPayloadIntoWorkspace(input: {
+  payload: GeneratedClassReviewPayload
+  currentReport: ClassReviewReportV1
+  currentIssueWorkspace: InternalIssueWorkspace
+  createOpaqueId: () => string
+}): { report: ClassReviewReportV1; issueWorkspace: InternalIssueWorkspace } {
+  const issueWorkspace = mergeInternalIssueWorkspace({
+    workspace: input.currentIssueWorkspace,
+    nextSystem: input.payload.generatedPayload.systemIssueBlocks,
+    generationId: input.payload.generationId,
+    invalidationEpoch: input.payload.invalidationEpoch,
+    createOpaqueId: input.createOpaqueId,
+    systemEvidenceFacts: input.payload.generatedPayload.systemEvidenceFacts,
+  })
+  const issueBlocks = projectInternalIssueWorkspace(issueWorkspace)
+  const candidate: ClassReviewReportV1 = {
+    ...input.currentReport,
+    workspaceState: 'ai_available',
+    reportRevision: (input.currentReport.reportRevision ?? 0) + 1,
+    currentGeneration: null,
+    statistics: structuredClone(input.currentReport.statistics),
+    issueBlocks,
+    issueOrder: issueBlocks.map((block) => block.blockId),
+    appliedGenerationId: input.payload.generationId,
+    generatedAt: input.payload.generatedPayload.generatedAt,
+    snapshotMetadata: structuredClone(input.payload.generatedPayload.snapshotMetadata),
+    aiSummary: structuredClone(input.payload.generatedPayload.aiSummary),
+  }
+  const parsed = parseClassReviewReport(candidate)
+  if (!parsed.ok) fail('class_review_candidate_conflict')
+  return { report: parsed.value, issueWorkspace }
 }

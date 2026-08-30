@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { ClassReviewIssueBlockV1, ClassReviewProviderOutputV1, ClassReviewReportV1, ClassReviewSynthesisRequestV1, ClassReviewSynthesisResultV1 } from './types'
 import type { ClassReviewProjectionHiddenStateV1 } from './classReviewProjection'
 import { createInMemoryTopicKeyRegistry, type TopicHmac, type TopicIdentity } from './classReviewTopicKey'
-import { cloneAndFreezeClassReviewGenerationSnapshot, createInternalIssueWorkspace, invalidateInternalSystemVariants, materializeClassReviewCandidate, materializeSystemIssueBlocks, mergeInternalIssueWorkspace, projectInternalIssueWorkspace, removeTeacherEvidence } from './classReviewMerge'
+import { cloneAndFreezeClassReviewGenerationSnapshot, createInternalIssueWorkspace, invalidateInternalSystemVariants, materializeClassReviewCandidate, mergeInternalIssueWorkspace, projectInternalIssueWorkspace, removeTeacherEvidence } from './classReviewMerge'
+import * as classReviewMergeModule from './classReviewMerge'
 
 function topic(key: string): TopicIdentity {
   const suffix = key.replace(/[^a-f0-9]/g, '').padEnd(16, 'a').slice(0, 16)
@@ -39,18 +40,74 @@ function hmac(): TopicHmac {
 
 function frozenRequest(): ClassReviewSynthesisRequestV1 {
   const groups = [
-    { groupId: 'g1', type: 'grammar' as const, subtype: null, severity: 'high' as const, title: 'G1', mustCover: true, distinctEssaySupport: 2, occurrenceCount: 3, excerpt: null },
-    { groupId: 'g2', type: 'word_choice' as const, subtype: null, severity: 'medium' as const, title: 'G2', mustCover: true, distinctEssaySupport: 2, occurrenceCount: 2, excerpt: null },
-    { groupId: 'g3', type: 'structure' as const, subtype: null, severity: 'low' as const, title: 'G3', mustCover: true, distinctEssaySupport: 1, occurrenceCount: 1, excerpt: null },
+    { groupId: 'g1', type: 'grammar' as const, subtype: null, severity: 'high' as const, title: 'Grammar', mustCover: true, distinctEssaySupport: 2, occurrenceCount: 3, excerpt: { originalText: 'I goes home.', suggestionOrDiagnosis: 'Subject verb agreement' } },
+    { groupId: 'g2', type: 'word_choice' as const, subtype: null, severity: 'medium' as const, title: 'Word choice', mustCover: true, distinctEssaySupport: 2, occurrenceCount: 2, excerpt: { originalText: 'filling happy', suggestionOrDiagnosis: 'Use feeling' } },
+    { groupId: 'g3', type: 'structure' as const, subtype: null, severity: 'low' as const, title: 'Rare', mustCover: true, distinctEssaySupport: 1, occurrenceCount: 1, excerpt: null },
   ]
-  return { contractVersion: 'class-review-synthesis-request-v1', requestId: 'request-1', rubricRevisionDigest: 'a'.repeat(64), policyVersion: 'class-review-policy-v1', schemaVersion: 'kimi-class-review-output-v1', projectionVersion: 'class-review-projection-v1', budgetVersion: 'class-review-prompt-budget-v1', statistics: { includedEssayCount: 4, issueEligibleEssayCount: 4, totalEssayCount: 4, excludedEssayCount: 0, score: { fullScore: 100, averageScore: 80, highestScore: 90, lowestScore: 70, medianScore: 80 }, scoreBands: [], dimensions: [], issueCounters: [] }, groups, semanticCoverage: { projectedGroupCount: 3, eligibleGroupCount: 3, groupCoverage: 1, projectedDistinctEssaySupportSum: 5, eligibleDistinctEssaySupportSum: 5, supportWeightedCoverage: 1, projectedOccurrenceSum: 6, eligibleOccurrenceSum: 6, occurrenceWeightedCoverage: 1 }, outputLimits: { maxCompletionTokens: 3072, maxVisibleCodePoints: 2200, maxJsonUtf8Bytes: 16384 } }
+  return { contractVersion: 'class-review-synthesis-request-v1', requestId: 'request-1', rubricRevisionDigest: 'a'.repeat(43), policyVersion: 'class-review-policy-v1', schemaVersion: 'kimi-class-review-output-v1', projectionVersion: 'class-review-projection-v1', budgetVersion: 'class-review-prompt-budget-v1', statistics: { includedEssayCount: 4, issueEligibleEssayCount: 4, totalEssayCount: 4, excludedEssayCount: 0, score: { fullScore: 100, averageScore: 80, highestScore: 90, lowestScore: 70, medianScore: 80 }, scoreBands: [], dimensions: [], issueCounters: [] }, groups, semanticCoverage: { projectedGroupCount: 3, eligibleGroupCount: 3, groupCoverage: 1, projectedDistinctEssaySupportSum: 5, eligibleDistinctEssaySupportSum: 5, supportWeightedCoverage: 1, projectedOccurrenceSum: 6, eligibleOccurrenceSum: 6, occurrenceWeightedCoverage: 1 }, outputLimits: { maxCompletionTokens: 3072, maxVisibleCodePoints: 2200, maxJsonUtf8Bytes: 16384 } }
 }
 
 function browserReport(): ClassReviewReportV1 {
   return { contractVersion: 'class-review-report-v1', workspaceState: 'draft', taskRevision: 1, reportRevision: 1, aiTextEditRevision: 0, currentGeneration: null, statistics: { totalEssayCount: 4, includedEssayCount: 4, issueEligibleEssayCount: 4, excludedEssayCount: 0, issueCoverageRate: 1, fullScore: 100, scoreSummary: { averageScore: 80, highestScore: 90, lowestScore: 70 }, scoreBands: [], dimensions: [] }, issueBlocks: [], issueOrder: [], clearSpellingItems: [], selectedMaterials: [] }
 }
 
+async function materializeBlocksThroughPublicBoundary(input: { providerOutput: ClassReviewProviderOutputV1; hidden: ClassReviewProjectionHiddenStateV1; issueEligibleEssayCount: number }) {
+  const request = frozenRequest()
+  request.statistics = { ...request.statistics, includedEssayCount: input.issueEligibleEssayCount, issueEligibleEssayCount: input.issueEligibleEssayCount, totalEssayCount: input.issueEligibleEssayCount }
+  const current = browserReport()
+  current.statistics = { ...current.statistics, includedEssayCount: input.issueEligibleEssayCount, issueEligibleEssayCount: input.issueEligibleEssayCount, totalEssayCount: input.issueEligibleEssayCount }
+  const snapshot = cloneAndFreezeClassReviewGenerationSnapshot({ originalRequest: request, hidden: input.hidden, generationId: 'generation-public', invalidationEpoch: 0, executionIdentity: 'execution-public', payloadDigest: 'digest-public', taskRevision: 1, reportRevision: 1, aiTextEditRevision: 0, sourceRevisionEpoch: 0, browserStatistics: current.statistics })
+  const result: ClassReviewSynthesisResultV1 = { contractVersion: 'class-review-synthesis-result-v1', requestId: request.requestId, status: 'succeeded', output: input.providerOutput, semanticCoverage: request.semanticCoverage, finishReason: 'stop', usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2, cachedTokens: 0 }, timingsMs: { queueMs: 0, providerMs: 1, validationMs: 0, totalMs: 1 } }
+  return materializeClassReviewCandidate({ snapshot, untrustedResult: result, currentReport: current, topicHmac: hmac(), createOpaqueId: (() => { let id = 0; return () => `public-${++id}` })(), now: () => '2026-08-30T00:00:00.000Z' })
+}
+
 describe('frozen generation merge boundary', () => {
+  it('maps Provider dimension aliases directly to original rubric dimensions and fails closed on hidden/browser disagreement', async () => {
+    const request = frozenRequest()
+    request.statistics.dimensions = [{ dimensionId: 'd1', label: 'Content', averageScore: 32, medianScore: 32, maxScore: 40, normalizedPerformance: 0.8 }]
+    const mappedHidden = hidden()
+    mappedHidden.dimensionAliases = new Map([['d1', 'rubric-content']])
+    const current = browserReport()
+    current.statistics.dimensions = [{ dimensionId: 'rubric-content', name: 'Content', averageScore: 32, maxScore: 40, normalizedPerformance: 0.8 }]
+    const snapshot = cloneAndFreezeClassReviewGenerationSnapshot({ originalRequest: request, hidden: mappedHidden, generationId: 'generation-dimension', invalidationEpoch: 0, executionIdentity: 'execution-dimension', payloadDigest: 'digest-dimension', taskRevision: 1, reportRevision: 1, aiTextEditRevision: 0, sourceRevisionEpoch: 0, browserStatistics: current.statistics })
+    const result: ClassReviewSynthesisResultV1 = {
+      contractVersion: 'class-review-synthesis-result-v1', requestId: request.requestId, status: 'succeeded',
+      output: { ...output([]), strengths: [{ title: 'Content strength', detail: 'Good content', dimensionIds: ['d1'] }] },
+      semanticCoverage: request.semanticCoverage, finishReason: 'stop', usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2, cachedTokens: 0 }, timingsMs: { queueMs: 0, providerMs: 1, validationMs: 0, totalMs: 1 },
+    }
+    let nextId = 0
+    const materialized = await materializeClassReviewCandidate({ snapshot, untrustedResult: result, currentReport: current, topicHmac: hmac(), createOpaqueId: () => `block-${++nextId}`, now: () => '2026-08-30T00:00:00.000Z' })
+    expect(materialized.report.workspaceState).toBe('ai_available')
+    if (materialized.report.workspaceState !== 'ai_available') throw new Error('expected ai report')
+    expect(materialized.report.aiSummary.strengths[0].dimensionIds).toEqual(['rubric-content'])
+
+    const mismatched = structuredClone(current)
+    mismatched.statistics.dimensions[0].dimensionId = 'rubric-other'
+    await expect(materializeClassReviewCandidate({ snapshot, untrustedResult: result, currentReport: mismatched, topicHmac: hmac(), createOpaqueId: () => 'block', now: () => '2026-08-30T00:00:00.000Z' })).rejects.toThrow('class_review_candidate_conflict')
+  })
+
+  it('uses issueOrder as the sole visible order and retains latest deterministic statistics', async () => {
+    const first: ClassReviewIssueBlockV1 = { blockId: 'block-a', topicKey: 'teacher.a', origin: 'teacher', title: 'A', diagnosis: 'A', teachingAction: 'A', severity: 'medium', teacherStudentCount: 1, systemStudentCount: 0, combinedStudentCount: 1, occurrenceCount: 1, supportDenominator: null, anonymousExamples: [], evidenceRefs: [] }
+    const second: ClassReviewIssueBlockV1 = { ...first, blockId: 'block-b', topicKey: 'teacher.b', title: 'B' }
+    const current = browserReport()
+    current.issueBlocks = [first, second]
+    current.issueOrder = ['block-b', 'block-a']
+    current.statistics = { ...current.statistics, totalEssayCount: 5, includedEssayCount: 5, issueEligibleEssayCount: 5 }
+    const request = frozenRequest()
+    request.groups = []
+    request.semanticCoverage = { projectedGroupCount: 0, eligibleGroupCount: 0, groupCoverage: 1, projectedDistinctEssaySupportSum: 0, eligibleDistinctEssaySupportSum: 0, supportWeightedCoverage: 1, projectedOccurrenceSum: 0, eligibleOccurrenceSum: 0, occurrenceWeightedCoverage: 1 }
+    const emptyHidden: ClassReviewProjectionHiddenStateV1 = { dimensionAliases: new Map(), selectedGroups: new Map(), unprojectedMustCover: [] }
+    const snapshot = cloneAndFreezeClassReviewGenerationSnapshot({ originalRequest: request, hidden: emptyHidden, generationId: 'generation-order', invalidationEpoch: 0, executionIdentity: 'execution-order', payloadDigest: 'digest-order', taskRevision: 1, reportRevision: 1, aiTextEditRevision: 0, sourceRevisionEpoch: 0, browserStatistics: browserReport().statistics })
+    const result: ClassReviewSynthesisResultV1 = { contractVersion: 'class-review-synthesis-result-v1', requestId: request.requestId, status: 'succeeded', output: output([]), semanticCoverage: request.semanticCoverage, finishReason: 'stop', usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2, cachedTokens: 0 }, timingsMs: { queueMs: 0, providerMs: 1, validationMs: 0, totalMs: 1 } }
+    const materialized = await materializeClassReviewCandidate({ snapshot, untrustedResult: result, currentReport: current, topicHmac: hmac(), createOpaqueId: () => 'new', now: () => '2026-08-30T00:00:00.000Z' })
+    expect(materialized.report.issueOrder).toEqual(['block-b', 'block-a'])
+    expect(materialized.report.issueBlocks.map((block) => block.blockId)).toEqual(['block-b', 'block-a'])
+    expect(materialized.report.statistics).toEqual(current.statistics)
+  })
+
+  it('exposes only the full snapshot materialization seam', () => {
+    expect(Object.keys(classReviewMergeModule).filter((key) => key.startsWith('materialize'))).toEqual(['materializeClassReviewCandidate'])
+  })
   it('deep-clones/freezes the full snapshot, parses unknown result, honors first-K, and produces a complete valid report candidate', async () => {
     const request = frozenRequest()
     const mutableHidden = hidden()
@@ -69,8 +126,48 @@ describe('frozen generation merge boundary', () => {
     expect(candidate.report.issueBlocks.some((block) => block.title === 'MUTATED')).toBe(false)
     expect(Object.isFrozen(snapshot.originalRequest.groups)).toBe(true)
     const prior = browserReport(); const priorBytes = JSON.stringify(prior)
-    await expect(materializeClassReviewCandidate({ snapshot, untrustedResult: result, currentReport: prior, topicHmac: hmac(), createOpaqueId: (() => { let n = 0; return () => `invalid-${++n}` })(), now: () => 'not-a-time' })).rejects.toThrow('class_review_candidate_invalid')
+    await expect(materializeClassReviewCandidate({ snapshot, untrustedResult: result, currentReport: prior, topicHmac: hmac(), createOpaqueId: (() => { let n = 0; return () => `invalid-${++n}` })(), now: () => 'not-a-time' })).rejects.toThrow('class_review_candidate_conflict')
     expect(JSON.stringify(prior)).toBe(priorBytes)
+  })
+
+  it('prevents Map set/delete from mutating the frozen hidden snapshot', () => {
+    const snapshot = cloneAndFreezeClassReviewGenerationSnapshot({ originalRequest: frozenRequest(), hidden: hidden(), generationId: 'generation-map', invalidationEpoch: 0, executionIdentity: 'execution-map', payloadDigest: 'digest-map', taskRevision: 1, reportRevision: 1, aiTextEditRevision: 0, sourceRevisionEpoch: 0, browserStatistics: browserReport().statistics })
+    const aliases = snapshot.hidden.dimensionAliases as Map<string, string>
+    const groups = snapshot.hidden.selectedGroups as Map<string, unknown>
+    const firstGroup = snapshot.hidden.selectedGroups.get('g1')!
+    expect(() => aliases.set('d1', 'rubric-content')).toThrow()
+    expect(() => groups.delete('g1')).toThrow()
+    expect(() => {
+      ;(firstGroup.essayIds as string[])[0] = 'mutated-through-view'
+    }).toThrow()
+    expect(snapshot.hidden.dimensionAliases.size).toBe(0)
+    expect(snapshot.hidden.selectedGroups.has('g1')).toBe(true)
+    expect(firstGroup.essayIds[0]).toBe('e1')
+  })
+
+  it('accepts a safe fallback occurrence count above the issue-eligible essay count', () => {
+    const request = frozenRequest()
+    const projectionHidden = hidden()
+    projectionHidden.unprojectedMustCover = [
+      {
+        ...projectionHidden.unprojectedMustCover[0],
+        occurrenceCount: 7,
+      },
+    ]
+
+    expect(() => cloneAndFreezeClassReviewGenerationSnapshot({
+      originalRequest: request,
+      hidden: projectionHidden,
+      generationId: 'generation-occurrences',
+      invalidationEpoch: 0,
+      executionIdentity: 'execution-occurrences',
+      payloadDigest: 'digest-occurrences',
+      taskRevision: 1,
+      reportRevision: 1,
+      aiTextEditRevision: 0,
+      sourceRevisionEpoch: 0,
+      browserStatistics: browserReport().statistics,
+    })).not.toThrow()
   })
 
   it('rejects malformed/duplicate/cross-generation results atomically without a partial candidate', async () => {
@@ -97,33 +194,29 @@ describe('frozen generation merge boundary', () => {
   })
 })
 
-describe('materializeSystemIssueBlocks', () => {
+describe('system block behavior through the one public materialization boundary', () => {
   it('recomputes union support, occurrences, denominator, composite identity and scrubbed examples', async () => {
-    const result = await materializeSystemIssueBlocks({
-      providerOutput: output([{ groupIds: ['g2', 'g1'], title: 'Shared', diagnosis: 'Diagnosis', teachingAction: 'Action', severity: 'high' }]),
-      hidden: hidden(), issueEligibleEssayCount: 10, topicHmac: hmac(), createOpaqueId: () => 'block-1',
-    })
-    expect(result.issueBlocks).toHaveLength(2) // pattern + omitted must-cover fallback
-    expect(result.issueBlocks[0]).toMatchObject({ origin: 'ai', systemStudentCount: 3, combinedStudentCount: 3, occurrenceCount: 5, supportDenominator: 10 })
-    expect(result.issueBlocks[0].topicKey).toMatch(/^tk1\./)
-    expect(result.issueBlocks[0].anonymousExamples).toEqual(['I goes home.', 'filling happy'])
-    expect(result.issueBlocks[1]).toMatchObject({ topicKey: topic('d').key, origin: 'ai', title: '逻辑与连贯：逻辑不清', diagnosis: '多篇作文出现同类逻辑不清问题。', teachingAction: '结合上下文梳理关系，并安排衔接与因果表达练习。', anonymousExamples: [] })
+    const result = await materializeBlocksThroughPublicBoundary({ providerOutput: output([{ groupIds: ['g2', 'g1'], title: 'Shared', diagnosis: 'Diagnosis', teachingAction: 'Action', severity: 'high' }]), hidden: hidden(), issueEligibleEssayCount: 10 })
+    expect(result.report.issueBlocks).toHaveLength(3) // pattern + unreferenced projected must-cover + unprojected must-cover
+    expect(result.report.issueBlocks[0]).toMatchObject({ origin: 'ai', systemStudentCount: 3, combinedStudentCount: 3, occurrenceCount: 5, supportDenominator: 10 })
+    expect(result.report.issueBlocks[0].topicKey).toMatch(/^tk1\./)
+    expect(result.report.issueBlocks[0].anonymousExamples).toEqual(['I goes home.', 'filling happy'])
+    expect(result.report.issueBlocks[1]).toMatchObject({ topicKey: topic('d').key, origin: 'ai', title: '逻辑与连贯：逻辑不清', diagnosis: '多篇作文出现同类逻辑不清问题。', teachingAction: '结合上下文梳理关系，并安排衔接与因果表达练习。', anonymousExamples: [] })
   })
 
   it('drops sub-threshold patterns and emits each must-cover fallback exactly once, including zero-pattern success', async () => {
-    const result = await materializeSystemIssueBlocks({ providerOutput: output([{ groupIds: ['g3'], title: 'Rare', diagnosis: 'D', teachingAction: 'A', severity: 'low' }]), hidden: hidden(), issueEligibleEssayCount: 10, topicHmac: hmac(), createOpaqueId: (() => { let n = 0; return () => `b${++n}` })() })
-    expect(result.issueBlocks.map((block) => block.topicKey)).toEqual([topic('d').key])
-    const empty = await materializeSystemIssueBlocks({ providerOutput: output([]), hidden: hidden(), issueEligibleEssayCount: 10, topicHmac: hmac(), createOpaqueId: () => 'fallback' })
-    expect(empty.issueBlocks.map((block) => block.topicKey)).toEqual([topic('d').key])
+    const result = await materializeBlocksThroughPublicBoundary({ providerOutput: output([{ groupIds: ['g3'], title: 'Rare', diagnosis: 'D', teachingAction: 'A', severity: 'low' }]), hidden: hidden(), issueEligibleEssayCount: 10 })
+    expect(result.report.issueBlocks.map((block) => block.topicKey)).toEqual([topic('a').key, topic('b').key, topic('d').key, topic('c').key])
+    const empty = await materializeBlocksThroughPublicBoundary({ providerOutput: output([]), hidden: hidden(), issueEligibleEssayCount: 10 })
+    expect(empty.report.issueBlocks.map((block) => block.topicKey)).toEqual([topic('a').key, topic('b').key, topic('d').key, topic('c').key])
   })
 
   it('rejects unknown, cross-snapshot and duplicate group ownership', async () => {
-    const base = { hidden: hidden(), issueEligibleEssayCount: 3, topicHmac: hmac(), createOpaqueId: () => 'b' }
-    await expect(materializeSystemIssueBlocks({ ...base, providerOutput: output([{ groupIds: ['outside'], title: 'x', diagnosis: 'd', teachingAction: 'a', severity: 'low' }]) })).rejects.toThrow('unknown_group')
-    await expect(materializeSystemIssueBlocks({ ...base, providerOutput: output([
+    await expect(materializeBlocksThroughPublicBoundary({ hidden: hidden(), issueEligibleEssayCount: 3, providerOutput: output([{ groupIds: ['outside'], title: 'x', diagnosis: 'd', teachingAction: 'a', severity: 'low' }]) })).rejects.toThrow('provider_invalid_response')
+    await expect(materializeBlocksThroughPublicBoundary({ hidden: hidden(), issueEligibleEssayCount: 3, providerOutput: output([
       { groupIds: ['g1'], title: 'x', diagnosis: 'd', teachingAction: 'a', severity: 'low' },
       { groupIds: ['g1'], title: 'y', diagnosis: 'd', teachingAction: 'a', severity: 'low' },
-    ]) })).rejects.toThrow('duplicate_group_ownership')
+    ]) })).rejects.toThrow('provider_invalid_response')
   })
 })
 
@@ -133,7 +226,7 @@ describe('internal mixed teacher/system workspace', () => {
 
   it('preserves teacher order and surviving block IDs while deterministic new system order allocates IDs only for new visible blocks', () => {
     const createOpaqueId = (() => { let n = 0; return () => `new-${++n}` })()
-    const workspace = createInternalIssueWorkspace([teacher('t1', 'teacher.1'), ai('old-a', 'tk1.a'), teacher('t2', 'teacher.2'), ai('vanished', 'tk1.z')])
+    const workspace = createInternalIssueWorkspace([teacher('t1', 'teacher.1'), ai('old-a', 'tk1.a'), teacher('t2', 'teacher.2'), ai('vanished', 'tk1.z')], { issueOrder: ['t1', 'old-a', 't2', 'vanished'] })
     const merged = mergeInternalIssueWorkspace({ workspace, nextSystem: [ai('new-c', 'tk1.c'), ai('new-a', 'tk1.a'), ai('new-b', 'tk1.b')], generationId: 'generation-1', invalidationEpoch: 0, createOpaqueId })
     expect(projectInternalIssueWorkspace(merged).map((item) => [item.topicKey, item.blockId])).toEqual([['teacher.1', 't1'], ['tk1.a', 'old-a'], ['teacher.2', 't2'], ['tk1.b', 'new-1'], ['tk1.c', 'new-2']])
   })
@@ -143,12 +236,13 @@ describe('internal mixed teacher/system workspace', () => {
     teacherBlock.evidenceRefs = [{ evidenceId: 'teacher-evidence', selectionOrigin: 'teacher_selected', sourceLocator: 'teacher-source', sourceResultRevision: 1, anonymousExample: null }]
     const system = ai('system', 'tk1.a')
     system.evidenceRefs = [{ evidenceId: 'system-evidence', selectionOrigin: 'system_generation', sourceLocator: 'system-source', sourceResultRevision: 1, anonymousExample: null }]
-    const base = createInternalIssueWorkspace([teacherBlock], { teacherEvidenceFacts: [{ topicKey: 'tk1.a', evidenceId: 'teacher-evidence', essayIdentity: 'essay-overlap', occurrenceCount: 2 }] })
+    const base = createInternalIssueWorkspace([teacherBlock], { issueOrder: ['t'], teacherEvidenceFacts: [{ topicKey: 'tk1.a', evidenceId: 'teacher-evidence', essayIdentity: 'essay-overlap', occurrenceCount: 2 }] })
     const mixed = mergeInternalIssueWorkspace({ workspace: base, nextSystem: [system], generationId: 'generation-1', invalidationEpoch: 0, createOpaqueId: () => 'must-not-run', systemEvidenceFacts: [{ topicKey: 'tk1.a', essayIdentities: ['essay-overlap', 'essay-system'], occurrenceCount: 3 }] })
     expect(projectInternalIssueWorkspace(mixed)[0]).toMatchObject({ origin: 'teacher', teacherStudentCount: 1, systemStudentCount: 2, combinedStudentCount: 2, occurrenceCount: 3 })
     expect(projectInternalIssueWorkspace(mixed)[0].evidenceRefs.map((ref) => ref.selectionOrigin)).toEqual(['teacher_selected', 'system_generation'])
     const restored = removeTeacherEvidence(mixed, 'teacher-evidence')
     expect(projectInternalIssueWorkspace(restored)[0]).toMatchObject({ blockId: 't', origin: 'ai' })
+    expect(restored.suppressed.size).toBe(0)
     const invalidated = invalidateInternalSystemVariants(mixed, 1)
     expect(projectInternalIssueWorkspace(removeTeacherEvidence(invalidated, 'teacher-evidence'))).toHaveLength(0)
   })
