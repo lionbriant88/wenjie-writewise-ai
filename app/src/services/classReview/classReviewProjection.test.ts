@@ -10,12 +10,14 @@ import {
   type PreparedGroupProjectionIdentityV1,
   type RedactionContext,
 } from './classReviewProjection'
+import { synthesisFixtures } from './fixtures/loadContractFixtures'
 import {
   redactClassReviewExcerpt,
   type PersonEntityDetector,
   type RedactionKnownNames,
   type RedactionResult,
 } from './classReviewRedaction'
+import { parseClassReviewSynthesisRequest } from './synthesisContracts'
 import { jsonUtf8ByteLength, type IssueCounterIdV1 } from './types'
 
 const emptyDetector: PersonEntityDetector = {
@@ -106,6 +108,7 @@ function preparedContext(
   groups: readonly ClassReviewIssueAggregate[],
   options: {
     topicKeys?: Readonly<Record<string, string>>
+    nullExcerptFingerprints?: ReadonlySet<string>
     transform?: (
       value: PreparedGroupProjectionIdentityV1,
       group: ClassReviewIssueAggregate,
@@ -123,8 +126,12 @@ function preparedContext(
         fingerprintDigest: `fp1.${(index + 1).toString(16).padStart(64, '0')}`,
       },
       title: redact(item.title, scrubKey(index, 0)),
-      originalText: redact(item.originalText, scrubKey(index, 1)),
-      suggestionOrDiagnosis: redact(item.suggestionOrDiagnosis, scrubKey(index, 2)),
+      excerpt: options.nullExcerptFingerprints?.has(item.fingerprint)
+        ? null
+        : {
+            originalText: redact(item.originalText, scrubKey(index, 1)),
+            suggestionOrDiagnosis: redact(item.suggestionOrDiagnosis, scrubKey(index, 2)),
+          },
     }
     prepared.set(item, options.transform ? options.transform(value, item) : value)
   })
@@ -300,6 +307,253 @@ describe('buildClassReviewProjection ordering, privacy, and coverage', () => {
     ])
   })
 
+  it('retains cloned essay identity sets for overlap-safe selected-group reconciliation', () => {
+    const first = group('overlap-first', {
+      title: 'First overlap group',
+      distinctEssaySupport: 2,
+      occurrenceCount: 3,
+      essayIds: ['essay-a', 'essay-b'],
+    })
+    const second = group('overlap-second', {
+      title: 'Second overlap group',
+      distinctEssaySupport: 2,
+      occurrenceCount: 5,
+      essayIds: ['essay-a', 'essay-c'],
+    })
+    const { result } = project(aggregate({ issueGroups: [first, second] }))
+
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    const reconciledEssayIds = new Set<string>()
+    for (const selected of result.hidden.selectedGroups.values()) {
+      for (const essayId of selected.essayIds) reconciledEssayIds.add(essayId)
+    }
+    expect([...reconciledEssayIds].sort()).toEqual(['essay-a', 'essay-b', 'essay-c'])
+    expect([...result.hidden.selectedGroups.values()].map((selected) => ({
+      essayIds: [...selected.essayIds],
+      occurrenceCount: selected.occurrenceCount,
+    }))).toEqual([
+      { essayIds: ['essay-a', 'essay-b'], occurrenceCount: 3 },
+      { essayIds: ['essay-a', 'essay-c'], occurrenceCount: 5 },
+    ])
+
+    first.essayIds[0] = 'mutated-essay'
+    first.occurrenceCount = 99
+    const firstHidden = result.hidden.selectedGroups.get('g1')
+    expect(firstHidden?.essayIds).toEqual(['essay-a', 'essay-b'])
+    expect(firstHidden?.occurrenceCount).toBe(3)
+    expect(Object.isFrozen(result.hidden)).toBe(true)
+    expect(Object.isFrozen(result.hidden.dimensionAliases)).toBe(true)
+    expect(Object.isFrozen(result.hidden.selectedGroups)).toBe(true)
+    expect(Object.isFrozen(result.hidden.unprojectedMustCover)).toBe(true)
+    expect(Object.isFrozen(firstHidden?.essayIds)).toBe(true)
+    expect(Object.isFrozen(firstHidden)).toBe(true)
+  })
+
+  it('keeps ready hidden reconciliation directly accessible but absent from external serialization', () => {
+    const privateGroup = group('transport-private-fingerprint', {
+      title: 'Transport-safe title',
+      originalText: 'Transport-safe original',
+      suggestionOrDiagnosis: 'Transport-safe diagnosis',
+      essayIds: ['ordinary-private-essay-id'],
+    })
+    const { result } = project(aggregate({ issueGroups: [privateGroup] }))
+
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.hidden.selectedGroups.get('g1')?.essayIds).toEqual(['ordinary-private-essay-id'])
+    expect(Object.prototype.propertyIsEnumerable.call(result, 'hidden')).toBe(false)
+    expect(Object.keys(result)).toEqual(['status', 'projection'])
+    const spread = { ...result }
+    const cloned = structuredClone(result)
+    const serialized = JSON.stringify(result)
+    const serializedError = JSON.stringify({ error: { code: 'projection_failed', result } })
+    for (const external of [spread, cloned]) expect('hidden' in external).toBe(false)
+    for (const external of [serialized, serializedError, JSON.stringify(spread), JSON.stringify(cloned)]) {
+      expect(external).not.toContain('hidden')
+      expect(external).not.toContain('ordinary-rubric-dimension-id')
+      expect(external).not.toContain('ordinary-private-essay-id')
+      expect(external).not.toContain('tk1.')
+      expect(external).not.toContain('scrub_v1_')
+    }
+  })
+
+  it('keeps post-preparation rejected hidden fallback absent from external serialization', () => {
+    const privateGroup = group('rejected-private-fingerprint', {
+      title: 'Rejected safe fallback title',
+      originalText: 'Rejected safe fallback original',
+      suggestionOrDiagnosis: 'Rejected safe fallback diagnosis',
+      distinctEssaySupport: 4,
+      occurrenceCount: 5,
+      essayIds: ['private-a', 'private-b', 'private-c', 'private-d'],
+    })
+    const { result } = project(
+      aggregate({ issueGroups: [privateGroup] }),
+      { maxEvidenceJsonUtf8Bytes: 1 },
+    )
+
+    expect(result.status).toBe('rejected')
+    expect('hidden' in result).toBe(true)
+    if (result.status !== 'rejected' || !('hidden' in result)) return
+    expect(result.hidden.unprojectedMustCover[0].content.kind).toBe('scrubbed')
+    expect(Object.prototype.propertyIsEnumerable.call(result, 'hidden')).toBe(false)
+    expect(Object.keys(result)).toEqual(['status', 'safeFailureCode'])
+    const spread = { ...result }
+    const cloned = structuredClone(result)
+    for (const external of [
+      JSON.stringify(result),
+      JSON.stringify({ error: result }),
+      JSON.stringify(spread),
+      JSON.stringify(cloned),
+    ]) {
+      expect(external).not.toContain('hidden')
+      expect(external).not.toContain('Rejected safe fallback title')
+      expect(external).not.toContain('private-a')
+      expect(external).not.toContain('tk1.')
+      expect(external).not.toContain('scrub_v1_')
+    }
+  })
+
+  it('projects an explicitly absent representative as excerpt null and passes the request parser', () => {
+    const sourceGroup = group('explicit-null-excerpt', {
+      title: 'Pattern without a representative excerpt',
+      distinctEssaySupport: 3,
+      occurrenceCount: 4,
+      essayIds: ['essay-a', 'essay-b', 'essay-c'],
+    })
+    const prepared = preparedContext([sourceGroup], {
+      nullExcerptFingerprints: new Set(['explicit-null-excerpt']),
+    })
+    const result = buildClassReviewProjection({
+      aggregate: aggregate({ issueGroups: [sourceGroup] }),
+      redactionContext: prepared.context,
+      limits: DEFAULT_CLASS_REVIEW_PROJECTION_LIMITS,
+    })
+
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.projection.groups).toEqual([{
+      groupId: 'g1',
+      type: 'grammar',
+      subtype: null,
+      severity: 'medium',
+      title: 'Pattern without a representative excerpt',
+      mustCover: false,
+      distinctEssaySupport: 3,
+      occurrenceCount: 4,
+      excerpt: null,
+    }])
+    expect(parseClassReviewSynthesisRequest({
+      ...synthesisFixtures.requests.pureStatistics,
+      statistics: result.projection.statistics,
+      groups: result.projection.groups,
+      semanticCoverage: result.projection.semanticCoverage,
+    }).ok).toBe(true)
+  })
+
+  it('keeps omitted title or excerpt redactions unprojected while selecting explicit null and safe groups', () => {
+    const omittedTitle = group('omitted-title', {
+      distinctEssaySupport: 4,
+      occurrenceCount: 4,
+      essayIds: ['essay-a', 'essay-b', 'essay-c', 'essay-d'],
+    })
+    const omittedExcerpt = group('omitted-excerpt', {
+      distinctEssaySupport: 4,
+      occurrenceCount: 5,
+      essayIds: ['essay-a', 'essay-b', 'essay-c', 'essay-e'],
+    })
+    const nullExcerpt = group('mixed-null', { title: 'Explicit null representative' })
+    const safeExcerpt = group('mixed-safe', { title: 'Safe representative' })
+    const groups = [omittedTitle, omittedExcerpt, nullExcerpt, safeExcerpt]
+    const prepared = preparedContext(groups, {
+      nullExcerptFingerprints: new Set(['mixed-null']),
+      transform(value, item) {
+        if (item === omittedTitle) return {
+          ...value,
+          title: {
+            status: 'omitted',
+            reason: 'entity_uncertain',
+            redactionVersion: 'class-review-redaction-v1',
+          },
+        }
+        if (item === omittedExcerpt && value.excerpt !== null) return {
+          ...value,
+          excerpt: {
+            ...value.excerpt,
+            suggestionOrDiagnosis: {
+              status: 'omitted',
+              reason: 'residual_identifier',
+              redactionVersion: 'class-review-redaction-v1',
+            },
+          },
+        }
+        return value
+      },
+    })
+    const result = buildClassReviewProjection({
+      aggregate: aggregate({ issueGroups: groups }),
+      redactionContext: prepared.context,
+      limits: DEFAULT_CLASS_REVIEW_PROJECTION_LIMITS,
+    })
+
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.projection.groups.map(({ title, excerpt }) => ({ title, excerpt }))).toEqual([
+      { title: 'Explicit null representative', excerpt: null },
+      {
+        title: 'Safe representative',
+        excerpt: {
+          originalText: 'Original evidence mixed-safe',
+          suggestionOrDiagnosis: 'Suggested correction mixed-safe',
+        },
+      },
+    ])
+    expect(result.projection.semanticCoverage).toMatchObject({
+      projectedGroupCount: 2,
+      eligibleGroupCount: 4,
+      groupCoverage: 0.5,
+    })
+    expect(result.hidden.unprojectedMustCover).toHaveLength(2)
+    expect(prepared.calls).toEqual(groups)
+  })
+
+  it('counts explicit null excerpts in deterministic evidence-byte admission', () => {
+    const sourceGroup = group('null-budget', {
+      title: 'Null excerpt byte boundary',
+      distinctEssaySupport: 4,
+      occurrenceCount: 4,
+      essayIds: ['essay-a', 'essay-b', 'essay-c', 'essay-d'],
+    })
+    const makePrepared = () => preparedContext([sourceGroup], {
+      nullExcerptFingerprints: new Set(['null-budget']),
+    })
+    const baseline = buildClassReviewProjection({
+      aggregate: aggregate({ issueGroups: [sourceGroup] }),
+      redactionContext: makePrepared().context,
+      limits: DEFAULT_CLASS_REVIEW_PROJECTION_LIMITS,
+    })
+    expect(baseline.status).toBe('ready')
+    if (baseline.status !== 'ready') return
+    const exactBytes = jsonUtf8ByteLength(baseline.projection.groups)
+
+    const exactResult = buildClassReviewProjection({
+      aggregate: aggregate({ issueGroups: [sourceGroup] }),
+      redactionContext: makePrepared().context,
+      limits: { ...DEFAULT_CLASS_REVIEW_PROJECTION_LIMITS, maxEvidenceJsonUtf8Bytes: exactBytes },
+    })
+    const tooSmallResult = buildClassReviewProjection({
+      aggregate: aggregate({ issueGroups: [sourceGroup] }),
+      redactionContext: makePrepared().context,
+      limits: { ...DEFAULT_CLASS_REVIEW_PROJECTION_LIMITS, maxEvidenceJsonUtf8Bytes: exactBytes - 1 },
+    })
+
+    expect(exactResult.status).toBe('ready')
+    expect(tooSmallResult).toMatchObject({
+      status: 'rejected',
+      safeFailureCode: 'class_review_projection_too_large',
+    })
+  })
+
   it('uses all eligible groups in honest signal-weight denominators', () => {
     const groups = [
       group('coverage-a', {
@@ -431,7 +685,7 @@ describe('buildClassReviewProjection ordering, privacy, and coverage', () => {
     expect(result.status).toBe('rejected')
     expect('hidden' in result).toBe(true)
     if (result.status !== 'rejected' || !('hidden' in result)) return
-    expect(Object.keys(result).sort()).toEqual(['hidden', 'safeFailureCode', 'status'])
+    expect(Object.keys(result)).toEqual(['status', 'safeFailureCode'])
     expect(result.hidden.selectedGroups.size).toBe(0)
     expect(result.hidden.unprojectedMustCover).toHaveLength(1)
     const serializedFallback = JSON.stringify(result.hidden.unprojectedMustCover)
@@ -453,6 +707,7 @@ describe('buildClassReviewProjection ordering, privacy, and coverage', () => {
     })
     expect(JSON.stringify(result)).not.toContain('Private raw source')
     expect(JSON.stringify(result)).not.toContain('private-fingerprint')
+    expect('hidden' in result).toBe(false)
   })
 
   it('rejects prepared identities carrying undeclared raw fields without echoing them', () => {
@@ -524,6 +779,15 @@ describe('buildClassReviewProjection exact structural and byte boundaries', () =
     })
     expect(project(aggregate({
       fixedIssueCounters: [{ counterId: 'student-defined-label', count: 1 }] as never,
+    })).result).toEqual({
+      status: 'rejected',
+      safeFailureCode: 'class_review_projection_too_large',
+    })
+  })
+
+  it('rejects zero-valued fixed counters as a safe structural projection failure', () => {
+    expect(project(aggregate({
+      fixedIssueCounters: [{ counterId: 'grammar', count: 0 }],
     })).result).toEqual({
       status: 'rejected',
       safeFailureCode: 'class_review_projection_too_large',

@@ -44,8 +44,10 @@ export const DEFAULT_CLASS_REVIEW_PROJECTION_LIMITS: Readonly<ClassReviewProject
 export interface PreparedGroupProjectionIdentityV1 {
   atomicTopic: TopicIdentity
   title: RedactionResult
-  originalText: RedactionResult
-  suggestionOrDiagnosis: RedactionResult
+  excerpt: {
+    originalText: RedactionResult
+    suggestionOrDiagnosis: RedactionResult
+  } | null
 }
 
 export interface RedactionContext {
@@ -55,8 +57,12 @@ export interface RedactionContext {
 export interface HiddenSelectedGroupV1 {
   atomicTopic: TopicIdentity
   title: RedactionResult
-  originalText: RedactionResult
-  suggestionOrDiagnosis: RedactionResult
+  excerpt: {
+    originalText: RedactionResult
+    suggestionOrDiagnosis: RedactionResult
+  } | null
+  essayIds: readonly string[]
+  occurrenceCount: number
 }
 
 type FallbackTemplateV1 =
@@ -122,14 +128,18 @@ interface PreparedCandidate {
   severity: Severity
   mustCover: boolean
   title: string | null
-  originalText: string | null
-  suggestionOrDiagnosis: string | null
+  excerpt: {
+    originalText: string | null
+    suggestionOrDiagnosis: string | null
+  } | null
 }
 
 interface ProjectableCandidate extends PreparedCandidate {
   title: string
-  originalText: string
-  suggestionOrDiagnosis: string
+  excerpt: {
+    originalText: string
+    suggestionOrDiagnosis: string
+  } | null
 }
 
 const ISSUE_COUNTER_IDS: readonly IssueCounterIdV1[] = [
@@ -199,10 +209,66 @@ function rejected(): ClassReviewProjectionResult {
 function rejectedWithHidden(
   hidden: ClassReviewProjectionHiddenStateV1,
 ): ClassReviewProjectionResult {
-  return {
+  return attachHidden({
     status: 'rejected',
     safeFailureCode: 'class_review_projection_too_large',
-    hidden,
+  }, hidden)
+}
+
+function attachHidden<T extends object>(
+  result: T,
+  hidden: ClassReviewProjectionHiddenStateV1,
+): T & { readonly hidden: ClassReviewProjectionHiddenStateV1 } {
+  Object.defineProperty(result, 'hidden', {
+    value: hidden,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  })
+  return result as T & { readonly hidden: ClassReviewProjectionHiddenStateV1 }
+}
+
+class FrozenReadonlyMap<K, V> implements ReadonlyMap<K, V> {
+  readonly #snapshot: Map<K, V>
+
+  constructor(entries: Iterable<readonly [K, V]>) {
+    this.#snapshot = new Map(entries)
+    Object.freeze(this)
+  }
+
+  get size(): number {
+    return this.#snapshot.size
+  }
+
+  has(key: K): boolean {
+    return this.#snapshot.has(key)
+  }
+
+  get(key: K): V | undefined {
+    return this.#snapshot.get(key)
+  }
+
+  entries(): MapIterator<[K, V]> {
+    return this.#snapshot.entries()
+  }
+
+  keys(): MapIterator<K> {
+    return this.#snapshot.keys()
+  }
+
+  values(): MapIterator<V> {
+    return this.#snapshot.values()
+  }
+
+  forEach(
+    callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void,
+    thisArg?: unknown,
+  ): void {
+    for (const [key, value] of this.#snapshot) callbackfn.call(thisArg, value, key, this)
+  }
+
+  [Symbol.iterator](): MapIterator<[K, V]> {
+    return this.entries()
   }
 }
 
@@ -281,11 +347,14 @@ function isValidAtomicTopic(value: TopicIdentity): boolean {
 
 function isValidPrepared(value: PreparedGroupProjectionIdentityV1 | null): value is PreparedGroupProjectionIdentityV1 {
   return value !== null
-    && hasExactKeys(value, ['atomicTopic', 'title', 'originalText', 'suggestionOrDiagnosis'])
+    && hasExactKeys(value, ['atomicTopic', 'title', 'excerpt'])
     && isValidAtomicTopic(value.atomicTopic)
     && isValidRedactionResult(value.title)
-    && isValidRedactionResult(value.originalText)
-    && isValidRedactionResult(value.suggestionOrDiagnosis)
+    && (value.excerpt === null || (
+      hasExactKeys(value.excerpt, ['originalText', 'suggestionOrDiagnosis'])
+      && isValidRedactionResult(value.excerpt.originalText)
+      && isValidRedactionResult(value.excerpt.suggestionOrDiagnosis)
+    ))
 }
 
 function clonePrepared(value: PreparedGroupProjectionIdentityV1): PreparedGroupProjectionIdentityV1 {
@@ -301,27 +370,22 @@ function clonePrepared(value: PreparedGroupProjectionIdentityV1): PreparedGroupP
         reason: redaction.reason,
         redactionVersion: 'class-review-redaction-v1',
       }
-  return {
-    atomicTopic: {
+  return Object.freeze({
+    atomicTopic: Object.freeze({
       kind: 'atomic',
       keyVersion: 'topic-key-v1',
       taskScope: value.atomicTopic.taskScope,
       key: value.atomicTopic.key,
       fingerprintDigest: value.atomicTopic.fingerprintDigest,
-    },
-    title: cloneRedaction(value.title),
-    originalText: cloneRedaction(value.originalText),
-    suggestionOrDiagnosis: cloneRedaction(value.suggestionOrDiagnosis),
-  }
-}
-
-function fixedTitle(type: SynthesisGroupTypeV1, subtype: SynthesisLogicSubtypeV1 | null): string {
-  if (type === 'logic' && subtype !== null) {
-    return `Logic: ${subtype.replaceAll('_', ' ')}`
-  }
-  return type === 'word_choice'
-    ? 'Word choice'
-    : `${type[0].toUpperCase()}${type.slice(1)}`
+    }),
+    title: Object.freeze(cloneRedaction(value.title)),
+    excerpt: value.excerpt === null
+      ? null
+      : Object.freeze({
+          originalText: Object.freeze(cloneRedaction(value.excerpt.originalText)),
+          suggestionOrDiagnosis: Object.freeze(cloneRedaction(value.excerpt.suggestionOrDiagnosis)),
+        }),
+  })
 }
 
 function fallbackTemplate(
@@ -339,29 +403,32 @@ function visibleCandidate(
   subtype: SynthesisLogicSubtypeV1 | null,
   mustCover: boolean,
 ): PreparedCandidate {
-  const rawTitle = prepared.title.status === 'kept'
-    ? prepared.title.text
-    : fixedTitle(type, subtype)
+  const rawTitle = prepared.title.status === 'kept' ? prepared.title.text : null
   let remaining = limits.maxGroupVisibleCodePoints
-  const title = truncateCodePoints(rawTitle, Math.min(limits.maxTitleCodePoints, remaining))
+  const title = rawTitle === null
+    ? null
+    : truncateCodePoints(rawTitle, Math.min(limits.maxTitleCodePoints, remaining))
   remaining -= title === null ? 0 : Array.from(title).length
 
-  let originalText: string | null = null
-  let suggestionOrDiagnosis: string | null = null
+  let excerpt: PreparedCandidate['excerpt'] = prepared.excerpt === null
+    ? null
+    : { originalText: null, suggestionOrDiagnosis: null }
   if (
-    prepared.originalText.status === 'kept'
-    && prepared.suggestionOrDiagnosis.status === 'kept'
+    prepared.excerpt !== null
+    && prepared.excerpt.originalText.status === 'kept'
+    && prepared.excerpt.suggestionOrDiagnosis.status === 'kept'
     && remaining > 0
   ) {
-    originalText = truncateCodePoints(
-      prepared.originalText.text,
+    const originalText = truncateCodePoints(
+      prepared.excerpt.originalText.text,
       Math.min(limits.maxOriginalTextCodePoints, remaining),
     )
     remaining -= originalText === null ? 0 : Array.from(originalText).length
-    suggestionOrDiagnosis = truncateCodePoints(
-      prepared.suggestionOrDiagnosis.text,
+    const suggestionOrDiagnosis = truncateCodePoints(
+      prepared.excerpt.suggestionOrDiagnosis.text,
       Math.min(limits.maxSuggestionOrDiagnosisCodePoints, remaining),
     )
+    excerpt = { originalText, suggestionOrDiagnosis }
   }
 
   return {
@@ -372,18 +439,19 @@ function visibleCandidate(
     severity: source.severity,
     mustCover,
     title,
-    originalText,
-    suggestionOrDiagnosis,
+    excerpt,
   }
 }
 
 function isProjectable(candidate: PreparedCandidate): candidate is ProjectableCandidate {
   return candidate.title !== null
     && candidate.title.length > 0
-    && candidate.originalText !== null
-    && candidate.originalText.length > 0
-    && candidate.suggestionOrDiagnosis !== null
-    && candidate.suggestionOrDiagnosis.length > 0
+    && (candidate.excerpt === null || (
+      candidate.excerpt.originalText !== null
+      && candidate.excerpt.originalText.length > 0
+      && candidate.excerpt.suggestionOrDiagnosis !== null
+      && candidate.excerpt.suggestionOrDiagnosis.length > 0
+    ))
 }
 
 function typeRank(value: SynthesisGroupTypeV1): number {
@@ -563,6 +631,7 @@ function buildStatistics(
       || !ISSUE_COUNTER_SET.has(counter.counterId)
       || seenCounters.has(counter.counterId)
       || !isSafeInteger(counter.count)
+      || counter.count === 0
     ) return true
     seenCounters.add(counter.counterId)
     return false
@@ -647,23 +716,24 @@ function coverage(
 
 function hiddenFallback(candidate: PreparedCandidate): HiddenMustCoverFallbackV1 {
   const title = candidate.prepared.title
-  const diagnosis = candidate.prepared.suggestionOrDiagnosis
-  const content: HiddenMustCoverFallbackV1['content'] =
-    title.status === 'kept' && diagnosis.status === 'kept'
+  const diagnosis = candidate.prepared.excerpt?.suggestionOrDiagnosis
+  const content: HiddenMustCoverFallbackV1['content'] = Object.freeze(
+    title.status === 'kept' && diagnosis?.status === 'kept'
       ? {
           kind: 'scrubbed',
-          title: { text: title.text, scrubbedEvidenceKey: title.scrubbedEvidenceKey },
-          diagnosis: {
+          title: Object.freeze({ text: title.text, scrubbedEvidenceKey: title.scrubbedEvidenceKey }),
+          diagnosis: Object.freeze({
             text: diagnosis.text,
             scrubbedEvidenceKey: diagnosis.scrubbedEvidenceKey,
-          },
+          }),
           teachingTemplate: candidate.type,
         }
       : {
           kind: 'template',
           template: fallbackTemplate(candidate.type, candidate.subtype),
-        }
-  return {
+        },
+  )
+  return Object.freeze({
     atomicTopic: candidate.prepared.atomicTopic,
     type: candidate.type,
     subtype: candidate.subtype,
@@ -672,7 +742,7 @@ function hiddenFallback(candidate: PreparedCandidate): HiddenMustCoverFallbackV1
     occurrenceCount: candidate.source.occurrenceCount,
     content,
     anonymousExample: null,
-  }
+  })
 }
 
 function buildHiddenState(
@@ -682,13 +752,13 @@ function buildHiddenState(
   eligible: readonly PreparedCandidate[],
 ): ClassReviewProjectionHiddenStateV1 {
   const selectedSources = new Set(selected.map(({ source }) => source))
-  return {
-    dimensionAliases,
-    selectedGroups,
-    unprojectedMustCover: eligible
+  return Object.freeze({
+    dimensionAliases: new FrozenReadonlyMap(dimensionAliases.entries()),
+    selectedGroups: new FrozenReadonlyMap(selectedGroups.entries()),
+    unprojectedMustCover: Object.freeze(eligible
       .filter((candidate) => candidate.mustCover && !selectedSources.has(candidate.source))
-      .map(hiddenFallback),
-  }
+      .map(hiddenFallback)),
+  })
 }
 
 export function buildClassReviewProjection(input: {
@@ -754,22 +824,20 @@ export function buildClassReviewProjection(input: {
       mustCover: candidate.mustCover,
       distinctEssaySupport: candidate.source.distinctEssaySupport,
       occurrenceCount: candidate.source.occurrenceCount,
-      excerpt: {
-        originalText: candidate.originalText,
-        suggestionOrDiagnosis: candidate.suggestionOrDiagnosis,
-      },
+      excerpt: candidate.excerpt,
     }
     if (jsonUtf8ByteLength([...groups, projectedGroup]) > input.limits.maxEvidenceJsonUtf8Bytes) {
       break
     }
     groups.push(projectedGroup)
     selected.push(candidate)
-    selectedGroups.set(groupId, {
+    selectedGroups.set(groupId, Object.freeze({
       atomicTopic: candidate.prepared.atomicTopic,
       title: candidate.prepared.title,
-      originalText: candidate.prepared.originalText,
-      suggestionOrDiagnosis: candidate.prepared.suggestionOrDiagnosis,
-    })
+      excerpt: candidate.prepared.excerpt,
+      essayIds: Object.freeze([...candidate.source.essayIds]),
+      occurrenceCount: candidate.source.occurrenceCount,
+    }))
   }
 
   const hidden = buildHiddenState(
@@ -780,13 +848,12 @@ export function buildClassReviewProjection(input: {
   )
   if (ordered.length > 0 && groups.length === 0) return rejectedWithHidden(hidden)
 
-  return {
+  return attachHidden({
     status: 'ready',
     projection: {
       statistics: statisticsState.statistics,
       groups,
       semanticCoverage: coverage(selected, ordered),
     },
-    hidden,
-  }
+  }, hidden)
 }
