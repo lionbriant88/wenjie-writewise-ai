@@ -359,6 +359,17 @@ function makeReferenceRichRequest(groupCount: number) {
       occurrenceCount: 1,
       excerpt: null,
     })),
+    semanticCoverage: {
+      projectedGroupCount: groupCount,
+      eligibleGroupCount: groupCount,
+      groupCoverage: 1,
+      projectedDistinctEssaySupportSum: groupCount,
+      eligibleDistinctEssaySupportSum: groupCount,
+      supportWeightedCoverage: 1,
+      projectedOccurrenceSum: groupCount,
+      eligibleOccurrenceSum: groupCount,
+      occurrenceWeightedCoverage: 1,
+    },
   }
 }
 
@@ -375,6 +386,9 @@ describe('class review synthesis result contract', () => {
     )
     if (!parsed.ok || parsed.value.status !== 'succeeded') throw new Error('result rejected')
     expect(parsed.value.output.patterns[0]?.groupIds).toEqual(['grammar.tense'])
+    expect(parsed.value.semanticCoverage).toEqual(
+      synthesisFixtures.requests.withGroups.semanticCoverage,
+    )
 
     expect(
       parseClassReviewSynthesisResult(
@@ -382,6 +396,122 @@ describe('class review synthesis result contract', () => {
         request.value,
       ).ok,
     ).toBe(true)
+    expect(
+      parseClassReviewSynthesisResult(
+        { ...synthesisFixtures.results.completedFailure, usage: null },
+        request.value,
+      ).ok,
+    ).toBe(true)
+  })
+
+  it('accepts only semantic coverage reconstructed from the admitted ordered prefix', () => {
+    const request = parseClassReviewSynthesisRequest(synthesisFixtures.requests.withGroups)
+    if (!request.ok) throw new Error('request fixture rejected')
+    const admittedCoverage = {
+      projectedGroupCount: 1,
+      eligibleGroupCount: 3,
+      groupCoverage: 1 / 3,
+      projectedDistinctEssaySupportSum: 2,
+      eligibleDistinctEssaySupportSum: 4,
+      supportWeightedCoverage: 0.5,
+      projectedOccurrenceSum: 3,
+      eligibleOccurrenceSum: 6,
+      occurrenceWeightedCoverage: 0.5,
+    }
+    const admitted = {
+      ...synthesisFixtures.results.succeeded,
+      semanticCoverage: admittedCoverage,
+      output: {
+        ...synthesisFixtures.results.succeeded.output,
+        patterns: [synthesisFixtures.results.succeeded.output.patterns[0]],
+      },
+    }
+    expect(parseClassReviewSynthesisResult(admitted, request.value)).toMatchObject({
+      ok: true,
+      value: { status: 'succeeded', semanticCoverage: admittedCoverage },
+    })
+
+    const arbitrary = structuredClone(admitted)
+    arbitrary.semanticCoverage.projectedDistinctEssaySupportSum = 1
+    arbitrary.semanticCoverage.supportWeightedCoverage = 0.25
+    expect(parseClassReviewSynthesisResult(arbitrary, request.value)).toEqual({
+      ok: false,
+      error: {
+        code: 'invalid_value',
+        path: '/semanticCoverage/projectedDistinctEssaySupportSum',
+      },
+    })
+  })
+
+  it('validates returned coverage before output and binds aliases to that exact prefix', () => {
+    const request = parseClassReviewSynthesisRequest(synthesisFixtures.requests.withGroups)
+    if (!request.ok) throw new Error('request fixture rejected')
+    const lowered = structuredClone(synthesisFixtures.results.succeeded)
+    lowered.semanticCoverage = {
+      projectedGroupCount: 1,
+      eligibleGroupCount: 3,
+      groupCoverage: 1 / 3,
+      projectedDistinctEssaySupportSum: 2,
+      eligibleDistinctEssaySupportSum: 4,
+      supportWeightedCoverage: 0.5,
+      projectedOccurrenceSum: 3,
+      eligibleOccurrenceSum: 6,
+      occurrenceWeightedCoverage: 0.5,
+    }
+    lowered.output.patterns = [synthesisFixtures.results.succeeded.output.patterns[1]]
+    expect(parseClassReviewSynthesisResult(lowered, request.value)).toEqual({
+      ok: false,
+      error: { code: 'unknown_reference', path: '/output/patterns/0/groupIds/0' },
+    })
+
+    lowered.semanticCoverage.projectedGroupCount = 2
+    lowered.semanticCoverage.groupCoverage = 2 / 3
+    expect(parseClassReviewSynthesisResult(lowered, request.value)).toEqual({
+      ok: false,
+      error: {
+        code: 'invalid_value',
+        path: '/semanticCoverage/projectedDistinctEssaySupportSum',
+      },
+    })
+  })
+
+  it('rejects an impossible zero-prefix success when eligible groups exist but accepts pure statistics', () => {
+    const groupedRequest = parseClassReviewSynthesisRequest(synthesisFixtures.requests.withGroups)
+    if (!groupedRequest.ok) throw new Error('grouped request fixture rejected')
+    const impossible = structuredClone(synthesisFixtures.results.succeeded)
+    impossible.semanticCoverage = {
+      projectedGroupCount: 0,
+      eligibleGroupCount: 3,
+      groupCoverage: 0,
+      projectedDistinctEssaySupportSum: 0,
+      eligibleDistinctEssaySupportSum: 4,
+      supportWeightedCoverage: 0,
+      projectedOccurrenceSum: 0,
+      eligibleOccurrenceSum: 6,
+      occurrenceWeightedCoverage: 0,
+    }
+    impossible.output.patterns = []
+    expect(parseClassReviewSynthesisResult(impossible, groupedRequest.value)).toEqual({
+      ok: false,
+      error: { code: 'invalid_value', path: '/semanticCoverage/projectedGroupCount' },
+    })
+
+    const statisticsRequest = parseClassReviewSynthesisRequest(
+      synthesisFixtures.requests.pureStatistics,
+    )
+    if (!statisticsRequest.ok) throw new Error('statistics request fixture rejected')
+    const statisticsSuccess = {
+      ...synthesisFixtures.results.succeeded,
+      requestId: statisticsRequest.value.requestId,
+      semanticCoverage: statisticsRequest.value.semanticCoverage,
+      output: {
+        overallComment: 'Synthetic statistics overview.',
+        strengths: [{ title: 'Overview', detail: 'Scores were summarized.', dimensionIds: [] }],
+        patterns: [],
+        learningRecommendations: [{ title: 'Practice', action: 'Continue guided practice.' }],
+      },
+    }
+    expect(parseClassReviewSynthesisResult(statisticsSuccess, statisticsRequest.value).ok).toBe(true)
   })
 
   it.each([
@@ -535,6 +665,7 @@ describe('class review synthesis result contract', () => {
     if (!visibleRequest.ok) throw new Error('visible request rejected')
     const excessiveVisibleOutput = {
       ...synthesisFixtures.results.succeeded,
+      semanticCoverage: visibleRequest.value.semanticCoverage,
       output: {
         overallComment: '😀'.repeat(300),
         strengths: [
@@ -560,6 +691,7 @@ describe('class review synthesis result contract', () => {
     if (!jsonRequest.ok) throw new Error('json request rejected')
     const oversizedJsonOutput = {
       ...synthesisFixtures.results.succeeded,
+      semanticCoverage: jsonRequest.value.semanticCoverage,
       output: {
         overallComment: '😀'.repeat(300),
         strengths: [0, 1, 2].map((strengthIndex) => ({
@@ -608,6 +740,18 @@ describe('class review synthesis result contract', () => {
       ok: false,
       error: { code: 'invalid_value', path: '/retryAfterMs' },
     })
+
+    expect(parseClassReviewSynthesisResult({
+      ...synthesisFixtures.results.rateLimited,
+      completionDisposition: 'not_started',
+    }, request.value).ok).toBe(true)
+    expect(parseClassReviewSynthesisResult({
+      ...synthesisFixtures.results.rateLimited,
+      safeFailureCode: 'provider_request_rejected',
+      retryable: false,
+      retryAfterMs: null,
+      completionDisposition: 'not_started',
+    }, request.value).ok).toBe(true)
 
     const invalidZeroCompletion = {
       ...synthesisFixtures.results.rateLimited,

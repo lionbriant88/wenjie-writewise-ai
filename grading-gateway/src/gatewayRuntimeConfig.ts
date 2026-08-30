@@ -1,4 +1,20 @@
 import type { MultimodalProviderCallStage } from './providers/providerTypes.js'
+import {
+  PRODUCTION_CLASS_REVIEW_FRAMING_CALIBRATION,
+  parseClassReviewFramingCalibration,
+  type ClassReviewFramingCalibration,
+} from './classReviewSynthesis/framingCalibrations.js'
+
+export type ClassReviewSynthesisRuntimeConfig =
+  | { mode: 'disabled' }
+  | { mode: 'fake'; serviceToken: string; maxCompletionTokens: 3072 }
+  | {
+    mode: 'kimi'
+    serviceToken: string
+    maxCompletionTokens: 3072
+    apiKey: string
+    framingCalibration: ClassReviewFramingCalibration
+  }
 
 export interface GatewayRuntimeConfig {
   provider: 'kimi' | 'mock'
@@ -15,6 +31,7 @@ export interface GatewayRuntimeConfig {
     capMs: 60000
     pauseAfterMs: 900000
   }
+  classReviewSynthesis: ClassReviewSynthesisRuntimeConfig
   kimi: {
     apiBase: string
     model: string
@@ -32,6 +49,10 @@ export class GatewayRuntimeConfigError extends Error {
 }
 
 type GatewayEnvironment = Record<string, string | undefined>
+
+export interface GatewayRuntimeConfigDependencies {
+  classReviewFramingCalibration?: unknown
+}
 
 function invalidConfig(): never {
   throw new GatewayRuntimeConfigError()
@@ -56,7 +77,24 @@ function exactInteger(value: string | undefined, expected: number): number {
   return parsed
 }
 
-export function parseGatewayRuntimeConfig(env: GatewayEnvironment): GatewayRuntimeConfig {
+function canonicalServiceToken(value: string | undefined): string {
+  const normalized = value?.trim() ?? ''
+  if (normalized.length < 32 || normalized.length > 256
+    || !/^[A-Za-z0-9._~-]+$/.test(normalized)) return invalidConfig()
+  return normalized
+}
+
+function canonicalKimiApiKey(value: string | undefined): string {
+  const normalized = value?.trim() ?? ''
+  if (normalized.length < 1 || normalized.length > 512
+    || !/^[\x21-\x7e]+$/.test(normalized)) return invalidConfig()
+  return normalized
+}
+
+export function parseGatewayRuntimeConfig(
+  env: GatewayEnvironment,
+  dependencies: GatewayRuntimeConfigDependencies = {},
+): GatewayRuntimeConfig {
   const provider = exactValue(env.GRADING_PROVIDER, ['kimi', 'mock'] as const)
   const rubricStrategy = exactValue(env.GRADING_RUBRIC_STRATEGY, ['single-pass-v1', 'two-pass-legacy'] as const)
   const essayPromptProfile = exactValue(env.GRADING_ESSAY_PROMPT_PROFILE, ['optimized-v1', 'legacy'] as const)
@@ -76,6 +114,35 @@ export function parseGatewayRuntimeConfig(env: GatewayEnvironment): GatewayRunti
   const promptCacheSecret = env.GRADING_PROMPT_CACHE_HMAC_SECRET ?? ''
   if (provider === 'kimi' && essayPromptProfile === 'optimized-v1' && Buffer.byteLength(promptCacheSecret.trim(), 'utf8') < 32) return invalidConfig()
 
+  const classMode = exactValue(env.CLASS_REVIEW_SYNTHESIS_MODE, ['disabled', 'fake', 'kimi'] as const)
+  let classReviewSynthesis: ClassReviewSynthesisRuntimeConfig
+  if (classMode === 'disabled') {
+    classReviewSynthesis = { mode: 'disabled' }
+  } else {
+    if (executionRegistry !== 'memory-v1') return invalidConfig()
+    const serviceToken = canonicalServiceToken(env.CLASS_REVIEW_SERVICE_TOKEN)
+    const maxCompletionTokens = exactInteger(
+      env.KIMI_MAX_COMPLETION_TOKENS_CLASS_REVIEW,
+      3_072,
+    ) as 3072
+    if (classMode === 'fake') {
+      classReviewSynthesis = { mode: 'fake', serviceToken, maxCompletionTokens }
+    } else {
+      const apiKey = canonicalKimiApiKey(env.KIMI_API_KEY)
+      const normalizedCacheSecret = promptCacheSecret.trim()
+      const framingCalibration = parseClassReviewFramingCalibration(
+        Object.prototype.hasOwnProperty.call(dependencies, 'classReviewFramingCalibration')
+          ? dependencies.classReviewFramingCalibration
+          : PRODUCTION_CLASS_REVIEW_FRAMING_CALIBRATION,
+      )
+      if (Buffer.byteLength(normalizedCacheSecret, 'utf8') < 32
+        || framingCalibration === null) return invalidConfig()
+      classReviewSynthesis = {
+        mode: 'kimi', serviceToken, maxCompletionTokens, apiKey, framingCalibration,
+      }
+    }
+  }
+
   return {
     provider,
     rubricStrategy,
@@ -91,6 +158,7 @@ export function parseGatewayRuntimeConfig(env: GatewayEnvironment): GatewayRunti
       capMs: exactInteger(env.GRADING_RETRY_CAP_MS, 60_000) as 60000,
       pauseAfterMs: exactInteger(env.GRADING_RETRY_AFTER_PAUSE_MS, 900_000) as 900000,
     },
+    classReviewSynthesis,
     kimi: {
       apiBase,
       model,
@@ -101,7 +169,9 @@ export function parseGatewayRuntimeConfig(env: GatewayEnvironment): GatewayRunti
         essay_grading_images: positiveInteger(env.KIMI_MAX_COMPLETION_TOKENS_ESSAY_GRADING_IMAGES, 16_384),
         essay_regrading_text: positiveInteger(env.KIMI_MAX_COMPLETION_TOKENS_ESSAY_REGRADING_TEXT, 16_384),
       },
-      promptCacheSecret,
+      promptCacheSecret: classReviewSynthesis.mode === 'kimi'
+        ? promptCacheSecret.trim()
+        : promptCacheSecret,
     },
   }
 }

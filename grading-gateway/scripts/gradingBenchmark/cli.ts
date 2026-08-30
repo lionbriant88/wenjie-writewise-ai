@@ -2688,6 +2688,7 @@ export function createBenchmarkRuntimeConfig(
       run.variant === 'baseline' ? 'two-pass-legacy' : 'single-pass-v1',
     GRADING_ESSAY_PROMPT_PROFILE: run.essayPromptProfile,
     GRADING_EXECUTION_REGISTRY: run.executionRegistry,
+    CLASS_REVIEW_SYNTHESIS_MODE: 'disabled',
     ...(run.hardLimit === 1
       ? { GRADING_MAX_CONCURRENT_PROVIDER_CALLS: '1' }
       : {}),

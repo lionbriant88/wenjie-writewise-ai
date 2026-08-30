@@ -88,6 +88,17 @@
         ],
         "learningRecommendations": [{ "title": "Practice", "action": "Review verb forms." }]
       },
+      "semanticCoverage": {
+        "projectedGroupCount": 2,
+        "eligibleGroupCount": 3,
+        "groupCoverage": 0.6666666666666666,
+        "projectedDistinctEssaySupportSum": 3,
+        "eligibleDistinctEssaySupportSum": 4,
+        "supportWeightedCoverage": 0.75,
+        "projectedOccurrenceSum": 4,
+        "eligibleOccurrenceSum": 6,
+        "occurrenceWeightedCoverage": 0.6666666666666666
+      },
       "finishReason": "stop",
       "usage": { "promptTokens": 100, "completionTokens": 50, "totalTokens": 150, "cachedTokens": null },
       "timingsMs": { "queueMs": 1, "providerMs": 2, "validationMs": 1, "totalMs": 4 }

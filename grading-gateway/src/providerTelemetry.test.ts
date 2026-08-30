@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  recordClassReviewGeneration,
   createProviderTelemetryRecorder,
   recordProviderOperation,
   recordUniqueProviderAttempts,
@@ -203,6 +204,156 @@ describe('provider telemetry', () => {
       processDiagnosticId: '88888888-8888-4888-8888-888888888888',
       operationDiagnosticId: '99999999-9999-4999-8999-999999999999',
       stage: 'material_context', model: 'Bearer PRIVATE-KEY', reasoningEffort: 'low', outcome: 'failed',
+    })).toBeNull()
+  })
+
+  it('deduplicates actual class-review completions and emits one exact safe operation record', () => {
+    const metrics: unknown[] = []
+    const recorder = createProviderTelemetryRecorder({
+      emit: (metric) => metrics.push(metric),
+      processDiagnosticIdFactory: () => 'abababab-abab-4bab-8bab-abababababab',
+    })
+    const attempt = observation('cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd')
+    const context = {
+      stage: 'class_review_generation' as const,
+      model: 'kimi-k3',
+      reasoningEffort: 'low' as const,
+      outcome: 'success' as const,
+    }
+    recordUniqueProviderAttempts(recorder, context, [attempt])
+    recordUniqueProviderAttempts(recorder, context, [attempt])
+    recordClassReviewGeneration(recorder, {
+      stage: 'class_review_generation',
+      model: 'kimi-k3',
+      reasoningEffort: 'low',
+      operationDiagnosticId: 'efefefef-efef-4fef-8fef-efefefefefef',
+      state: 'completed',
+      outcome: 'success',
+      attemptCount: 1,
+      includedEssayCount: 3,
+      excludedEssayCount: 1,
+      projectedGroupCount: 2,
+      eligibleGroupCount: 3,
+      projectedDistinctEssaySupportSum: 3,
+      eligibleDistinctEssaySupportSum: 4,
+      projectedOccurrenceSum: 4,
+      eligibleOccurrenceSum: 6,
+      queueMs: 1,
+      providerMs: 17,
+      validationMs: 1,
+      totalMs: 19,
+      promptTokenInvariant: true,
+    })
+
+    expect(metrics).toEqual([
+      {
+        event: 'provider_attempt',
+        processDiagnosticId: 'abababab-abab-4bab-8bab-abababababab',
+        attemptDiagnosticId: 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd',
+        stage: 'class_review_generation', model: 'kimi-k3', reasoningEffort: 'low',
+        providerMs: 17, finishReason: 'stop', attempt: 1, outcome: 'success',
+        promptTokens: 100, completionTokens: 20, totalTokens: 120, cachedTokens: 40,
+      },
+      {
+        event: 'provider_operation',
+        processDiagnosticId: 'abababab-abab-4bab-8bab-abababababab',
+        operationDiagnosticId: 'efefefef-efef-4fef-8fef-efefefefefef',
+        stage: 'class_review_generation', model: 'kimi-k3', reasoningEffort: 'low',
+        state: 'completed', outcome: 'success', attemptCount: 1,
+        includedEssayCount: 3, excludedEssayCount: 1,
+        projectedGroupCount: 2, eligibleGroupCount: 3,
+        projectedDistinctEssaySupportSum: 3, eligibleDistinctEssaySupportSum: 4,
+        projectedOccurrenceSum: 4, eligibleOccurrenceSum: 6,
+        queueMs: 1, providerMs: 17, validationMs: 1, totalMs: 19,
+        promptTokenInvariant: true,
+      },
+    ])
+    expect(recorder.snapshot().uniqueAttempts).toBe(1)
+  })
+
+  it('allows a fixed class failure code but strips all body, alias, ratio, credential and raw fields', () => {
+    const serialized = serializeSafeProviderMetric({
+      event: 'provider_operation',
+      processDiagnosticId: '12121212-1212-4212-8212-121212121212',
+      operationDiagnosticId: '34343434-3434-4434-8434-343434343434',
+      stage: 'class_review_generation', model: 'kimi-k3', reasoningEffort: 'low',
+      state: 'completed', outcome: 'failed', safeFailureCode: 'provider_invalid_response',
+      attemptCount: 1,
+      includedEssayCount: 3, excludedEssayCount: 1,
+      projectedGroupCount: 1, eligibleGroupCount: 3,
+      projectedDistinctEssaySupportSum: 2, eligibleDistinctEssaySupportSum: 4,
+      projectedOccurrenceSum: 3, eligibleOccurrenceSum: 6,
+      queueMs: 1, providerMs: 2, validationMs: 1, totalMs: 4,
+      promptTokenInvariant: false,
+      groupCoverage: 1 / 3,
+      requestId: 'PRIVATE-REQUEST-ID',
+      groupIds: ['PRIVATE-GROUP-ID'],
+      dimensionIds: ['PRIVATE-DIMENSION-ID'],
+      originalText: 'PRIVATE-ESSAY-CONTENT',
+      prompt: 'PRIVATE-PROMPT',
+      Authorization: 'Bearer PRIVATE-KEY',
+      rawResponse: { private: true },
+    })
+    expect(serialized && JSON.parse(serialized)).toEqual({
+      event: 'provider_operation',
+      processDiagnosticId: '12121212-1212-4212-8212-121212121212',
+      operationDiagnosticId: '34343434-3434-4434-8434-343434343434',
+      stage: 'class_review_generation', model: 'kimi-k3', reasoningEffort: 'low',
+      state: 'completed', outcome: 'failed', safeFailureCode: 'provider_invalid_response',
+      attemptCount: 1,
+      includedEssayCount: 3, excludedEssayCount: 1,
+      projectedGroupCount: 1, eligibleGroupCount: 3,
+      projectedDistinctEssaySupportSum: 2, eligibleDistinctEssaySupportSum: 4,
+      projectedOccurrenceSum: 3, eligibleOccurrenceSum: 6,
+      queueMs: 1, providerMs: 2, validationMs: 1, totalMs: 4,
+      promptTokenInvariant: false,
+    })
+    expect(serialized).not.toMatch(/PRIVATE|groupCoverage|requestId|groupIds|dimensionIds|originalText|"prompt"|Authorization|rawResponse/)
+  })
+
+  it('does not let fake or no-attempt operations claim the real-Kimi prompt invariant', () => {
+    const base = {
+      event: 'provider_operation',
+      processDiagnosticId: '56565656-5656-4656-8656-565656565656',
+      operationDiagnosticId: '78787878-7878-4878-8878-787878787878',
+      stage: 'class_review_generation', reasoningEffort: 'low',
+      state: 'completed', outcome: 'success',
+      includedEssayCount: 3, excludedEssayCount: 1,
+      projectedGroupCount: 2, eligibleGroupCount: 3,
+      projectedDistinctEssaySupportSum: 3, eligibleDistinctEssaySupportSum: 4,
+      projectedOccurrenceSum: 4, eligibleOccurrenceSum: 6,
+      queueMs: 1, providerMs: 2, validationMs: 1, totalMs: 4,
+    }
+    const fake = serializeSafeProviderMetric({
+      ...base, model: 'fake', attemptCount: 1, promptTokenInvariant: true,
+    })
+    expect(fake && JSON.parse(fake)).not.toHaveProperty('promptTokenInvariant')
+    const noAttempt = serializeSafeProviderMetric({
+      ...base, model: 'kimi-k3', attemptCount: 0, promptTokenInvariant: true,
+    })
+    expect(noAttempt && JSON.parse(noAttempt)).not.toHaveProperty('promptTokenInvariant')
+  })
+
+  it('rejects internally contradictory class-review operation metrics', () => {
+    const base = {
+      event: 'provider_operation',
+      processDiagnosticId: '90909090-9090-4090-8090-909090909090',
+      operationDiagnosticId: '91919191-9191-4191-8191-919191919191',
+      stage: 'class_review_generation', model: 'kimi-k3', reasoningEffort: 'low',
+      state: 'not_started', outcome: 'failed', safeFailureCode: 'provider_timeout',
+      attemptCount: 0, includedEssayCount: 3, excludedEssayCount: 1,
+      projectedGroupCount: 2, eligibleGroupCount: 3,
+      projectedDistinctEssaySupportSum: 3, eligibleDistinctEssaySupportSum: 4,
+      projectedOccurrenceSum: 4, eligibleOccurrenceSum: 6,
+      queueMs: 1, providerMs: 0, validationMs: 1, totalMs: 2,
+    }
+    expect(serializeSafeProviderMetric({ ...base, outcome: 'success' })).toBeNull()
+    expect(serializeSafeProviderMetric({ ...base, safeFailureCode: undefined })).toBeNull()
+    expect(serializeSafeProviderMetric({ ...base, attemptCount: 1 })).toBeNull()
+    expect(serializeSafeProviderMetric({ ...base, totalMs: 0 })).toBeNull()
+    expect(serializeSafeProviderMetric({
+      ...base, state: 'unknown', outcome: 'result_unknown',
+      safeFailureCode: 'provider_timeout',
     })).toBeNull()
   })
 })

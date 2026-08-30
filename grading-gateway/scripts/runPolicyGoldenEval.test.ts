@@ -26,6 +26,7 @@ function evaluatorRuntimeConfig(): GatewayRuntimeConfig {
     deadlines: { httpMs: 360_000, providerFinalMs: 420_000, settlementGraceMs: 30_000 },
     admission: { hardLimit: 1 }, registry: { terminalTtlMs: 86_400_000, maxEntries: 100 },
     retry: { maxProviderAttempts: 2, maxRateLimitRequeues: 5, baseMs: 2_000, capMs: 60_000, pauseAfterMs: 900_000 },
+    classReviewSynthesis: { mode: 'disabled' },
     kimi: {
       apiBase: 'https://api.moonshot.cn/v1', model: 'k3', reasoningEffort: 'low', promptCacheSecret: '',
       stageBudgets: { material_context: 1, rubric_generation: 1, essay_grading_images: 1, essay_regrading_text: 1 },

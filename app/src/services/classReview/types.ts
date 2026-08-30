@@ -19,6 +19,7 @@ export type SafeFailureCode =
   | 'class_review_prompt_calibration_missing'
   | 'class_review_prompt_contract_drift'
   | 'provider_not_configured'
+  | 'provider_request_rejected'
   | 'provider_auth_failed'
   | 'provider_balance_unavailable'
   | 'provider_rate_limited'
@@ -472,6 +473,7 @@ export type ClassReviewSynthesisResultV1 =
       requestId: OpaqueId
       status: 'succeeded'
       output: ClassReviewProviderOutputV1
+      semanticCoverage: SemanticCoverageV1
       finishReason: 'stop'
       usage: ProviderUsageV1
       timingsMs: SynthesisTimingsV1

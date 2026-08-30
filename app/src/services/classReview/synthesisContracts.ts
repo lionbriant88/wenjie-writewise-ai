@@ -42,6 +42,7 @@ const SAFE_FAILURE_CODES: readonly SafeFailureCode[] = [
   'class_review_prompt_calibration_missing',
   'class_review_prompt_contract_drift',
   'provider_not_configured',
+  'provider_request_rejected',
   'provider_auth_failed',
   'provider_balance_unavailable',
   'provider_rate_limited',
@@ -834,6 +835,7 @@ export function parseClassReviewSynthesisResult(
   const baseKeys = ['contractVersion', 'requestId', 'status', 'timingsMs']
   const record = hasOnlyKeys(value, '', baseKeys, [
     'output',
+    'semanticCoverage',
     'finishReason',
     'usage',
     'safeFailureCode',
@@ -864,12 +866,78 @@ export function parseClassReviewSynthesisResult(
       'requestId',
       'status',
       'output',
+      'semanticCoverage',
       'finishReason',
       'usage',
       'timingsMs',
     ])
     if (!exact.ok) return exact
-    const output = parseProviderOutput(record.value.output, request)
+    const semanticCoverage = parseSemanticCoverage(
+      record.value.semanticCoverage,
+      '/semanticCoverage',
+    )
+    if (!semanticCoverage.ok) return semanticCoverage
+    const coverage = semanticCoverage.value
+    const originalCoverage = request.semanticCoverage
+    for (const key of [
+      'eligibleGroupCount',
+      'eligibleDistinctEssaySupportSum',
+      'eligibleOccurrenceSum',
+    ] as const) {
+      if (coverage[key] !== originalCoverage[key]) {
+        return fail('invalid_value', `/semanticCoverage/${key}`)
+      }
+    }
+    if (coverage.projectedGroupCount > request.groups.length) {
+      return fail('invalid_value', '/semanticCoverage/projectedGroupCount')
+    }
+    if (coverage.projectedGroupCount === 0
+      && (request.groups.length > 0 || coverage.eligibleGroupCount > 0)) {
+      return fail('invalid_value', '/semanticCoverage/projectedGroupCount')
+    }
+    const admittedGroups = request.groups.slice(0, coverage.projectedGroupCount)
+    const projectedSupport = admittedGroups.reduce(
+      (total, group) => total + group.distinctEssaySupport,
+      0,
+    )
+    if (!Number.isSafeInteger(projectedSupport)
+      || coverage.projectedDistinctEssaySupportSum !== projectedSupport) {
+      return fail('invalid_value', '/semanticCoverage/projectedDistinctEssaySupportSum')
+    }
+    const projectedOccurrences = admittedGroups.reduce(
+      (total, group) => total + group.occurrenceCount,
+      0,
+    )
+    if (!Number.isSafeInteger(projectedOccurrences)
+      || coverage.projectedOccurrenceSum !== projectedOccurrences) {
+      return fail('invalid_value', '/semanticCoverage/projectedOccurrenceSum')
+    }
+    const expectedRatios = {
+      groupCoverage: coverage.eligibleGroupCount === 0
+        ? 1
+        : coverage.projectedGroupCount / coverage.eligibleGroupCount,
+      supportWeightedCoverage: coverage.eligibleDistinctEssaySupportSum === 0
+        ? 1
+        : projectedSupport / coverage.eligibleDistinctEssaySupportSum,
+      occurrenceWeightedCoverage: coverage.eligibleOccurrenceSum === 0
+        ? 1
+        : projectedOccurrences / coverage.eligibleOccurrenceSum,
+    }
+    for (const key of [
+      'groupCoverage',
+      'supportWeightedCoverage',
+      'occurrenceWeightedCoverage',
+    ] as const) {
+      if (coverage[key] !== expectedRatios[key]) {
+        return fail('invalid_value', `/semanticCoverage/${key}`)
+      }
+    }
+    const admittedRequest: ClassReviewSynthesisRequestV1 = {
+      ...request,
+      groups: admittedGroups,
+      semanticCoverage: coverage,
+    }
+    const output = parseProviderOutput(record.value.output, admittedRequest)
     if (!output.ok) return output
     const finishReason = literalAt(record.value.finishReason, '/finishReason', 'stop')
     if (!finishReason.ok) return finishReason
@@ -882,6 +950,7 @@ export function parseClassReviewSynthesisResult(
       requestId: requestId.value,
       status: 'succeeded',
       output: output.value,
+      semanticCoverage: coverage,
       finishReason: 'stop',
       usage: usage.value,
       timingsMs: timingsMs.value,
@@ -959,7 +1028,8 @@ export function parseClassReviewSynthesisResult(
   if (
     retryAfterMs !== null &&
     (safeFailureCode.value !== 'provider_rate_limited' ||
-      completionDisposition.value !== 'confirmed_zero_completion')
+      (completionDisposition.value !== 'not_started'
+        && completionDisposition.value !== 'confirmed_zero_completion'))
   ) {
     return fail('invalid_value', '/retryAfterMs')
   }
@@ -973,9 +1043,12 @@ export function parseClassReviewSynthesisResult(
       if (!parsedFinishReason.ok) return parsedFinishReason
       finishReason = parsedFinishReason.value
     }
-    const parsedUsage = parseUsage(record.value.usage, '/usage')
-    if (!parsedUsage.ok) return parsedUsage
-    usage = parsedUsage.value
+    if (record.value.usage === null) usage = null
+    else {
+      const parsedUsage = parseUsage(record.value.usage, '/usage')
+      if (!parsedUsage.ok) return parsedUsage
+      usage = parsedUsage.value
+    }
   } else {
     if (record.value.finishReason !== null) return fail('invalid_value', '/finishReason')
     if (record.value.usage !== null) return fail('invalid_value', '/usage')

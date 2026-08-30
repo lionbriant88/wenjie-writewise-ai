@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest'
+import type { ClassReviewFramingCalibration } from './classReviewSynthesis/framingCalibrations.js'
 import { GatewayRuntimeConfigError, parseGatewayRuntimeConfig } from './gatewayRuntimeConfig.js'
+
+const syntheticClassReviewCalibration: ClassReviewFramingCalibration = {
+  apiBase: 'https://api.moonshot.cn/v1',
+  model: 'kimi-k3',
+  reasoningEffort: 'low',
+  policyVersion: 'class-review-policy-v1',
+  schemaVersion: 'kimi-class-review-output-v1',
+  projectionVersion: 'class-review-projection-v1',
+  budgetVersion: 'class-review-prompt-budget-v1',
+  wireSerializationVersion: 'class-review-wire-serialization-v1',
+  framingTokens: 512,
+}
 
 function validEnvironment(overrides: Record<string, string | undefined> = {}) {
   return {
@@ -19,9 +32,13 @@ function validEnvironment(overrides: Record<string, string | undefined> = {}) {
     GRADING_RETRY_CAP_MS: '60000',
     GRADING_RETRY_AFTER_PAUSE_MS: '900000',
     GRADING_PROMPT_CACHE_HMAC_SECRET: '',
+    CLASS_REVIEW_SYNTHESIS_MODE: 'disabled',
+    CLASS_REVIEW_SERVICE_TOKEN: '',
     KIMI_API_BASE: 'https://api.moonshot.cn/v1',
     KIMI_MODEL: 'kimi-k3',
     KIMI_REASONING_EFFORT: 'low',
+    KIMI_API_KEY: '',
+    KIMI_MAX_COMPLETION_TOKENS_CLASS_REVIEW: '3072',
     KIMI_MAX_COMPLETION_TOKENS_MATERIAL_CONTEXT: '16384',
     KIMI_MAX_COMPLETION_TOKENS_RUBRIC_GENERATION: '12000',
     KIMI_MAX_COMPLETION_TOKENS_ESSAY_GRADING_IMAGES: '14000',
@@ -41,6 +58,7 @@ describe('parseGatewayRuntimeConfig', () => {
       admission: { hardLimit: 4 },
       registry: { terminalTtlMs: 86_400_000, maxEntries: 2_000 },
       retry: { maxProviderAttempts: 2, maxRateLimitRequeues: 5, baseMs: 2_000, capMs: 60_000, pauseAfterMs: 900_000 },
+      classReviewSynthesis: { mode: 'disabled' },
       kimi: {
         apiBase: 'https://api.moonshot.cn/v1',
         model: 'kimi-k3',
@@ -58,6 +76,130 @@ describe('parseGatewayRuntimeConfig', () => {
 
   it('allows explicit mock without a cache secret while retaining bounded runtime settings', () => {
     expect(parseGatewayRuntimeConfig(validEnvironment({ GRADING_PROVIDER: 'mock' })).provider).toBe('mock')
+  })
+
+  it('accepts each explicit class-review mode without inferring it from the essay Provider', () => {
+    const rawToken = `  ${'s'.repeat(32)}  `
+    const fake = parseGatewayRuntimeConfig(validEnvironment({
+      GRADING_PROVIDER: 'mock',
+      GRADING_EXECUTION_REGISTRY: 'memory-v1',
+      CLASS_REVIEW_SYNTHESIS_MODE: 'fake',
+      CLASS_REVIEW_SERVICE_TOKEN: rawToken,
+    }))
+    expect(fake.classReviewSynthesis).toEqual({
+      mode: 'fake',
+      serviceToken: 's'.repeat(32),
+      maxCompletionTokens: 3_072,
+    })
+    expect(parseGatewayRuntimeConfig(validEnvironment({
+      GRADING_PROVIDER: 'mock',
+      GRADING_EXECUTION_REGISTRY: 'memory-v1',
+      CLASS_REVIEW_SYNTHESIS_MODE: 'fake',
+      CLASS_REVIEW_SERVICE_TOKEN: 'A._~-z09'.repeat(32),
+    })).classReviewSynthesis).toMatchObject({ serviceToken: 'A._~-z09'.repeat(32) })
+
+    const kimi = parseGatewayRuntimeConfig(validEnvironment({
+      GRADING_PROVIDER: 'mock',
+      GRADING_EXECUTION_REGISTRY: 'memory-v1',
+      CLASS_REVIEW_SYNTHESIS_MODE: 'kimi',
+      CLASS_REVIEW_SERVICE_TOKEN: 's'.repeat(32),
+      KIMI_API_KEY: '  synthetic-not-a-real-key  ',
+      GRADING_PROMPT_CACHE_HMAC_SECRET: 'c'.repeat(32),
+    }), { classReviewFramingCalibration: syntheticClassReviewCalibration })
+    expect(kimi.classReviewSynthesis).toEqual({
+      mode: 'kimi',
+      serviceToken: 's'.repeat(32),
+      maxCompletionTokens: 3_072,
+      apiKey: 'synthetic-not-a-real-key',
+      framingCalibration: syntheticClassReviewCalibration,
+    })
+    expect(kimi.provider).toBe('mock')
+    const maximumKey = parseGatewayRuntimeConfig(validEnvironment({
+      GRADING_PROVIDER: 'mock',
+      GRADING_EXECUTION_REGISTRY: 'memory-v1',
+      CLASS_REVIEW_SYNTHESIS_MODE: 'kimi',
+      CLASS_REVIEW_SERVICE_TOKEN: 's'.repeat(32),
+      KIMI_API_KEY: 'K'.repeat(512),
+      GRADING_PROMPT_CACHE_HMAC_SECRET: 'c'.repeat(32),
+    }), { classReviewFramingCalibration: syntheticClassReviewCalibration })
+    expect(maximumKey.classReviewSynthesis).toMatchObject({ apiKey: 'K'.repeat(512) })
+  })
+
+  it('keeps disabled class synthesis independent from its optional token and real Kimi prerequisites', () => {
+    const config = parseGatewayRuntimeConfig(validEnvironment({
+      GRADING_PROVIDER: 'mock',
+      CLASS_REVIEW_SYNTHESIS_MODE: 'disabled',
+      CLASS_REVIEW_SERVICE_TOKEN: undefined,
+      KIMI_MAX_COMPLETION_TOKENS_CLASS_REVIEW: undefined,
+      KIMI_API_KEY: undefined,
+      GRADING_PROMPT_CACHE_HMAC_SECRET: '',
+    }))
+    expect(config.classReviewSynthesis).toEqual({ mode: 'disabled' })
+    const ignored = parseGatewayRuntimeConfig(validEnvironment({
+      CLASS_REVIEW_SYNTHESIS_MODE: 'disabled',
+      CLASS_REVIEW_SERVICE_TOKEN: 'PRIVATE-DISABLED-TOKEN',
+      KIMI_MAX_COMPLETION_TOKENS_CLASS_REVIEW: '3073',
+      KIMI_API_KEY: 'PRIVATE-DISABLED-KEY',
+      GRADING_PROMPT_CACHE_HMAC_SECRET: '',
+    }), { classReviewFramingCalibration: { private: 'PRIVATE-CALIBRATION' } })
+    expect(ignored.classReviewSynthesis).toEqual({ mode: 'disabled' })
+    expect(JSON.stringify(ignored.classReviewSynthesis)).not.toMatch(/PRIVATE|token|key|calibration/i)
+  })
+
+  it.each([
+    ['missing mode', { CLASS_REVIEW_SYNTHESIS_MODE: undefined }],
+    ['unknown mode', { CLASS_REVIEW_SYNTHESIS_MODE: 'mock' }],
+    ['blank enabled token', { CLASS_REVIEW_SYNTHESIS_MODE: 'fake', CLASS_REVIEW_SERVICE_TOKEN: ' '.repeat(40), GRADING_EXECUTION_REGISTRY: 'memory-v1' }],
+    ['short enabled token', { CLASS_REVIEW_SYNTHESIS_MODE: 'fake', CLASS_REVIEW_SERVICE_TOKEN: 'a'.repeat(31), GRADING_EXECUTION_REGISTRY: 'memory-v1' }],
+    ['Unicode enabled token', { CLASS_REVIEW_SYNTHESIS_MODE: 'fake', CLASS_REVIEW_SERVICE_TOKEN: '界'.repeat(32), GRADING_EXECUTION_REGISTRY: 'memory-v1' }],
+    ['whitespace-bearing enabled token', { CLASS_REVIEW_SYNTHESIS_MODE: 'fake', CLASS_REVIEW_SERVICE_TOKEN: `${'a'.repeat(32)} b`, GRADING_EXECUTION_REGISTRY: 'memory-v1' }],
+    ['control-bearing enabled token', { CLASS_REVIEW_SYNTHESIS_MODE: 'fake', CLASS_REVIEW_SERVICE_TOKEN: `${'a'.repeat(32)}\u0000`, GRADING_EXECUTION_REGISTRY: 'memory-v1' }],
+    ['padded enabled token', { CLASS_REVIEW_SYNTHESIS_MODE: 'fake', CLASS_REVIEW_SERVICE_TOKEN: `${'a'.repeat(32)}=`, GRADING_EXECUTION_REGISTRY: 'memory-v1' }],
+    ['oversized enabled token', { CLASS_REVIEW_SYNTHESIS_MODE: 'fake', CLASS_REVIEW_SERVICE_TOKEN: 'a'.repeat(257), GRADING_EXECUTION_REGISTRY: 'memory-v1' }],
+    ['enabled direct execution', { CLASS_REVIEW_SYNTHESIS_MODE: 'fake', CLASS_REVIEW_SERVICE_TOKEN: 's'.repeat(32), GRADING_EXECUTION_REGISTRY: 'direct-legacy' }],
+    ['class completion budget -1', { CLASS_REVIEW_SYNTHESIS_MODE: 'fake', CLASS_REVIEW_SERVICE_TOKEN: 's'.repeat(32), GRADING_EXECUTION_REGISTRY: 'memory-v1', KIMI_MAX_COMPLETION_TOKENS_CLASS_REVIEW: '3071' }],
+    ['class completion budget +1', { CLASS_REVIEW_SYNTHESIS_MODE: 'fake', CLASS_REVIEW_SERVICE_TOKEN: 's'.repeat(32), GRADING_EXECUTION_REGISTRY: 'memory-v1', KIMI_MAX_COMPLETION_TOKENS_CLASS_REVIEW: '3073' }],
+    ['class completion budget fractional', { CLASS_REVIEW_SYNTHESIS_MODE: 'fake', CLASS_REVIEW_SERVICE_TOKEN: 's'.repeat(32), GRADING_EXECUTION_REGISTRY: 'memory-v1', KIMI_MAX_COMPLETION_TOKENS_CLASS_REVIEW: '3072.5' }],
+    ['class completion budget missing', { CLASS_REVIEW_SYNTHESIS_MODE: 'fake', CLASS_REVIEW_SERVICE_TOKEN: 's'.repeat(32), GRADING_EXECUTION_REGISTRY: 'memory-v1', KIMI_MAX_COMPLETION_TOKENS_CLASS_REVIEW: undefined }],
+  ])('fails closed for class config: %s', (_name, overrides) => {
+    expect(() => parseGatewayRuntimeConfig(validEnvironment(overrides))).toThrow(GatewayRuntimeConfigError)
+  })
+
+  it.each([
+    ['missing Kimi API key', { KIMI_API_KEY: undefined, GRADING_PROMPT_CACHE_HMAC_SECRET: 'c'.repeat(32) }],
+    ['blank Kimi API key', { KIMI_API_KEY: '   ', GRADING_PROMPT_CACHE_HMAC_SECRET: 'c'.repeat(32) }],
+    ['missing cache secret', { KIMI_API_KEY: 'synthetic-not-a-real-key', GRADING_PROMPT_CACHE_HMAC_SECRET: undefined }],
+    ['short cache secret', { KIMI_API_KEY: 'synthetic-not-a-real-key', GRADING_PROMPT_CACHE_HMAC_SECRET: 'c'.repeat(31) }],
+    ['Unicode Kimi API key', { KIMI_API_KEY: '界'.repeat(32), GRADING_PROMPT_CACHE_HMAC_SECRET: 'c'.repeat(32) }],
+    ['whitespace-bearing Kimi API key', { KIMI_API_KEY: 'synthetic key', GRADING_PROMPT_CACHE_HMAC_SECRET: 'c'.repeat(32) }],
+    ['control-bearing Kimi API key', { KIMI_API_KEY: `synthetic\u0000key`, GRADING_PROMPT_CACHE_HMAC_SECRET: 'c'.repeat(32) }],
+    ['oversized Kimi API key', { KIMI_API_KEY: 'K'.repeat(513), GRADING_PROMPT_CACHE_HMAC_SECRET: 'c'.repeat(32) }],
+  ])('fails closed for Kimi class synthesis with %s', (_name, overrides) => {
+    expect(() => parseGatewayRuntimeConfig(validEnvironment({
+      GRADING_PROVIDER: 'mock',
+      GRADING_EXECUTION_REGISTRY: 'memory-v1',
+      CLASS_REVIEW_SYNTHESIS_MODE: 'kimi',
+      CLASS_REVIEW_SERVICE_TOKEN: 's'.repeat(32),
+      ...overrides,
+    }), { classReviewFramingCalibration: syntheticClassReviewCalibration })).toThrow(GatewayRuntimeConfigError)
+  })
+
+  it('fails Kimi class synthesis closed when production framing calibration is absent or inexact', () => {
+    const environment = validEnvironment({
+      GRADING_PROVIDER: 'mock',
+      GRADING_EXECUTION_REGISTRY: 'memory-v1',
+      CLASS_REVIEW_SYNTHESIS_MODE: 'kimi',
+      CLASS_REVIEW_SERVICE_TOKEN: 's'.repeat(32),
+      KIMI_API_KEY: 'synthetic-not-a-real-key',
+      GRADING_PROMPT_CACHE_HMAC_SECRET: 'c'.repeat(32),
+    })
+    expect(() => parseGatewayRuntimeConfig(environment)).toThrow(GatewayRuntimeConfigError)
+    expect(() => parseGatewayRuntimeConfig(environment, {
+      classReviewFramingCalibration: null,
+    })).toThrow(GatewayRuntimeConfigError)
+    expect(() => parseGatewayRuntimeConfig(environment, {
+      classReviewFramingCalibration: { ...syntheticClassReviewCalibration, framingTokens: 513 },
+    })).toThrow(GatewayRuntimeConfigError)
   })
 
   it.each([

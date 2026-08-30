@@ -4,6 +4,29 @@ import type { ProviderAttemptObservation, ProviderCallStage, ProviderUsageSnapsh
 type MetricOutcome = 'success' | 'failed' | 'result_unknown'
 type SafeFinishReason = ProviderAttemptObservation['finishReason']
 
+export type ClassReviewGenerationState =
+  | 'not_started'
+  | 'confirmed_zero_completion'
+  | 'completed'
+  | 'unknown'
+
+export type ClassReviewSafeFailureCode =
+  | 'class_review_projection_too_large'
+  | 'class_review_prompt_too_large'
+  | 'class_review_prompt_calibration_missing'
+  | 'class_review_prompt_contract_drift'
+  | 'provider_not_configured'
+  | 'provider_request_rejected'
+  | 'provider_auth_failed'
+  | 'provider_balance_unavailable'
+  | 'provider_rate_limited'
+  | 'provider_timeout'
+  | 'provider_result_unknown'
+  | 'provider_unavailable'
+  | 'provider_content_filtered'
+  | 'provider_unexpected_tool_call'
+  | 'provider_invalid_response'
+
 export interface SafeImageDimensionMetric {
   page: number
   width: number
@@ -29,6 +52,27 @@ export interface ProviderOperationMetricInput extends ProviderAttemptMetricConte
   confirmedTextCodeUnits?: number
 }
 
+export interface ClassReviewGenerationMetricInput extends ProviderAttemptMetricContext {
+  stage: 'class_review_generation'
+  operationDiagnosticId: string
+  state: ClassReviewGenerationState
+  safeFailureCode?: ClassReviewSafeFailureCode
+  attemptCount: number
+  includedEssayCount: number
+  excludedEssayCount: number
+  projectedGroupCount: number
+  eligibleGroupCount: number
+  projectedDistinctEssaySupportSum: number
+  eligibleDistinctEssaySupportSum: number
+  projectedOccurrenceSum: number
+  eligibleOccurrenceSum: number
+  queueMs: number
+  providerMs: number
+  validationMs: number
+  totalMs: number
+  promptTokenInvariant?: boolean
+}
+
 export interface SafeProviderAttemptMetric extends ProviderAttemptMetricContext {
   event: 'provider_attempt'
   processDiagnosticId: string
@@ -47,7 +91,16 @@ export interface SafeProviderOperationMetric extends ProviderOperationMetricInpu
   processDiagnosticId: string
 }
 
-export type SafeProviderMetric = SafeProviderAttemptMetric | SafeProviderOperationMetric
+
+export interface SafeClassReviewGenerationMetric extends ClassReviewGenerationMetricInput {
+  event: 'provider_operation'
+  processDiagnosticId: string
+}
+
+export type SafeProviderMetric =
+  | SafeProviderAttemptMetric
+  | SafeProviderOperationMetric
+  | SafeClassReviewGenerationMetric
 export type SafeProviderMetricSink = (metric: SafeProviderMetric) => void
 
 export type ProviderTokenTotalSnapshot =
@@ -68,16 +121,39 @@ export interface ProviderTelemetrySnapshot {
 
 export interface ProviderTelemetryRecorder {
   recordUniqueAttempts(context: ProviderAttemptMetricContext, attempts: readonly ProviderAttemptObservation[]): void
-  recordOperation(metric: ProviderOperationMetricInput): void
+  recordOperation(metric: ProviderOperationMetricInput | ClassReviewGenerationMetricInput): void
   snapshot(): ProviderTelemetrySnapshot
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const SAFE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 const SENSITIVE_MARKER = /private|bearer|authorization|api[_-]?key|base64|secret|content|digest/i
-const STAGES = new Set<ProviderCallStage>(['material_context', 'rubric_generation', 'essay_grading_images', 'essay_regrading_text'])
+const STAGES = new Set<ProviderCallStage>([
+  'material_context', 'rubric_generation', 'essay_grading_images', 'essay_regrading_text',
+  'class_review_generation',
+])
 const OUTCOMES = new Set<MetricOutcome>(['success', 'failed', 'result_unknown'])
 const FINISH_REASONS = new Set<SafeFinishReason>(['stop', 'length', 'content_filter', 'tool_calls', 'unknown'])
+const CLASS_REVIEW_STATES = new Set<ClassReviewGenerationState>([
+  'not_started', 'confirmed_zero_completion', 'completed', 'unknown',
+])
+const CLASS_REVIEW_FAILURE_CODES = new Set<ClassReviewSafeFailureCode>([
+  'class_review_projection_too_large',
+  'class_review_prompt_too_large',
+  'class_review_prompt_calibration_missing',
+  'class_review_prompt_contract_drift',
+  'provider_not_configured',
+  'provider_request_rejected',
+  'provider_auth_failed',
+  'provider_balance_unavailable',
+  'provider_rate_limited',
+  'provider_timeout',
+  'provider_result_unknown',
+  'provider_unavailable',
+  'provider_content_filtered',
+  'provider_unexpected_tool_call',
+  'provider_invalid_response',
+])
 
 function safeId(value: unknown): value is string {
   return typeof value === 'string' && UUID.test(value)
@@ -142,6 +218,76 @@ function sanitizedMetric(value: unknown): SafeProviderMetric | null {
     return result
   }
   if (metric.event !== 'provider_operation' || !safeId(metric.operationDiagnosticId)) return null
+  if (metric.stage === 'class_review_generation') {
+    if (!CLASS_REVIEW_STATES.has(metric.state as ClassReviewGenerationState)
+      || (metric.safeFailureCode !== undefined
+        && !CLASS_REVIEW_FAILURE_CODES.has(metric.safeFailureCode as ClassReviewSafeFailureCode))) return null
+    for (const key of [
+      'attemptCount',
+      'includedEssayCount',
+      'excludedEssayCount',
+      'projectedGroupCount',
+      'eligibleGroupCount',
+      'projectedDistinctEssaySupportSum',
+      'eligibleDistinctEssaySupportSum',
+      'projectedOccurrenceSum',
+      'eligibleOccurrenceSum',
+      'queueMs',
+      'providerMs',
+      'validationMs',
+      'totalMs',
+    ] as const) {
+      if (!safeInteger(metric[key])) return null
+    }
+    if ((metric.projectedGroupCount as number) > (metric.eligibleGroupCount as number)
+      || (metric.projectedDistinctEssaySupportSum as number) > (metric.eligibleDistinctEssaySupportSum as number)
+      || (metric.projectedOccurrenceSum as number) > (metric.eligibleOccurrenceSum as number)) return null
+    const state = metric.state as ClassReviewGenerationState
+    const outcome = metric.outcome as MetricOutcome
+    const hasFailure = metric.safeFailureCode !== undefined
+    if (outcome === 'success' && (state !== 'completed' || hasFailure)) return null
+    if (outcome === 'failed' && !hasFailure) return null
+    if (outcome === 'result_unknown'
+      && (state !== 'unknown' || metric.safeFailureCode !== 'provider_result_unknown')) return null
+    if (state === 'unknown' && outcome !== 'result_unknown') return null
+    if (state === 'not_started' && (metric.attemptCount as number) !== 0) return null
+    if ((metric.totalMs as number) < Math.max(
+      metric.queueMs as number,
+      metric.providerMs as number,
+      metric.validationMs as number,
+    )) return null
+    const result: SafeClassReviewGenerationMetric = {
+      event: 'provider_operation',
+      processDiagnosticId: metric.processDiagnosticId,
+      operationDiagnosticId: metric.operationDiagnosticId,
+      stage: 'class_review_generation',
+      model: metric.model,
+      reasoningEffort: 'low',
+      state: metric.state as ClassReviewGenerationState,
+      outcome: metric.outcome as MetricOutcome,
+      ...(metric.safeFailureCode === undefined
+        ? {}
+        : { safeFailureCode: metric.safeFailureCode as ClassReviewSafeFailureCode }),
+      attemptCount: metric.attemptCount as number,
+      includedEssayCount: metric.includedEssayCount as number,
+      excludedEssayCount: metric.excludedEssayCount as number,
+      projectedGroupCount: metric.projectedGroupCount as number,
+      eligibleGroupCount: metric.eligibleGroupCount as number,
+      projectedDistinctEssaySupportSum: metric.projectedDistinctEssaySupportSum as number,
+      eligibleDistinctEssaySupportSum: metric.eligibleDistinctEssaySupportSum as number,
+      projectedOccurrenceSum: metric.projectedOccurrenceSum as number,
+      eligibleOccurrenceSum: metric.eligibleOccurrenceSum as number,
+      queueMs: metric.queueMs as number,
+      providerMs: metric.providerMs as number,
+      validationMs: metric.validationMs as number,
+      totalMs: metric.totalMs as number,
+      ...(metric.model === 'kimi-k3' && (metric.attemptCount as number) > 0
+        && typeof metric.promptTokenInvariant === 'boolean'
+        ? { promptTokenInvariant: metric.promptTokenInvariant }
+        : {}),
+    }
+    return result
+  }
   const result: SafeProviderOperationMetric = {
     event: 'provider_operation', processDiagnosticId: metric.processDiagnosticId, operationDiagnosticId: metric.operationDiagnosticId,
     stage: metric.stage as ProviderCallStage, model: metric.model, reasoningEffort: 'low',
@@ -255,6 +401,13 @@ export function recordUniqueProviderAttempts(
 }
 
 export function recordProviderOperation(recorder: ProviderTelemetryRecorder, metric: ProviderOperationMetricInput): void {
+  recorder.recordOperation(metric)
+}
+
+export function recordClassReviewGeneration(
+  recorder: ProviderTelemetryRecorder,
+  metric: ClassReviewGenerationMetricInput,
+): void {
   recorder.recordOperation(metric)
 }
 

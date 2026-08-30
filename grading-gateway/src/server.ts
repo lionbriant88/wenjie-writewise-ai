@@ -36,6 +36,16 @@ import {
 import { EssayGradingRegistry, type RegistryAttachResult, type RegistryTimers } from './essayGradingRegistry.js'
 import { OneShotProviderExecutionTracker, type OneShotExecutionOutcome } from './oneShotProviderExecution.js'
 import { ProviderAdmissionController } from './providerAdmissionController.js'
+import type { ClassReviewSynthesisProvider } from './providers/classReviewSynthesisProviderTypes.js'
+import {
+  parseClassReviewFramingCalibration,
+  type ClassReviewFramingCalibration,
+} from './classReviewSynthesis/framingCalibrations.js'
+import { authorizeClassReviewServiceRequest } from './classReviewSynthesis/serviceAuth.js'
+import { ClassReviewRuntimeInvariant } from './classReviewSynthesis/runtimeInvariant.js'
+import { ClassReviewSynthesisService } from './classReviewSynthesis/service.js'
+import type { ClassReviewPromptTokenizer } from './classReviewSynthesis/promptBudget.js'
+import { validateClassReviewSynthesisRequest } from './classReviewSynthesis/validateRequest.js'
 
 export interface GatewayExecutionTimers extends RegistryTimers {}
 
@@ -55,16 +65,17 @@ export function createGatewayExecutionServices(
   runtimeConfig: GatewayRuntimeConfig,
   options: GatewayExecutionServiceOptions = {},
 ): GatewayExecutionServices {
+  const sharedNow = options.now ?? performance.now.bind(performance)
   const admission = new ProviderAdmissionController({
     hardLimit: runtimeConfig.admission.hardLimit,
-    ...(options.now ? { now: options.now } : {}),
+    now: sharedNow,
   })
   const shared = {
     admission,
     providerFinalDeadlineMs: runtimeConfig.deadlines.providerFinalMs,
     settlementGraceMs: runtimeConfig.deadlines.settlementGraceMs,
     retryAfterPauseMs: runtimeConfig.retry.pauseAfterMs,
-    ...(options.now ? { now: options.now } : {}),
+    now: sharedNow,
     ...(options.timers ? { timers: options.timers } : {}),
   }
   return {
@@ -94,6 +105,10 @@ export interface CreateServerOptions {
   executionServices?: GatewayExecutionServices
   monotonicNow?: () => number
   executionTimers?: GatewayExecutionTimers
+  classReviewProvider?: ClassReviewSynthesisProvider
+  classReviewFramingCalibration?: ClassReviewFramingCalibration | null
+  classReviewRuntimeInvariant?: ClassReviewRuntimeInvariant
+  classReviewTokenizer?: ClassReviewPromptTokenizer
 }
 
 const taskMaterialUpload = multer({
@@ -108,6 +123,7 @@ const taskMaterialUpload = multer({
 })
 
 export const MAX_IMAGE_GRADING_METADATA_BYTES = 32 * 1024 * 1024
+export const MAX_CLASS_REVIEW_JSON_BYTES = 64 * 1024
 const imageGradeUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_RUBRIC_IMAGE_BYTES + 1, files: MAX_RUBRIC_PAGES, fields: 1, fieldSize: MAX_IMAGE_GRADING_METADATA_BYTES, parts: MAX_RUBRIC_PAGES + 2 },
@@ -283,6 +299,7 @@ function imageGradeRequestId(value: unknown) {
 function safeRuntimeSnapshot(
   config: GatewayRuntimeConfig | undefined,
   admission: ProviderAdmissionController | undefined,
+  classReviewInvariant?: ClassReviewRuntimeInvariant,
 ) {
   if (!config) return { status: 'unconfigured' as const }
   const admissionSnapshot = admission?.snapshot()
@@ -307,6 +324,15 @@ function safeRuntimeSnapshot(
       essayPromptProfile: config.essayPromptProfile,
       executionRegistry: config.executionRegistry,
     },
+    classReviewSynthesis: config.classReviewSynthesis.mode === 'disabled'
+      ? { mode: 'disabled' as const }
+      : {
+          mode: config.classReviewSynthesis.mode,
+          maxCompletionTokens: config.classReviewSynthesis.maxCompletionTokens,
+          promptInvariant: config.classReviewSynthesis.mode === 'fake'
+            ? 'not_applicable' as const
+            : classReviewInvariant?.snapshot().promptContract ?? 'ready',
+        },
     admission: admissionSnapshot
       ? {
           managed: true,
@@ -526,6 +552,23 @@ function safeImageOperationMetadata(pages: readonly GatewayImageInput[]) {
   }
 }
 
+const classReviewJsonParser = express.json({
+  limit: MAX_CLASS_REVIEW_JSON_BYTES,
+  strict: true,
+  type: 'application/json',
+})
+
+function fixedClassReviewError(response: Response, status: number, code: string, message: string) {
+  response.status(status).json({ error: { code, message } })
+}
+
+function hasOriginHeader(request: Request): boolean {
+  for (let index = 0; index < request.rawHeaders.length; index += 2) {
+    if (request.rawHeaders[index]?.toLowerCase() === 'origin') return true
+  }
+  return Object.prototype.hasOwnProperty.call(request.headers, 'origin')
+}
+
 export function createServer(options: CreateServerOptions = {}) {
   const timeoutMs = options.timeoutMs ?? options.runtimeConfig?.deadlines.httpMs ?? 60_000
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error('Invalid injected server deadline.')
@@ -541,6 +584,48 @@ export function createServer(options: CreateServerOptions = {}) {
     throw new Error('Injected execution services require the memory-v1 execution profile.')
   }
   const telemetry = options.providerTelemetry ?? createProviderTelemetryRecorder()
+  const classRuntime = options.runtimeConfig?.classReviewSynthesis ?? { mode: 'disabled' as const }
+  const classReviewInvariant = options.classReviewRuntimeInvariant ?? new ClassReviewRuntimeInvariant()
+  const calibrationWasInjected = Object.prototype.hasOwnProperty.call(
+    options,
+    'classReviewFramingCalibration',
+  )
+  let classReviewService: ClassReviewSynthesisService | undefined
+  if (classRuntime.mode === 'disabled') {
+    if (options.classReviewProvider !== undefined || calibrationWasInjected) {
+      throw new Error('Invalid class review runtime construction.')
+    }
+  } else {
+    if (!memoryExecution || !options.classReviewProvider) {
+      throw new Error('Invalid class review runtime construction.')
+    }
+    const calibration = parseClassReviewFramingCalibration(
+      classRuntime.mode === 'fake'
+        ? options.classReviewFramingCalibration
+        : calibrationWasInjected
+          ? options.classReviewFramingCalibration
+          : classRuntime.framingCalibration,
+    )
+    if (calibration === null) throw new Error('Invalid class review runtime construction.')
+    if (classRuntime.mode === 'kimi'
+      && JSON.stringify(calibration) !== JSON.stringify(classRuntime.framingCalibration)) {
+      throw new Error('Invalid class review runtime construction.')
+    }
+    classReviewService = new ClassReviewSynthesisService({
+      mode: classRuntime.mode,
+      provider: options.classReviewProvider,
+      admission: memoryExecution.admission,
+      oneShot: memoryExecution.oneShot,
+      calibration,
+      ...(options.classReviewTokenizer ? { tokenizer: options.classReviewTokenizer } : {}),
+      ...(classRuntime.mode === 'kimi'
+        ? { hmacSecret: options.runtimeConfig?.kimi.promptCacheSecret }
+        : {}),
+      runtimeInvariant: classReviewInvariant,
+      providerTelemetry: telemetry,
+      monotonicNow,
+    })
+  }
   const app = express()
   const routeReceiptTimes = new WeakMap<Request, number>()
   const captureRouteReceipt = (request: Request, _response: Response, next: NextFunction) => {
@@ -548,6 +633,95 @@ export function createServer(options: CreateServerOptions = {}) {
     next()
   }
   const receivedAt = (request: Request) => routeReceiptTimes.get(request) ?? validMonotonicNow(monotonicNow)
+  app.all('/grading/class-review-syntheses', (request, response) => {
+    const routeReceivedAt = validMonotonicNow(monotonicNow)
+    if (classRuntime.mode === 'disabled' || !classReviewService) {
+      fixedClassReviewError(response, 404, 'not_found', 'Not found.')
+      return
+    }
+    if (hasOriginHeader(request)) {
+      fixedClassReviewError(
+        response,
+        403,
+        'browser_origin_forbidden',
+        'Browser-origin requests are not allowed.',
+      )
+      return
+    }
+    if (request.method !== 'POST') {
+      fixedClassReviewError(response, 404, 'not_found', 'Not found.')
+      return
+    }
+    const authorizationHeader = typeof request.headers.authorization === 'string'
+      ? request.headers.authorization
+      : undefined
+    const auth = authorizeClassReviewServiceRequest({
+      originPresent: false,
+      authorizationHeader,
+      expectedToken: classRuntime.serviceToken,
+    })
+    if (auth !== 'authorized') {
+      response.setHeader('WWW-Authenticate', 'Bearer')
+      fixedClassReviewError(
+        response,
+        401,
+        'service_auth_required',
+        'Internal service authentication failed.',
+      )
+      return
+    }
+
+    classReviewJsonParser(request, response, (error) => {
+      if (error) {
+        const record = errorRecord(error)
+        if (record?.type === 'entity.too.large' || record?.status === 413) {
+          fixedClassReviewError(
+            response,
+            413,
+            'request_too_large',
+            'Class review synthesis request is too large.',
+          )
+        } else {
+          fixedClassReviewError(
+            response,
+            400,
+            'invalid_json',
+            'Request body must be valid JSON.',
+          )
+        }
+        return
+      }
+      const validated = validateClassReviewSynthesisRequest(request.body)
+      if (!validated.ok) {
+        fixedClassReviewError(
+          response,
+          400,
+          'invalid_request',
+          'Class review synthesis request is invalid.',
+        )
+        return
+      }
+      void classReviewService.synthesize({
+        request: validated.value,
+        receivedAt: routeReceivedAt,
+        httpDeadlineMs: timeoutMs,
+      }).then((safe) => {
+        if (safe.httpStatus === 429 && safe.result.status === 'failed'
+          && safe.result.safeFailureCode === 'provider_rate_limited'
+          && safe.result.retryAfterMs !== null) {
+          setTruthfulRetryAfter(response, safe.result.retryAfterMs)
+        }
+        response.status(safe.httpStatus).json(safe.result)
+      }).catch(() => {
+        fixedClassReviewError(
+          response,
+          503,
+          'service_unavailable',
+          'Class review synthesis service is unavailable.',
+        )
+      })
+    })
+  })
   app.use(cors({
     origin: options.allowedOrigin ?? 'http://127.0.0.1:5173',
     allowedHeaders: ['Content-Type', 'X-Grading-Request-Id'],
@@ -557,7 +731,11 @@ export function createServer(options: CreateServerOptions = {}) {
     response.json({
       ok: true,
       service: 'grading-gateway',
-      runtime: safeRuntimeSnapshot(options.runtimeConfig, memoryExecution?.admission),
+      runtime: safeRuntimeSnapshot(
+        options.runtimeConfig,
+        memoryExecution?.admission,
+        classReviewInvariant,
+      ),
     })
   })
   app.post('/tasks/material-context', captureRouteReceipt, taskMaterialUploadBoundary, async (request, response) => {

@@ -30,6 +30,7 @@ function runtimeConfig(
     admission: { hardLimit: 4 },
     registry: { terminalTtlMs: 86_400_000, maxEntries: 2_000 },
     retry: { maxProviderAttempts: 2, maxRateLimitRequeues: 5, baseMs: 2_000, capMs: 60_000, pauseAfterMs: 900_000 },
+    classReviewSynthesis: { mode: 'disabled' },
     kimi: {
       apiBase: 'https://api.moonshot.cn/v1', model: 'kimi-k3', reasoningEffort: 'low',
       promptCacheSecret: essayPromptProfile === 'optimized-v1' ? 'test-only-cache-secret-at-least-32-bytes' : '',

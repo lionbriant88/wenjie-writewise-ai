@@ -1,12 +1,19 @@
 import 'dotenv/config'
 import { parseGatewayRuntimeConfig } from './gatewayRuntimeConfig.js'
+import { PRODUCTION_CLASS_REVIEW_FRAMING_CALIBRATION } from './classReviewSynthesis/framingCalibrations.js'
+import { ClassReviewRuntimeInvariant } from './classReviewSynthesis/runtimeInvariant.js'
+import { createClassReviewSynthesisProviderForRuntime } from './classReviewSynthesis/service.js'
 import { createSafeProviderMetricStderrSink, createProviderTelemetryRecorder } from './providerTelemetry.js'
 import { getMultimodalProvider } from './providers/index.js'
 import { createSafeDiagnosticStderrSink } from './safeDiagnostics.js'
 import { createGatewayExecutionServices, createServer } from './server.js'
 
-const runtimeConfig = parseGatewayRuntimeConfig(process.env)
-const kimiApiKey = process.env.KIMI_API_KEY
+const runtimeConfig = parseGatewayRuntimeConfig(process.env, {
+  classReviewFramingCalibration: PRODUCTION_CLASS_REVIEW_FRAMING_CALIBRATION,
+})
+const kimiApiKey = runtimeConfig.classReviewSynthesis.mode === 'kimi'
+  ? runtimeConfig.classReviewSynthesis.apiKey
+  : process.env.KIMI_API_KEY
 const host = process.env.HOST ?? '127.0.0.1'
 const port = Number.parseInt(process.env.PORT ?? '8790', 10)
 const onDiagnostic = createSafeDiagnosticStderrSink(
@@ -20,6 +27,8 @@ const providerTelemetry = createProviderTelemetryRecorder({
   ),
 })
 const multimodalProvider = getMultimodalProvider(runtimeConfig, { apiKey: kimiApiKey })
+const classReviewProvider = createClassReviewSynthesisProviderForRuntime(runtimeConfig)
+const classReviewRuntimeInvariant = new ClassReviewRuntimeInvariant()
 const monotonicNow = performance.now.bind(performance)
 const executionServices = runtimeConfig.executionRegistry === 'memory-v1'
   ? createGatewayExecutionServices(runtimeConfig, { now: monotonicNow })
@@ -28,6 +37,8 @@ const app = createServer({
   runtimeConfig,
   multimodalProvider,
   providerTelemetry,
+  classReviewRuntimeInvariant,
+  ...(classReviewProvider ? { classReviewProvider } : {}),
   monotonicNow,
   ...(executionServices ? { executionServices } : {}),
   allowedOrigin: process.env.GRADING_ALLOWED_ORIGIN ?? 'http://127.0.0.1:5173',

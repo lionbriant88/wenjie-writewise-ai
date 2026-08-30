@@ -151,6 +151,7 @@ function runtimeConfig(options: NormalizedFakeAcceptanceGatewayOptions): Gateway
       capMs: 60_000,
       pauseAfterMs: 900_000,
     },
+    classReviewSynthesis: { mode: 'disabled' },
     kimi: {
       apiBase: 'https://api.moonshot.cn/v1',
       model: 'kimi-k3',

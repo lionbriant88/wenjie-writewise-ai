@@ -1,8 +1,10 @@
+import { readFileSync } from 'node:fs'
 import request from 'supertest'
 import { describe, expect, it } from 'vitest'
 import {
   createGatewayExecutionServices,
   createServer,
+  MAX_CLASS_REVIEW_JSON_BYTES,
   MAX_IMAGE_GRADING_METADATA_BYTES,
   type GatewayExecutionTimers,
 } from './server.js'
@@ -14,6 +16,49 @@ import type { GatewayRuntimeConfig } from './gatewayRuntimeConfig.js'
 import { createProviderTelemetryRecorder } from './providerTelemetry.js'
 import { KimiMultimodalProvider } from './providers/kimiMultimodalProvider.js'
 import { createKimiTransport, type KimiCompletionInput, type KimiTransport } from './providers/kimiTransport.js'
+import type { ClassReviewSynthesisProvider } from './providers/classReviewSynthesisProviderTypes.js'
+import type { ClassReviewFramingCalibration } from './classReviewSynthesis/framingCalibrations.js'
+import type { ClassReviewProviderOutputV1 } from './classReviewSynthesis/types.js'
+
+const classReviewFixture = JSON.parse(readFileSync(
+  new URL('../../test-fixtures/class-review/synthesis-contracts.json', import.meta.url),
+  'utf8',
+)) as {
+  requests: { withGroups: Record<string, unknown> }
+  results: { succeeded: Record<string, unknown> & { output: ClassReviewProviderOutputV1 } }
+}
+const CLASS_REVIEW_TOKEN = 'class-review-service-token-0123456789'
+const classReviewCalibration: ClassReviewFramingCalibration = {
+  apiBase: 'https://api.moonshot.cn/v1', model: 'kimi-k3', reasoningEffort: 'low',
+  policyVersion: 'class-review-policy-v1', schemaVersion: 'kimi-class-review-output-v1',
+  projectionVersion: 'class-review-projection-v1', budgetVersion: 'class-review-prompt-budget-v1',
+  wireSerializationVersion: 'class-review-wire-serialization-v1', framingTokens: 512,
+}
+
+function classReviewObservation(id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa') {
+  return {
+    attemptDiagnosticId: id,
+    finishReason: 'stop' as const,
+    usage: {
+      promptTokens: { status: 'known' as const, value: 100 },
+      completionTokens: { status: 'known' as const, value: 50 },
+      totalTokens: { status: 'known' as const, value: 150 },
+      cachedTokens: { status: 'unknown' as const, reason: 'absent' as const },
+    },
+    providerElapsedMs: 2,
+  }
+}
+
+function fakeClassReviewProvider(
+  implementation?: ClassReviewSynthesisProvider['synthesize'],
+): ClassReviewSynthesisProvider {
+  return {
+    synthesize: implementation ?? (async () => ({
+      value: classReviewFixture.results.succeeded.output,
+      attempts: [classReviewObservation()],
+    })),
+  }
+}
 
 interface RawMultimodalProvider {
   generateMaterialContext(input: Parameters<MultimodalProvider['generateMaterialContext']>[0]): Promise<TaskMaterialContextV1>
@@ -87,11 +132,22 @@ function legacyRuntimeConfig(): GatewayRuntimeConfig {
     deadlines: { httpMs: 360_000, providerFinalMs: 420_000, settlementGraceMs: 30_000 },
     admission: { hardLimit: 4 }, registry: { terminalTtlMs: 86_400_000, maxEntries: 2_000 },
     retry: { maxProviderAttempts: 2, maxRateLimitRequeues: 5, baseMs: 2_000, capMs: 60_000, pauseAfterMs: 900_000 },
+    classReviewSynthesis: { mode: 'disabled' },
     kimi: {
       apiBase: 'https://api.moonshot.cn/v1', model: 'kimi-k3', reasoningEffort: 'low', promptCacheSecret: '',
       stageBudgets: { material_context: 16_384, rubric_generation: 16_384, essay_grading_images: 16_384, essay_regrading_text: 16_384 },
     },
   }
+}
+
+function fakeClassReviewRuntimeConfig(): GatewayRuntimeConfig {
+  return memoryRuntimeConfig({
+    classReviewSynthesis: {
+      mode: 'fake',
+      serviceToken: CLASS_REVIEW_TOKEN,
+      maxCompletionTokens: 3_072,
+    },
+  })
 }
 
 function memoryRuntimeConfig(overrides: Partial<GatewayRuntimeConfig> = {}): GatewayRuntimeConfig {
@@ -1145,10 +1201,25 @@ describe('grading gateway server boundary', () => {
         stageBudgets: { material_context: 16_384, rubric_generation: 16_384, essay_grading_images: 16_384, essay_regrading_text: 16_384 },
         hardLimit: 4,
         modes: { rubricStrategy: 'two-pass-legacy', essayPromptProfile: 'legacy', executionRegistry: 'direct-legacy' },
+        classReviewSynthesis: { mode: 'disabled' },
         admission: { managed: false },
       },
     })
     expect(JSON.stringify(response.body)).not.toMatch(/key|secret|requestId|essayId|taskId|usage|token|content|digest/i)
+  })
+
+  it('exposes only safe class-review mode, budget and invariant status in health', async () => {
+    const response = await request(createServer({
+      runtimeConfig: fakeClassReviewRuntimeConfig(),
+      classReviewProvider: fakeClassReviewProvider(),
+      classReviewFramingCalibration: classReviewCalibration,
+    })).get('/health').expect(200)
+    expect(response.body.runtime.classReviewSynthesis).toEqual({
+      mode: 'fake', maxCompletionTokens: 3_072, promptInvariant: 'not_applicable',
+    })
+    expect(JSON.stringify(response.body.runtime.classReviewSynthesis)).not.toMatch(
+      /serviceToken|secret|apiKey|calibration/i,
+    )
   })
 
   it('reports the live redacted memory admission state and exposes no anonymous resume route', async () => {
@@ -1707,6 +1778,258 @@ describe('grading gateway server boundary', () => {
       .post('/grading/grade')
       .send({ requestId: 'deprecated-request' })
       .expect(404)
+  })
+
+  it('enforces enabled/disabled class-review Provider and calibration construction invariants', () => {
+    const enabled = fakeClassReviewRuntimeConfig()
+    const classProvider = fakeClassReviewProvider()
+    expect(() => createServer({ runtimeConfig: enabled })).toThrow(/class review/i)
+    expect(() => createServer({
+      runtimeConfig: enabled,
+      classReviewProvider: classProvider,
+    })).toThrow(/class review/i)
+    expect(() => createServer({
+      runtimeConfig: legacyRuntimeConfig(),
+      classReviewProvider: classProvider,
+      classReviewFramingCalibration: classReviewCalibration,
+    })).toThrow(/class review/i)
+  })
+
+  it('reserves the disabled exact path as the same fixed no-CORS 404 for every method and header', async () => {
+    const app = createServer({
+      runtimeConfig: legacyRuntimeConfig(),
+      allowedOrigin: 'http://127.0.0.1:5173',
+    })
+    for (const invoke of [
+      () => request(app).get('/grading/class-review-syntheses'),
+      () => request(app).post('/grading/class-review-syntheses')
+        .set('Origin', 'http://127.0.0.1:5173')
+        .set('Authorization', `Bearer ${CLASS_REVIEW_TOKEN}`)
+        .send(classReviewFixture.requests.withGroups),
+      () => request(app).options('/grading/class-review-syntheses')
+        .set('Origin', 'http://127.0.0.1:5173')
+        .set('Access-Control-Request-Method', 'POST'),
+    ]) {
+      const response = await invoke().expect(404)
+      expect(response.body).toEqual({ error: { code: 'not_found', message: 'Not found.' } })
+      expect(response.headers).not.toHaveProperty('access-control-allow-origin')
+      expect(response.headers).not.toHaveProperty('access-control-allow-headers')
+    }
+  })
+
+  it('orders enabled Origin, method, bearer and bounded JSON guards before global browser CORS', async () => {
+    let providerCalls = 0
+    const diagnostics: unknown[] = []
+    const app = createServer({
+      runtimeConfig: fakeClassReviewRuntimeConfig(),
+      classReviewProvider: fakeClassReviewProvider(async () => {
+        providerCalls += 1
+        return {
+          value: classReviewFixture.results.succeeded.output,
+          attempts: [classReviewObservation()],
+        }
+      }),
+      classReviewFramingCalibration: classReviewCalibration,
+      allowedOrigin: 'http://127.0.0.1:5173',
+      onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+    })
+
+    for (const origin of ['', 'http://127.0.0.1:5173']) {
+      const forbidden = await request(app).post('/grading/class-review-syntheses')
+        .set('Origin', origin)
+        .set('Authorization', `Bearer ${CLASS_REVIEW_TOKEN}`)
+        .set('Content-Type', 'application/json')
+        .send('{"PRIVATE-BODY-MARKER":')
+        .expect(403)
+      expect(forbidden.body).toEqual({
+        error: {
+          code: 'browser_origin_forbidden',
+          message: 'Browser-origin requests are not allowed.',
+        },
+      })
+      expect(forbidden.headers).not.toHaveProperty('access-control-allow-origin')
+      expect(JSON.stringify(forbidden.body)).not.toMatch(/PRIVATE|TOKEN|BODY/)
+    }
+
+    const wrongMethod = await request(app).get('/grading/class-review-syntheses')
+      .set('Authorization', `Bearer ${CLASS_REVIEW_TOKEN}`)
+      .expect(404)
+    expect(wrongMethod.body).toEqual({ error: { code: 'not_found', message: 'Not found.' } })
+    expect(wrongMethod.headers).not.toHaveProperty('access-control-allow-origin')
+
+    for (const authorization of [undefined, 'Bearer wrong-token-that-is-at-least-32-bytes', `Bearer  ${CLASS_REVIEW_TOKEN}`]) {
+      let call = request(app).post('/grading/class-review-syntheses')
+        .send({ privateBody: 'PRIVATE-AUTH-BODY-MARKER' })
+      if (authorization !== undefined) call = call.set('Authorization', authorization)
+      const unauthorized = await call.expect(401)
+      expect(unauthorized.headers['www-authenticate']).toBe('Bearer')
+      expect(unauthorized.body).toEqual({
+        error: {
+          code: 'service_auth_required',
+          message: 'Internal service authentication failed.',
+        },
+      })
+      expect(unauthorized.headers).not.toHaveProperty('access-control-allow-origin')
+      expect(JSON.stringify(unauthorized.body)).not.toMatch(/PRIVATE|TOKEN|BODY/)
+    }
+
+    const malformed = await request(app).post('/grading/class-review-syntheses')
+      .set('Authorization', `Bearer ${CLASS_REVIEW_TOKEN}`)
+      .set('Content-Type', 'application/json')
+      .send('{"PRIVATE-JSON-MARKER":')
+      .expect(400)
+    expect(malformed.body).toEqual({
+      error: { code: 'invalid_json', message: 'Request body must be valid JSON.' },
+    })
+    expect(JSON.stringify(malformed.body)).not.toMatch(/PRIVATE|JSON-MARKER/)
+
+    const prefix = '{"padding":"'
+    const suffix = '"}'
+    const atLimitBody = `${prefix}${'P'.repeat(MAX_CLASS_REVIEW_JSON_BYTES - prefix.length - suffix.length)}${suffix}`
+    expect(Buffer.byteLength(atLimitBody, 'utf8')).toBe(MAX_CLASS_REVIEW_JSON_BYTES)
+    const atLimit = await request(app).post('/grading/class-review-syntheses')
+      .set('Authorization', `Bearer ${CLASS_REVIEW_TOKEN}`)
+      .set('Content-Type', 'application/json')
+      .send(atLimitBody)
+      .expect(400)
+    expect(atLimit.body).toEqual({
+      error: { code: 'invalid_request', message: 'Class review synthesis request is invalid.' },
+    })
+    expect(atLimit.headers).not.toHaveProperty('access-control-allow-origin')
+
+    const callerCacheKey = await request(app).post('/grading/class-review-syntheses')
+      .set('Authorization', `Bearer ${CLASS_REVIEW_TOKEN}`)
+      .send({
+        ...(classReviewFixture.requests.withGroups as Record<string, unknown>),
+        promptCacheKey: 'PRIVATE-CALLER-CACHE-KEY',
+      })
+      .expect(400)
+    expect(callerCacheKey.body).toEqual({
+      error: { code: 'invalid_request', message: 'Class review synthesis request is invalid.' },
+    })
+    expect(JSON.stringify(callerCacheKey.body)).not.toMatch(/PRIVATE|CACHE|KEY/)
+
+    const aboveLimit = await request(app).post('/grading/class-review-syntheses')
+      .set('Authorization', `Bearer ${CLASS_REVIEW_TOKEN}`)
+      .set('Content-Type', 'application/json')
+      .send(`${atLimitBody}P`)
+      .expect(413)
+    expect(aboveLimit.body).toEqual({
+      error: { code: 'request_too_large', message: 'Class review synthesis request is too large.' },
+    })
+    expect(aboveLimit.headers).not.toHaveProperty('access-control-allow-origin')
+    expect(JSON.stringify(aboveLimit.body)).not.toMatch(/PRIVATE|padding|P{8}/)
+    expect(providerCalls).toBe(0)
+    expect(diagnostics).toEqual([])
+
+    const publicCors = await request(app).get('/health')
+      .set('Origin', 'http://127.0.0.1:5173')
+      .expect(200)
+    expect(publicCors.headers['access-control-allow-origin']).toBe('http://127.0.0.1:5173')
+  })
+
+  it('returns the shared strict success fixture and remains stateless across repeated requestIds', async () => {
+    let providerCalls = 0
+    const runtimeConfig = fakeClassReviewRuntimeConfig()
+    const executionServices = createGatewayExecutionServices(runtimeConfig)
+    const app = createServer({
+      runtimeConfig,
+      executionServices,
+      classReviewProvider: fakeClassReviewProvider(async () => {
+        providerCalls += 1
+        return {
+          value: classReviewFixture.results.succeeded.output,
+          attempts: [classReviewObservation(`bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb${providerCalls}`)],
+        }
+      }),
+      classReviewFramingCalibration: classReviewCalibration,
+    })
+    for (let index = 0; index < 2; index += 1) {
+      const response = await request(app).post('/grading/class-review-syntheses')
+        .set('Authorization', `Bearer ${CLASS_REVIEW_TOKEN}`)
+        .send(classReviewFixture.requests.withGroups)
+        .expect(200)
+      expect(response.body).toEqual({
+        ...classReviewFixture.results.succeeded,
+        timingsMs: response.body.timingsMs,
+      })
+    }
+    expect(providerCalls).toBe(2)
+    expect(executionServices.registry.inspect('request.groups')).toBeNull()
+  })
+
+  it('shares the exact essay admission and returns target-busy delay without starting class Provider', async () => {
+    const runtimeConfig = fakeClassReviewRuntimeConfig()
+    const executionServices = createGatewayExecutionServices(runtimeConfig)
+    const pendingEssay = deferred<ReturnType<typeof strictMultimodalPayload>>()
+    let activeCalls = 0
+    let maximumActive = 0
+    let classCalls = 0
+    const multimodalProvider = fakeMultimodalProvider({
+      async gradeEssay() {
+        activeCalls += 1
+        maximumActive = Math.max(maximumActive, activeCalls)
+        const value = await pendingEssay.promise
+        activeCalls -= 1
+        return value
+      },
+    })
+    const app = createServer({
+      runtimeConfig,
+      executionServices,
+      multimodalProvider,
+      classReviewProvider: fakeClassReviewProvider(async () => {
+        classCalls += 1
+        activeCalls += 1
+        maximumActive = Math.max(maximumActive, activeCalls)
+        activeCalls -= 1
+        return {
+          value: classReviewFixture.results.succeeded.output,
+          attempts: [classReviewObservation()],
+        }
+      }),
+      classReviewFramingCalibration: classReviewCalibration,
+    })
+    const essay = Promise.resolve(request(app).post('/grading/grade-images')
+      .field('metadata', JSON.stringify(imageGradeMetadata('shared-essay-request'))))
+    await waitFor(() => activeCalls === 1)
+
+    const blocked = await request(app).post('/grading/class-review-syntheses')
+      .set('Authorization', `Bearer ${CLASS_REVIEW_TOKEN}`)
+      .send(classReviewFixture.requests.withGroups)
+      .expect(429)
+    expect(blocked.body).toMatchObject({
+      status: 'failed', safeFailureCode: 'provider_rate_limited', retryable: true,
+      retryAfterMs: 1_000, completionDisposition: 'not_started',
+    })
+    expect(blocked.headers['retry-after']).toBe('1')
+    expect(classCalls).toBe(0)
+    expect(maximumActive).toBe(1)
+
+    pendingEssay.resolve(strictMultimodalPayload('Teacher-confirmed synthetic text.'))
+    await essay
+  })
+
+  it('projects confirmed-zero Provider 429 milliseconds into one truthful ceil-second header', async () => {
+    const app = createServer({
+      runtimeConfig: fakeClassReviewRuntimeConfig(),
+      classReviewProvider: fakeClassReviewProvider(async () => {
+        throw new GradingProviderError('provider_rate_limited', 'PRIVATE-RATE-LIMIT', true, undefined, {
+          termination: 'confirmed', retryAfterMs: 1_001,
+        })
+      }),
+      classReviewFramingCalibration: classReviewCalibration,
+    })
+    const response = await request(app).post('/grading/class-review-syntheses')
+      .set('Authorization', `Bearer ${CLASS_REVIEW_TOKEN}`)
+      .send(classReviewFixture.requests.withGroups)
+      .expect(429)
+    expect(response.body).toMatchObject({
+      status: 'failed', safeFailureCode: 'provider_rate_limited', retryable: true,
+      retryAfterMs: 1_001, completionDisposition: 'confirmed_zero_completion',
+    })
+    expect(response.headers['retry-after']).toBe('2')
+    expect(JSON.stringify(response.body)).not.toMatch(/PRIVATE|RATE-LIMIT/)
   })
 
   it('allows the configured local origin and trace header in preflight', async () => {
