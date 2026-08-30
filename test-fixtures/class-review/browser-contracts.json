@@ -5,20 +5,98 @@
     "apply_candidate": { "contractVersion": "class-review-generation-command-v1", "intent": "apply_candidate", "generationId": "gen.apply", "expectedTaskRevision": 4, "expectedReportRevision": 2, "expectedGenerationRevision": 1, "expectedAiTextEditRevision": 3 },
     "discard_candidate": { "contractVersion": "class-review-generation-command-v1", "intent": "discard_candidate", "generationId": "gen.discard", "expectedGenerationRevision": 1 }
   },
+  "actionableGenerations": {
+    "queued": { "generationId": "gen.queued", "generationRevision": 1, "state": "queued", "createdAt": "2026-08-29T00:00:00Z" },
+    "running": { "generationId": "gen.running", "generationRevision": 2, "state": "running", "createdAt": "2026-08-29T00:00:00Z" },
+    "result_unknown": { "generationId": "gen.unknown", "generationRevision": 3, "state": "result_unknown", "safeFailureCode": "provider_result_unknown", "createdAt": "2026-08-29T00:00:00Z" },
+    "succeeded_unapplied": { "generationId": "gen.unapplied", "generationRevision": 4, "state": "succeeded_unapplied", "safeUnappliedReason": "merge_conflict", "createdAt": "2026-08-29T00:00:00Z", "completedAt": "2026-08-29T00:01:00Z" }
+  },
   "statuses": {
     "queued": { "contractVersion": "class-review-generation-status-v1", "generationId": "gen.queued", "generationRevision": 1, "includedEssayCount": 3, "issueEligibleEssayCount": 2, "totalEssayCount": 4, "createdAt": "2026-08-29T00:00:00Z", "state": "queued" },
     "running": { "contractVersion": "class-review-generation-status-v1", "generationId": "gen.running", "generationRevision": 1, "includedEssayCount": 3, "issueEligibleEssayCount": 2, "totalEssayCount": 4, "createdAt": "2026-08-29T00:00:00Z", "state": "running" },
     "result_unknown": { "contractVersion": "class-review-generation-status-v1", "generationId": "gen.unknown", "generationRevision": 1, "includedEssayCount": 3, "issueEligibleEssayCount": 2, "totalEssayCount": 4, "createdAt": "2026-08-29T00:00:00Z", "state": "result_unknown", "safeFailureCode": "provider_result_unknown" },
-    "succeeded": { "contractVersion": "class-review-generation-status-v1", "generationId": "gen.success", "generationRevision": 1, "includedEssayCount": 3, "issueEligibleEssayCount": 2, "totalEssayCount": 4, "createdAt": "2026-08-29T00:00:00Z", "state": "succeeded", "semanticCoverage": { "projectedGroupCount": 1, "eligibleGroupCount": 1, "groupCoverage": 1, "projectedDistinctEssaySupportSum": 2, "eligibleDistinctEssaySupportSum": 2, "supportWeightedCoverage": 1, "projectedOccurrenceSum": 2, "eligibleOccurrenceSum": 2, "occurrenceWeightedCoverage": 1 }, "completedAt": "2026-08-29T00:01:00Z" },
-    "succeeded_unapplied": { "contractVersion": "class-review-generation-status-v1", "generationId": "gen.unapplied", "generationRevision": 1, "includedEssayCount": 3, "issueEligibleEssayCount": 2, "totalEssayCount": 4, "createdAt": "2026-08-29T00:00:00Z", "state": "succeeded_unapplied", "semanticCoverage": { "projectedGroupCount": 1, "eligibleGroupCount": 1, "groupCoverage": 1, "projectedDistinctEssaySupportSum": 2, "eligibleDistinctEssaySupportSum": 2, "supportWeightedCoverage": 1, "projectedOccurrenceSum": 2, "eligibleOccurrenceSum": 2, "occurrenceWeightedCoverage": 1 }, "safeUnappliedReason": "ai_text_changed", "completedAt": "2026-08-29T00:01:00Z" },
+    "succeeded": { "contractVersion": "class-review-generation-status-v1", "generationId": "gen.success", "generationRevision": 1, "includedEssayCount": 3, "issueEligibleEssayCount": 2, "totalEssayCount": 4, "createdAt": "2026-08-29T00:00:00Z", "state": "succeeded", "semanticCoverage": { "projectedGroupCount": 1, "eligibleGroupCount": 2, "groupCoverage": 0.5, "projectedDistinctEssaySupportSum": 2, "eligibleDistinctEssaySupportSum": 4, "supportWeightedCoverage": 0.5, "projectedOccurrenceSum": 3, "eligibleOccurrenceSum": 6, "occurrenceWeightedCoverage": 0.5 }, "completedAt": "2026-08-29T00:01:00Z" },
+    "succeeded_unapplied": { "contractVersion": "class-review-generation-status-v1", "generationId": "gen.unapplied", "generationRevision": 1, "includedEssayCount": 3, "issueEligibleEssayCount": 2, "totalEssayCount": 4, "createdAt": "2026-08-29T00:00:00Z", "state": "succeeded_unapplied", "semanticCoverage": { "projectedGroupCount": 1, "eligibleGroupCount": 2, "groupCoverage": 0.5, "projectedDistinctEssaySupportSum": 2, "eligibleDistinctEssaySupportSum": 4, "supportWeightedCoverage": 0.5, "projectedOccurrenceSum": 3, "eligibleOccurrenceSum": 6, "occurrenceWeightedCoverage": 0.5 }, "safeUnappliedReason": "ai_text_changed", "completedAt": "2026-08-29T00:01:00Z" },
     "failed": { "contractVersion": "class-review-generation-status-v1", "generationId": "gen.failed", "generationRevision": 1, "includedEssayCount": 3, "issueEligibleEssayCount": 2, "totalEssayCount": 4, "createdAt": "2026-08-29T00:00:00Z", "state": "failed", "safeFailureCode": "provider_timeout", "completedAt": "2026-08-29T00:01:00Z" },
     "discarded": { "contractVersion": "class-review-generation-status-v1", "generationId": "gen.discarded", "generationRevision": 1, "includedEssayCount": 3, "issueEligibleEssayCount": 2, "totalEssayCount": 4, "createdAt": "2026-08-29T00:00:00Z", "state": "discarded", "completedAt": "2026-08-29T00:01:00Z" },
     "invalidated": { "contractVersion": "class-review-generation-status-v1", "generationId": "gen.invalidated", "generationRevision": 1, "includedEssayCount": 3, "issueEligibleEssayCount": 2, "totalEssayCount": 4, "createdAt": "2026-08-29T00:00:00Z", "state": "invalidated", "safeFailureCode": "class_review_task_invalidated", "completedAt": "2026-08-29T00:01:00Z" }
   },
   "reports": {
-    "none": { "contractVersion": "class-review-report-v1", "taskRevision": 4, "reportRevision": null, "aiTextEditRevision": 0, "currentGeneration": null, "statistics": { "totalEssayCount": 4, "includedEssayCount": 0, "issueEligibleEssayCount": 0, "excludedEssayCount": 4, "issueCoverageRate": 1, "fullScore": 15, "scoreSummary": null, "scoreBands": [], "dimensions": [] }, "issueBlocks": [], "issueOrder": [], "clearSpellingItems": [], "selectedMaterials": [], "workspaceState": "none" },
-    "draft": { "contractVersion": "class-review-report-v1", "taskRevision": 4, "reportRevision": 2, "aiTextEditRevision": 0, "currentGeneration": { "generationId": "gen.queued", "generationRevision": 1, "state": "queued", "createdAt": "2026-08-29T00:00:00Z" }, "statistics": { "totalEssayCount": 4, "includedEssayCount": 3, "issueEligibleEssayCount": 2, "excludedEssayCount": 1, "issueCoverageRate": 0.6666666666666666, "fullScore": 15, "scoreSummary": { "averageScore": 10, "highestScore": 12, "lowestScore": 8 }, "scoreBands": [], "dimensions": [] }, "issueBlocks": [], "issueOrder": [], "clearSpellingItems": [], "selectedMaterials": [], "workspaceState": "draft" },
-    "ai_removed": { "contractVersion": "class-review-report-v1", "taskRevision": 4, "reportRevision": 3, "aiTextEditRevision": 0, "currentGeneration": null, "statistics": { "totalEssayCount": 4, "includedEssayCount": 3, "issueEligibleEssayCount": 2, "excludedEssayCount": 1, "issueCoverageRate": 0.6666666666666666, "fullScore": 15, "scoreSummary": { "averageScore": 10, "highestScore": 12, "lowestScore": 8 }, "scoreBands": [], "dimensions": [] }, "issueBlocks": [], "issueOrder": [], "clearSpellingItems": [], "selectedMaterials": [], "workspaceState": "ai_removed" },
-    "ai_available": { "contractVersion": "class-review-report-v1", "taskRevision": 4, "reportRevision": 4, "aiTextEditRevision": 1, "currentGeneration": { "generationId": "gen.unapplied", "generationRevision": 1, "state": "succeeded_unapplied", "safeUnappliedReason": "merge_conflict", "createdAt": "2026-08-29T00:00:00Z", "completedAt": "2026-08-29T00:01:00Z" }, "statistics": { "totalEssayCount": 4, "includedEssayCount": 3, "issueEligibleEssayCount": 2, "excludedEssayCount": 1, "issueCoverageRate": 0.6666666666666666, "fullScore": 15, "scoreSummary": { "averageScore": 10, "highestScore": 12, "lowestScore": 8 }, "scoreBands": [], "dimensions": [] }, "issueBlocks": [], "issueOrder": [], "clearSpellingItems": [], "selectedMaterials": [], "workspaceState": "ai_available", "appliedGenerationId": "gen.applied", "generatedAt": "2026-08-29T00:01:00Z", "snapshotMetadata": { "includedEssayCount": 3, "issueEligibleEssayCount": 2, "totalEssayCount": 4, "semanticCoverage": { "projectedGroupCount": 1, "eligibleGroupCount": 1, "groupCoverage": 1, "projectedDistinctEssaySupportSum": 2, "eligibleDistinctEssaySupportSum": 2, "supportWeightedCoverage": 1, "projectedOccurrenceSum": 2, "eligibleOccurrenceSum": 2, "occurrenceWeightedCoverage": 1 } }, "aiSummary": { "overallComment": "Synthetic summary.", "strengths": [{ "title": "Clarity", "detail": "Most responses are clear.", "dimensionIds": [] }], "learningRecommendations": [{ "title": "Practice", "action": "Review linking words." }] } }
+    "none": {
+      "contractVersion": "class-review-report-v1", "taskRevision": 4, "reportRevision": null, "aiTextEditRevision": 0, "currentGeneration": null,
+      "statistics": { "totalEssayCount": 4, "includedEssayCount": 0, "issueEligibleEssayCount": 0, "excludedEssayCount": 4, "issueCoverageRate": 1, "fullScore": 15, "scoreSummary": null, "scoreBands": [], "dimensions": [] },
+      "issueBlocks": [], "issueOrder": [], "clearSpellingItems": [], "selectedMaterials": [], "workspaceState": "none"
+    },
+    "draft": {
+      "contractVersion": "class-review-report-v1", "taskRevision": 4, "reportRevision": 2, "aiTextEditRevision": 0,
+      "currentGeneration": { "generationId": "gen.queued", "generationRevision": 1, "state": "queued", "createdAt": "2026-08-29T00:00:00Z" },
+      "statistics": {
+        "totalEssayCount": 4, "includedEssayCount": 3, "issueEligibleEssayCount": 2, "excludedEssayCount": 1, "issueCoverageRate": 0.6666666666666666, "fullScore": 15,
+        "scoreSummary": { "averageScore": 10, "highestScore": 12, "lowestScore": 8 },
+        "scoreBands": [
+          { "bandId": "score.low", "lowerInclusive": 0, "upperInclusive": 7, "essayCount": 1 },
+          { "bandId": "score.high", "lowerInclusive": 8, "upperInclusive": 15, "essayCount": 2 }
+        ],
+        "dimensions": [{ "dimensionId": "language", "name": "Language", "averageScore": 8, "maxScore": 10, "normalizedPerformance": 0.8 }]
+      },
+      "issueBlocks": [{
+        "blockId": "issue.teacher.1", "topicKey": "grammar.subject_verb", "origin": "teacher", "title": "Subject verb agreement",
+        "diagnosis": "A synthetic agreement pattern needs review.", "teachingAction": "Contrast singular and plural forms.", "severity": "medium",
+        "teacherStudentCount": 1, "systemStudentCount": 0, "combinedStudentCount": 1, "occurrenceCount": 1, "supportDenominator": 2,
+        "anonymousExamples": ["Synthetic sentence example."],
+        "evidenceRefs": [{ "evidenceId": "evidence.teacher.1", "selectionOrigin": "teacher_selected", "sourceLocator": "essay.synthetic.1", "sourceResultRevision": 1, "anonymousExample": "Synthetic sentence example." }]
+      }],
+      "issueOrder": ["issue.teacher.1"],
+      "clearSpellingItems": [{ "itemId": "spelling.1", "topicKey": "spelling.definite", "sourceSubtype": "spelling", "originalWord": "recieve", "correctedWord": "receive", "studentCount": 1, "occurrenceCount": 1, "anonymousExample": "A synthetic spelling example." }],
+      "selectedMaterials": [{ "materialId": "material.1", "type": "typical_error", "categoryLabel": "Agreement", "severity": "medium", "needsTeacherReview": false, "originalText": "They goes home.", "revisedText": "They go home.", "diagnosis": "Subject and verb do not agree.", "teachingSuggestion": "Review plural subjects.", "sourceLocator": "essay.synthetic.1" }],
+      "workspaceState": "draft"
+    },
+    "ai_removed": {
+      "contractVersion": "class-review-report-v1", "taskRevision": 4, "reportRevision": 3, "aiTextEditRevision": 0, "currentGeneration": null,
+      "statistics": { "totalEssayCount": 4, "includedEssayCount": 3, "issueEligibleEssayCount": 2, "excludedEssayCount": 1, "issueCoverageRate": 0.6666666666666666, "fullScore": 15, "scoreSummary": { "averageScore": 10, "highestScore": 12, "lowestScore": 8 }, "scoreBands": [], "dimensions": [] },
+      "issueBlocks": [{ "blockId": "issue.teacher.removed", "topicKey": "structure.transition", "origin": "teacher", "title": "Transition", "diagnosis": "A synthetic transition needs review.", "teachingAction": "Practice linking clauses.", "severity": "low", "teacherStudentCount": 1, "systemStudentCount": 0, "combinedStudentCount": 1, "occurrenceCount": 1, "supportDenominator": null, "anonymousExamples": [], "evidenceRefs": [] }],
+      "issueOrder": ["issue.teacher.removed"], "clearSpellingItems": [], "selectedMaterials": [], "workspaceState": "ai_removed"
+    },
+    "ai_available": {
+      "contractVersion": "class-review-report-v1", "taskRevision": 4, "reportRevision": 4, "aiTextEditRevision": 1,
+      "currentGeneration": { "generationId": "gen.unapplied", "generationRevision": 4, "state": "succeeded_unapplied", "safeUnappliedReason": "merge_conflict", "createdAt": "2026-08-29T00:00:00Z", "completedAt": "2026-08-29T00:01:00Z" },
+      "statistics": {
+        "totalEssayCount": 4, "includedEssayCount": 3, "issueEligibleEssayCount": 2, "excludedEssayCount": 1, "issueCoverageRate": 0.6666666666666666, "fullScore": 15,
+        "scoreSummary": { "averageScore": 10, "highestScore": 12, "lowestScore": 8 },
+        "scoreBands": [{ "bandId": "score.all", "lowerInclusive": 0, "upperInclusive": 15, "essayCount": 3 }],
+        "dimensions": [{ "dimensionId": "language", "name": "Language", "averageScore": 8, "maxScore": 10, "normalizedPerformance": 0.8 }]
+      },
+      "issueBlocks": [
+        {
+          "blockId": "issue.ai.1", "topicKey": "grammar.subject_verb", "origin": "ai", "title": "Subject verb agreement",
+          "diagnosis": "A synthetic agreement pattern appears.", "teachingAction": "Contrast singular and plural forms.", "severity": "medium",
+          "teacherStudentCount": 0, "systemStudentCount": 2, "combinedStudentCount": 2, "occurrenceCount": 3, "supportDenominator": 2,
+          "anonymousExamples": ["Synthetic sentence example."],
+          "evidenceRefs": [{ "evidenceId": "evidence.system.1", "selectionOrigin": "system_generation", "sourceLocator": "essay.synthetic.2", "sourceResultRevision": 2, "anonymousExample": "Synthetic sentence example." }]
+        },
+        {
+          "blockId": "issue.teacher.2", "topicKey": "structure.transition", "origin": "teacher", "title": "Transition",
+          "diagnosis": "A teacher selected a synthetic transition.", "teachingAction": "Practice linking clauses.", "severity": "low",
+          "teacherStudentCount": 1, "systemStudentCount": 0, "combinedStudentCount": 1, "occurrenceCount": 1, "supportDenominator": null,
+          "anonymousExamples": [],
+          "evidenceRefs": [{ "evidenceId": "evidence.teacher.2", "selectionOrigin": "teacher_selected", "sourceLocator": "essay.synthetic.3", "sourceResultRevision": 1, "anonymousExample": null }]
+        }
+      ],
+      "issueOrder": ["issue.ai.1", "issue.teacher.2"],
+      "clearSpellingItems": [
+        { "itemId": "spelling.1", "topicKey": "spelling.definite", "sourceSubtype": "word_choice", "originalWord": "filling", "correctedWord": "feeling", "studentCount": 1, "occurrenceCount": 1, "anonymousExample": null },
+        { "itemId": "spelling.2", "topicKey": "spelling.receive", "sourceSubtype": "spelling", "originalWord": "recieve", "correctedWord": "receive", "studentCount": 1, "occurrenceCount": 1, "anonymousExample": null }
+      ],
+      "selectedMaterials": [], "workspaceState": "ai_available", "appliedGenerationId": "gen.applied", "generatedAt": "2026-08-29T00:01:00Z",
+      "snapshotMetadata": {
+        "includedEssayCount": 3, "issueEligibleEssayCount": 2, "totalEssayCount": 4,
+        "semanticCoverage": { "projectedGroupCount": 1, "eligibleGroupCount": 2, "groupCoverage": 0.5, "projectedDistinctEssaySupportSum": 2, "eligibleDistinctEssaySupportSum": 4, "supportWeightedCoverage": 0.5, "projectedOccurrenceSum": 3, "eligibleOccurrenceSum": 6, "occurrenceWeightedCoverage": 0.5 }
+      },
+      "aiSummary": {
+        "overallComment": "Synthetic summary.",
+        "strengths": [{ "title": "Clarity", "detail": "Most synthetic responses are clear.", "dimensionIds": ["language"] }],
+        "learningRecommendations": [{ "title": "Practice", "action": "Review linking words." }]
+      }
+    }
   }
 }
