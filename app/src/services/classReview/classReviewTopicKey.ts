@@ -95,6 +95,20 @@ function validateTaskScope(value: string): void {
   if (!/^scope_v1_[0-9a-f]{32,64}$/.test(value)) return fail('topic_input_invalid')
 }
 
+function isClaimedTopicKey(
+  value: unknown,
+  shortenedKey: string,
+  collisionSuffix: string,
+): value is string {
+  if (typeof value !== 'string' || !isWellFormedAndBounded(value, MAX_OPAQUE_LENGTH)) {
+    return false
+  }
+  if (value === shortenedKey || value === `${shortenedKey}.${collisionSuffix}`) return true
+  const collisionPrefix = `${shortenedKey}.${collisionSuffix}.`
+  if (!value.startsWith(collisionPrefix)) return false
+  return /^(?:[2-9]|[1-9]\d+)$/u.test(value.slice(collisionPrefix.length))
+}
+
 function compareCodePoints(left: string, right: string): number {
   return left === right ? 0 : left < right ? -1 : 1
 }
@@ -158,20 +172,24 @@ async function deriveIdentity(
     await safeDigest(hmac, 'topic-collision-suffix-v1', digestBytes),
   )
   const shortenedKey = `tk1.${publicKeyHex.slice(0, 16)}`
+  const collisionSuffix = suffixHex.slice(0, 12)
   let key: string
   try {
-    key = await hmac.registry.claim({
+    const claimedKey = await hmac.registry.claim({
       taskScope,
       keyVersion: KEY_VERSION,
       kind,
       shortenedKey,
       fingerprintDigest,
-      collisionSuffix: suffixHex.slice(0, 12),
+      collisionSuffix,
     })
+    if (!isClaimedTopicKey(claimedKey, shortenedKey, collisionSuffix)) {
+      return fail('topic_registry_failed')
+    }
+    key = claimedKey
   } catch {
     return fail('topic_registry_failed')
   }
-  validateOpaque(key)
   return { kind, keyVersion: KEY_VERSION, taskScope, key, fingerprintDigest }
 }
 

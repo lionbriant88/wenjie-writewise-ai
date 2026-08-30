@@ -56,15 +56,27 @@ export type RedactionResult =
 
 type ScanResult = 'ok' | 'malformed' | 'too_long'
 
-const EMAIL = /[\p{L}\p{N}][\p{L}\p{N}._%+-]{0,63}@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/giu
-const URL = /(?:https?:\/\/|www\.)[^\s<>{}[\]"']+/giu
-const PHONE = /(?:\+?86[\s-]?)?1[3-9]\d(?:[\s-]?\d){8}/gu
-const LABELLED_ID = /(?:学号|学生编号|身份证号|证件号|student\s*(?:id|number)|identity\s*(?:id|number))\s*[:：]?\s*[A-Za-z0-9-]{4,32}/giu
-const SOCIAL_ACCOUNT = /(?:微信|wechat|qq|社交账号|账号|account)\s*[:：]?\s*@?[A-Za-z0-9_.-]{3,64}/giu
-const SOCIAL_HANDLE = /@[A-Za-z][A-Za-z0-9_.-]{2,63}/gu
-const CONTINUOUS_DIGITS = /\d{6,}/gu
+const EMAIL_CANDIDATE = /[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/giu
+const URL_CANDIDATE = /(?:https?:\/\/|www\.)[^\s<>{}[\]"']+/giu
+const PHONE_CANDIDATE = /(?:\+?86[\s-]?)?1[3-9]\d(?:[\s-]?\d){8,}/gu
+const LABELLED_ID_CANDIDATE = /(?:学号|学生编号|身份证号|证件号|student\s*(?:id|number)|identity\s*(?:id|number))\s*[:：]?\s*[A-Za-z0-9-]+/giu
+const SOCIAL_ACCOUNT_CANDIDATE = /(?:微信|wechat|qq|社交账号|账号|account)\s*[:：]?\s*@?[\p{L}\p{N}_.+-]+(?:@[\p{L}\p{N}.-]+)?/giu
+const SOCIAL_HANDLE_CANDIDATE = /@[A-Za-z][A-Za-z0-9_.-]+/gu
+const CONTINUOUS_DIGITS_CANDIDATE = /\d{6,}/gu
 const FORMAT_CONTROL = /\p{Cf}/u
 const LETTER_OR_NUMBER = /[\p{L}\p{N}]/u
+const LATIN_SCRIPT = /\p{Script=Latin}/u
+const COMBINING_MARK = /\p{M}/u
+
+interface StructuredSpan {
+  start: number
+  end: number
+}
+
+interface StructuredScan {
+  spans: StructuredSpan[]
+  overlong: boolean
+}
 
 function omitted(reason: RedactionOmissionReason): RedactionResult {
   return { status: 'omitted', reason, redactionVersion: REDACTION_VERSION }
@@ -96,17 +108,25 @@ function normalizeText(value: string): string {
 }
 
 function hasPromptInjection(value: string): boolean {
-  const normalized = asciiLower(value)
-  return /ignore\s+(?:all\s+)?previous\s+instructions?/u.test(normalized)
-    || /(?:reveal|show|print|output)\s+(?:the\s+)?system\s+prompt/u.test(normalized)
+  const normalized = asciiLower(normalizeText(value.replaceAll(PLACEHOLDER, ' ')))
+  return /(?:ignore|disregard|forget|override|bypass)\s+(?:(?:the\s+)?(?:previous|prior|above|all)\s+){1,2}(?:instructions?|prompts?|rules?)/u.test(normalized)
+    || /(?:reveal|disclose|show|print|leak|output)\s+(?:the\s+)?(?:hidden|system|developer)(?:\s+(?:hidden|system|developer))*\s+(?:prompts?|messages?|instructions?)/u.test(normalized)
+    || /you\s+are\s+now\s+(?:the\s+)?(?:system|developer)(?:\s+role)?/u.test(normalized)
+    || /act\s+as\s+(?:the\s+)?(?:system|developer)(?:\s+role)?/u.test(normalized)
+    || /switch\s+to\s+(?:the\s+)?(?:system|developer)(?:\s+role)?/u.test(normalized)
     || /you\s+are\s+(?:chatgpt|an?\s+ai|the\s+system)/u.test(normalized)
     || /follow\s+(?:my|the)\s+(?:next\s+)?instructions?/u.test(normalized)
-    || /请?忽略(?:以上|此前|之前|所有)?指令/u.test(normalized)
-    || /(?:输出|显示|泄露)(?:系统)?提示词/u.test(normalized)
+    || /请?(?:忽略|无视|忘记|覆盖|绕过)(?:此前|之前|以上|所有)(?:指令|提示|规则)/u.test(normalized)
+    || /(?:泄露|显示|输出|打印)(?:系统|开发者|隐藏)(?:提示|消息|指令)(?:词)?/u.test(normalized)
+    || /(?:你现在是|切换为|扮演)(?:系统|开发者)(?:角色)?/u.test(normalized)
 }
 
-function isBoundaryCodePoint(value: string | undefined): boolean {
-  return value !== undefined && LETTER_OR_NUMBER.test(value)
+function isLatinTokenContinuation(value: string | undefined): boolean {
+  return value !== undefined && (
+    LATIN_SCRIPT.test(value)
+    || COMBINING_MARK.test(value)
+    || /[0-9_]/u.test(value)
+  )
 }
 
 function isAsciiIdentifierCodePoint(value: string | undefined): boolean {
@@ -132,7 +152,7 @@ function replaceKnownName(value: string, rawName: string): string {
   if (name.length === 0) return value
   const lowerValue = asciiLower(value)
   const lowerName = asciiLower(name)
-  const usesLatinBoundary = /[A-Za-z]/.test(name)
+  const usesLatinBoundary = LATIN_SCRIPT.test(name)
   let cursor = 0
   let output = ''
   let changed = false
@@ -141,8 +161,8 @@ function replaceKnownName(value: string, rawName: string): string {
     if (match < 0) break
     const end = match + name.length
     const boundarySafe = !usesLatinBoundary || (
-      !isBoundaryCodePoint(previousCodePoint(value, match))
-      && !isBoundaryCodePoint(nextCodePoint(value, end))
+      !isLatinTokenContinuation(previousCodePoint(value, match))
+      && !isLatinTokenContinuation(nextCodePoint(value, end))
     )
     if (!boundarySafe) {
       output += value.slice(cursor, match + 1)
@@ -180,23 +200,111 @@ function normalizedKnownNames(input: RedactionKnownNames): string[] | null {
   ))
 }
 
-function replaceStructuredPii(value: string): string {
-  return value
-    .replace(URL, PLACEHOLDER)
-    .replace(EMAIL, PLACEHOLDER)
-    .replace(PHONE, PLACEHOLDER)
-    .replace(LABELLED_ID, PLACEHOLDER)
-    .replace(SOCIAL_ACCOUNT, PLACEHOLDER)
-    .replace(SOCIAL_HANDLE, PLACEHOLDER)
-    .replace(CONTINUOUS_DIGITS, PLACEHOLDER)
+function codePointLength(value: string): number {
+  return Array.from(value).length
+}
+
+function collectCandidates(
+  value: string,
+  pattern: RegExp,
+  isSafe: (matched: string) => boolean,
+  spans: StructuredSpan[],
+): boolean {
+  let overlong = false
+  pattern.lastIndex = 0
+  for (const match of value.matchAll(pattern)) {
+    if (match.index === undefined) continue
+    if (!isSafe(match[0])) {
+      overlong = true
+      continue
+    }
+    spans.push({ start: match.index, end: match.index + match[0].length })
+  }
+  pattern.lastIndex = 0
+  return overlong
+}
+
+function scanStructuredPii(value: string): StructuredScan {
+  const spans: StructuredSpan[] = []
+  let overlong = false
+  overlong = collectCandidates(
+    value,
+    URL_CANDIDATE,
+    (matched) => codePointLength(matched) <= 256,
+    spans,
+  ) || overlong
+  overlong = collectCandidates(
+    value,
+    EMAIL_CANDIDATE,
+    (matched) => codePointLength(matched.slice(0, matched.indexOf('@'))) <= 64,
+    spans,
+  ) || overlong
+  overlong = collectCandidates(
+    value,
+    PHONE_CANDIDATE,
+    (matched) => {
+      const digits = matched.replace(/\D/gu, '')
+      const subscriberDigits = /^\+?86/u.test(matched) ? digits.slice(2) : digits
+      return subscriberDigits.length === 11
+    },
+    spans,
+  ) || overlong
+  overlong = collectCandidates(
+    value,
+    LABELLED_ID_CANDIDATE,
+    (matched) => {
+      const token = matched.match(/[A-Za-z0-9-]+$/u)?.[0] ?? ''
+      return token.length >= 4 && token.length <= 32
+    },
+    spans,
+  ) || overlong
+  overlong = collectCandidates(
+    value,
+    SOCIAL_ACCOUNT_CANDIDATE,
+    (matched) => {
+      const token = matched.match(/@?[\p{L}\p{N}_.+-]+(?:@[\p{L}\p{N}.-]+)?$/u)?.[0] ?? ''
+      return codePointLength(token) >= 3 && codePointLength(token) <= 64
+    },
+    spans,
+  ) || overlong
+  overlong = collectCandidates(
+    value,
+    SOCIAL_HANDLE_CANDIDATE,
+    (matched) => codePointLength(matched.slice(1)) <= 64,
+    spans,
+  ) || overlong
+  overlong = collectCandidates(
+    value,
+    CONTINUOUS_DIGITS_CANDIDATE,
+    (matched) => matched.length <= 32,
+    spans,
+  ) || overlong
+
+  const merged: StructuredSpan[] = []
+  for (const span of spans.sort((left, right) => left.start - right.start || left.end - right.end)) {
+    const previous = merged[merged.length - 1]
+    if (previous && span.start <= previous.end) {
+      previous.end = Math.max(previous.end, span.end)
+    } else {
+      merged.push({ ...span })
+    }
+  }
+  return { spans: merged, overlong }
+}
+
+function replaceStructuredPii(value: string, spans: readonly StructuredSpan[]): string {
+  let cursor = 0
+  let output = ''
+  for (const span of spans) {
+    output += value.slice(cursor, span.start) + PLACEHOLDER
+    cursor = span.end
+  }
+  return output + value.slice(cursor)
 }
 
 function containsStructuredPii(value: string): boolean {
-  const patterns = [URL, EMAIL, PHONE, LABELLED_ID, SOCIAL_ACCOUNT, SOCIAL_HANDLE, CONTINUOUS_DIGITS]
-  return patterns.some((pattern) => {
-    pattern.lastIndex = 0
-    return pattern.test(value)
-  })
+  const scan = scanStructuredPii(value)
+  return scan.overlong || scan.spans.length > 0
 }
 
 function validateHits(hits: readonly PersonEntityHit[], text: string): PersonEntityHit[] | null {
@@ -274,7 +382,9 @@ export function redactClassReviewExcerpt(input: RedactionInput): RedactionResult
 
   let scrubbed = text
   for (const name of names) scrubbed = replaceKnownName(scrubbed, name)
-  scrubbed = replaceStructuredPii(scrubbed)
+  const structured = scanStructuredPii(scrubbed)
+  if (structured.overlong) return omitted('residual_identifier')
+  scrubbed = replaceStructuredPii(scrubbed, structured.spans)
 
   if (
     !input.entityDetector
@@ -294,9 +404,9 @@ export function redactClassReviewExcerpt(input: RedactionInput): RedactionResult
   scrubbed = replacedEntities.text
   if (replacedEntities.cutIdentifier) return omitted('residual_identifier')
 
+  if (hasPromptInjection(scrubbed)) return omitted('prompt_injection')
   if (
     FORMAT_CONTROL.test(scrubbed)
-    || hasPromptInjection(scrubbed)
     || containsKnownName(scrubbed, names)
     || containsStructuredPii(scrubbed)
   ) return omitted('residual_identifier')

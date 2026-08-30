@@ -5,6 +5,7 @@ import {
   createInMemoryTopicKeyRegistry,
   type AtomicTopicFingerprint,
   type TopicHmac,
+  type TopicKeyRegistry,
 } from './classReviewTopicKey'
 
 const encoder = new TextEncoder()
@@ -28,10 +29,11 @@ function deterministicBytes(domain: string, message: Uint8Array): Uint8Array {
 
 function createTestHmac(
   digest: TopicHmac['digest'] = async (domain, message) => deterministicBytes(domain, message),
+  registry: TopicKeyRegistry = createInMemoryTopicKeyRegistry(),
 ): TopicHmac {
   return {
     digest,
-    registry: createInMemoryTopicKeyRegistry(),
+    registry,
   }
 }
 
@@ -269,6 +271,65 @@ describe('class review topic identity', () => {
     } catch (error) {
       expect(String(error)).toContain('topic_hmac_failed')
       expect(String(error)).not.toContain(privateMarker)
+    }
+  })
+
+  it.each([
+    ['plain name', () => 'Alice'],
+    ['another claim key', () => 'tk1.ffffffffffffffff'],
+    ['altered prefix', (shortenedKey: string) => `tk2.${shortenedKey.slice(4)}`],
+    ['altered suffix', (shortenedKey: string) => `${shortenedKey}.000000000000`],
+    ['raw-like suffix', (shortenedKey: string) => `${shortenedKey}.task-raw-17`],
+  ])('rejects malicious atomic registry output: %s', async (_label, output) => {
+    const registry: TopicKeyRegistry = {
+      claim: async (claim) => output(claim.shortenedKey),
+    }
+    const maliciousHmac = createTestHmac(undefined, registry)
+
+    await expect(deriveAtomicTopicKey(baseFingerprint, maliciousHmac))
+      .rejects.toThrow('topic_registry_failed')
+  })
+
+  it('rejects malicious composite registry output under the same fixed failure', async () => {
+    const validHmac = createTestHmac()
+    const first = await deriveAtomicTopicKey(baseFingerprint, validHmac)
+    const second = await deriveAtomicTopicKey({
+      ...baseFingerprint,
+      signature: 'second composite registry member',
+    }, validHmac)
+    const maliciousHmac = createTestHmac(undefined, {
+      claim: async () => 'Alice',
+    })
+
+    await expect(deriveCompositeTopicKey([first, second], maliciousHmac))
+      .rejects.toThrow('topic_registry_failed')
+  })
+
+  it('sanitizes dynamic registry errors for atomic and composite derivation', async () => {
+    const privateMarker = baseFingerprint.signature
+    const validHmac = createTestHmac()
+    const first = await deriveAtomicTopicKey(baseFingerprint, validHmac)
+    const second = await deriveAtomicTopicKey({
+      ...baseFingerprint,
+      signature: 'second member for registry error coverage',
+    }, validHmac)
+    const failingHmac = createTestHmac(undefined, {
+      claim: async () => {
+        throw new Error(`registry exposed ${privateMarker}`)
+      },
+    })
+
+    for (const operation of [
+      deriveAtomicTopicKey(baseFingerprint, failingHmac),
+      deriveCompositeTopicKey([first, second], failingHmac),
+    ]) {
+      try {
+        await operation
+        throw new Error('expected registry rejection')
+      } catch (error) {
+        expect(String(error)).toContain('topic_registry_failed')
+        expect(String(error)).not.toContain(privateMarker)
+      }
     }
   })
 })
