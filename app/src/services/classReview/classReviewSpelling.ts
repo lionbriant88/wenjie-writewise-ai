@@ -49,6 +49,31 @@ function normalizeForComparison(value: string): string {
   return normalizeVisible(value).toLocaleLowerCase('en-US')
 }
 
+function isEnglishTokenCodePoint(value: string | undefined): boolean {
+  return value !== undefined && /[A-Za-z'’-]/u.test(value)
+}
+
+function containsAtTokenBoundary(haystack: string, needle: string): boolean {
+  if (needle.length === 0) return false
+  let start = haystack.indexOf(needle)
+  while (start >= 0) {
+    const before = start > 0 ? haystack[start - 1] : undefined
+    const afterIndex = start + needle.length
+    const after = afterIndex < haystack.length ? haystack[afterIndex] : undefined
+    if (!isEnglishTokenCodePoint(before) && !isEnglishTokenCodePoint(after)) return true
+    start = haystack.indexOf(needle, start + 1)
+  }
+  return false
+}
+
+function sourceLocationsOverlap(left: string, right: string): boolean {
+  const normalizedLeft = normalizeForComparison(left)
+  const normalizedRight = normalizeForComparison(right)
+  return normalizedLeft === normalizedRight
+    || containsAtTokenBoundary(normalizedLeft, normalizedRight)
+    || containsAtTokenBoundary(normalizedRight, normalizedLeft)
+}
+
 function isBoundedEnglishToken(value: string): boolean {
   return Array.from(value).length <= MAX_SPELLING_TOKEN_CODE_POINTS && ENGLISH_TOKEN.test(value)
 }
@@ -129,11 +154,34 @@ function alignedCorrections(input: SpellingCandidateInput): AlignedCorrection[] 
 }
 
 function overlapsLogic(input: SpellingCandidateInput, association: AlignedCorrection): boolean {
-  const original = normalizeForComparison(input.candidate.original)
   return input.logicIssues.some((logicIssue) => (
     logicIssue.sentenceId === association.id
-    || normalizeForComparison(logicIssue.original) === original
+    || sourceLocationsOverlap(logicIssue.original, association.original)
   ))
+}
+
+function overlapsConflictingLexicalEvidence(
+  input: SpellingCandidateInput,
+  association: AlignedCorrection,
+): boolean {
+  const conflictingTypes = input.candidate.type === 'spelling'
+    ? new Set<ErrorAnnotation['type']>(['grammar', 'word_choice', 'structure'])
+    : new Set<ErrorAnnotation['type']>(['grammar', 'spelling', 'structure'])
+
+  return input.errorAnnotations.some((issue) => {
+    if (issue.id === input.candidate.id || !conflictingTypes.has(issue.type)) return false
+    if (sourceLocationsOverlap(issue.original, association.original)) return true
+
+    const linkedSources = [
+      ...input.sentenceRevisions
+        .filter((revision) => revision.relatedErrorIds.includes(issue.id))
+        .map((revision) => revision.original),
+      ...input.sentencePairs
+        .filter((pair) => pair.relatedErrorIds.includes(issue.id))
+        .map((pair) => pair.original),
+    ]
+    return linkedSources.some((source) => sourceLocationsOverlap(source, association.original))
+  })
 }
 
 export function classifyDefiniteSpellingCandidate(
@@ -180,6 +228,7 @@ export function classifyDefiniteSpellingCandidate(
     normalizeForComparison(association.original) !== normalizedOriginal
     || normalizeForComparison(association.corrected) !== normalizedCorrection
   ) return null
+  if (overlapsConflictingLexicalEvidence(input, association)) return null
   if (overlapsLogic(input, association)) return null
 
   return {

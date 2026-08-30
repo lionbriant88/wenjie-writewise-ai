@@ -122,6 +122,38 @@ function result(
   }
 }
 
+function spellingResult(
+  essayId: string,
+  occurrences: Array<{
+    id: string
+    original: string
+    corrected: string
+    type?: 'spelling' | 'word_choice'
+  }>,
+): GradingResult {
+  const base = result(essayId, 12)
+  return {
+    ...base,
+    errorAnnotations: occurrences.map((occurrence) => ({
+      id: occurrence.id,
+      type: occurrence.type ?? 'spelling',
+      original: occurrence.original,
+      suggestion: occurrence.corrected,
+      explanation: 'Synthetic clear spelling.',
+      severity: 'low',
+      evidenceCertainty: 'certain',
+    })),
+    sentenceRevisions: occurrences.map((occurrence, index) => ({
+      id: `revision-${essayId}-${index}`,
+      relatedErrorIds: [occurrence.id],
+      original: occurrence.original,
+      revised: occurrence.corrected,
+      note: '',
+      changeTypes: [occurrence.type ?? 'spelling'],
+    })),
+  }
+}
+
 describe('classReviewSupportThreshold', () => {
   it.each([
     [2, 2],
@@ -224,6 +256,128 @@ describe('aggregateClassReviewSnapshot', () => {
     expect(aggregate.exclusions).toContainEqual({ essayId: 'stale', reason: 'stale_generation' })
   })
 
+  it('rejects stale rubric captures independently from stale source captures', () => {
+    const staleRubric = essay('stale-rubric', 'success', {
+      gradingRun: {
+        status: 'success',
+        requestId: 'stale-rubric-request',
+        source: 'mock',
+        reviewReasons: [],
+        startedAt: timestamp,
+        completedAt: timestamp,
+        sourceGeneration: 0,
+        rubricGeneration: 1,
+      },
+    })
+    const aggregate = aggregateClassReviewSnapshot({
+      task: task({ rubricGeneration: 2 }),
+      essays: [staleRubric],
+      results: [result('stale-rubric', 12)],
+    })
+
+    expect(aggregate.includedEssayCount).toBe(0)
+    expect(aggregate.excludedEssayCount).toBe(1)
+    expect(aggregate.exclusions).toEqual([
+      { essayId: 'stale-rubric', reason: 'stale_generation' },
+    ])
+  })
+
+  it.each([
+    ['score below zero', { totalScore: -1 }],
+    ['score above full score', { totalScore: 16 }],
+    ['empty dimensions', { dimensionScores: [] }],
+    ['duplicate dimensions', {
+      dimensionScores: [
+        result('seed', 10).dimensionScores[0],
+        result('seed', 10).dimensionScores[0],
+      ],
+    }],
+    ['malformed dimensions array', { dimensionScores: null }],
+    ['non-finite dimension score', {
+      dimensionScores: [{ ...result('seed', 10).dimensionScores[0], score: Number.NaN }],
+    }],
+  ])('excludes an invalid score channel with a fixed reason: %s', (_label, overrides) => {
+    const invalid = { ...result('invalid', 10), ...overrides } as unknown as GradingResult
+    const aggregate = aggregateClassReviewSnapshot({
+      task: task(),
+      essays: [essay('invalid')],
+      results: [invalid],
+    })
+
+    expect(aggregate).toMatchObject({
+      includedEssayCount: 0,
+      issueEligibleEssayCount: 0,
+      excludedEssayCount: 1,
+      partialIssueChannelCount: 0,
+    })
+    expect(aggregate.exclusions).toEqual([{ essayId: 'invalid', reason: 'invalid_result' }])
+  })
+
+  it('requires score dimensions to correspond to the current rubric when available', () => {
+    const currentTask = task({
+      rubricDraft: {
+        source: 'teacher',
+        writingGoal: 'Write clearly.',
+        offTopicCriteria: [],
+        dimensions: [{
+          id: 'language',
+          name: 'Language',
+          weight: 40,
+          description: 'Language quality.',
+          deductionFocus: [],
+        }],
+        excellentFeatures: [],
+        reviewTriggers: [],
+        status: 'confirmed',
+      },
+    })
+    const mismatched = result('mismatched', 10)
+    mismatched.dimensionScores[0] = { ...mismatched.dimensionScores[0], id: 'other' }
+
+    const aggregate = aggregateClassReviewSnapshot({
+      task: currentTask,
+      essays: [essay('mismatched')],
+      results: [mismatched],
+    })
+
+    expect(aggregate.includedEssayCount).toBe(0)
+    expect(aggregate.exclusions).toEqual([
+      { essayId: 'mismatched', reason: 'invalid_result' },
+    ])
+  })
+
+  it.each([
+    ['malformed lexical issues', { errorAnnotations: null }],
+    ['malformed sentence revisions', { sentenceRevisions: null }],
+    ['malformed recognition warnings', { recognitionWarnings: [7] }],
+    ['malformed full-text issue structures', {
+      fullTextRevision: {
+        originalText: '',
+        correctedText: '',
+        polishedText: '',
+        sentencePairs: null,
+        logicIssues: [],
+        logicNotes: [],
+      },
+    }],
+  ])('keeps a usable score but excludes an incomplete issue channel: %s', (_label, overrides) => {
+    const malformed = { ...result('malformed', 12), ...overrides } as unknown as GradingResult
+    const aggregate = aggregateClassReviewSnapshot({
+      task: task(),
+      essays: [essay('malformed')],
+      results: [malformed],
+    })
+
+    expect(aggregate).toMatchObject({
+      includedEssayCount: 1,
+      issueEligibleEssayCount: 0,
+      excludedEssayCount: 0,
+      partialIssueChannelCount: 1,
+    })
+    expect(aggregate.issueGroups).toEqual([])
+    expect(aggregate.clearSpellingItems).toEqual([])
+  })
+
   it('returns a legal empty common-issue result', () => {
     const essays = [essay('essay-1'), essay('essay-2')]
     const aggregate = aggregateClassReviewSnapshot({
@@ -253,5 +407,119 @@ describe('aggregateClassReviewSnapshot', () => {
     expect(aggregate.exclusions).toEqual([
       { essayId: 'ambiguous', reason: 'ambiguous_result' },
     ])
+  })
+
+  it('groups clear spelling by exact normalized pair and recomputes after edits or invalidation', () => {
+    const currentEssay = essay('spelling')
+    const initialResult = spellingResult('spelling', [
+      { id: 'spell-1', original: 'feelling', corrected: 'feeling' },
+      { id: 'spell-2', original: 'feelling', corrected: 'feeling' },
+    ])
+    const initial = aggregateClassReviewSnapshot({
+      task: task(),
+      essays: [currentEssay],
+      results: [initialResult],
+    })
+
+    expect(initial.clearSpellingItems).toHaveLength(1)
+    expect(initial.clearSpellingItems[0]).toMatchObject({
+      sourceSubtype: 'spelling',
+      studentCount: 1,
+      occurrenceCount: 2,
+    })
+
+    const edited = aggregateClassReviewSnapshot({
+      task: task(),
+      essays: [currentEssay],
+      results: [result('spelling', 12)],
+    })
+    const invalidated = aggregateClassReviewSnapshot({
+      task: task(),
+      essays: [{ ...currentEssay, status: 'manual' }],
+      results: [initialResult],
+    })
+
+    expect(edited.clearSpellingItems).toEqual([])
+    expect(invalidated.clearSpellingItems).toEqual([])
+  })
+
+  it('never merges different spelling corrections or source subtypes', () => {
+    const essays = [essay('spelling-a'), essay('spelling-b'), essay('word-choice')]
+    const aggregate = aggregateClassReviewSnapshot({
+      task: task(),
+      essays,
+      results: [
+        spellingResult('spelling-a', [
+          { id: 'spell-a', original: 'feelling', corrected: 'feeling' },
+        ]),
+        spellingResult('spelling-b', [
+          { id: 'spell-b', original: 'feelling', corrected: 'feelings' },
+        ]),
+        spellingResult('word-choice', [
+          { id: 'choice', original: 'feelling', corrected: 'feeling', type: 'word_choice' },
+        ]),
+      ],
+    })
+
+    expect(aggregate.clearSpellingItems).toHaveLength(3)
+    expect(new Set(aggregate.clearSpellingItems.map((item) => item.fingerprint)).size).toBe(3)
+  })
+
+  it('returns deeply identical output for essay, result and annotation permutations', () => {
+    const firstEssay = essay('essay-a')
+    const secondEssay = essay('essay-b')
+    const failedEssay = essay('essay-c', 'failed')
+    const firstIssues = [
+      { ...issue('issue-z'), explanation: 'Z detail.', severity: 'low' as const },
+      { ...issue('issue-b', ' Go   school ', ' Go to school '), explanation: 'B detail.' },
+    ]
+    const secondIssues = [
+      { ...issue('issue-a', 'GO SCHOOL', 'GO TO SCHOOL'), explanation: 'A detail.', severity: 'high' as const },
+    ]
+    const firstResult = {
+      ...spellingResult('essay-a', [
+        { id: 'spell-a', original: 'Ｆｅｅｌｌｉｎｇ', corrected: 'Ｆｅｅｌｉｎｇ' },
+      ]),
+      errorAnnotations: [
+        ...firstIssues,
+        ...spellingResult('essay-a', [
+          { id: 'spell-a', original: 'Ｆｅｅｌｌｉｎｇ', corrected: 'Ｆｅｅｌｉｎｇ' },
+        ]).errorAnnotations,
+      ],
+    }
+    const secondResult = {
+      ...spellingResult('essay-b', [
+        { id: 'spell-b', original: 'feelling', corrected: 'feeling' },
+      ]),
+      errorAnnotations: [
+        ...secondIssues,
+        ...spellingResult('essay-b', [
+          { id: 'spell-b', original: 'feelling', corrected: 'feeling' },
+        ]).errorAnnotations,
+      ],
+    }
+    const failedResult = result('essay-c', 9)
+
+    const forward = aggregateClassReviewSnapshot({
+      task: task(),
+      essays: [firstEssay, failedEssay, secondEssay],
+      results: [firstResult, failedResult, secondResult],
+    })
+    const reversed = aggregateClassReviewSnapshot({
+      task: task(),
+      essays: [secondEssay, failedEssay, firstEssay],
+      results: [secondResult, failedResult, {
+        ...firstResult,
+        errorAnnotations: [...firstResult.errorAnnotations].reverse(),
+      }],
+    })
+
+    expect(reversed).toEqual(forward)
+    expect(forward.issueGroups[0]).toMatchObject({
+      severity: 'high',
+      title: 'A detail.',
+      distinctEssaySupport: 2,
+      occurrenceCount: 3,
+    })
   })
 })

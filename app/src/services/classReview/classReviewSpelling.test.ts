@@ -216,6 +216,52 @@ describe('classifyDefiniteSpellingCandidate', () => {
     })).toBeNull()
   })
 
+  it.each([
+    ['spelling', 'grammar'],
+    ['spelling', 'word_choice'],
+    ['word_choice', 'grammar'],
+    ['word_choice', 'spelling'],
+  ] as const)('rejects unlinked %s versus %s evidence at the same mechanical source', (
+    candidateType,
+    conflictType,
+  ) => {
+    const original = candidateType === 'word_choice' ? 'filling' : 'feelling'
+    const candidate = lexicalIssue(original, 'feeling', candidateType)
+    const conflict = lexicalIssue(
+      `The source contains ${original} here`,
+      'A separate correction.',
+      conflictType,
+      { id: 'issue-2' },
+    )
+
+    expect(classify(candidate, {
+      errorAnnotations: [candidate, conflict],
+      sentenceRevisions: [
+        revision(original, 'feeling', [candidateType]),
+        revision(conflict.original, conflict.suggestion, [conflictType], {
+          id: 'revision-2',
+          relatedErrorIds: ['issue-2'],
+        }),
+      ],
+    })).toBeNull()
+  })
+
+  it('allows mechanically disjoint unlinked lexical evidence', () => {
+    const candidate = lexicalIssue('feelling', 'feeling')
+    const disjoint = lexicalIssue('go school', 'go to school', 'grammar', { id: 'issue-2' })
+
+    expect(classify(candidate, {
+      errorAnnotations: [candidate, disjoint],
+      sentenceRevisions: [
+        revision('feelling', 'feeling', ['spelling']),
+        revision('go school', 'go to school', ['grammar'], {
+          id: 'revision-2',
+          relatedErrorIds: ['issue-2'],
+        }),
+      ],
+    })).not.toBeNull()
+  })
+
   it('rejects logic, handwriting and recognition overlap', () => {
     const candidate = lexicalIssue('feelling', 'feeling')
     const baseOptions = {
@@ -247,6 +293,26 @@ describe('classifyDefiniteSpellingCandidate', () => {
       }],
     })).toBeNull()
     expect(classify(candidate, { recognitionWarnings: ['Uncertain handwriting.'] })).toBeNull()
+  })
+
+  it('rejects containing-sentence logic evidence without a shared association id', () => {
+    const candidate = lexicalIssue('feelling', 'feeling')
+    expect(classify(candidate, {
+      logicIssues: [{
+        id: 'logic-containing',
+        sentenceId: 'different-revision',
+        original: 'The sentence contains feelling here.',
+        contextBefore: '',
+        contextAfter: '',
+        subType: 'unclear_logic',
+        severity: 'medium',
+        diagnosis: '',
+        suggestedAction: 'ask_student_to_explain',
+        conservativeSuggestion: '',
+        polishedSuggestion: '',
+        needsTeacherReview: false,
+      }],
+    })).toBeNull()
   })
 
   it('normalizes only NFKC, surrounding whitespace and English case in fingerprints', () => {

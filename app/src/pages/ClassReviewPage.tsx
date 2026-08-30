@@ -115,7 +115,7 @@ export function ClassReviewPage() {
     return <EmptyState title="找不到任务" description="请返回任务列表重新选择一个批改任务。" />
   }
 
-  const stats = getClassOverviewStats(findEssaysByTask(essays, taskId), gradingResults, task.fullScore)
+  const stats = getClassOverviewStats(findEssaysByTask(essays, taskId), gradingResults, task)
   const summaryStats = [
     { label: '作文总数', value: stats.totalEssayCount.toString() },
     { label: '平均分', value: formatScore(stats.averageScore) },

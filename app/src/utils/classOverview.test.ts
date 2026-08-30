@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Essay, GradingResult } from '../types'
+import type { Essay, GradingResult, Task } from '../types'
 import { getClassOverviewStats } from './classOverview'
 
 function essay(id: string): Essay {
@@ -20,12 +20,41 @@ function essay(id: string): Essay {
   }
 }
 
+function successfulEssay(id: string, overrides: Partial<Essay> = {}): Essay {
+  return {
+    ...essay(id),
+    status: 'grading_ready',
+    teacherReviewed: false,
+    sourceGeneration: 2,
+    aiResultId: `${id}-result`,
+    gradingRun: {
+      status: 'success',
+      requestId: `request-${id}`,
+      source: 'mock',
+      reviewReasons: [],
+      startedAt: '2026-06-25T08:59:00.000Z',
+      completedAt: '2026-06-25T09:00:00.000Z',
+      sourceGeneration: 2,
+      rubricGeneration: 3,
+    },
+    ...overrides,
+  }
+}
+
 function result(essayId: string, totalScore: number): GradingResult {
   return {
     id: `${essayId}-result`,
     essayId,
     totalScore,
-    dimensionScores: [],
+    dimensionScores: [{
+      id: 'language',
+      name: 'Language',
+      score: Math.min(totalScore, 15),
+      maxScore: 15,
+      weight: 100,
+      reason: '',
+      evidence: '',
+    }],
     errorAnnotations: [],
     sentenceRevisions: [],
     upgradedExpressions: [],
@@ -39,6 +68,13 @@ function result(essayId: string, totalScore: number): GradingResult {
   }
 }
 
+function overviewTask(fullScore: number, rubricGeneration = 0): Pick<
+  Task,
+  'fullScore' | 'rubricGeneration' | 'rubricDraft'
+> {
+  return { fullScore, rubricGeneration }
+}
+
 describe('getClassOverviewStats', () => {
   it('summarizes class scores and groups them by exam score bands', () => {
     const essays = ['e1', 'e2', 'e3', 'e4', 'e5', 'e6'].map(essay)
@@ -48,7 +84,7 @@ describe('getClassOverviewStats', () => {
       result('e3', 8.6),
       result('e4', 12.4),
       result('e5', 12.6),
-    ], 15)
+    ], overviewTask(15))
 
     expect(stats.totalEssayCount).toBe(6)
     expect(stats.scoredEssayCount).toBe(5)
@@ -65,7 +101,7 @@ describe('getClassOverviewStats', () => {
   })
 
   it('returns empty score summaries when no essays have scores yet', () => {
-    const stats = getClassOverviewStats([essay('e1')], [], 15)
+    const stats = getClassOverviewStats([essay('e1')], [], overviewTask(15))
 
     expect(stats.totalEssayCount).toBe(1)
     expect(stats.scoredEssayCount).toBe(0)
@@ -86,7 +122,7 @@ describe('getClassOverviewStats', () => {
     const stats = getClassOverviewStats(
       [confirmed, ready],
       [result('confirmed', 26), result('ready', 30)],
-      30,
+      overviewTask(30),
     )
 
     expect(stats.scoredEssayCount).toBe(2)
@@ -108,10 +144,92 @@ describe('getClassOverviewStats', () => {
         { ...essay('grading'), status: 'grading', teacherReviewed: false },
       ],
       [result('ready', 12), result('manual', 15), result('grading', 14)],
-      15,
+      overviewTask(15),
     )
 
     expect(stats.scoredEssayCount).toBe(1)
     expect(stats.averageScore).toBe(12)
+  })
+
+  it('uses the same run and generation eligibility as class-review aggregation', () => {
+    const failed = successfulEssay('failed', {
+      gradingRun: {
+        status: 'failed',
+        requestId: 'failed-request',
+        errorCode: 'provider_unavailable',
+        errorMessage: 'Synthetic failure',
+        retryable: false,
+        completedAt: '2026-06-25T09:00:00.000Z',
+        sourceGeneration: 2,
+        rubricGeneration: 3,
+      },
+    })
+    const running = successfulEssay('running', {
+      gradingRun: {
+        status: 'running',
+        requestId: 'running-request',
+        startedAt: '2026-06-25T09:00:00.000Z',
+        sourceGeneration: 2,
+        rubricGeneration: 3,
+      },
+    })
+    const staleSource = successfulEssay('stale-source', {
+      gradingRun: {
+        status: 'success',
+        requestId: 'stale-source-request',
+        source: 'mock',
+        reviewReasons: [],
+        startedAt: '2026-06-25T08:59:00.000Z',
+        completedAt: '2026-06-25T09:00:00.000Z',
+        sourceGeneration: 1,
+        rubricGeneration: 3,
+      },
+    })
+    const staleRubric = successfulEssay('stale-rubric', {
+      gradingRun: {
+        status: 'success',
+        requestId: 'stale-rubric-request',
+        source: 'mock',
+        reviewReasons: [],
+        startedAt: '2026-06-25T08:59:00.000Z',
+        completedAt: '2026-06-25T09:00:00.000Z',
+        sourceGeneration: 2,
+        rubricGeneration: 2,
+      },
+    })
+
+    const stats = getClassOverviewStats(
+      [successfulEssay('current'), failed, running, staleSource, staleRubric],
+      ['current', 'failed', 'running', 'stale-source', 'stale-rubric'].map((id) => result(id, 10)),
+      overviewTask(15, 3),
+    )
+
+    expect(stats.scoredEssayCount).toBe(1)
+    expect(stats.averageScore).toBe(10)
+  })
+
+  it.each([
+    ['score below zero', { totalScore: -1 }],
+    ['score above full score', { totalScore: 16 }],
+    ['empty dimensions', { dimensionScores: [] }],
+    ['duplicate dimension ids', {
+      dimensionScores: [
+        result('seed', 10).dimensionScores[0],
+        result('seed', 10).dimensionScores[0],
+      ],
+    }],
+    ['invalid dimension maximum', {
+      dimensionScores: [{ ...result('seed', 10).dimensionScores[0], maxScore: 0 }],
+    }],
+  ])('rejects a structurally invalid score channel: %s', (_label, overrides) => {
+    const invalid = { ...result('invalid', 10), ...overrides } as GradingResult
+    const stats = getClassOverviewStats(
+      [successfulEssay('invalid')],
+      [invalid],
+      overviewTask(15, 3),
+    )
+
+    expect(stats.scoredEssayCount).toBe(0)
+    expect(stats.averageScore).toBeNull()
   })
 })

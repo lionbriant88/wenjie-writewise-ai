@@ -1,15 +1,22 @@
-import type { ErrorAnnotation, Essay, GradingResult, LogicIssue, Task } from '../../types'
+import type {
+  ErrorAnnotation,
+  Essay,
+  FullTextSentencePair,
+  GradingResult,
+  LegibilityIssue,
+  LogicIssue,
+  SentenceRevision,
+  Task,
+} from '../../types'
 import { getDynamicScoreBands } from '../../utils/gradingDiagnostics'
-import { getClassOverviewStatsFromScores } from '../../utils/classOverview'
+import {
+  getClassOverviewStatsFromScores,
+  selectCurrentClassReviewResults,
+  type CurrentClassReviewExclusionReason,
+} from '../../utils/classOverview'
 import { classifyDefiniteSpellingCandidate } from './classReviewSpelling'
 
-export type ClassReviewExclusionReason =
-  | 'manual'
-  | 'grading_not_successful'
-  | 'missing_result'
-  | 'ambiguous_result'
-  | 'stale_generation'
-  | 'invalid_result'
+export type ClassReviewExclusionReason = CurrentClassReviewExclusionReason
 
 export interface ClassReviewEssayExclusion {
   essayId: string
@@ -78,13 +85,64 @@ export interface ClassReviewAggregate {
 
 type MutableIssueAggregate = Omit<
   ClassReviewIssueAggregate,
-  'distinctEssaySupport' | 'essayIds' | 'mustCover'
-> & { essayIds: Set<string> }
+  'changeTypes' | 'distinctEssaySupport' | 'essayIds' | 'mustCover'
+> & {
+  changeTypes: Set<string>
+  essayIds: Set<string>
+  representativeKey: string
+}
 
 type MutableSpellingAggregate = Omit<
   ClassReviewClearSpellingAggregate,
   'studentCount' | 'essayIds'
-> & { essayIds: Set<string> }
+> & {
+  essayIds: Set<string>
+  representativeKey: string
+}
+
+type IssueEligibleResult = {
+  essay: Essay
+  result: GradingResult & {
+    errorAnnotations: ErrorAnnotation[]
+    sentenceRevisions: SentenceRevision[]
+    recognitionWarnings: string[]
+    legibilityIssues: LegibilityIssue[]
+  }
+}
+
+const ERROR_TYPES = new Set(['grammar', 'spelling', 'word_choice', 'structure'])
+const SEVERITIES = new Set(['low', 'medium', 'high'])
+const EVIDENCE_CERTAINTIES = new Set(['certain', 'uncertain'])
+const FULL_TEXT_CHANGE_TYPES = new Set([
+  'grammar',
+  'spelling',
+  'word_choice',
+  'sentence_upgrade',
+  'coherence',
+  'logic_bridge',
+  'delete_suggestion',
+  'replace_sentence',
+  'reference_clarification',
+])
+const LOGIC_SUBTYPES = new Set([
+  'weak_connection',
+  'unclear_logic',
+  'missing_cause_effect',
+  'unclear_transition',
+  'topic_drift',
+  'irrelevant_sentence',
+  'unclear_reference',
+  'missing_motivation',
+  'plot_gap',
+])
+const LOGIC_ACTIONS = new Set([
+  'add_connector',
+  'add_bridge_sentence',
+  'delete_sentence',
+  'replace_sentence',
+  'clarify_reference',
+  'ask_student_to_explain',
+])
 
 function roundToOneDecimal(value: number): number {
   return Math.round(value * 10) / 10
@@ -94,50 +152,180 @@ function roundRatio(value: number): number {
   return Math.round(value * 1_000_000) / 1_000_000
 }
 
-function normalizeFingerprintText(value: string): string {
-  return value.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLocaleLowerCase('en-US')
+function compareCodePoints(left: string, right: string): number {
+  return left === right ? 0 : left < right ? -1 : 1
 }
 
-function isUsableResult(result: GradingResult, fullScore: number): boolean {
-  if (!Number.isFinite(result.totalScore) || result.totalScore < 0 || result.totalScore > fullScore) {
+function normalizeVisible(value: string): string {
+  return value.normalize('NFKC').trim().replace(/\s+/gu, ' ')
+}
+
+function normalizeFingerprintText(value: string): string {
+  return normalizeVisible(value).toLocaleLowerCase('en-US')
+}
+
+function stableTextKey(...parts: string[]): string {
+  const visible = parts.map(normalizeVisible)
+  return JSON.stringify([
+    ...visible.map((part) => part.toLocaleLowerCase('en-US')),
+    ...visible,
+  ])
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string')
+}
+
+function isOptionalBoolean(value: unknown): boolean {
+  return value === undefined || typeof value === 'boolean'
+}
+
+function isErrorAnnotation(value: unknown): value is ErrorAnnotation {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && value.id.length > 0
+    && typeof value.type === 'string'
+    && ERROR_TYPES.has(value.type)
+    && typeof value.original === 'string'
+    && typeof value.suggestion === 'string'
+    && typeof value.explanation === 'string'
+    && typeof value.severity === 'string'
+    && SEVERITIES.has(value.severity)
+    && typeof value.evidenceCertainty === 'string'
+    && EVIDENCE_CERTAINTIES.has(value.evidenceCertainty)
+    && isOptionalBoolean(value.needsTeacherReview)
+}
+
+function isSentenceRevision(value: unknown): value is SentenceRevision {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && value.id.length > 0
+    && isStringArray(value.relatedErrorIds)
+    && typeof value.original === 'string'
+    && typeof value.revised === 'string'
+    && typeof value.note === 'string'
+    && isStringArray(value.changeTypes)
+    && value.changeTypes.every((item) => FULL_TEXT_CHANGE_TYPES.has(item))
+    && isOptionalBoolean(value.needsTeacherReview)
+}
+
+function isSentencePair(value: unknown): value is FullTextSentencePair {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && value.id.length > 0
+    && typeof value.original === 'string'
+    && typeof value.corrected === 'string'
+    && typeof value.polished === 'string'
+    && isStringArray(value.relatedErrorIds)
+    && isStringArray(value.changeTypes)
+    && value.changeTypes.every((item) => FULL_TEXT_CHANGE_TYPES.has(item))
+    && typeof value.explanation === 'string'
+    && isOptionalBoolean(value.needsTeacherReview)
+}
+
+function isLogicIssue(value: unknown): value is LogicIssue {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && value.id.length > 0
+    && (value.sentenceId === undefined || typeof value.sentenceId === 'string')
+    && typeof value.original === 'string'
+    && typeof value.contextBefore === 'string'
+    && typeof value.contextAfter === 'string'
+    && typeof value.subType === 'string'
+    && LOGIC_SUBTYPES.has(value.subType)
+    && typeof value.severity === 'string'
+    && SEVERITIES.has(value.severity)
+    && typeof value.diagnosis === 'string'
+    && typeof value.suggestedAction === 'string'
+    && LOGIC_ACTIONS.has(value.suggestedAction)
+    && typeof value.conservativeSuggestion === 'string'
+    && typeof value.polishedSuggestion === 'string'
+    && typeof value.needsTeacherReview === 'boolean'
+}
+
+function isLegibilityIssue(value: unknown): value is LegibilityIssue {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && typeof value.transcriptText === 'string'
+    && isStringArray(value.possibleReadings)
+    && typeof value.pageNumber === 'number'
+    && Number.isFinite(value.pageNumber)
+    && typeof value.regionDescription === 'string'
+    && typeof value.explanation === 'string'
+    && value.defaultOutcome === 'count_as_legibility_error'
+}
+
+function hasCompleteIssueChannel(result: GradingResult): boolean {
+  const value = result as unknown as Record<string, unknown>
+  if (!Array.isArray(value.errorAnnotations) || !value.errorAnnotations.every(isErrorAnnotation)) {
     return false
   }
-  return result.dimensionScores.every((dimension) => (
-    Number.isFinite(dimension.score)
-    && Number.isFinite(dimension.maxScore)
-    && dimension.maxScore > 0
-    && dimension.score >= 0
-    && dimension.score <= dimension.maxScore
-  ))
+  if (new Set(value.errorAnnotations.map((item) => item.id)).size !== value.errorAnnotations.length) {
+    return false
+  }
+  if (!Array.isArray(value.sentenceRevisions) || !value.sentenceRevisions.every(isSentenceRevision)) {
+    return false
+  }
+  if (!Array.isArray(value.upgradedExpressions)) return false
+  if (!isStringArray(value.recognitionWarnings)) return false
+  if (!Array.isArray(value.legibilityIssues) || !value.legibilityIssues.every(isLegibilityIssue)) {
+    return false
+  }
+  if (value.fullTextRevision !== undefined) {
+    if (!isRecord(value.fullTextRevision)) return false
+    if (
+      typeof value.fullTextRevision.originalText !== 'string'
+      || typeof value.fullTextRevision.correctedText !== 'string'
+      || typeof value.fullTextRevision.polishedText !== 'string'
+      || !Array.isArray(value.fullTextRevision.sentencePairs)
+      || !value.fullTextRevision.sentencePairs.every(isSentencePair)
+      || !Array.isArray(value.fullTextRevision.logicIssues)
+      || !value.fullTextRevision.logicIssues.every(isLogicIssue)
+      || !isStringArray(value.fullTextRevision.logicNotes)
+    ) return false
+  }
+  return true
 }
 
 function scoreDimensions(results: readonly GradingResult[]): ClassReviewDimensionAggregate[] {
   const dimensions = new Map<string, {
     name: string
-    scoreTotal: number
+    representativeKey: string
+    scores: number[]
     maxScore: number
-    count: number
   }>()
   for (const result of results) {
     for (const dimension of result.dimensionScores) {
+      const representativeKey = stableTextKey(dimension.name, String(dimension.maxScore))
       const current = dimensions.get(dimension.id)
       if (current) {
-        current.scoreTotal += dimension.score
-        current.count += 1
+        current.scores.push(dimension.score)
+        if (compareCodePoints(representativeKey, current.representativeKey) < 0) {
+          current.name = normalizeVisible(dimension.name)
+          current.maxScore = dimension.maxScore
+          current.representativeKey = representativeKey
+        }
       } else {
         dimensions.set(dimension.id, {
-          name: dimension.name,
-          scoreTotal: dimension.score,
+          name: normalizeVisible(dimension.name),
+          representativeKey,
+          scores: [dimension.score],
           maxScore: dimension.maxScore,
-          count: 1,
         })
       }
     }
   }
   return Array.from(dimensions.entries())
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => compareCodePoints(left, right))
     .map(([dimensionId, dimension]) => {
-      const averageScore = roundToOneDecimal(dimension.scoreTotal / dimension.count)
+      const scores = [...dimension.scores].sort((left, right) => left - right)
+      const averageScore = roundToOneDecimal(
+        scores.reduce((total, score) => total + score, 0) / scores.length,
+      )
       return {
         dimensionId,
         name: dimension.name,
@@ -167,26 +355,39 @@ function logicFingerprint(issue: LogicIssue): string {
   ])
 }
 
+function severityRank(value: ClassReviewIssueAggregate['severity']): number {
+  return value === 'high' ? 0 : value === 'medium' ? 1 : 2
+}
+
 function addIssueOccurrence(
   groups: Map<string, MutableIssueAggregate>,
   essayId: string,
-  value: Omit<MutableIssueAggregate, 'essayIds' | 'occurrenceCount'>,
+  value: Omit<MutableIssueAggregate, 'essayIds' | 'occurrenceCount' | 'changeTypes'> & {
+    changeTypes: readonly string[]
+  },
 ): void {
   const current = groups.get(value.fingerprint)
   if (current) {
     current.occurrenceCount += 1
     current.essayIds.add(essayId)
+    for (const changeType of value.changeTypes) current.changeTypes.add(changeType)
+    if (severityRank(value.severity) < severityRank(current.severity)) {
+      current.severity = value.severity
+    }
+    if (compareCodePoints(value.representativeKey, current.representativeKey) < 0) {
+      current.representativeKey = value.representativeKey
+      current.title = value.title
+      current.originalText = value.originalText
+      current.suggestionOrDiagnosis = value.suggestionOrDiagnosis
+    }
     return
   }
   groups.set(value.fingerprint, {
     ...value,
     occurrenceCount: 1,
+    changeTypes: new Set(value.changeTypes),
     essayIds: new Set([essayId]),
   })
-}
-
-function severityRank(value: ClassReviewIssueAggregate['severity']): number {
-  return value === 'high' ? 0 : value === 'medium' ? 1 : 2
 }
 
 export function classReviewSupportThreshold(issueEligibleEssayCount: number): number {
@@ -203,73 +404,22 @@ export function aggregateClassReviewSnapshot(input: {
   results: readonly GradingResult[]
 }): ClassReviewAggregate {
   const taskEssays = input.essays.filter((essay) => essay.taskId === input.task.id)
-  const resultsByEssayId = new Map<string, GradingResult[]>()
-  for (const result of input.results) {
-    const indexed = resultsByEssayId.get(result.essayId)
-    if (indexed) indexed.push(result)
-    else resultsByEssayId.set(result.essayId, [result])
-  }
-
-  const includedResults: GradingResult[] = []
-  const issueEligible: Array<{ essay: Essay; result: GradingResult }> = []
-  const exclusions: ClassReviewEssayExclusion[] = []
-  let partialIssueChannelCount = 0
-
-  for (const essay of taskEssays) {
-    if (essay.status === 'manual') {
-      exclusions.push({ essayId: essay.id, reason: 'manual' })
-      continue
-    }
-    if (essay.status !== 'grading_ready' && essay.status !== 'completed') {
-      exclusions.push({ essayId: essay.id, reason: 'grading_not_successful' })
-      continue
-    }
-    if (essay.gradingRun && essay.gradingRun.status !== 'success' && essay.gradingRun.status !== 'partial') {
-      exclusions.push({ essayId: essay.id, reason: 'grading_not_successful' })
-      continue
-    }
-
-    const candidates = resultsByEssayId.get(essay.id) ?? []
-    const matching = essay.aiResultId
-      ? candidates.filter((result) => result.id === essay.aiResultId)
-      : candidates
-    if (matching.length === 0) {
-      exclusions.push({ essayId: essay.id, reason: 'missing_result' })
-      continue
-    }
-    if (matching.length !== 1) {
-      exclusions.push({ essayId: essay.id, reason: 'ambiguous_result' })
-      continue
-    }
-
-    const sourceGeneration = essay.sourceGeneration ?? 0
-    const rubricGeneration = input.task.rubricGeneration ?? 0
-    const capturedSourceGeneration = essay.gradingRun && 'sourceGeneration' in essay.gradingRun
-      ? essay.gradingRun.sourceGeneration ?? 0
-      : 0
-    const capturedRubricGeneration = essay.gradingRun && 'rubricGeneration' in essay.gradingRun
-      ? essay.gradingRun.rubricGeneration ?? 0
-      : 0
-    if (
-      capturedSourceGeneration !== sourceGeneration
-      || capturedRubricGeneration !== rubricGeneration
-    ) {
-      exclusions.push({ essayId: essay.id, reason: 'stale_generation' })
-      continue
-    }
-
-    const currentResult = matching[0]
-    if (!isUsableResult(currentResult, input.task.fullScore)) {
-      exclusions.push({ essayId: essay.id, reason: 'invalid_result' })
-      continue
-    }
-    includedResults.push(currentResult)
-    if (essay.gradingRun?.status === 'success') {
-      issueEligible.push({ essay, result: currentResult })
-    } else {
-      partialIssueChannelCount += 1
-    }
-  }
+  const selection = selectCurrentClassReviewResults({
+    essays: taskEssays,
+    results: input.results,
+    task: input.task,
+  })
+  const includedResults = selection.included.map(({ result }) => result)
+  const issueEligible = selection.included.filter(
+    ({ essay, result }) => essay.gradingRun?.status === 'success' && hasCompleteIssueChannel(result),
+  ) as IssueEligibleResult[]
+  const exclusions = selection.exclusions
+    .map<ClassReviewEssayExclusion>((exclusion) => exclusion)
+    .sort((left, right) => (
+      compareCodePoints(left.essayId, right.essayId)
+      || compareCodePoints(left.reason, right.reason)
+    ))
+  const partialIssueChannelCount = selection.included.length - issueEligible.length
 
   const overview = getClassOverviewStatsFromScores(
     taskEssays.length,
@@ -300,78 +450,93 @@ export function aggregateClassReviewSnapshot(input: {
         legibilityIssues: result.legibilityIssues,
       })
       if (definiteSpelling) {
+        const originalWord = normalizeVisible(definiteSpelling.originalWord)
+        const correctedWord = normalizeVisible(definiteSpelling.correctedWord)
+        const anonymousExample = normalizeVisible(issue.original)
+        const representativeKey = stableTextKey(originalWord, correctedWord, anonymousExample)
         const current = spellingGroups.get(definiteSpelling.fingerprint)
         if (current) {
           current.occurrenceCount += 1
           current.essayIds.add(essay.id)
+          if (compareCodePoints(representativeKey, current.representativeKey) < 0) {
+            current.originalWord = originalWord
+            current.correctedWord = correctedWord
+            current.anonymousExample = anonymousExample
+            current.representativeKey = representativeKey
+          }
         } else {
           spellingGroups.set(definiteSpelling.fingerprint, {
             fingerprint: definiteSpelling.fingerprint,
             sourceSubtype: definiteSpelling.sourceSubtype,
-            originalWord: definiteSpelling.originalWord,
-            correctedWord: definiteSpelling.correctedWord,
+            originalWord,
+            correctedWord,
             occurrenceCount: 1,
             essayIds: new Set([essay.id]),
-            anonymousExample: issue.original,
+            anonymousExample,
+            representativeKey,
           })
         }
         continue
       }
-      const fingerprint = issueFingerprint(issue)
+      const title = normalizeVisible(issue.explanation)
+      const originalText = normalizeVisible(issue.original)
+      const suggestionOrDiagnosis = normalizeVisible(issue.suggestion)
       addIssueOccurrence(issueGroups, essay.id, {
-        fingerprint,
+        fingerprint: issueFingerprint(issue),
         type: issue.type,
         subtype: null,
         severity: issue.severity,
-        title: issue.explanation,
-        originalText: issue.original,
-        suggestionOrDiagnosis: issue.suggestion,
+        title,
+        originalText,
+        suggestionOrDiagnosis,
         changeTypes: [issue.type],
+        representativeKey: stableTextKey(title, originalText, suggestionOrDiagnosis),
       })
     }
     for (const logicIssue of logicIssues) {
-      const fingerprint = logicFingerprint(logicIssue)
+      const title = normalizeVisible(logicIssue.diagnosis)
+      const originalText = normalizeVisible(logicIssue.original)
+      const suggestionOrDiagnosis = normalizeVisible(logicIssue.conservativeSuggestion)
       addIssueOccurrence(issueGroups, essay.id, {
-        fingerprint,
+        fingerprint: logicFingerprint(logicIssue),
         type: 'logic',
         subtype: logicIssue.subType,
         severity: logicIssue.severity,
-        title: logicIssue.diagnosis,
-        originalText: logicIssue.original,
-        suggestionOrDiagnosis: logicIssue.conservativeSuggestion,
+        title,
+        originalText,
+        suggestionOrDiagnosis,
         changeTypes: [],
+        representativeKey: stableTextKey(title, originalText, suggestionOrDiagnosis),
       })
     }
   }
 
   const requiredSupport = classReviewSupportThreshold(issueEligible.length)
   const finalizedIssueGroups = Array.from(issueGroups.values())
-    .map<ClassReviewIssueAggregate>((group) => ({
+    .map<ClassReviewIssueAggregate>(({ essayIds, representativeKey: _representativeKey, changeTypes, ...group }) => ({
       ...group,
-      distinctEssaySupport: group.essayIds.size,
-      essayIds: Array.from(group.essayIds).sort(),
-      mustCover: group.essayIds.size >= requiredSupport,
+      changeTypes: Array.from(changeTypes).sort(compareCodePoints),
+      distinctEssaySupport: essayIds.size,
+      essayIds: Array.from(essayIds).sort(compareCodePoints),
+      mustCover: essayIds.size >= requiredSupport,
     }))
     .sort((left, right) => (
       severityRank(left.severity) - severityRank(right.severity)
       || right.distinctEssaySupport - left.distinctEssaySupport
       || right.occurrenceCount - left.occurrenceCount
-      || left.fingerprint.localeCompare(right.fingerprint)
+      || compareCodePoints(left.fingerprint, right.fingerprint)
     ))
 
   const clearSpellingItems = Array.from(spellingGroups.values())
-    .map<ClassReviewClearSpellingAggregate>((item) => ({
+    .map<ClassReviewClearSpellingAggregate>(({ essayIds, representativeKey: _representativeKey, ...item }) => ({
       ...item,
-      studentCount: item.essayIds.size,
-      essayIds: Array.from(item.essayIds).sort(),
+      studentCount: essayIds.size,
+      essayIds: Array.from(essayIds).sort(compareCodePoints),
     }))
     .sort((left, right) => (
       right.studentCount - left.studentCount
       || right.occurrenceCount - left.occurrenceCount
-      || normalizeFingerprintText(left.originalWord).localeCompare(
-        normalizeFingerprintText(right.originalWord),
-      )
-      || left.fingerprint.localeCompare(right.fingerprint)
+      || compareCodePoints(left.fingerprint, right.fingerprint)
     ))
 
   return {
