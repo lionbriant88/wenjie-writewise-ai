@@ -91,6 +91,20 @@ function canonicalKimiApiKey(value: string | undefined): string {
   return normalized
 }
 
+function defineRuntimeSecret<T extends object, K extends string>(
+  target: T,
+  key: K,
+  value: string,
+): T & Record<K, string> {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  })
+  return target as T & Record<K, string>
+}
+
 export function parseGatewayRuntimeConfig(
   env: GatewayEnvironment,
   dependencies: GatewayRuntimeConfigDependencies = {},
@@ -126,7 +140,11 @@ export function parseGatewayRuntimeConfig(
       3_072,
     ) as 3072
     if (classMode === 'fake') {
-      classReviewSynthesis = { mode: 'fake', serviceToken, maxCompletionTokens }
+      classReviewSynthesis = defineRuntimeSecret(
+        { mode: 'fake' as const, maxCompletionTokens },
+        'serviceToken',
+        serviceToken,
+      )
     } else {
       const apiKey = canonicalKimiApiKey(env.KIMI_API_KEY)
       const normalizedCacheSecret = promptCacheSecret.trim()
@@ -137,11 +155,32 @@ export function parseGatewayRuntimeConfig(
       )
       if (Buffer.byteLength(normalizedCacheSecret, 'utf8') < 32
         || framingCalibration === null) return invalidConfig()
-      classReviewSynthesis = {
-        mode: 'kimi', serviceToken, maxCompletionTokens, apiKey, framingCalibration,
-      }
+      classReviewSynthesis = defineRuntimeSecret(
+        defineRuntimeSecret(
+          { mode: 'kimi' as const, maxCompletionTokens, framingCalibration },
+          'serviceToken',
+          serviceToken,
+        ),
+        'apiKey',
+        apiKey,
+      )
     }
   }
+
+  const kimiRuntime: Omit<GatewayRuntimeConfig['kimi'], 'promptCacheSecret'> = {
+    apiBase,
+    model,
+    reasoningEffort,
+    stageBudgets: {
+      material_context: positiveInteger(env.KIMI_MAX_COMPLETION_TOKENS_MATERIAL_CONTEXT, 16_384),
+      rubric_generation: positiveInteger(env.KIMI_MAX_COMPLETION_TOKENS_RUBRIC_GENERATION, 16_384),
+      essay_grading_images: positiveInteger(env.KIMI_MAX_COMPLETION_TOKENS_ESSAY_GRADING_IMAGES, 16_384),
+      essay_regrading_text: positiveInteger(env.KIMI_MAX_COMPLETION_TOKENS_ESSAY_REGRADING_TEXT, 16_384),
+    },
+  }
+  const kimi = defineRuntimeSecret(kimiRuntime, 'promptCacheSecret', classReviewSynthesis.mode === 'kimi'
+    ? promptCacheSecret.trim()
+    : promptCacheSecret)
 
   return {
     provider,
@@ -159,19 +198,6 @@ export function parseGatewayRuntimeConfig(
       pauseAfterMs: exactInteger(env.GRADING_RETRY_AFTER_PAUSE_MS, 900_000) as 900000,
     },
     classReviewSynthesis,
-    kimi: {
-      apiBase,
-      model,
-      reasoningEffort,
-      stageBudgets: {
-        material_context: positiveInteger(env.KIMI_MAX_COMPLETION_TOKENS_MATERIAL_CONTEXT, 16_384),
-        rubric_generation: positiveInteger(env.KIMI_MAX_COMPLETION_TOKENS_RUBRIC_GENERATION, 16_384),
-        essay_grading_images: positiveInteger(env.KIMI_MAX_COMPLETION_TOKENS_ESSAY_GRADING_IMAGES, 16_384),
-        essay_regrading_text: positiveInteger(env.KIMI_MAX_COMPLETION_TOKENS_ESSAY_REGRADING_TEXT, 16_384),
-      },
-      promptCacheSecret: classReviewSynthesis.mode === 'kimi'
-        ? promptCacheSecret.trim()
-        : promptCacheSecret,
-    },
+    kimi,
   }
 }

@@ -124,6 +124,7 @@ const taskMaterialUpload = multer({
 
 export const MAX_IMAGE_GRADING_METADATA_BYTES = 32 * 1024 * 1024
 export const MAX_CLASS_REVIEW_JSON_BYTES = 64 * 1024
+const CLASS_REVIEW_SYNTHESIS_PATH = '/grading/class-review-syntheses'
 const imageGradeUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_RUBRIC_IMAGE_BYTES + 1, files: MAX_RUBRIC_PAGES, fields: 1, fieldSize: MAX_IMAGE_GRADING_METADATA_BYTES, parts: MAX_RUBRIC_PAGES + 2 },
@@ -633,7 +634,11 @@ export function createServer(options: CreateServerOptions = {}) {
     next()
   }
   const receivedAt = (request: Request) => routeReceiptTimes.get(request) ?? validMonotonicNow(monotonicNow)
-  app.all('/grading/class-review-syntheses', (request, response) => {
+  app.all(CLASS_REVIEW_SYNTHESIS_PATH, (request, response) => {
+    if (request.path !== CLASS_REVIEW_SYNTHESIS_PATH) {
+      fixedClassReviewError(response, 404, 'not_found', 'Not found.')
+      return
+    }
     const routeReceivedAt = validMonotonicNow(monotonicNow)
     if (classRuntime.mode === 'disabled' || !classReviewService) {
       fixedClassReviewError(response, 404, 'not_found', 'Not found.')

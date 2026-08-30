@@ -1817,6 +1817,61 @@ describe('grading gateway server boundary', () => {
     }
   })
 
+  it('consumes trailing-slash and case aliases as fixed no-CORS 404s in both class modes while preserving query identity', async () => {
+    let providerCalls = 0
+    const allowedOrigin = 'http://127.0.0.1:5173'
+    const disabledApp = createServer({
+      runtimeConfig: legacyRuntimeConfig(),
+      allowedOrigin,
+    })
+    const enabledApp = createServer({
+      runtimeConfig: fakeClassReviewRuntimeConfig(),
+      classReviewProvider: fakeClassReviewProvider(async () => {
+        providerCalls += 1
+        return {
+          value: classReviewFixture.results.succeeded.output,
+          attempts: [classReviewObservation()],
+        }
+      }),
+      classReviewFramingCalibration: classReviewCalibration,
+      allowedOrigin,
+    })
+
+    for (const app of [disabledApp, enabledApp]) {
+      for (const alias of [
+        '/grading/class-review-syntheses/',
+        '/grading/Class-Review-Syntheses',
+      ]) {
+        const response = await request(app).post(alias)
+          .set('Origin', allowedOrigin)
+          .set('Authorization', `Bearer ${CLASS_REVIEW_TOKEN}`)
+          .set('Content-Type', 'application/json')
+          .send('{"PRIVATE-ALIAS-BODY":')
+          .expect(404)
+        expect(response.body).toEqual({ error: { code: 'not_found', message: 'Not found.' } })
+        expect(response.headers).not.toHaveProperty('access-control-allow-origin')
+        expect(response.headers).not.toHaveProperty('access-control-allow-headers')
+        expect(JSON.stringify(response.body)).not.toMatch(/PRIVATE|ALIAS|BODY/)
+      }
+    }
+
+    const queriedExactPath = await request(enabledApp)
+      .post('/grading/class-review-syntheses?probe=1')
+      .set('Origin', allowedOrigin)
+      .set('Authorization', `Bearer ${CLASS_REVIEW_TOKEN}`)
+      .set('Content-Type', 'application/json')
+      .send('{"PRIVATE-QUERY-BODY":')
+      .expect(403)
+    expect(queriedExactPath.body).toEqual({
+      error: {
+        code: 'browser_origin_forbidden',
+        message: 'Browser-origin requests are not allowed.',
+      },
+    })
+    expect(queriedExactPath.headers).not.toHaveProperty('access-control-allow-origin')
+    expect(providerCalls).toBe(0)
+  })
+
   it('orders enabled Origin, method, bearer and bounded JSON guards before global browser CORS', async () => {
     let providerCalls = 0
     const diagnostics: unknown[] = []

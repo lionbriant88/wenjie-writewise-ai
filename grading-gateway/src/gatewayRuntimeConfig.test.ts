@@ -49,7 +49,8 @@ function validEnvironment(overrides: Record<string, string | undefined> = {}) {
 
 describe('parseGatewayRuntimeConfig', () => {
   it('parses an explicit Phase 0 China K3 runtime without enabling later optimizations', () => {
-    expect(parseGatewayRuntimeConfig(validEnvironment())).toEqual({
+    const config = parseGatewayRuntimeConfig(validEnvironment())
+    expect(config).toEqual({
       provider: 'kimi',
       rubricStrategy: 'two-pass-legacy',
       essayPromptProfile: 'legacy',
@@ -69,9 +70,9 @@ describe('parseGatewayRuntimeConfig', () => {
           essay_grading_images: 14_000,
           essay_regrading_text: 8_000,
         },
-        promptCacheSecret: '',
       },
     })
+    expect(config.kimi.promptCacheSecret).toBe('')
   })
 
   it('allows explicit mock without a cache secret while retaining bounded runtime settings', () => {
@@ -88,15 +89,24 @@ describe('parseGatewayRuntimeConfig', () => {
     }))
     expect(fake.classReviewSynthesis).toEqual({
       mode: 'fake',
-      serviceToken: 's'.repeat(32),
       maxCompletionTokens: 3_072,
     })
-    expect(parseGatewayRuntimeConfig(validEnvironment({
+    expect(fake.classReviewSynthesis.mode).toBe('fake')
+    if (fake.classReviewSynthesis.mode !== 'fake') throw new Error('Expected fake class-review runtime.')
+    expect(fake.classReviewSynthesis.serviceToken).toBe('s'.repeat(32))
+    expect(Object.getOwnPropertyDescriptor(fake.classReviewSynthesis, 'serviceToken')).toMatchObject({
+      enumerable: false,
+      value: 's'.repeat(32),
+    })
+    const punctuationTokenConfig = parseGatewayRuntimeConfig(validEnvironment({
       GRADING_PROVIDER: 'mock',
       GRADING_EXECUTION_REGISTRY: 'memory-v1',
       CLASS_REVIEW_SYNTHESIS_MODE: 'fake',
       CLASS_REVIEW_SERVICE_TOKEN: 'A._~-z09'.repeat(32),
-    })).classReviewSynthesis).toMatchObject({ serviceToken: 'A._~-z09'.repeat(32) })
+    }))
+    expect(punctuationTokenConfig.classReviewSynthesis.mode).toBe('fake')
+    if (punctuationTokenConfig.classReviewSynthesis.mode !== 'fake') throw new Error('Expected fake class-review runtime.')
+    expect(punctuationTokenConfig.classReviewSynthesis.serviceToken).toBe('A._~-z09'.repeat(32))
 
     const kimi = parseGatewayRuntimeConfig(validEnvironment({
       GRADING_PROVIDER: 'mock',
@@ -108,11 +118,13 @@ describe('parseGatewayRuntimeConfig', () => {
     }), { classReviewFramingCalibration: syntheticClassReviewCalibration })
     expect(kimi.classReviewSynthesis).toEqual({
       mode: 'kimi',
-      serviceToken: 's'.repeat(32),
       maxCompletionTokens: 3_072,
-      apiKey: 'synthetic-not-a-real-key',
       framingCalibration: syntheticClassReviewCalibration,
     })
+    expect(kimi.classReviewSynthesis.mode).toBe('kimi')
+    if (kimi.classReviewSynthesis.mode !== 'kimi') throw new Error('Expected Kimi class-review runtime.')
+    expect(kimi.classReviewSynthesis.serviceToken).toBe('s'.repeat(32))
+    expect(kimi.classReviewSynthesis.apiKey).toBe('synthetic-not-a-real-key')
     expect(kimi.provider).toBe('mock')
     const maximumKey = parseGatewayRuntimeConfig(validEnvironment({
       GRADING_PROVIDER: 'mock',
@@ -122,7 +134,45 @@ describe('parseGatewayRuntimeConfig', () => {
       KIMI_API_KEY: 'K'.repeat(512),
       GRADING_PROMPT_CACHE_HMAC_SECRET: 'c'.repeat(32),
     }), { classReviewFramingCalibration: syntheticClassReviewCalibration })
-    expect(maximumKey.classReviewSynthesis).toMatchObject({ apiKey: 'K'.repeat(512) })
+    expect(maximumKey.classReviewSynthesis.mode).toBe('kimi')
+    if (maximumKey.classReviewSynthesis.mode !== 'kimi') throw new Error('Expected Kimi class-review runtime.')
+    expect(maximumKey.classReviewSynthesis.apiKey).toBe('K'.repeat(512))
+  })
+
+  it('keeps normalized runtime secrets directly accessible but omits them from whole-config serialization', () => {
+    const serviceToken = `SERVICE_TOKEN_SENTINEL.${'s'.repeat(32)}`
+    const apiKey = `KIMI_API_KEY_SENTINEL-${'k'.repeat(32)}`
+    const promptCacheSecret = `CACHE_SECRET_SENTINEL.${'c'.repeat(32)}`
+    const config = parseGatewayRuntimeConfig(validEnvironment({
+      GRADING_PROVIDER: 'mock',
+      GRADING_EXECUTION_REGISTRY: 'memory-v1',
+      CLASS_REVIEW_SYNTHESIS_MODE: 'kimi',
+      CLASS_REVIEW_SERVICE_TOKEN: `  ${serviceToken}  `,
+      KIMI_API_KEY: `  ${apiKey}  `,
+      GRADING_PROMPT_CACHE_HMAC_SECRET: `  ${promptCacheSecret}  `,
+    }), { classReviewFramingCalibration: syntheticClassReviewCalibration })
+
+    expect(config.classReviewSynthesis.mode).toBe('kimi')
+    if (config.classReviewSynthesis.mode !== 'kimi') throw new Error('Expected Kimi class-review runtime.')
+    expect(config.classReviewSynthesis.serviceToken).toBe(serviceToken)
+    expect(config.classReviewSynthesis.apiKey).toBe(apiKey)
+    expect(config.kimi.promptCacheSecret).toBe(promptCacheSecret)
+
+    for (const [owner, key, value] of [
+      [config.classReviewSynthesis, 'serviceToken', serviceToken],
+      [config.classReviewSynthesis, 'apiKey', apiKey],
+      [config.kimi, 'promptCacheSecret', promptCacheSecret],
+    ] as const) {
+      expect(Object.hasOwn(owner, key)).toBe(true)
+      const descriptor = Object.getOwnPropertyDescriptor(owner, key)
+      expect(descriptor).toMatchObject({ enumerable: false, value })
+      expect(descriptor).not.toHaveProperty('get')
+    }
+
+    const serialized = JSON.stringify(config)
+    expect(serialized).not.toContain(serviceToken)
+    expect(serialized).not.toContain(apiKey)
+    expect(serialized).not.toContain(promptCacheSecret)
   })
 
   it('keeps disabled class synthesis independent from its optional token and real Kimi prerequisites', () => {
