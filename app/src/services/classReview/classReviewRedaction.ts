@@ -62,6 +62,9 @@ const PHONE_CANDIDATE = /(?:\+?86[\s-]?)?1[3-9]\d(?:[\s-]?\d){8,}/gu
 const LABELLED_ID_CANDIDATE = /(?:学号|学生编号|身份证号|证件号|student\s*(?:id|number)|identity\s*(?:id|number))\s*[:：]?\s*(?<identifier>[\p{L}\p{N}\p{M}_.+-]+)/giu
 const SOCIAL_ACCOUNT_CANDIDATE = /(?:微信|wechat|qq|社交账号|账号|account)\s*[:：]?\s*(?<account>[@\p{L}\p{N}\p{M}_.+-]+)/giu
 const SOCIAL_HANDLE_CANDIDATE = /@(?<handle>[\p{L}\p{N}\p{M}_.+-]+)/gu
+const AT_TOKEN_CODE_POINT = /[@\p{L}\p{N}\p{M}_.+-]/u
+const COMPLETE_AT_EMAIL = /^(?<local>[\p{L}\p{N}][\p{L}\p{N}\p{M}._+-]*)@(?<domain>[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?(?:\.[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?)+)$/u
+const COMPLETE_AT_HANDLE = /^@(?<handle>[\p{L}\p{N}][\p{L}\p{N}\p{M}_.+-]*)$/u
 const CONTINUOUS_DIGITS_CANDIDATE = /\d{6,}/gu
 const FORMAT_CONTROL = /\p{Cf}/u
 const LETTER_OR_NUMBER = /[\p{L}\p{N}]/u
@@ -266,6 +269,50 @@ function collectCandidates(
   return overlong
 }
 
+function collectMaximalAtTokens(value: string, spans: StructuredSpan[]): boolean {
+  let invalid = false
+  const seen = new Set<string>()
+  for (let index = 0; index < value.length;) {
+    const codePoint = nextCodePoint(value, index)
+    if (codePoint === undefined) return true
+    if (codePoint !== '@') {
+      index += codePoint.length
+      continue
+    }
+
+    let start = index
+    for (let previous = previousCodePoint(value, start); previous && AT_TOKEN_CODE_POINT.test(previous);) {
+      start -= previous.length
+      previous = previousCodePoint(value, start)
+    }
+    let end = index + codePoint.length
+    for (let next = nextCodePoint(value, end); next && AT_TOKEN_CODE_POINT.test(next);) {
+      end += next.length
+      next = nextCodePoint(value, end)
+    }
+
+    const rangeKey = `${start}:${end}`
+    if (!seen.has(rangeKey)) {
+      seen.add(rangeKey)
+      const token = value.slice(start, end)
+      const email = token.match(COMPLETE_AT_EMAIL)
+      const handle = token.match(COMPLETE_AT_HANDLE)
+      const validEmail = email !== null
+        && codePointLength(email.groups?.local ?? '') <= 64
+      const validHandle = handle !== null
+        && codePointLength(handle.groups?.handle ?? '') >= 3
+        && codePointLength(handle.groups?.handle ?? '') <= 64
+      if (validEmail || validHandle) {
+        spans.push({ start, end })
+      } else {
+        invalid = true
+      }
+    }
+    index = end
+  }
+  return invalid
+}
+
 function scanStructuredPii(value: string): StructuredScan {
   const spans: StructuredSpan[] = []
   let overlong = false
@@ -281,6 +328,7 @@ function scanStructuredPii(value: string): StructuredScan {
     (match) => codePointLength(match[0].slice(0, match[0].indexOf('@'))) <= 64,
     spans,
   ) || overlong
+  overlong = collectMaximalAtTokens(value, spans) || overlong
   overlong = collectCandidates(
     value,
     PHONE_CANDIDATE,

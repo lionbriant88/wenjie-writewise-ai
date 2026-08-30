@@ -417,6 +417,74 @@ describe('class review excerpt redaction', () => {
   })
 
   it.each([
+    ['composed Latin prefix', 'é@writer is embedded in an identifier and must not be partially projected.'],
+    ['decomposed Latin prefix', 'e\u0301@writer is embedded in an identifier and must not be partially projected.'],
+    ['repeated at-sign', '@@writer is not a complete social handle and must not be partially projected.'],
+    ['underscore prefix', '_@writer is embedded in an identifier and must not be partially projected.'],
+    ['plus prefix', '+@writer is embedded in an identifier and must not be partially projected.'],
+    ['letter prefix', 'prefix@writer is embedded in an identifier and must not be partially projected.'],
+  ])('omits an invalid maximal standalone at-token on both sides: %s', (_label, sourceText) => {
+    const result = redactClassReviewExcerpt(input(sourceText))
+
+    expect(result).toEqual({
+      status: 'omitted',
+      reason: 'residual_identifier',
+      redactionVersion: 'class-review-redaction-v1',
+    })
+    expect(JSON.stringify(result)).not.toContain(sourceText)
+    expect(JSON.stringify(result)).not.toContain('writer')
+  })
+
+  it.each([
+    ['composed Unicode email', 'é@example.com is private, while the conclusion lacks supporting evidence.'],
+    ['NFKC-composed Unicode email', 'e\u0301@example.com is private, while the conclusion lacks supporting evidence.'],
+    ['non-composing mark email', 'a\u0338@example.com is private, while the conclusion lacks supporting evidence.'],
+    ['safe whitespace boundary', 'Use @writer carefully, because the conclusion lacks supporting evidence.'],
+    ['safe punctuation boundary', '(@writer), while the conclusion lacks supporting evidence.'],
+    ['right Unicode continuation', '@writeré is private, while the conclusion lacks supporting evidence.'],
+    ['right decomposed-mark continuation', '@writere\u0301 is private, while the conclusion lacks supporting evidence.'],
+  ])('redacts the complete valid maximal standalone at-token: %s', (_label, sourceText) => {
+    const result = redactClassReviewExcerpt(input(sourceText))
+
+    expect(result).toMatchObject({ status: 'kept' })
+    if (result.status === 'kept') {
+      expect(result.text.match(/\[REDACTED\]/g)).toHaveLength(1)
+      expect(result.text).not.toContain('@')
+      expect(result.text).not.toContain('writer')
+      expect(result.text).not.toContain('example.com')
+    }
+  })
+
+  it('keeps the exact standalone handle bound and omits the same maximal token at plus one', () => {
+    const atLimit = `@${'a'.repeat(64)} is private, while the conclusion lacks supporting evidence.`
+    const aboveLimit = `@${'a'.repeat(64)}b must be omitted without an orphan suffix.`
+
+    expect(redactClassReviewExcerpt(input(atLimit))).toMatchObject({
+      status: 'kept',
+      text: '[REDACTED] is private, while the conclusion lacks supporting evidence.',
+    })
+    expect(redactClassReviewExcerpt(input(aboveLimit))).toEqual({
+      status: 'omitted',
+      reason: 'residual_identifier',
+      redactionVersion: 'class-review-redaction-v1',
+    })
+  })
+
+  it('merges a maximal at-token with overlapping email and labelled-account spans', () => {
+    const result = redactClassReviewExcerpt(input(
+      '账号:e\u0301.writer@example.com is private, while the conclusion lacks supporting evidence.',
+    ))
+
+    expect(result).toMatchObject({
+      status: 'kept',
+      text: '[REDACTED] is private, while the conclusion lacks supporting evidence.',
+    })
+    if (result.status === 'kept') {
+      expect(result.text.match(/\[REDACTED\]/g)).toHaveLength(1)
+    }
+  })
+
+  it.each([
     `A hidden${String.fromCharCode(0x200b)}lice identifier remains in an otherwise useful grammar example.`,
     `The evidence contains a bidi override ${String.fromCharCode(0x202e)} and must not be projected.`,
     `Malformed ${String.fromCharCode(0xd800)} text must not enter the projection.`,
