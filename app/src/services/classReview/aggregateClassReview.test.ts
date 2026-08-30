@@ -34,6 +34,21 @@ function task(overrides: Partial<Task> = {}): Task {
     createdAt: timestamp,
     updatedAt: timestamp,
     generateClassReview: true,
+    rubricDraft: {
+      source: 'teacher',
+      writingGoal: 'Synthetic goal.',
+      offTopicCriteria: [],
+      dimensions: [{
+        id: 'language',
+        name: 'Language',
+        weight: 100,
+        description: 'Language quality.',
+        deductionFocus: [],
+      }],
+      excellentFeatures: [],
+      reviewTriggers: [],
+      status: 'confirmed',
+    },
     ...overrides,
   }
 }
@@ -480,11 +495,6 @@ describe('aggregateClassReviewSnapshot', () => {
   })
 
   it.each([
-    ['empty related IDs', (base: GradingResult) => ({
-      ...base,
-      errorAnnotations: [issue('error-1')],
-      sentenceRevisions: [revisionItem('revision-1', [])],
-    })],
     ['duplicate related IDs', (base: GradingResult) => ({
       ...base,
       errorAnnotations: [issue('error-1')],
@@ -622,6 +632,30 @@ describe('aggregateClassReviewSnapshot', () => {
       issueEligibleEssayCount: 0,
       excludedEssayCount: 0,
       partialIssueChannelCount: 1,
+    })
+    expect(aggregate.issueGroups).toEqual([])
+    expect(aggregate.clearSpellingItems).toEqual([])
+  })
+
+  it('accepts pure presentation revisions and sentence pairs with no related issue IDs', () => {
+    const complete = result('unlinked-presentation', 12)
+    complete.sentenceRevisions = [revisionItem('revision-1', [], ['coherence'])]
+    complete.fullTextRevision = {
+      ...complete.fullTextRevision!,
+      sentencePairs: [pairItem('pair-1', [], ['sentence_upgrade'])],
+    }
+
+    const aggregate = aggregateClassReviewSnapshot({
+      task: task(),
+      essays: [essay('unlinked-presentation')],
+      results: [complete],
+    })
+
+    expect(aggregate).toMatchObject({
+      includedEssayCount: 1,
+      issueEligibleEssayCount: 1,
+      excludedEssayCount: 0,
+      partialIssueChannelCount: 0,
     })
     expect(aggregate.issueGroups).toEqual([])
     expect(aggregate.clearSpellingItems).toEqual([])

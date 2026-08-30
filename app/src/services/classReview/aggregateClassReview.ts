@@ -230,7 +230,6 @@ function hasValidRelationAndChangeArrays(value: Record<string, unknown>): boolea
   return isBoundedStringArray(value.relatedErrorIds, {
     maximumItems: 100,
     maximumLength: 200,
-    minimumItems: 1,
     unique: true,
   })
     && isBoundedStringArray(value.changeTypes, {

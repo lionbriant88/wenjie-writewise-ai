@@ -72,7 +72,25 @@ function overviewTask(fullScore: number, rubricGeneration = 0): Pick<
   Task,
   'fullScore' | 'rubricGeneration' | 'rubricDraft'
 > {
-  return { fullScore, rubricGeneration }
+  return {
+    fullScore,
+    rubricGeneration,
+    rubricDraft: {
+      source: 'teacher',
+      writingGoal: 'Synthetic goal.',
+      offTopicCriteria: [],
+      dimensions: [{
+        id: 'language',
+        name: 'Language',
+        weight: 100,
+        description: 'Language quality.',
+        deductionFocus: [],
+      }],
+      excellentFeatures: [],
+      reviewTriggers: [],
+      status: 'confirmed',
+    },
+  }
 }
 
 describe('getClassOverviewStats', () => {
@@ -209,6 +227,34 @@ describe('getClassOverviewStats', () => {
   })
 
   it.each([
+    ['missing', undefined],
+    ['draft', {
+      ...overviewTask(15, 3).rubricDraft!,
+      status: 'draft' as const,
+    }],
+  ])('rejects a modern captured run when the current rubric is %s', (_label, rubricDraft) => {
+    const stats = getClassOverviewStats(
+      [successfulEssay('modern')],
+      [result('modern', 10)],
+      { fullScore: 15, rubricGeneration: 3, rubricDraft },
+    )
+
+    expect(stats.scoredEssayCount).toBe(0)
+    expect(stats.averageScore).toBeNull()
+  })
+
+  it('accepts a modern captured run only with a confirmed current rubric', () => {
+    const stats = getClassOverviewStats(
+      [successfulEssay('modern')],
+      [result('modern', 10)],
+      overviewTask(15, 3),
+    )
+
+    expect(stats.scoredEssayCount).toBe(1)
+    expect(stats.averageScore).toBe(10)
+  })
+
+  it.each([
     ['score below zero', { totalScore: -1 }],
     ['score above full score', { totalScore: 16 }],
     ['empty dimensions', { dimensionScores: [] }],
@@ -282,6 +328,16 @@ describe('getClassOverviewStats', () => {
   })
 
   it('uses the current visible-legibility cap when reconciling the total score', () => {
+    const legibilityTask = {
+      ...overviewTask(15, 3),
+      rubricDraft: {
+        ...overviewTask(15, 3).rubricDraft!,
+        dimensions: [
+          { id: 'content', name: 'Content', weight: 95, description: 'Content.', deductionFocus: [] },
+          { id: 'legibility', name: 'Legibility', weight: 5, description: 'Legibility.', deductionFocus: [] },
+        ],
+      },
+    }
     const capped = {
       ...result('legibility', 14),
       dimensionScores: [
@@ -317,12 +373,12 @@ describe('getClassOverviewStats', () => {
     expect(getClassOverviewStats(
       [successfulEssay('legibility')],
       [capped],
-      overviewTask(15, 3),
+      legibilityTask,
     ).scoredEssayCount).toBe(1)
     expect(getClassOverviewStats(
       [successfulEssay('uncapped')],
       [uncapped],
-      overviewTask(15, 3),
+      legibilityTask,
     ).scoredEssayCount).toBe(0)
   })
 
@@ -358,7 +414,7 @@ describe('getClassOverviewStats', () => {
     const legacyStats = getClassOverviewStats(
       [essay('legacy')],
       [result('legacy', 11)],
-      { ...currentTask, rubricGeneration: 0 },
+      { fullScore: 15, rubricGeneration: 0, rubricDraft: undefined },
     )
 
     expect(modernStats.scoredEssayCount).toBe(1)

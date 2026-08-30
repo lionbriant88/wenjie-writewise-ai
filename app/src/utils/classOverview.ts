@@ -119,8 +119,16 @@ export function hasUsableClassReviewScoreChannel(
     : roundedTotal
   if (value.totalScore !== expectedTotal) return false
 
-  const rubricDimensions = requireRubricCorrespondence && task.rubricDraft?.status === 'confirmed'
-    ? task.rubricDraft.dimensions
+  if (
+    requireRubricCorrespondence
+    && (
+      !task.rubricDraft
+      || task.rubricDraft.status !== 'confirmed'
+      || !Array.isArray(task.rubricDraft.dimensions)
+    )
+  ) return false
+  const rubricDimensions = requireRubricCorrespondence
+    ? task.rubricDraft!.dimensions
     : null
   if (rubricDimensions) {
     if (
