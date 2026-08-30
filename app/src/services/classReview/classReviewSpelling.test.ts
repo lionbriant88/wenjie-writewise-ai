@@ -262,6 +262,62 @@ describe('classifyDefiniteSpellingCandidate', () => {
     })).not.toBeNull()
   })
 
+  it.each([
+    'sentence_upgrade',
+    'coherence',
+    'logic_bridge',
+    'delete_suggestion',
+    'replace_sentence',
+    'reference_clarification',
+  ] as const)('rejects an unlinked overlapping %s association anywhere in the correction union', (
+    changeType,
+  ) => {
+    const candidate = lexicalIssue('feelling', 'feeling')
+    expect(classify(candidate, {
+      sentencePairs: [pair(
+        'The sentence contains feelling here.',
+        'The sentence contains feeling here.',
+        [changeType],
+        { id: `pair-${changeType}`, relatedErrorIds: [] },
+      )],
+    })).toBeNull()
+  })
+
+  it.each([
+    ['spelling', 'word_choice', 'feelling'],
+    ['word_choice', 'spelling', 'filling'],
+  ] as const)('rejects a separately linked overlapping %s versus %s association', (
+    candidateType,
+    competingType,
+    original,
+  ) => {
+    const candidate = lexicalIssue(original, 'feeling', candidateType)
+    expect(classify(candidate, {
+      sentenceRevisions: [
+        revision(original, 'feeling', [candidateType]),
+        revision(
+          `The sentence contains ${original} here.`,
+          'A competing correction.',
+          [competingType],
+          { id: 'revision-competing', relatedErrorIds: ['different-issue'] },
+        ),
+      ],
+    })).toBeNull()
+  })
+
+  it('rejects a duplicate same-source correction that cannot prove an isolated occurrence', () => {
+    const candidate = lexicalIssue('feelling', 'feeling')
+    expect(classify(candidate, {
+      sentenceRevisions: [
+        revision('feelling', 'feeling', ['spelling']),
+        revision('feelling', 'feeling', ['spelling'], {
+          id: 'revision-duplicate-source',
+          relatedErrorIds: ['different-issue'],
+        }),
+      ],
+    })).toBeNull()
+  })
+
   it('rejects logic, handwriting and recognition overlap', () => {
     const candidate = lexicalIssue('feelling', 'feeling')
     const baseOptions = {

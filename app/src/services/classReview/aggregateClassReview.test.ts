@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import type { ErrorAnnotation, Essay, GradingResult, Task } from '../../types'
+import type {
+  ErrorAnnotation,
+  Essay,
+  FullTextChangeType,
+  FullTextSentencePair,
+  GradingResult,
+  LegibilityIssue,
+  LogicIssue,
+  SentenceRevision,
+  Task,
+  UpgradedExpression,
+} from '../../types'
 import {
   aggregateClassReviewSnapshot,
   classReviewSupportThreshold,
@@ -86,6 +97,7 @@ function issue(id: string, original = 'go school', suggestion = 'go to school'):
     explanation: 'Missing preposition.',
     severity: 'medium',
     evidenceCertainty: 'certain',
+    needsTeacherReview: false,
   }
 }
 
@@ -103,19 +115,35 @@ function result(
       {
         id: 'language',
         name: 'Language',
-        score: totalScore * 0.4,
-        maxScore: 6,
-        weight: 40,
-        reason: '',
-        evidence: '',
+        score: totalScore,
+        maxScore: 15,
+        weight: 100,
+        reason: 'Synthetic score reason.',
+        evidence: 'Synthetic score evidence.',
       },
     ],
-    errorAnnotations,
+    errorAnnotations: errorAnnotations.map((annotation) => ({
+      ...annotation,
+      needsTeacherReview: annotation.needsTeacherReview ?? false,
+    })),
     sentenceRevisions: [],
     upgradedExpressions: [],
+    fullTextRevision: {
+      originalText: 'Synthetic transcript.',
+      correctedText: 'Synthetic transcript.',
+      polishedText: 'Synthetic transcript.',
+      sentencePairs: [],
+      logicIssues: [],
+      logicNotes: [],
+    },
     recognitionWarnings: [],
     legibilityIssues: [],
-    overallComment: '',
+    overallComment: 'Synthetic overall comment.',
+    resultVersion: 'grading-result-v2',
+    source: 'mock',
+    reviewReasons: [],
+    transcript: 'Synthetic transcript.',
+    printedTextExcluded: true,
     teacherAdjusted: false,
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -142,15 +170,88 @@ function spellingResult(
       explanation: 'Synthetic clear spelling.',
       severity: 'low',
       evidenceCertainty: 'certain',
+      needsTeacherReview: false,
     })),
     sentenceRevisions: occurrences.map((occurrence, index) => ({
       id: `revision-${essayId}-${index}`,
       relatedErrorIds: [occurrence.id],
       original: occurrence.original,
       revised: occurrence.corrected,
-      note: '',
+      note: 'Synthetic correction note.',
       changeTypes: [occurrence.type ?? 'spelling'],
+      needsTeacherReview: false,
     })),
+  }
+}
+
+function revisionItem(
+  id = 'revision-1',
+  relatedErrorIds: string[] = ['error-1'],
+  changeTypes: FullTextChangeType[] = ['grammar'],
+): SentenceRevision {
+  return {
+    id,
+    relatedErrorIds,
+    original: 'go school',
+    revised: 'go to school',
+    note: 'Synthetic revision note.',
+    changeTypes,
+    needsTeacherReview: false,
+  }
+}
+
+function pairItem(
+  id = 'pair-1',
+  relatedErrorIds: string[] = ['error-1'],
+  changeTypes: FullTextChangeType[] = ['grammar'],
+): FullTextSentencePair {
+  return {
+    id,
+    relatedErrorIds,
+    original: 'go school',
+    corrected: 'go to school',
+    polished: 'I go to school.',
+    explanation: 'Synthetic pair explanation.',
+    changeTypes,
+    needsTeacherReview: false,
+  }
+}
+
+function logicItem(id = 'logic-1'): LogicIssue {
+  return {
+    id,
+    original: 'This is unclear.',
+    contextBefore: '',
+    contextAfter: '',
+    subType: 'unclear_logic',
+    severity: 'medium',
+    diagnosis: 'Synthetic diagnosis.',
+    suggestedAction: 'ask_student_to_explain',
+    conservativeSuggestion: 'Explain the connection.',
+    polishedSuggestion: 'Clarify the connection.',
+    needsTeacherReview: false,
+  }
+}
+
+function upgradeItem(id = 'upgrade-1'): UpgradedExpression {
+  return {
+    id,
+    original: 'good',
+    upgraded: 'beneficial',
+    note: 'Synthetic upgrade note.',
+    needsTeacherReview: false,
+  }
+}
+
+function legibilityItem(id = 'legibility-1', pageNumber = 1): LegibilityIssue {
+  return {
+    id,
+    transcriptText: 'word',
+    possibleReadings: ['word', 'ward'],
+    pageNumber,
+    regionDescription: 'line 1',
+    explanation: 'Synthetic legibility explanation.',
+    defaultOutcome: 'count_as_legibility_error',
   }
 }
 
@@ -219,8 +320,8 @@ describe('aggregateClassReviewSnapshot', () => {
       {
         dimensionId: 'language',
         name: 'Language',
-        averageScore: 4.8,
-        maxScore: 6,
+        averageScore: 12,
+        maxScore: 15,
         normalizedPerformance: 0.8,
       },
     ])
@@ -322,7 +423,7 @@ describe('aggregateClassReviewSnapshot', () => {
         dimensions: [{
           id: 'language',
           name: 'Language',
-          weight: 40,
+          weight: 100,
           description: 'Language quality.',
           deductionFocus: [],
         }],
@@ -378,6 +479,154 @@ describe('aggregateClassReviewSnapshot', () => {
     expect(aggregate.clearSpellingItems).toEqual([])
   })
 
+  it.each([
+    ['empty related IDs', (base: GradingResult) => ({
+      ...base,
+      errorAnnotations: [issue('error-1')],
+      sentenceRevisions: [revisionItem('revision-1', [])],
+    })],
+    ['duplicate related IDs', (base: GradingResult) => ({
+      ...base,
+      errorAnnotations: [issue('error-1')],
+      sentenceRevisions: [revisionItem('revision-1', ['error-1', 'error-1'])],
+    })],
+    ['dangling related IDs', (base: GradingResult) => ({
+      ...base,
+      errorAnnotations: [issue('error-1')],
+      sentenceRevisions: [revisionItem('revision-1', ['missing-error'])],
+    })],
+    ['empty change types', (base: GradingResult) => ({
+      ...base,
+      errorAnnotations: [issue('error-1')],
+      sentenceRevisions: [revisionItem('revision-1', ['error-1'], [])],
+    })],
+    ['duplicate change types', (base: GradingResult) => ({
+      ...base,
+      errorAnnotations: [issue('error-1')],
+      sentenceRevisions: [revisionItem('revision-1', ['error-1'], ['grammar', 'grammar'])],
+    })],
+    ['invalid change types', (base: GradingResult) => ({
+      ...base,
+      errorAnnotations: [issue('error-1')],
+      sentenceRevisions: [revisionItem(
+        'revision-1',
+        ['error-1'],
+        ['invalid_change_type' as FullTextChangeType],
+      )],
+    })],
+    ['duplicate lexical issue IDs', (base: GradingResult) => ({
+      ...base,
+      errorAnnotations: [issue('error-1'), issue('error-1')],
+    })],
+    ['duplicate sentence revision IDs', (base: GradingResult) => ({
+      ...base,
+      errorAnnotations: [issue('error-1')],
+      sentenceRevisions: [revisionItem('revision-1'), revisionItem('revision-1')],
+    })],
+    ['duplicate sentence pair IDs', (base: GradingResult) => ({
+      ...base,
+      errorAnnotations: [issue('error-1')],
+      fullTextRevision: {
+        ...base.fullTextRevision!,
+        sentencePairs: [pairItem('pair-1'), pairItem('pair-1')],
+      },
+    })],
+    ['duplicate logic issue IDs', (base: GradingResult) => ({
+      ...base,
+      fullTextRevision: {
+        ...base.fullTextRevision!,
+        logicIssues: [logicItem('logic-1'), logicItem('logic-1')],
+      },
+    })],
+    ['duplicate upgraded-expression IDs', (base: GradingResult) => ({
+      ...base,
+      upgradedExpressions: [upgradeItem('upgrade-1'), upgradeItem('upgrade-1')],
+    })],
+    ['duplicate legibility IDs', (base: GradingResult) => ({
+      ...base,
+      legibilityIssues: [legibilityItem('legibility-1'), legibilityItem('legibility-1')],
+    })],
+    ['cross-collection duplicate IDs', (base: GradingResult) => ({
+      ...base,
+      errorAnnotations: [issue('shared-id')],
+      sentenceRevisions: [revisionItem('shared-id', ['shared-id'])],
+    })],
+    ['malformed upgraded expression', (base: GradingResult) => ({
+      ...base,
+      upgradedExpressions: [{ ...upgradeItem(), note: '' }],
+    })],
+    ['empty lexical evidence text', (base: GradingResult) => ({
+      ...base,
+      errorAnnotations: [{ ...issue('error-1'), original: '' }],
+    })],
+    ['empty overall comment', (base: GradingResult) => ({
+      ...base,
+      overallComment: '',
+    })],
+    ['empty recognition warning', (base: GradingResult) => ({
+      ...base,
+      recognitionWarnings: [''],
+    })],
+    ['duplicate logic notes', (base: GradingResult) => ({
+      ...base,
+      fullTextRevision: {
+        ...base.fullTextRevision!,
+        logicNotes: ['Synthetic note.', 'Synthetic note.'],
+      },
+    })],
+    ['invalid legibility page zero', (base: GradingResult) => ({
+      ...base,
+      legibilityIssues: [legibilityItem('legibility-1', 0)],
+    })],
+    ['invalid legibility page above essay count', (base: GradingResult) => ({
+      ...base,
+      legibilityIssues: [legibilityItem('legibility-1', 2)],
+    })],
+    ['invalid fractional legibility page', (base: GradingResult) => ({
+      ...base,
+      legibilityIssues: [legibilityItem('legibility-1', 1.5)],
+    })],
+    ['missing full-text revision', (base: GradingResult) => ({
+      ...base,
+      fullTextRevision: undefined,
+    })],
+    ['empty full-text source', (base: GradingResult) => ({
+      ...base,
+      fullTextRevision: { ...base.fullTextRevision!, originalText: '' },
+    })],
+    ['full-text source not equal to adapted transcript', (base: GradingResult) => ({
+      ...base,
+      fullTextRevision: { ...base.fullTextRevision!, originalText: 'Different transcript.' },
+    })],
+    ['out-of-range optional confidence', (base: GradingResult) => ({
+      ...base,
+      aiConfidence: 1.1,
+    })],
+    ['negative optional result revision', (base: GradingResult) => ({
+      ...base,
+      resultRevision: -1,
+    })],
+  ])('keeps score eligibility but rejects deeply incomplete issue evidence: %s', (
+    _label,
+    mutate,
+  ) => {
+    const malformed = mutate(result('deep-malformed', 12)) as GradingResult
+    const aggregate = aggregateClassReviewSnapshot({
+      task: task(),
+      essays: [essay('deep-malformed')],
+      results: [malformed],
+    })
+
+    expect(aggregate).toMatchObject({
+      includedEssayCount: 1,
+      issueEligibleEssayCount: 0,
+      excludedEssayCount: 0,
+      partialIssueChannelCount: 1,
+    })
+    expect(aggregate.issueGroups).toEqual([])
+    expect(aggregate.clearSpellingItems).toEqual([])
+  })
+
   it('returns a legal empty common-issue result', () => {
     const essays = [essay('essay-1'), essay('essay-2')]
     const aggregate = aggregateClassReviewSnapshot({
@@ -413,7 +662,6 @@ describe('aggregateClassReviewSnapshot', () => {
     const currentEssay = essay('spelling')
     const initialResult = spellingResult('spelling', [
       { id: 'spell-1', original: 'feelling', corrected: 'feeling' },
-      { id: 'spell-2', original: 'feelling', corrected: 'feeling' },
     ])
     const initial = aggregateClassReviewSnapshot({
       task: task(),
@@ -425,7 +673,7 @@ describe('aggregateClassReviewSnapshot', () => {
     expect(initial.clearSpellingItems[0]).toMatchObject({
       sourceSubtype: 'spelling',
       studentCount: 1,
-      occurrenceCount: 2,
+      occurrenceCount: 1,
     })
 
     const edited = aggregateClassReviewSnapshot({
@@ -441,6 +689,38 @@ describe('aggregateClassReviewSnapshot', () => {
 
     expect(edited.clearSpellingItems).toEqual([])
     expect(invalidated.clearSpellingItems).toEqual([])
+  })
+
+  it('uses only the newly pointed-to result when old and new regrade results coexist', () => {
+    const currentEssay = essay('regraded', 'success', { aiResultId: 'regraded-result-new' })
+    const oldResult = {
+      ...spellingResult('regraded', [
+        { id: 'old-spelling', original: 'feelling', corrected: 'feeling' },
+      ]),
+      id: 'regraded-result-old',
+    }
+    const newResult = {
+      ...spellingResult('regraded', [
+        { id: 'new-spelling', original: 'recieve', corrected: 'receive' },
+      ]),
+      id: 'regraded-result-new',
+      resultRevision: 2,
+    }
+
+    const aggregate = aggregateClassReviewSnapshot({
+      task: task(),
+      essays: [currentEssay],
+      results: [oldResult, newResult],
+    })
+
+    expect(aggregate.includedEssayCount).toBe(1)
+    expect(aggregate.clearSpellingItems).toHaveLength(1)
+    expect(aggregate.clearSpellingItems[0]).toMatchObject({
+      originalWord: 'recieve',
+      correctedWord: 'receive',
+      occurrenceCount: 1,
+    })
+    expect(aggregate.clearSpellingItems.some((item) => item.originalWord === 'feelling')).toBe(false)
   })
 
   it('never merges different spelling corrections or source subtypes', () => {

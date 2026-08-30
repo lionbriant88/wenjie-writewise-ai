@@ -41,7 +41,7 @@ function successfulEssay(id: string, overrides: Partial<Essay> = {}): Essay {
   }
 }
 
-function result(essayId: string, totalScore: number): GradingResult {
+function result(essayId: string, totalScore: number, fullScore = 15): GradingResult {
   return {
     id: `${essayId}-result`,
     essayId,
@@ -49,11 +49,11 @@ function result(essayId: string, totalScore: number): GradingResult {
     dimensionScores: [{
       id: 'language',
       name: 'Language',
-      score: Math.min(totalScore, 15),
-      maxScore: 15,
+      score: Math.min(totalScore, fullScore),
+      maxScore: fullScore,
       weight: 100,
-      reason: '',
-      evidence: '',
+      reason: 'Synthetic score reason.',
+      evidence: 'Synthetic score evidence.',
     }],
     errorAnnotations: [],
     sentenceRevisions: [],
@@ -79,18 +79,18 @@ describe('getClassOverviewStats', () => {
   it('summarizes class scores and groups them by exam score bands', () => {
     const essays = ['e1', 'e2', 'e3', 'e4', 'e5', 'e6'].map(essay)
     const stats = getClassOverviewStats(essays, [
-      result('e1', 2.4),
-      result('e2', 5.8),
-      result('e3', 8.6),
-      result('e4', 12.4),
-      result('e5', 12.6),
+      result('e1', 2),
+      result('e2', 6),
+      result('e3', 9),
+      result('e4', 12),
+      result('e5', 13),
     ], overviewTask(15))
 
     expect(stats.totalEssayCount).toBe(6)
     expect(stats.scoredEssayCount).toBe(5)
     expect(stats.averageScore).toBe(8.4)
-    expect(stats.highestScore).toBe(12.6)
-    expect(stats.lowestScore).toBe(2.4)
+    expect(stats.highestScore).toBe(13)
+    expect(stats.lowestScore).toBe(2)
     expect(stats.bands).toEqual([
       { label: '0-3', count: 1, percent: 20 },
       { label: '4-6', count: 1, percent: 20 },
@@ -121,7 +121,7 @@ describe('getClassOverviewStats', () => {
 
     const stats = getClassOverviewStats(
       [confirmed, ready],
-      [result('confirmed', 26), result('ready', 30)],
+      [result('confirmed', 26, 30), result('ready', 30, 30)],
       overviewTask(30),
     )
 
@@ -231,5 +231,178 @@ describe('getClassOverviewStats', () => {
 
     expect(stats.scoredEssayCount).toBe(0)
     expect(stats.averageScore).toBeNull()
+  })
+
+  it.each([
+    ['zero dimension weight', {
+      dimensionScores: [{ ...result('seed', 10).dimensionScores[0], weight: 0 }],
+    }],
+    ['dimension weights not totaling 100', {
+      dimensionScores: [
+        {
+          ...result('seed', 10).dimensionScores[0],
+          id: 'content',
+          name: 'Content',
+          score: 5,
+          maxScore: 7.5,
+          weight: 50,
+        },
+        {
+          ...result('seed', 10).dimensionScores[0],
+          id: 'language',
+          score: 5,
+          maxScore: 6,
+          weight: 40,
+        },
+      ],
+    }],
+    ['dimension maximum above task full score', {
+      dimensionScores: [{ ...result('seed', 10).dimensionScores[0], maxScore: 16 }],
+    }],
+    ['dimension maximum inconsistent with its weight', {
+      dimensionScores: [{ ...result('seed', 10).dimensionScores[0], maxScore: 14 }],
+    }],
+    ['reported total inconsistent with dimension scores', { totalScore: 9 }],
+    ['invalid dimension review flag', {
+      dimensionScores: [{
+        ...result('seed', 10).dimensionScores[0],
+        needsTeacherReview: 'yes',
+      }],
+    }],
+  ])('rejects an internally incoherent score channel: %s', (_label, overrides) => {
+    const incoherent = { ...result('incoherent', 10), ...overrides } as unknown as GradingResult
+    const stats = getClassOverviewStats(
+      [successfulEssay('incoherent')],
+      [incoherent],
+      overviewTask(15, 3),
+    )
+
+    expect(stats.scoredEssayCount).toBe(0)
+    expect(stats.averageScore).toBeNull()
+  })
+
+  it('uses the current visible-legibility cap when reconciling the total score', () => {
+    const capped = {
+      ...result('legibility', 14),
+      dimensionScores: [
+        {
+          ...result('seed', 10).dimensionScores[0],
+          id: 'content',
+          name: 'Content',
+          score: 14.25,
+          maxScore: 14.25,
+          weight: 95,
+        },
+        {
+          ...result('seed', 10).dimensionScores[0],
+          id: 'legibility',
+          name: 'Legibility',
+          score: 0.5,
+          maxScore: 0.75,
+          weight: 5,
+        },
+      ],
+      legibilityIssues: [{
+        id: 'legibility-1',
+        transcriptText: 'word',
+        possibleReadings: ['word', 'ward'],
+        pageNumber: 1,
+        regionDescription: 'line 1',
+        explanation: 'Synthetic visible issue.',
+        defaultOutcome: 'count_as_legibility_error' as const,
+      }],
+    }
+    const uncapped = { ...capped, id: 'uncapped-result', essayId: 'uncapped', totalScore: 15 }
+
+    expect(getClassOverviewStats(
+      [successfulEssay('legibility')],
+      [capped],
+      overviewTask(15, 3),
+    ).scoredEssayCount).toBe(1)
+    expect(getClassOverviewStats(
+      [successfulEssay('uncapped')],
+      [uncapped],
+      overviewTask(15, 3),
+    ).scoredEssayCount).toBe(0)
+  })
+
+  it('accepts an exact modern rubric score channel and coherent legacy generation-zero scores', () => {
+    const currentTask = {
+      ...overviewTask(15, 3),
+      rubricDraft: {
+        source: 'teacher' as const,
+        writingGoal: 'Synthetic goal.',
+        offTopicCriteria: [],
+        dimensions: [
+          { id: 'content', name: 'Content', weight: 40, description: 'Content.', deductionFocus: [] },
+          { id: 'language', name: 'Language', weight: 60, description: 'Language.', deductionFocus: [] },
+        ],
+        excellentFeatures: [],
+        reviewTriggers: [],
+        status: 'confirmed' as const,
+      },
+    }
+    const modern = {
+      ...result('modern', 12),
+      dimensionScores: [
+        { ...result('seed', 10).dimensionScores[0], id: 'content', name: 'Content', score: 5, maxScore: 6, weight: 40 },
+        { ...result('seed', 10).dimensionScores[0], id: 'language', name: 'Language', score: 7, maxScore: 9, weight: 60 },
+      ],
+    }
+
+    const modernStats = getClassOverviewStats(
+      [successfulEssay('modern')],
+      [modern],
+      currentTask,
+    )
+    const legacyStats = getClassOverviewStats(
+      [essay('legacy')],
+      [result('legacy', 11)],
+      { ...currentTask, rubricGeneration: 0 },
+    )
+
+    expect(modernStats.scoredEssayCount).toBe(1)
+    expect(legacyStats.scoredEssayCount).toBe(1)
+  })
+
+  it.each([
+    ['dimension order', (dimensions: GradingResult['dimensionScores']) => [...dimensions].reverse()],
+    ['dimension name', (dimensions: GradingResult['dimensionScores']) => [
+      { ...dimensions[0], name: 'Different content name' }, dimensions[1],
+    ]],
+    ['dimension weight', (dimensions: GradingResult['dimensionScores']) => [
+      { ...dimensions[0], maxScore: 7.5, weight: 50 },
+      { ...dimensions[1], maxScore: 7.5, weight: 50 },
+    ]],
+    ['dimension maximum', (dimensions: GradingResult['dimensionScores']) => [
+      { ...dimensions[0], maxScore: 5.99 }, dimensions[1],
+    ]],
+  ])('rejects modern current-rubric mismatch in %s', (_label, mutate) => {
+    const currentTask = {
+      ...overviewTask(15, 3),
+      rubricDraft: {
+        source: 'teacher' as const,
+        writingGoal: 'Synthetic goal.',
+        offTopicCriteria: [],
+        dimensions: [
+          { id: 'content', name: 'Content', weight: 40, description: 'Content.', deductionFocus: [] },
+          { id: 'language', name: 'Language', weight: 60, description: 'Language.', deductionFocus: [] },
+        ],
+        excellentFeatures: [],
+        reviewTriggers: [],
+        status: 'confirmed' as const,
+      },
+    }
+    const dimensions = [
+      { ...result('seed', 10).dimensionScores[0], id: 'content', name: 'Content', score: 5, maxScore: 6, weight: 40 },
+      { ...result('seed', 10).dimensionScores[0], id: 'language', name: 'Language', score: 7, maxScore: 9, weight: 60 },
+    ]
+    const mismatched = { ...result('mismatch', 12), dimensionScores: mutate(dimensions) }
+
+    expect(getClassOverviewStats(
+      [successfulEssay('mismatch')],
+      [mismatched],
+      currentTask,
+    ).scoredEssayCount).toBe(0)
   })
 })

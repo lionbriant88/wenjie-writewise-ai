@@ -127,9 +127,8 @@ export function unrestrictedDamerauLevenshteinV1(left: string, right: string): n
   return distances[sourceLength + 1][targetLength + 1]
 }
 
-function alignedCorrections(input: SpellingCandidateInput): AlignedCorrection[] {
-  const revisionMatches = input.sentenceRevisions
-    .filter((item) => item.relatedErrorIds.includes(input.candidate.id))
+function allCorrections(input: SpellingCandidateInput): AlignedCorrection[] {
+  const revisions = input.sentenceRevisions
     .map<AlignedCorrection>((item) => ({
       kind: 'sentence_revision',
       id: item.id,
@@ -139,8 +138,7 @@ function alignedCorrections(input: SpellingCandidateInput): AlignedCorrection[] 
       changeTypes: item.changeTypes,
       needsTeacherReview: item.needsTeacherReview,
     }))
-  const pairMatches = input.sentencePairs
-    .filter((item) => item.relatedErrorIds.includes(input.candidate.id))
+  const pairs = input.sentencePairs
     .map<AlignedCorrection>((item) => ({
       kind: 'sentence_pair',
       id: item.id,
@@ -150,7 +148,11 @@ function alignedCorrections(input: SpellingCandidateInput): AlignedCorrection[] 
       changeTypes: item.changeTypes,
       needsTeacherReview: item.needsTeacherReview,
     }))
-  return [...revisionMatches, ...pairMatches]
+  return [...revisions, ...pairs]
+}
+
+function alignedCorrections(input: SpellingCandidateInput): AlignedCorrection[] {
+  return allCorrections(input).filter((item) => item.relatedErrorIds.includes(input.candidate.id))
 }
 
 function overlapsLogic(input: SpellingCandidateInput, association: AlignedCorrection): boolean {
@@ -182,6 +184,16 @@ function overlapsConflictingLexicalEvidence(
     ]
     return linkedSources.some((source) => sourceLocationsOverlap(source, association.original))
   })
+}
+
+function overlapsAnotherCorrectionAssociation(
+  input: SpellingCandidateInput,
+  association: AlignedCorrection,
+): boolean {
+  return allCorrections(input).some((candidate) => (
+    (candidate.kind !== association.kind || candidate.id !== association.id)
+    && sourceLocationsOverlap(candidate.original, association.original)
+  ))
 }
 
 export function classifyDefiniteSpellingCandidate(
@@ -229,6 +241,7 @@ export function classifyDefiniteSpellingCandidate(
     || normalizeForComparison(association.corrected) !== normalizedCorrection
   ) return null
   if (overlapsConflictingLexicalEvidence(input, association)) return null
+  if (overlapsAnotherCorrectionAssociation(input, association)) return null
   if (overlapsLogic(input, association)) return null
 
   return {

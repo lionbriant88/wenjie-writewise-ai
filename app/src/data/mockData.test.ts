@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest'
+import { calculateTotalScore } from '../services/grading/scoringRules'
 import { mockEssays, mockGradingResults, mockTasks } from './mockData'
 
 describe('mock grading result consistency', () => {
+  it('derives every synthetic total from the shared current scoring rule', () => {
+    for (const result of mockGradingResults) {
+      expect(result.totalScore, `${result.id} should reconcile with its dimensions`).toBe(
+        calculateTotalScore(result.dimensionScores.map(({ score }) => score), 15),
+      )
+    }
+  })
+
   it('initializes every canonical task and essay generation explicitly', () => {
     expect(mockTasks.every((task) => task.rubricGeneration === 0)).toBe(true)
     expect(mockEssays.every((essay) => essay.sourceGeneration === 0)).toBe(true)

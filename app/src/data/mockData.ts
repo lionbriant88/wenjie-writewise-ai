@@ -8,6 +8,7 @@ import type {
   Task,
 } from '../types'
 import { confirmOcrAudit, createPendingOcrAudit } from '../services/ocr/audit/transcriptAudit'
+import { calculateTotalScore } from '../services/grading/scoringRules'
 
 const baseDate = '2026-06-25T09:00:00.000Z'
 const mockEssayText =
@@ -219,11 +220,13 @@ export const createMockFullTextRevision = (essayId: string): FullTextRevision =>
   ],
 })
 
-const resultFor = (essayId: string, seed: number): GradingResult => ({
+const resultFor = (essayId: string, seed: number): GradingResult => {
+  const dimensionScores = dimensions(seed)
+  return {
   id: `${essayId}-result`,
   essayId,
-  totalScore: 12.6 + (seed % 3) * 0.2,
-  dimensionScores: dimensions(seed),
+  totalScore: calculateTotalScore(dimensionScores.map(({ score }) => score), 15),
+  dimensionScores,
   errorAnnotations: [
     {
       id: `${essayId}-err-1`,
@@ -302,7 +305,8 @@ const resultFor = (essayId: string, seed: number): GradingResult => ({
   teacherAdjusted: false,
   createdAt: baseDate,
   updatedAt: baseDate,
-})
+  }
+}
 
 const mockPromptInfo: NonNullable<Task['promptInfo']> = {
   writingGenre: 'practical_writing',

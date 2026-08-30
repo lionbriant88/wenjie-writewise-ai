@@ -7,6 +7,7 @@ import type {
   LogicIssue,
   SentenceRevision,
   Task,
+  UpgradedExpression,
 } from '../../types'
 import { getDynamicScoreBands } from '../../utils/gradingDiagnostics'
 import {
@@ -176,118 +177,233 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === 'string')
+function isBoundedText(value: unknown, maximumLength = 50_000): value is string {
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= maximumLength
+}
+
+function isBoundedOptionalText(value: unknown, maximumLength = 50_000): value is string {
+  return typeof value === 'string' && value.length <= maximumLength
+}
+
+function isBoundedStringArray(
+  value: unknown,
+  options: {
+    maximumItems: number
+    maximumLength: number
+    minimumItems?: number
+    unique?: boolean
+  },
+): value is string[] {
+  if (
+    !Array.isArray(value)
+    || value.length < (options.minimumItems ?? 0)
+    || value.length > options.maximumItems
+    || !value.every((item) => isBoundedText(item, options.maximumLength))
+  ) return false
+  return options.unique !== true || new Set(value).size === value.length
 }
 
 function isOptionalBoolean(value: unknown): boolean {
   return value === undefined || typeof value === 'boolean'
 }
 
+function hasUniqueIds(items: readonly { id: string }[]): boolean {
+  return new Set(items.map(({ id }) => id)).size === items.length
+}
+
 function isErrorAnnotation(value: unknown): value is ErrorAnnotation {
   return isRecord(value)
-    && typeof value.id === 'string'
-    && value.id.length > 0
+    && isBoundedText(value.id, 200)
     && typeof value.type === 'string'
     && ERROR_TYPES.has(value.type)
-    && typeof value.original === 'string'
-    && typeof value.suggestion === 'string'
-    && typeof value.explanation === 'string'
+    && isBoundedText(value.original)
+    && isBoundedText(value.suggestion)
+    && isBoundedText(value.explanation)
     && typeof value.severity === 'string'
     && SEVERITIES.has(value.severity)
     && typeof value.evidenceCertainty === 'string'
     && EVIDENCE_CERTAINTIES.has(value.evidenceCertainty)
-    && isOptionalBoolean(value.needsTeacherReview)
+    && typeof value.needsTeacherReview === 'boolean'
+}
+
+function hasValidRelationAndChangeArrays(value: Record<string, unknown>): boolean {
+  return isBoundedStringArray(value.relatedErrorIds, {
+    maximumItems: 100,
+    maximumLength: 200,
+    minimumItems: 1,
+    unique: true,
+  })
+    && isBoundedStringArray(value.changeTypes, {
+      maximumItems: 20,
+      maximumLength: 64,
+      minimumItems: 1,
+      unique: true,
+    })
+    && value.changeTypes.every((item) => FULL_TEXT_CHANGE_TYPES.has(item))
 }
 
 function isSentenceRevision(value: unknown): value is SentenceRevision {
   return isRecord(value)
-    && typeof value.id === 'string'
-    && value.id.length > 0
-    && isStringArray(value.relatedErrorIds)
-    && typeof value.original === 'string'
-    && typeof value.revised === 'string'
-    && typeof value.note === 'string'
-    && isStringArray(value.changeTypes)
-    && value.changeTypes.every((item) => FULL_TEXT_CHANGE_TYPES.has(item))
+    && isBoundedText(value.id, 200)
+    && hasValidRelationAndChangeArrays(value)
+    && isBoundedText(value.original)
+    && isBoundedText(value.revised)
+    && isBoundedText(value.note)
     && isOptionalBoolean(value.needsTeacherReview)
 }
 
 function isSentencePair(value: unknown): value is FullTextSentencePair {
   return isRecord(value)
-    && typeof value.id === 'string'
-    && value.id.length > 0
-    && typeof value.original === 'string'
-    && typeof value.corrected === 'string'
-    && typeof value.polished === 'string'
-    && isStringArray(value.relatedErrorIds)
-    && isStringArray(value.changeTypes)
-    && value.changeTypes.every((item) => FULL_TEXT_CHANGE_TYPES.has(item))
-    && typeof value.explanation === 'string'
-    && isOptionalBoolean(value.needsTeacherReview)
+    && isBoundedText(value.id, 200)
+    && hasValidRelationAndChangeArrays(value)
+    && isBoundedText(value.original)
+    && isBoundedText(value.corrected)
+    && isBoundedText(value.polished)
+    && isBoundedText(value.explanation)
+    && typeof value.needsTeacherReview === 'boolean'
 }
 
 function isLogicIssue(value: unknown): value is LogicIssue {
   return isRecord(value)
-    && typeof value.id === 'string'
-    && value.id.length > 0
-    && (value.sentenceId === undefined || typeof value.sentenceId === 'string')
-    && typeof value.original === 'string'
-    && typeof value.contextBefore === 'string'
-    && typeof value.contextAfter === 'string'
+    && isBoundedText(value.id, 200)
+    && (value.sentenceId === undefined || isBoundedText(value.sentenceId, 200))
+    && isBoundedText(value.original)
+    && isBoundedOptionalText(value.contextBefore)
+    && isBoundedOptionalText(value.contextAfter)
     && typeof value.subType === 'string'
     && LOGIC_SUBTYPES.has(value.subType)
     && typeof value.severity === 'string'
     && SEVERITIES.has(value.severity)
-    && typeof value.diagnosis === 'string'
+    && isBoundedText(value.diagnosis)
     && typeof value.suggestedAction === 'string'
     && LOGIC_ACTIONS.has(value.suggestedAction)
-    && typeof value.conservativeSuggestion === 'string'
-    && typeof value.polishedSuggestion === 'string'
+    && isBoundedText(value.conservativeSuggestion)
+    && isBoundedText(value.polishedSuggestion)
     && typeof value.needsTeacherReview === 'boolean'
 }
 
-function isLegibilityIssue(value: unknown): value is LegibilityIssue {
+function isUpgradedExpression(value: unknown): value is UpgradedExpression {
   return isRecord(value)
-    && typeof value.id === 'string'
-    && typeof value.transcriptText === 'string'
-    && isStringArray(value.possibleReadings)
-    && typeof value.pageNumber === 'number'
-    && Number.isFinite(value.pageNumber)
-    && typeof value.regionDescription === 'string'
-    && typeof value.explanation === 'string'
+    && isBoundedText(value.id, 200)
+    && isBoundedText(value.original)
+    && isBoundedText(value.upgraded)
+    && isBoundedText(value.note)
+    && isOptionalBoolean(value.needsTeacherReview)
+}
+
+function isLegibilityIssue(value: unknown, pageCount: number): value is LegibilityIssue {
+  return isRecord(value)
+    && isBoundedText(value.id, 200)
+    && isBoundedText(value.transcriptText)
+    && isBoundedStringArray(value.possibleReadings, {
+      maximumItems: 4,
+      maximumLength: 1_000,
+      minimumItems: 2,
+      unique: true,
+    })
+    && new Set(value.possibleReadings.map(normalizeFingerprintText)).size === value.possibleReadings.length
+    && Number.isInteger(value.pageNumber)
+    && (value.pageNumber as number) >= 1
+    && (value.pageNumber as number) <= pageCount
+    && isBoundedText(value.regionDescription)
+    && isBoundedText(value.explanation)
     && value.defaultOutcome === 'count_as_legibility_error'
 }
 
-function hasCompleteIssueChannel(result: GradingResult): boolean {
+function hasCompleteIssueChannel(result: GradingResult, essay: Essay): boolean {
   const value = result as unknown as Record<string, unknown>
-  if (!Array.isArray(value.errorAnnotations) || !value.errorAnnotations.every(isErrorAnnotation)) {
-    return false
-  }
-  if (new Set(value.errorAnnotations.map((item) => item.id)).size !== value.errorAnnotations.length) {
-    return false
-  }
-  if (!Array.isArray(value.sentenceRevisions) || !value.sentenceRevisions.every(isSentenceRevision)) {
-    return false
-  }
-  if (!Array.isArray(value.upgradedExpressions)) return false
-  if (!isStringArray(value.recognitionWarnings)) return false
-  if (!Array.isArray(value.legibilityIssues) || !value.legibilityIssues.every(isLegibilityIssue)) {
-    return false
-  }
-  if (value.fullTextRevision !== undefined) {
-    if (!isRecord(value.fullTextRevision)) return false
-    if (
-      typeof value.fullTextRevision.originalText !== 'string'
-      || typeof value.fullTextRevision.correctedText !== 'string'
-      || typeof value.fullTextRevision.polishedText !== 'string'
-      || !Array.isArray(value.fullTextRevision.sentencePairs)
-      || !value.fullTextRevision.sentencePairs.every(isSentencePair)
-      || !Array.isArray(value.fullTextRevision.logicIssues)
-      || !value.fullTextRevision.logicIssues.every(isLogicIssue)
-      || !isStringArray(value.fullTextRevision.logicNotes)
-    ) return false
-  }
+  if (
+    value.resultVersion !== 'grading-result-v2'
+    || (value.source !== 'mock' && value.source !== 'remote')
+    || !isBoundedStringArray(value.reviewReasons, {
+      maximumItems: 100,
+      maximumLength: 50_000,
+      unique: true,
+    })
+    || value.reviewReasons.length !== 0
+    || !isBoundedText(value.transcript)
+    || typeof value.printedTextExcluded !== 'boolean'
+    || !isBoundedText(value.overallComment)
+    || typeof value.teacherAdjusted !== 'boolean'
+    || (value.aiConfidence !== undefined && (
+      typeof value.aiConfidence !== 'number'
+      || !Number.isFinite(value.aiConfidence)
+      || value.aiConfidence < 0
+      || value.aiConfidence > 1
+    ))
+    || (value.resultRevision !== undefined && (
+      !Number.isSafeInteger(value.resultRevision)
+      || (value.resultRevision as number) < 0
+    ))
+    || !isBoundedText(value.createdAt, 100)
+    || !Number.isFinite(Date.parse(value.createdAt))
+    || !isBoundedText(value.updatedAt, 100)
+    || !Number.isFinite(Date.parse(value.updatedAt))
+  ) return false
+
+  if (
+    !Array.isArray(value.errorAnnotations)
+    || value.errorAnnotations.length > 100
+    || !value.errorAnnotations.every(isErrorAnnotation)
+    || !Array.isArray(value.sentenceRevisions)
+    || value.sentenceRevisions.length > 100
+    || !value.sentenceRevisions.every(isSentenceRevision)
+    || !Array.isArray(value.upgradedExpressions)
+    || value.upgradedExpressions.length > 100
+    || !value.upgradedExpressions.every(isUpgradedExpression)
+    || !isBoundedStringArray(value.recognitionWarnings, {
+      maximumItems: 50,
+      maximumLength: 1_000,
+      unique: true,
+    })
+    || value.recognitionWarnings.length !== 0
+    || !Array.isArray(value.legibilityIssues)
+    || value.legibilityIssues.length > 50
+    || !value.legibilityIssues.every((item) => isLegibilityIssue(item, essay.pageCount))
+  ) return false
+
+  if (!isRecord(value.fullTextRevision)) return false
+  if (
+    !isBoundedText(value.fullTextRevision.originalText)
+    || value.fullTextRevision.originalText !== value.transcript
+    || !isBoundedText(value.fullTextRevision.correctedText)
+    || !isBoundedText(value.fullTextRevision.polishedText)
+    || !Array.isArray(value.fullTextRevision.sentencePairs)
+    || value.fullTextRevision.sentencePairs.length > 100
+    || !value.fullTextRevision.sentencePairs.every(isSentencePair)
+    || !Array.isArray(value.fullTextRevision.logicIssues)
+    || value.fullTextRevision.logicIssues.length > 50
+    || !value.fullTextRevision.logicIssues.every(isLogicIssue)
+    || !isBoundedStringArray(value.fullTextRevision.logicNotes, {
+      maximumItems: 100,
+      maximumLength: 50_000,
+      unique: true,
+    })
+  ) return false
+
+  const idCollections = [
+    value.errorAnnotations,
+    value.sentenceRevisions,
+    value.fullTextRevision.sentencePairs,
+    value.fullTextRevision.logicIssues,
+    value.upgradedExpressions,
+    value.legibilityIssues,
+  ] as Array<Array<{ id: string }>>
+  if (idCollections.some((items) => !hasUniqueIds(items))) return false
+  const allIds = idCollections.flatMap((items) => items.map(({ id }) => id))
+  if (new Set(allIds).size !== allIds.length) return false
+
+  const knownIssueIds = new Set([
+    ...value.errorAnnotations.map(({ id }) => id),
+    ...value.fullTextRevision.logicIssues.map(({ id }) => id),
+  ])
+  const linkedItems = [
+    ...value.sentenceRevisions,
+    ...value.fullTextRevision.sentencePairs,
+  ]
+  if (linkedItems.some(({ relatedErrorIds }) => (
+    relatedErrorIds.some((id) => !knownIssueIds.has(id))
+  ))) return false
   return true
 }
 
@@ -411,7 +527,9 @@ export function aggregateClassReviewSnapshot(input: {
   })
   const includedResults = selection.included.map(({ result }) => result)
   const issueEligible = selection.included.filter(
-    ({ essay, result }) => essay.gradingRun?.status === 'success' && hasCompleteIssueChannel(result),
+    ({ essay, result }) => (
+      essay.gradingRun?.status === 'success' && hasCompleteIssueChannel(result, essay)
+    ),
   ) as IssueEligibleResult[]
   const exclusions = selection.exclusions
     .map<ClassReviewEssayExclusion>((exclusion) => exclusion)

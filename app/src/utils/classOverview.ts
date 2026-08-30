@@ -1,4 +1,10 @@
 import type { Essay, GradingResult, Task } from '../types'
+import {
+  calculateDimensionMaxScore,
+  calculateTotalScore,
+  capTotalScoreForVisibleLegibilityDeduction,
+  hasValidRubricWeights,
+} from '../services/grading/scoringRules'
 import { getDynamicScoreBands } from './gradingDiagnostics'
 
 export interface ClassOverviewBand {
@@ -48,13 +54,18 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
 }
 
+function isBoundedText(value: unknown, maximumLength: number): value is string {
+  return isNonEmptyString(value) && value.length <= maximumLength
+}
+
 export function hasUsableClassReviewScoreChannel(
   value: unknown,
   task: ClassOverviewTask,
   requireRubricCorrespondence = true,
 ): value is GradingResult {
   if (!isRecord(value)) return false
-  if (!isNonEmptyString(value.id) || !isNonEmptyString(value.essayId)) return false
+  if (!Number.isFinite(task.fullScore) || task.fullScore <= 0) return false
+  if (!isBoundedText(value.id, 200) || !isBoundedText(value.essayId, 200)) return false
   if (
     typeof value.totalScore !== 'number'
     || !Number.isFinite(value.totalScore)
@@ -64,35 +75,66 @@ export function hasUsableClassReviewScoreChannel(
   if (!Array.isArray(value.dimensionScores) || value.dimensionScores.length === 0) return false
 
   const dimensionIds = new Set<string>()
+  const dimensionWeights: number[] = []
+  const dimensionScores: number[] = []
   for (const dimension of value.dimensionScores) {
     if (!isRecord(dimension)) return false
-    if (!isNonEmptyString(dimension.id) || dimensionIds.has(dimension.id)) return false
+    if (!isBoundedText(dimension.id, 200) || dimensionIds.has(dimension.id)) return false
     dimensionIds.add(dimension.id)
-    if (!isNonEmptyString(dimension.name)) return false
+    if (!isBoundedText(dimension.name, 200)) return false
     if (
       typeof dimension.score !== 'number'
       || !Number.isFinite(dimension.score)
       || typeof dimension.maxScore !== 'number'
       || !Number.isFinite(dimension.maxScore)
       || dimension.maxScore <= 0
+      || dimension.maxScore > task.fullScore
       || dimension.score < 0
       || dimension.score > dimension.maxScore
       || typeof dimension.weight !== 'number'
       || !Number.isFinite(dimension.weight)
-      || dimension.weight < 0
-      || dimension.weight > 100
-      || typeof dimension.reason !== 'string'
-      || typeof dimension.evidence !== 'string'
+      || dimension.maxScore !== calculateDimensionMaxScore(task.fullScore, dimension.weight)
+      || !isBoundedText(dimension.reason, 50_000)
+      || !isBoundedText(dimension.evidence, 50_000)
+      || (dimension.needsTeacherReview !== undefined
+        && typeof dimension.needsTeacherReview !== 'boolean')
     ) return false
+    dimensionWeights.push(dimension.weight)
+    dimensionScores.push(dimension.score)
   }
+  if (!hasValidRubricWeights(dimensionWeights)) return false
+
+  const roundedTotal = calculateTotalScore(dimensionScores, task.fullScore)
+  const legibilityDimension = value.dimensionScores.find((dimension) => (
+    isRecord(dimension) && dimension.id === 'legibility'
+  )) as Record<string, unknown> | undefined
+  const expectedTotal = legibilityDimension
+    ? capTotalScoreForVisibleLegibilityDeduction(
+        roundedTotal,
+        task.fullScore,
+        legibilityDimension.score as number,
+        legibilityDimension.maxScore as number,
+        Array.isArray(value.legibilityIssues) && value.legibilityIssues.length > 0,
+      )
+    : roundedTotal
+  if (value.totalScore !== expectedTotal) return false
 
   const rubricDimensions = requireRubricCorrespondence && task.rubricDraft?.status === 'confirmed'
     ? task.rubricDraft.dimensions
     : null
   if (rubricDimensions) {
-    if (rubricDimensions.length !== dimensionIds.size) return false
-    for (const rubricDimension of rubricDimensions) {
-      if (!dimensionIds.has(rubricDimension.id)) return false
+    if (
+      !hasValidRubricWeights(rubricDimensions.map(({ weight }) => weight))
+      || rubricDimensions.length !== value.dimensionScores.length
+    ) return false
+    for (const [index, rubricDimension] of rubricDimensions.entries()) {
+      const dimension = value.dimensionScores[index] as Record<string, unknown>
+      if (
+        dimension.id !== rubricDimension.id
+        || dimension.name !== rubricDimension.name
+        || dimension.weight !== rubricDimension.weight
+        || dimension.maxScore !== calculateDimensionMaxScore(task.fullScore, rubricDimension.weight)
+      ) return false
     }
   }
   return true
