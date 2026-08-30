@@ -45,4 +45,27 @@ describe('class-review framing calibration', () => {
       expect(isExactClassReviewFramingCalibration(value)).toBe(false)
     }
   })
+
+  it('rejects accessor and throwing-proxy inputs without executing untrusted properties', () => {
+    let getterReads = 0
+    const accessor = { ...syntheticCalibration } as Record<string, unknown>
+    Object.defineProperty(accessor, 'framingTokens', {
+      enumerable: true,
+      get() {
+        getterReads += 1
+        throw new Error('accessor must not execute')
+      },
+    })
+    const throwingProxy = new Proxy(syntheticCalibration, {
+      ownKeys() {
+        throw new Error('proxy trap')
+      },
+    })
+
+    expect(() => isExactClassReviewFramingCalibration(accessor)).not.toThrow()
+    expect(isExactClassReviewFramingCalibration(accessor)).toBe(false)
+    expect(getterReads).toBe(0)
+    expect(() => isExactClassReviewFramingCalibration(throwingProxy)).not.toThrow()
+    expect(isExactClassReviewFramingCalibration(throwingProxy)).toBe(false)
+  })
 })

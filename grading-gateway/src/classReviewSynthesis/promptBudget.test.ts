@@ -28,6 +28,29 @@ function request(name: keyof typeof fixtures.requests): ClassReviewSynthesisRequ
   return parsed.value
 }
 
+function requestWithThreeGroups(): ClassReviewSynthesisRequestV1 {
+  const value = structuredClone(request('withGroups'))
+  value.groups.push({
+    ...value.groups[1],
+    groupId: 'logic.third',
+    title: 'Third ordered group',
+  })
+  value.semanticCoverage = {
+    projectedGroupCount: 3,
+    eligibleGroupCount: 3,
+    groupCoverage: 1,
+    projectedDistinctEssaySupportSum: 4,
+    eligibleDistinctEssaySupportSum: 4,
+    supportWeightedCoverage: 1,
+    projectedOccurrenceSum: 5,
+    eligibleOccurrenceSum: 5,
+    occurrenceWeightedCoverage: 1,
+  }
+  const parsed = validateClassReviewSynthesisRequest(value)
+  if (!parsed.ok) throw new Error(`invalid three-group fixture ${parsed.error.path}`)
+  return parsed.value
+}
+
 function wireSizedMessages(target: number, count: 2 | 3): KimiMessage[] {
   const messages: KimiMessage[] = Array.from({ length: count }, (_, index) => ({
     role: index === 0 ? 'system' : 'user', content: '',
@@ -137,6 +160,85 @@ describe('class-review prompt budget', () => {
       occurrenceWeightedCoverage: 1 / 2,
     })
     expect(count.mock.calls.some(([wire]) => String(wire).includes('logic.bridge'))).toBe(true)
+  })
+
+  it('retains a later passing prefix after an earlier tokenizer-only failure', () => {
+    const input = request('withGroups')
+    const count = vi.fn((wire: string) => {
+      if (!wire.includes('grammar.tense')) return 100
+      return wire.includes('logic.bridge') ? 100 : 20_000
+    })
+
+    const prepared = prepareClassReviewSynthesisRequest({ request: input, tokenizer: { count }, calibration })
+
+    expect(prepared.ok).toBe(true)
+    if (!prepared.ok) return
+    expect(prepared.request.groups.map(({ groupId }) => groupId)).toEqual([
+      'grammar.tense',
+      'logic.bridge',
+    ])
+    expect(count.mock.calls.some(([wire]) => String(wire).includes('grammar.tense')
+      && !String(wire).includes('logic.bridge'))).toBe(true)
+    expect(count.mock.calls.some(([wire]) => String(wire).includes('logic.bridge'))).toBe(true)
+  })
+
+  it('retains the longest ordered prefix across pass, fail, then later pass', () => {
+    const input = requestWithThreeGroups()
+    const count = vi.fn((wire: string) => {
+      if (wire.includes('logic.third')) return 100
+      if (wire.includes('logic.bridge')) return 20_000
+      return 100
+    })
+
+    const prepared = prepareClassReviewSynthesisRequest({ request: input, tokenizer: { count }, calibration })
+
+    expect(prepared.ok).toBe(true)
+    if (!prepared.ok) return
+    expect(prepared.request.groups.map(({ groupId }) => groupId)).toEqual([
+      'grammar.tense',
+      'logic.bridge',
+      'logic.third',
+    ])
+    expect(count).toHaveBeenCalledTimes(4)
+  })
+
+  it('rejects changing accessor calibration without returning NaN success metrics', () => {
+    const messages: KimiMessage[] = [{ role: 'system', content: 'p' }, { role: 'user', content: '{}' }]
+    let reads = 0
+    const changing = { ...calibration } as Record<string, unknown>
+    Object.defineProperty(changing, 'framingTokens', {
+      enumerable: true,
+      get() {
+        reads += 1
+        return reads <= 3 ? 512 : Number.NaN
+      },
+    })
+
+    const result = preflightClassReviewPrompt({
+      messages,
+      schema: {},
+      calibration: changing as unknown as ClassReviewFramingCalibration,
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'class_review_prompt_calibration_missing',
+      reason: 'calibration',
+    })
+    expect(reads).toBe(0)
+
+    const success = preflightClassReviewPrompt({ messages, schema: {}, calibration })
+    expect(success.ok).toBe(true)
+    if (!success.ok) return
+    for (const metric of [
+      success.fixedPrefixUtf8Bytes,
+      success.finalWireUtf8Bytes,
+      success.controllableUnits,
+      success.framingTokens,
+      success.totalPromptTokens,
+    ]) {
+      expect(Number.isSafeInteger(metric)).toBe(true)
+    }
   })
 
   it('distinguishes fixed-prefix failure from an eligible group that cannot fit', () => {

@@ -17,6 +17,7 @@ import type {
 } from './classReviewSynthesisProviderTypes.js'
 import type { KimiTransport } from './kimiTransport.js'
 import {
+  ClassReviewProviderError,
   GradingProviderError,
   type ProviderAttemptObservation,
   type ProviderDiagnosticCode,
@@ -41,8 +42,8 @@ function dedupeObservations(
   })
 }
 
-function preparationError(code: ClassReviewPreparationErrorCode): GradingProviderError {
-  return new GradingProviderError(
+function preparationError(code: ClassReviewPreparationErrorCode): ClassReviewProviderError {
+  return new ClassReviewProviderError(
     code,
     'Class review prompt configuration or size is invalid.',
     false,

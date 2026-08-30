@@ -1,7 +1,7 @@
 import type { KimiMessage } from '../providers/kimiTransport.js'
 import { classReviewProviderOutputSchema } from './providerContract.js'
 import {
-  isExactClassReviewFramingCalibration,
+  parseClassReviewFramingCalibration,
   type ClassReviewFramingCalibration,
 } from './framingCalibrations.js'
 import {
@@ -84,12 +84,26 @@ export function preflightClassReviewPrompt(input: {
   tokenizer?: ClassReviewPromptTokenizer
   calibration: ClassReviewFramingCalibration | null
 }): ClassReviewPromptBudgetResult {
+  return preflightClassReviewPromptWithCalibration({
+    messages: input.messages,
+    schema: input.schema,
+    tokenizer: input.tokenizer,
+    calibration: parseClassReviewFramingCalibration(input.calibration),
+  })
+}
+
+function preflightClassReviewPromptWithCalibration(input: {
+  messages: readonly KimiMessage[]
+  schema: unknown
+  tokenizer?: ClassReviewPromptTokenizer
+  calibration: ClassReviewFramingCalibration | null
+}): ClassReviewPromptBudgetResult {
   const fixedPrefix = serializeClassReviewFixedPrefixWire(input.messages, input.schema)
   const finalWire = serializeClassReviewPromptWire(input.messages, input.schema)
   const fixedPrefixUtf8Bytes = Buffer.byteLength(fixedPrefix, 'utf8')
   const finalWireUtf8Bytes = Buffer.byteLength(finalWire, 'utf8')
 
-  if (!isExactClassReviewFramingCalibration(input.calibration)) {
+  if (input.calibration === null) {
     return {
       ok: false,
       code: 'class_review_prompt_calibration_missing',
@@ -106,7 +120,8 @@ export function preflightClassReviewPrompt(input: {
   const tokenizerCount = countWithTokenizer(input.tokenizer, finalWire)
   const controllableUnits = Math.max(tokenizerCount ?? 0, finalWireUtf8Bytes)
   const framingTokens = input.calibration.framingTokens
-  const totalPromptTokens = controllableUnits + framingTokens
+  const summedPromptTokens = controllableUnits + framingTokens
+  const totalPromptTokens = Number.isSafeInteger(summedPromptTokens) ? summedPromptTokens : null
   const metrics = {
     fixedPrefixUtf8Bytes,
     finalWireUtf8Bytes,
@@ -125,10 +140,10 @@ export function preflightClassReviewPrompt(input: {
   if (controllableUnits > CONTROLLABLE_PROMPT_TOKENS_V1) {
     return { ok: false, code: 'class_review_prompt_too_large', reason: 'controllable_units', ...metrics }
   }
-  if (totalPromptTokens > TOTAL_PROMPT_TOKENS_V1) {
+  if (totalPromptTokens === null || totalPromptTokens > TOTAL_PROMPT_TOKENS_V1) {
     return { ok: false, code: 'class_review_prompt_too_large', reason: 'total_prompt_tokens', ...metrics }
   }
-  return { ok: true, ...metrics }
+  return { ok: true, ...metrics, totalPromptTokens }
 }
 
 function coverageForPrefix(
@@ -166,11 +181,48 @@ function requestForPrefix(
   request: ClassReviewSynthesisRequestV1,
   groups: readonly SynthesisGroupV1[],
 ): ClassReviewSynthesisRequestV1 {
-  return {
-    ...request,
-    groups: [...groups],
+  const snapshot: ClassReviewSynthesisRequestV1 = {
+    contractVersion: request.contractVersion,
+    requestId: request.requestId,
+    rubricRevisionDigest: request.rubricRevisionDigest,
+    policyVersion: request.policyVersion,
+    schemaVersion: request.schemaVersion,
+    projectionVersion: request.projectionVersion,
+    budgetVersion: request.budgetVersion,
+    statistics: {
+      includedEssayCount: request.statistics.includedEssayCount,
+      issueEligibleEssayCount: request.statistics.issueEligibleEssayCount,
+      totalEssayCount: request.statistics.totalEssayCount,
+      excludedEssayCount: request.statistics.excludedEssayCount,
+      score: { ...request.statistics.score },
+      scoreBands: request.statistics.scoreBands.map((band) => ({ ...band })),
+      dimensions: request.statistics.dimensions.map((dimension) => ({ ...dimension })),
+      issueCounters: request.statistics.issueCounters.map((counter) => ({ ...counter })),
+    },
+    groups: groups.map((group) => ({
+      groupId: group.groupId,
+      type: group.type,
+      subtype: group.subtype,
+      severity: group.severity,
+      title: group.title,
+      mustCover: group.mustCover,
+      distinctEssaySupport: group.distinctEssaySupport,
+      occurrenceCount: group.occurrenceCount,
+      excerpt: group.excerpt === null ? null : { ...group.excerpt },
+    })),
     semanticCoverage: coverageForPrefix(request.semanticCoverage, groups),
+    outputLimits: { ...request.outputLimits },
   }
+  return deepFreeze(snapshot)
+}
+
+function deepFreeze<T>(value: T): T {
+  if (typeof value !== 'object' || value === null || Object.isFrozen(value)) return value
+  for (const key of Reflect.ownKeys(value)) {
+    deepFreeze((value as Record<PropertyKey, unknown>)[key])
+  }
+  Object.freeze(value)
+  return value
 }
 
 export type ClassReviewPreparationErrorCode =
@@ -192,13 +244,17 @@ export function prepareClassReviewSynthesisRequest(input: {
   tokenizer?: ClassReviewPromptTokenizer
   calibration: ClassReviewFramingCalibration | null
 }): ClassReviewPromptPreparationResult {
+  const calibration = parseClassReviewFramingCalibration(input.calibration)
+  if (calibration === null) {
+    return { ok: false, code: 'class_review_prompt_calibration_missing' }
+  }
   let admittedRequest = requestForPrefix(input.request, [])
   let messages = buildClassReviewMessages(admittedRequest)
-  let budget = preflightClassReviewPrompt({
+  let budget = preflightClassReviewPromptWithCalibration({
     messages,
     schema: classReviewProviderOutputSchema,
     tokenizer: input.tokenizer,
-    calibration: input.calibration,
+    calibration,
   })
   if (!budget.ok) {
     return {
@@ -212,13 +268,13 @@ export function prepareClassReviewSynthesisRequest(input: {
   for (let index = 0; index < input.request.groups.length; index += 1) {
     const candidateRequest = requestForPrefix(input.request, input.request.groups.slice(0, index + 1))
     const candidateMessages = buildClassReviewMessages(candidateRequest)
-    const candidateBudget = preflightClassReviewPrompt({
+    const candidateBudget = preflightClassReviewPromptWithCalibration({
       messages: candidateMessages,
       schema: classReviewProviderOutputSchema,
       tokenizer: input.tokenizer,
-      calibration: input.calibration,
+      calibration,
     })
-    if (!candidateBudget.ok) break
+    if (!candidateBudget.ok) continue
     admittedRequest = candidateRequest
     messages = candidateMessages
     budget = candidateBudget

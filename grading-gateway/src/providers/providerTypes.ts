@@ -19,8 +19,6 @@ export type ClassReviewProviderErrorCode =
   | 'class_review_projection_too_large'
   | 'class_review_prompt_calibration_missing'
 
-export type AnyProviderErrorCode = ProviderErrorCode | ClassReviewProviderErrorCode
-
 export type ProviderDiagnosticCode =
   | 'response_json'
   | 'completion_envelope'
@@ -81,20 +79,28 @@ export interface ProviderErrorDetails {
 }
 
 export class GradingProviderError extends Error {
-  readonly code: ProviderErrorCode
-
   constructor(
-    code: AnyProviderErrorCode,
+    readonly code: ProviderErrorCode,
     message: string,
     readonly retryable: boolean,
     readonly diagnosticCode?: ProviderDiagnosticCode,
     readonly details?: ProviderErrorDetails,
   ) {
     super(message)
-    // Legacy essay routes intentionally remain exhaustive over ProviderErrorCode.
-    // Class-review routes consume ClassReviewProviderErrorCode at their separate boundary.
-    this.code = code as ProviderErrorCode
     this.name = 'GradingProviderError'
+  }
+}
+
+export class ClassReviewProviderError extends Error {
+  constructor(
+    readonly code: ClassReviewProviderErrorCode,
+    message: string,
+    readonly retryable: boolean,
+    readonly diagnosticCode?: ProviderDiagnosticCode,
+    readonly details?: ProviderErrorDetails,
+  ) {
+    super(message)
+    this.name = 'ClassReviewProviderError'
   }
 }
 

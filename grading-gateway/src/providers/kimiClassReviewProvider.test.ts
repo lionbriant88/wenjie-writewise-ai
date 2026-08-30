@@ -12,10 +12,12 @@ import type { ClassReviewSynthesisProvider } from './classReviewSynthesisProvide
 import { KimiClassReviewProvider } from './kimiClassReviewProvider.js'
 import type { KimiCompletionInput, KimiTransport } from './kimiTransport.js'
 import {
+  ClassReviewProviderError,
   GradingProviderError,
-  type AnyProviderErrorCode,
+  type ClassReviewProviderErrorCode,
   type ProviderAttemptObservation,
   type ProviderDiagnosticCode,
+  type ProviderErrorCode,
 } from './providerTypes.js'
 
 const fixture = JSON.parse(readFileSync(
@@ -68,7 +70,11 @@ function provider(transport: KimiTransport, overrides: {
 
 async function expectProviderError(
   run: Promise<unknown>,
-  expected: Partial<{ code: AnyProviderErrorCode; retryable: boolean; diagnosticCode: ProviderDiagnosticCode }>,
+  expected: Partial<{
+    code: ProviderErrorCode
+    retryable: boolean
+    diagnosticCode: ProviderDiagnosticCode
+  }>,
 ) {
   try {
     await run
@@ -80,7 +86,39 @@ async function expectProviderError(
   }
 }
 
+async function expectClassReviewProviderError(
+  run: Promise<unknown>,
+  expected: Partial<{ code: ClassReviewProviderErrorCode; retryable: boolean }>,
+) {
+  try {
+    await run
+    throw new Error('expected class-review provider error')
+  } catch (error) {
+    expect(error).toBeInstanceOf(ClassReviewProviderError)
+    expect(error).not.toBeInstanceOf(GradingProviderError)
+    expect(error).toMatchObject({ name: 'ClassReviewProviderError', ...expected })
+    return error as ClassReviewProviderError
+  }
+}
+
+function deferredCompletion() {
+  let resolve!: (value: Awaited<ReturnType<KimiTransport['complete']>>) => void
+  const promise = new Promise<Awaited<ReturnType<KimiTransport['complete']>>>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
 describe('KimiClassReviewProvider', () => {
+  it('keeps legacy and class-review error codes honest for an explicit boundary union', () => {
+    type ClassReviewBoundaryError = GradingProviderError | ClassReviewProviderError
+    expectTypeOf<GradingProviderError['code']>().toEqualTypeOf<ProviderErrorCode>()
+    expectTypeOf<ClassReviewProviderError['code']>().toEqualTypeOf<ClassReviewProviderErrorCode>()
+    expectTypeOf<ClassReviewBoundaryError['code']>().toEqualTypeOf<
+      ProviderErrorCode | ClassReviewProviderErrorCode
+    >()
+  })
+
   it('implements the separate interface and makes exactly one bounded generation call', async () => {
     const complete = vi.fn(async (_input: KimiCompletionInput) => ({
       value: fixture.results.succeeded.output,
@@ -139,11 +177,53 @@ describe('KimiClassReviewProvider', () => {
 
   it('fails closed for missing framing calibration before transport', async () => {
     const complete = vi.fn()
-    await expectProviderError(
+    await expectClassReviewProviderError(
       provider({ complete }, { calibration: null }).synthesize({ request: request(), signal: new AbortController().signal }),
       { code: 'class_review_prompt_calibration_missing', retryable: false },
     )
     expect(complete).not.toHaveBeenCalled()
+  })
+
+  it('validates against the immutable sent aliases when caller mutates request during transport', async () => {
+    const input = request()
+    const beforeCall = structuredClone(input)
+    const pending = deferredCompletion()
+    const complete = vi.fn((_transportInput: KimiCompletionInput) => pending.promise)
+    const run = provider({ complete }).synthesize({ request: input, signal: new AbortController().signal })
+
+    expect(complete).toHaveBeenCalledTimes(1)
+    expect(input).toEqual(beforeCall)
+    input.groups[0].groupId = 'mutated.group'
+    input.statistics.dimensions[0].dimensionId = 'mutated.dimension'
+    pending.resolve({ value: fixture.results.succeeded.output, observation: observation() })
+
+    await expect(run).resolves.toEqual({
+      value: fixture.results.succeeded.output,
+      attempts: [observation()],
+    })
+    expect(String(complete.mock.calls[0][0].messages[2]?.content)).not.toContain('mutated.group')
+  })
+
+  it('cannot accept aliases introduced only by caller mutation after messages were sent', async () => {
+    const input = request()
+    const pending = deferredCompletion()
+    const complete = vi.fn((_transportInput: KimiCompletionInput) => pending.promise)
+    const run = provider({ complete }).synthesize({ request: input, signal: new AbortController().signal })
+
+    input.groups[0].groupId = 'post-send.group'
+    input.statistics.dimensions[0].dimensionId = 'post-send.dimension'
+    const forged = structuredClone(fixture.results.succeeded.output)
+    forged.patterns[0].groupIds = ['post-send.group']
+    forged.strengths[0].dimensionIds = ['post-send.dimension']
+    expect(String(complete.mock.calls[0][0].messages[2]?.content)).not.toContain('post-send.group')
+    pending.resolve({ value: forged, observation: observation() })
+
+    await expectProviderError(run, {
+      code: 'provider_invalid_response',
+      retryable: false,
+      diagnosticCode: 'completion_content',
+    })
+    expect(complete).toHaveBeenCalledTimes(1)
   })
 
   it.each([
