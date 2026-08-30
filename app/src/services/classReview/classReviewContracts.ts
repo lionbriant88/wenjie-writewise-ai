@@ -44,6 +44,7 @@ const SAFE_FAILURE_CODES: readonly SafeFailureCode[] = [
   'class_review_prompt_calibration_missing',
   'class_review_prompt_contract_drift',
   'provider_not_configured',
+  'provider_request_rejected',
   'provider_auth_failed',
   'provider_balance_unavailable',
   'provider_rate_limited',
@@ -1065,6 +1066,7 @@ export function parseClassReviewReport(value: unknown): ParseResult<ClassReviewR
   if (!uniqueMaterialIds.ok) return uniqueMaterialIds
 
   if (workspaceState.value === 'none') {
+    if (currentGeneration !== null) return fail('invalid_value', '/currentGeneration')
     if (record.value.reportRevision !== null) return fail('invalid_value', '/reportRevision')
     if (aiTextEditRevision.value !== 0) return fail('invalid_value', '/aiTextEditRevision')
     if (issueBlocks.value.length !== 0) return fail('invalid_value', '/issueBlocks')
@@ -1110,6 +1112,9 @@ export function parseClassReviewReport(value: unknown): ParseResult<ClassReviewR
 
   const appliedGenerationId = opaqueAt(record.value.appliedGenerationId, '/appliedGenerationId')
   if (!appliedGenerationId.ok) return appliedGenerationId
+  if (currentGeneration?.generationId === appliedGenerationId.value) {
+    return fail('invalid_value', '/currentGeneration/generationId')
+  }
   const generatedAt = timestampAt(record.value.generatedAt, '/generatedAt')
   if (!generatedAt.ok) return generatedAt
   const snapshotMetadata = parseSnapshotMetadata(record.value.snapshotMetadata)

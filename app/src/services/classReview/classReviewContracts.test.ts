@@ -124,6 +124,44 @@ describe('class review browser contracts', () => {
     ).toEqual({ ok: false, error: { code: 'unknown_key', path: '/completedAt' } })
   })
 
+  it('accepts the published provider_request_rejected failed-status code', () => {
+    expect(
+      parseClassReviewGenerationStatus({
+        ...browserFixtures.statuses.failed,
+        safeFailureCode: 'provider_request_rejected',
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: { state: 'failed', safeFailureCode: 'provider_request_rejected' },
+    })
+  })
+
+  it('rejects an impossible none workspace with an actionable generation', () => {
+    expect(parseClassReviewReport({
+      ...browserFixtures.reports.none,
+      currentGeneration: browserFixtures.actionableGenerations.queued,
+    })).toEqual({ ok: false, error: { code: 'invalid_value', path: '/currentGeneration' } })
+
+  })
+
+  it('rejects applied/actionable self-overlap while allowing a distinct regeneration', () => {
+    const applied = browserFixtures.reports.ai_available
+    expect(parseClassReviewReport({
+      ...applied,
+      currentGeneration: {
+        ...browserFixtures.actionableGenerations.queued,
+        generationId: applied.appliedGenerationId,
+      },
+    })).toEqual({ ok: false, error: { code: 'invalid_value', path: '/currentGeneration/generationId' } })
+    expect(parseClassReviewReport({
+      ...applied,
+      currentGeneration: {
+        ...browserFixtures.actionableGenerations.queued,
+        generationId: 'generation.regeneration.distinct',
+      },
+    }).ok).toBe(true)
+  })
+
   it('parses actionable generations with exact nested keys', () => {
     const invalidReport = {
       ...browserFixtures.reports.draft,
