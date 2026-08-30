@@ -1,4 +1,4 @@
-import type { ProviderCallStage } from './providers/providerTypes.js'
+import type { MultimodalProviderCallStage } from './providers/providerTypes.js'
 
 export interface GatewayRuntimeConfig {
   provider: 'kimi' | 'mock'
@@ -19,7 +19,7 @@ export interface GatewayRuntimeConfig {
     apiBase: string
     model: string
     reasoningEffort: 'low'
-    stageBudgets: Record<ProviderCallStage, number>
+    stageBudgets: Record<MultimodalProviderCallStage, number>
     promptCacheSecret: string
   }
 }

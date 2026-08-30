@@ -1,0 +1,8 @@
+export const CLASS_REVIEW_WIRE_SERIALIZATION_VERSION = 'class-review-wire-serialization-v1' as const
+
+export const FIXED_PREFIX_UTF8_BYTES_V1 = 16_384
+export const FINAL_PROVIDER_TEXT_UTF8_BYTES_V1 = 49_152
+export const CONTROLLABLE_PROMPT_TOKENS_V1 = 15_872
+export const FRAMING_RESERVE_TOKENS_V1 = 512
+export const TOTAL_PROMPT_TOKENS_V1 = 16_384
+export const MAX_COMPLETION_TOKENS_V1 = 3_072

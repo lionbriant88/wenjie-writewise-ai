@@ -10,7 +10,11 @@ import {
   getMultimodalProvider,
   getProvider,
 } from './index.js'
-import { GradingProviderError } from './providerTypes.js'
+import {
+  GradingProviderError,
+  type MultimodalProviderCallStage,
+  type ProviderCallStage,
+} from './providerTypes.js'
 
 function runtimeConfig(
   provider: 'kimi' | 'mock' = 'kimi',
@@ -72,6 +76,14 @@ function completion(value: unknown, attempt: number) {
 }
 
 describe('provider selection', () => {
+  it('adds class review as an independent call stage without widening multimodal budgets', () => {
+    expectTypeOf<ProviderCallStage>().toEqualTypeOf<
+      MultimodalProviderCallStage | 'class_review_generation'
+    >()
+    expectTypeOf<keyof GatewayRuntimeConfig['kimi']['stageBudgets']>()
+      .toEqualTypeOf<MultimodalProviderCallStage>()
+  })
+
   it('keeps the class-review factory independent, exact, and fail closed', () => {
     const fakeProvider = {
       async synthesize() {

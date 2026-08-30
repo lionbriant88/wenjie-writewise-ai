@@ -6,7 +6,11 @@ import { createKimiTransport, type KimiTransport, type KimiTransportOptions } fr
 import { MockGradingProvider } from './mockGradingProvider.js'
 import type { ClassReviewSynthesisProvider } from './classReviewSynthesisProviderTypes.js'
 import type { MultimodalProvider } from './multimodalProviderTypes.js'
-import { GradingProviderError, type GradingProvider, type ProviderCallStage } from './providerTypes.js'
+import {
+  GradingProviderError,
+  type GradingProvider,
+  type MultimodalProviderCallStage,
+} from './providerTypes.js'
 
 export interface MultimodalProviderDependencies {
   apiKey?: string
@@ -121,11 +125,12 @@ export function getClassReviewSynthesisProvider(
 
 export function createStageBudgetedTransport(
   transport: KimiTransport,
-  budgets: Record<ProviderCallStage, number>,
+  budgets: Record<MultimodalProviderCallStage, number>,
 ): KimiTransport {
   return {
     maxCompletionTokens: Math.max(...Object.values(budgets)),
     complete(input) {
+      if (input.stage === 'class_review_generation') throw providerConfigurationError()
       return transport.complete({ ...input, maxCompletionTokens: budgets[input.stage] })
     },
   }
