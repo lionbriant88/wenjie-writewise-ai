@@ -1,5 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { mockClassInsights, mockEssays, mockGradingResults, mockTasks } from '../data/mockData'
+import { mockEssays, mockGradingResults, mockTasks } from '../data/mockData'
+import { aggregateClassReviewSnapshot, type ClassReviewAggregate } from '../services/classReview/aggregateClassReview'
+import { parseClassReviewReport } from '../services/classReview/classReviewContracts'
+import {
+  createLocalClassReviewCoordinator,
+  type ClassReviewSynthesisClient,
+} from '../services/classReview/classReviewCoordinator'
+import {
+  buildClassReviewProjection,
+  DEFAULT_CLASS_REVIEW_PROJECTION_LIMITS,
+  type ClassReviewProjectionResult,
+  type PreparedGroupProjectionIdentityV1,
+  type RedactionContext,
+} from '../services/classReview/classReviewProjection'
+import { redactClassReviewExcerpt, type PersonEntityDetector } from '../services/classReview/classReviewRedaction'
+import { createFakeClassReviewSynthesisClient } from '../services/classReview/fakeClassReviewSynthesisClient'
+import type {
+  AiSummaryV1,
+  ClassReviewReportV1,
+  ClassReviewStatisticsV1,
+  ClearSpellingItemV1,
+} from '../services/classReview/types'
 import { confirmOcrAudit } from '../services/ocr/audit/transcriptAudit'
 import { adaptAiGradingResult } from '../services/grading/adaptAiGradingResult'
 import { buildMultimodalGradingRequest } from '../services/grading/buildMultimodalGradingRequest'
@@ -29,7 +50,13 @@ import type {
   TaskStatus,
 } from '../types'
 import { getClassReviewMaterialKey } from '../utils/classReviewMaterials'
-import { AppStateContext, type ConfirmMockOcrEssayInput, type EnqueueImageEssaysInput } from './appStateContextValue'
+import {
+  AppStateContext,
+  type AddClassReviewIssueInput,
+  type ClassReviewAppSnapshot,
+  type ConfirmMockOcrEssayInput,
+  type EnqueueImageEssaysInput,
+} from './appStateContextValue'
 import {
   captureGradingQueueJob,
   incrementGeneration,
@@ -54,6 +81,258 @@ const activeEssayStatuses = new Set<Essay['status']>([
   'pending_ocr', 'ocr_running', 'pending_grading', 'grading', 'grading_ready',
 ])
 const STABLE_SUCCESS_WINDOW = 8
+const CLASS_REVIEW_TOPIC_SECRET = new Uint8Array([
+  0x73, 0x79, 0x6e, 0x74, 0x68, 0x65, 0x74, 0x69,
+  0x63, 0x2d, 0x63, 0x6c, 0x61, 0x73, 0x73, 0x2d,
+  0x72, 0x65, 0x76, 0x69, 0x65, 0x77, 0x2d, 0x76,
+  0x31, 0x2d, 0x6c, 0x6f, 0x63, 0x61, 0x6c, 0x21,
+])
+const CLASS_REVIEW_ENTITY_DETECTOR: PersonEntityDetector = Object.freeze({
+  detectorVersion: 'person-entity-detector-v1',
+  detect: () => [],
+})
+
+type ReadyClassReviewProjection = Extract<ClassReviewProjectionResult, { status: 'ready' }>
+
+interface ClassReviewSourceState {
+  signature: string
+  taskRevision: number
+}
+
+interface BuiltClassReviewSource {
+  signature: string
+  aggregate: ClassReviewAggregate
+  projection: ReadyClassReviewProjection
+  replacement: {
+    taskRevision: number
+    rubricRevisionDigest: string
+    statistics: ClassReviewStatisticsV1
+    projection: ReadyClassReviewProjection
+  }
+  initialReport: ClassReviewReportV1
+}
+
+function hashHex(value: string): string {
+  let a = 0x811c9dc5
+  let b = 0x9e3779b9
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    a ^= code
+    a = Math.imul(a, 0x01000193) >>> 0
+    b ^= code + index
+    b = Math.imul(b, 0x85ebca6b) >>> 0
+  }
+  const parts: string[] = []
+  for (let index = 0; index < 8; index += 1) {
+    a = Math.imul(a ^ (b >>> 13), 0x01000193) >>> 0
+    b = Math.imul(b ^ (a >>> 16), 0xc2b2ae35) >>> 0
+    parts.push((a ^ b).toString(16).padStart(8, '0'))
+  }
+  return parts.join('')
+}
+
+function opaqueFrom(prefix: string, seed: string, length = 32): string {
+  return `${prefix}.${hashHex(seed).slice(0, length)}`
+}
+
+function classReviewTaskScope(taskId: string): string {
+  return `scope_v1_${hashHex(`class-review-task:${taskId}`).slice(0, 64)}`
+}
+
+function classReviewRubricDigest(task: Task): string {
+  return hashHex(
+    JSON.stringify({
+      taskId: task.id,
+      rubricGeneration: task.rubricGeneration ?? 0,
+      scoringTemplateId: task.scoringTemplateId,
+      fullScore: task.fullScore,
+      dimensions: task.rubricDraft?.dimensions.map((dimension) => ({
+        id: dimension.id,
+        weight: dimension.weight,
+      })) ?? [],
+    }),
+  ).slice(0, 43)
+}
+
+function classReviewSourceSignature(
+  task: Task,
+  taskEssays: readonly Essay[],
+  taskResults: readonly GradingResult[],
+): string {
+  const essayState = taskEssays
+    .map((essay) => ({
+      id: essay.id,
+      status: essay.status,
+      sourceGeneration: essay.sourceGeneration ?? 0,
+      aiResultId: essay.aiResultId ?? null,
+      teacherReviewed: essay.teacherReviewed,
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id))
+  const resultState = taskResults
+    .map((result) => ({
+      essayId: result.essayId,
+      resultRevision: result.resultRevision ?? 0,
+      totalScore: result.totalScore,
+      dimensions: result.dimensionScores.map((dimension) => ({
+        id: dimension.id,
+        score: dimension.score,
+        maxScore: dimension.maxScore,
+      })),
+      issueIds: result.errorAnnotations.map((issue) => issue.id),
+      sentenceRevisionIds: result.sentenceRevisions.map((revision) => revision.id),
+    }))
+    .sort((left, right) => left.essayId.localeCompare(right.essayId))
+  return hashHex(JSON.stringify({
+    task: {
+      id: task.id,
+      rubricGeneration: task.rubricGeneration ?? 0,
+      rubricDigest: classReviewRubricDigest(task),
+      status: task.status,
+      totalEssayCount: task.totalEssayCount,
+      completedEssayCount: task.completedEssayCount,
+      exceptionEssayCount: task.exceptionEssayCount,
+    },
+    essays: essayState,
+    results: resultState,
+  }))
+}
+
+function compareOpaque(left: string, right: string): number {
+  return left === right ? 0 : left < right ? -1 : 1
+}
+
+function createClassReviewRedactionContext(task: Task, taskEssays: readonly Essay[]): RedactionContext {
+  const taskScope = classReviewTaskScope(task.id)
+  const knownNames = {
+    students: [],
+    defaultStudentLabels: taskEssays.map((essay) => essay.essayNumber),
+    teachers: [],
+    classNames: [task.className],
+    schoolNames: [],
+    taskNames: [task.taskName],
+  }
+  const redact = (sourceText: string, seed: string) => redactClassReviewExcerpt({
+    sourceText,
+    knownNames,
+    entityDetector: CLASS_REVIEW_ENTITY_DETECTOR,
+    scrubbedEvidenceKey: `scrub_v1_${hashHex(seed)}`,
+  })
+  return {
+    prepare(group): PreparedGroupProjectionIdentityV1 | null {
+      const digest = hashHex(`${task.id}\u0000${group.fingerprint}`)
+      return {
+        atomicTopic: {
+          kind: 'atomic',
+          keyVersion: 'topic-key-v1',
+          taskScope,
+          key: `tk1.${digest.slice(0, 16)}`,
+          fingerprintDigest: `fp1.${digest}`,
+        },
+        title: redact(group.title, `${digest}:title`),
+        excerpt: {
+          originalText: redact(group.originalText, `${digest}:original`),
+          suggestionOrDiagnosis: redact(group.suggestionOrDiagnosis, `${digest}:suggestion`),
+        },
+      }
+    },
+  }
+}
+
+function clearSpellingItemsFromAggregate(aggregate: ClassReviewAggregate): ClearSpellingItemV1[] {
+  return aggregate.clearSpellingItems
+    .map((item) => {
+      const digest = hashHex(`${item.sourceSubtype}\u0000${item.fingerprint}`)
+      return {
+        itemId: `spell.${digest.slice(0, 32)}`,
+        topicKey: `tk1.${digest.slice(0, 16)}`,
+        sourceSubtype: item.sourceSubtype,
+        originalWord: item.originalWord,
+        correctedWord: item.correctedWord,
+        studentCount: item.studentCount,
+        occurrenceCount: item.occurrenceCount,
+        anonymousExample: item.anonymousExample,
+      }
+    })
+    .sort((left, right) =>
+      compareOpaque(left.originalWord, right.originalWord)
+      || compareOpaque(left.correctedWord, right.correctedWord)
+      || compareOpaque(left.itemId, right.itemId),
+    )
+}
+
+function classReviewStatisticsFromAggregate(aggregate: ClassReviewAggregate): ClassReviewStatisticsV1 {
+  return {
+    totalEssayCount: aggregate.totalEssayCount,
+    includedEssayCount: aggregate.includedEssayCount,
+    issueEligibleEssayCount: aggregate.issueEligibleEssayCount,
+    excludedEssayCount: aggregate.excludedEssayCount,
+    issueCoverageRate: aggregate.includedEssayCount === 0
+      ? 1
+      : aggregate.issueEligibleEssayCount / aggregate.includedEssayCount,
+    fullScore: aggregate.fullScore,
+    scoreSummary: aggregate.scoreSummary,
+    scoreBands: aggregate.scoreBands.map((band) => ({
+      bandId: band.bandId,
+      lowerInclusive: band.lowerInclusive,
+      upperInclusive: band.upperInclusive,
+      essayCount: band.essayCount,
+    })),
+    dimensions: aggregate.dimensions.map((dimension) => ({
+      dimensionId: dimension.dimensionId,
+      name: dimension.name,
+      averageScore: dimension.averageScore,
+      maxScore: dimension.maxScore,
+      normalizedPerformance: dimension.normalizedPerformance,
+    })),
+  }
+}
+
+function parseReportOrThrow(value: unknown): ClassReviewReportV1 {
+  const parsed = parseClassReviewReport(value)
+  if (!parsed.ok) {
+    throw new Error(`class_review_candidate_conflict:${parsed.error.code}:${parsed.error.path}`)
+  }
+  return parsed.value
+}
+
+function buildInitialClassReviewReport(
+  taskRevision: number,
+  statistics: ClassReviewStatisticsV1,
+  aggregate: ClassReviewAggregate,
+): ClassReviewReportV1 {
+  return parseReportOrThrow({
+    contractVersion: 'class-review-report-v1',
+    workspaceState: 'draft',
+    taskRevision,
+    reportRevision: 0,
+    aiTextEditRevision: 0,
+    currentGeneration: null,
+    statistics,
+    issueBlocks: [],
+    issueOrder: [],
+    clearSpellingItems: clearSpellingItemsFromAggregate(aggregate),
+    selectedMaterials: [],
+  })
+}
+
+function taskIsSettledForClassReview(taskEssays: readonly Essay[]): boolean {
+  return taskEssays.length > 0
+    && taskEssays.every((essay) =>
+      essay.status === 'completed' || essay.status === 'manual' || essay.status === 'needs_review')
+}
+
+function reportCanGenerate(report: ClassReviewReportV1, sourceReady: boolean, isSettled: boolean): boolean {
+  const activeState = report.currentGeneration?.state
+  const activeGeneration = activeState === 'queued'
+    || activeState === 'running'
+    || activeState === 'result_unknown'
+    || activeState === 'succeeded_unapplied'
+  if (!sourceReady || !isSettled || activeGeneration || report.statistics.includedEssayCount < 2) return false
+  return report.workspaceState === 'draft'
+    || report.workspaceState === 'none'
+    || report.workspaceState === 'ai_removed'
+    || report.workspaceState === 'ai_available'
+}
 
 interface AppGradingJobRecord {
   captured: CapturedGradingQueueJob
@@ -132,17 +411,25 @@ export interface AppStateProviderProps {
   children: ReactNode
   gradingClient?: GradingClient
   gradingSchedulerOptions?: TaskGradingSchedulerOptions
+  classReviewSynthesisClient?: ClassReviewSynthesisClient
 }
 
-export function AppStateProvider({ children, gradingClient, gradingSchedulerOptions }: AppStateProviderProps) {
+export function AppStateProvider({
+  children,
+  gradingClient,
+  gradingSchedulerOptions,
+  classReviewSynthesisClient,
+}: AppStateProviderProps) {
   const [tasks, setTasks] = useState<Task[]>(mockTasks)
   const [essays, setEssays] = useState<Essay[]>(mockEssays)
   const [taskGradingQueues, setTaskGradingQueues] = useState<Readonly<Record<string, TaskQueueSnapshot>>>({})
   const [gradingResults, setGradingResults] = useState<GradingResult[]>(mockGradingResults)
-  const [classInsights] = useState<ClassInsight[]>(mockClassInsights)
+  const [classInsights] = useState<ClassInsight[]>([])
   const [classReviewMaterials, setClassReviewMaterials] = useState<ClassReviewMaterial[]>([])
+  const [classReviewVersion, setClassReviewVersion] = useState(0)
   const tasksRef = useRef(tasks)
   const essaysRef = useRef(essays)
+  const gradingResultsRef = useRef(gradingResults)
   const imageSubmissionIdsRef = useRef(new Set<string>())
   const mountedRef = useRef(true)
   const gradingIdentityStoreRef = useRef<ReturnType<typeof createGradingJobIdentityStore> | null>(null)
@@ -150,6 +437,9 @@ export function AppStateProvider({ children, gradingClient, gradingSchedulerOpti
   const gradingClientRef = useRef<GradingClient | null>(null)
   const gradingSchedulerOptionsRef = useRef<TaskGradingSchedulerOptions | null>(null)
   const gradingSchedulerRef = useRef<ReturnType<typeof createTaskGradingScheduler> | null>(null)
+  const classReviewCoordinatorRef = useRef<ReturnType<typeof createLocalClassReviewCoordinator> | null>(null)
+  const classReviewSourceStateRef = useRef(new Map<string, ClassReviewSourceState>())
+  const classReviewOpaqueCounterRef = useRef(0)
   if (!gradingClientRef.current) {
     gradingClientRef.current = gradingClient ?? createConfiguredGradingClient()
   }
@@ -162,9 +452,21 @@ export function AppStateProvider({ children, gradingClient, gradingSchedulerOpti
   if (!gradingSchedulerRef.current) {
     gradingSchedulerRef.current = createTaskGradingScheduler(gradingSchedulerOptionsRef.current)
   }
+  if (!classReviewCoordinatorRef.current) {
+    classReviewCoordinatorRef.current = createLocalClassReviewCoordinator({
+      synthesisClient: classReviewSynthesisClient ?? createFakeClassReviewSynthesisClient({ scenario: 'success' }),
+      topicKeySecret: CLASS_REVIEW_TOPIC_SECRET,
+      now: () => new Date().toISOString(),
+      createOpaqueId: () => {
+        classReviewOpaqueCounterRef.current += 1
+        return `crid.${classReviewOpaqueCounterRef.current.toString(36)}.${hashHex(String(classReviewOpaqueCounterRef.current)).slice(0, 20)}`
+      },
+    })
+  }
 
   useEffect(() => { tasksRef.current = tasks }, [tasks])
   useEffect(() => { essaysRef.current = essays }, [essays])
+  useEffect(() => { gradingResultsRef.current = gradingResults }, [gradingResults])
   useEffect(() => {
     mountedRef.current = true
     if (!gradingSchedulerRef.current) {
@@ -193,6 +495,166 @@ export function AppStateProvider({ children, gradingClient, gradingSchedulerOpti
     })
     return true
   }, [])
+
+  const bumpClassReviewVersion = useCallback(() => {
+    if (!mountedRef.current) return
+    setClassReviewVersion((current) => current + 1)
+  }, [])
+
+  const buildClassReviewSource = useCallback((taskId: string, taskRevision: number): BuiltClassReviewSource => {
+    const task = tasksRef.current.find((item) => item.id === taskId)
+    if (!task) throw new Error('class_review_task_invalidated')
+    const taskEssays = essaysRef.current.filter((essay) => essay.taskId === taskId)
+    const essayIds = new Set(taskEssays.map((essay) => essay.id))
+    const taskResults = gradingResultsRef.current.filter((result) => essayIds.has(result.essayId))
+    const aggregate = aggregateClassReviewSnapshot({ task, essays: taskEssays, results: taskResults })
+    const projection = buildClassReviewProjection({
+      aggregate,
+      redactionContext: createClassReviewRedactionContext(task, taskEssays),
+      limits: DEFAULT_CLASS_REVIEW_PROJECTION_LIMITS,
+    })
+    if (projection.status !== 'ready') {
+      throw new Error(projection.status === 'rejected'
+        ? projection.safeFailureCode
+        : 'class_review_source_invalidated')
+    }
+    const statistics = classReviewStatisticsFromAggregate(aggregate)
+    const signature = classReviewSourceSignature(task, taskEssays, taskResults)
+    const replacement = {
+      taskRevision,
+      rubricRevisionDigest: classReviewRubricDigest(task),
+      statistics,
+      projection,
+    }
+    return {
+      signature,
+      aggregate,
+      projection,
+      replacement,
+      initialReport: buildInitialClassReviewReport(taskRevision, replacement.statistics, aggregate),
+    }
+  }, [])
+
+  const registerClassReviewWorkspace = useCallback((taskId: string): ClassReviewSourceState => {
+    const existing = classReviewSourceStateRef.current.get(taskId)
+    if (existing) return existing
+    const source = buildClassReviewSource(taskId, 0)
+    classReviewCoordinatorRef.current!.registerWorkspace({
+      taskKey: taskId,
+      taskRevision: 0,
+      rubricRevisionDigest: source.replacement.rubricRevisionDigest,
+      report: source.initialReport,
+      projection: source.projection,
+    })
+    const state = { signature: source.signature, taskRevision: 0 }
+    classReviewSourceStateRef.current.set(taskId, state)
+    return state
+  }, [buildClassReviewSource])
+
+  const syncClassReviewSource = useCallback((
+    taskId: string,
+    kind: 'ordinary_revision' | 'source_deleted',
+    removedTeacherEvidenceIds: readonly string[] = [],
+  ): boolean => {
+    const state = registerClassReviewWorkspace(taskId)
+    const currentSource = buildClassReviewSource(taskId, state.taskRevision)
+    if (kind === 'ordinary_revision' && currentSource.signature === state.signature) return false
+    const nextRevision = state.taskRevision + 1
+    const nextSource = buildClassReviewSource(taskId, nextRevision)
+    const snapshot = classReviewCoordinatorRef.current!.getSnapshot(taskId)
+    classReviewCoordinatorRef.current!.syncSources(kind === 'ordinary_revision'
+      ? {
+          kind,
+          taskKey: taskId,
+          expectedTaskRevision: state.taskRevision,
+          expectedReportRevision: snapshot.report.reportRevision,
+          expectedSourceRevisionEpoch: snapshot.sourceRevisionEpoch,
+          replacement: nextSource.replacement,
+        }
+      : {
+          kind,
+          taskKey: taskId,
+          expectedTaskRevision: state.taskRevision,
+          expectedReportRevision: snapshot.report.reportRevision,
+          expectedSourceRevisionEpoch: snapshot.sourceRevisionEpoch,
+          removedTeacherEvidenceIds,
+          replacement: nextSource.replacement,
+        })
+    const nextState = {
+      signature: kind === 'ordinary_revision'
+        ? nextSource.signature
+        : `deleted:${nextRevision}:${nextSource.signature}`,
+      taskRevision: nextRevision,
+    }
+    classReviewSourceStateRef.current.set(taskId, nextState)
+    bumpClassReviewVersion()
+    return true
+  }, [buildClassReviewSource, bumpClassReviewVersion, registerClassReviewWorkspace])
+
+  const ensureClassReviewWorkspace = useCallback((taskId: string): void => {
+    registerClassReviewWorkspace(taskId)
+    syncClassReviewSource(taskId, 'ordinary_revision')
+  }, [registerClassReviewWorkspace, syncClassReviewSource])
+
+  const getClassReviewSnapshot = useCallback((taskId: string): ClassReviewAppSnapshot => {
+    ensureClassReviewWorkspace(taskId)
+    const snapshot = classReviewCoordinatorRef.current!.getSnapshot(taskId)
+    const taskEssays = essaysRef.current.filter((essay) => essay.taskId === taskId)
+    const isSettled = taskIsSettledForClassReview(taskEssays)
+    return {
+      ...snapshot,
+      canGenerate: reportCanGenerate(snapshot.report, snapshot.sourceReady, isSettled),
+      isSettled,
+    }
+  }, [ensureClassReviewWorkspace])
+
+  const findCurrentClassReviewResult = useCallback((essayId: string): GradingResult | undefined =>
+    gradingResultsRef.current.find((result) => result.essayId === essayId), [])
+
+  const classReviewIssueCommandFromInput = useCallback((input: AddClassReviewIssueInput) => {
+    const task = tasksRef.current.find((item) => item.id === input.taskId)
+    const essay = essaysRef.current.find((item) => item.id === input.essayId && item.taskId === input.taskId)
+    const result = findCurrentClassReviewResult(input.essayId)
+    const currentRevision = result?.resultRevision ?? 0
+    if (!task || !essay || !result || currentRevision !== input.sourceResultRevision) {
+      throw new Error('class_review_source_invalidated')
+    }
+    const topicSeed = JSON.stringify([
+      input.taskId,
+      input.title,
+      input.diagnosis,
+      input.teachingAction,
+      input.severity,
+    ])
+    const evidenceSeed = JSON.stringify([
+      input.taskId,
+      input.essayId,
+      input.sourceLocator,
+      input.sourceResultRevision,
+      topicSeed,
+    ])
+    const occurrenceCount = input.occurrenceCount ?? 1
+    return {
+      kind: 'add' as const,
+      blockId: opaqueFrom('block', topicSeed, 32),
+      topicKey: opaqueFrom('teacher', topicSeed, 32),
+      title: input.title,
+      diagnosis: input.diagnosis,
+      teachingAction: input.teachingAction,
+      severity: input.severity,
+      evidence: [{
+        ref: {
+          evidenceId: opaqueFrom('evidence', evidenceSeed, 40),
+          selectionOrigin: 'teacher_selected' as const,
+          sourceLocator: input.sourceLocator,
+          sourceResultRevision: input.sourceResultRevision,
+          anonymousExample: input.anonymousExample,
+        },
+        essayIdentity: opaqueFrom('essay', `${task.id}:${essay.id}`, 40),
+        occurrenceCount,
+      }],
+    }
+  }, [findCurrentClassReviewResult])
 
   const createTask = useCallback((input: CreateTaskInput) => {
     const id = `task-${Date.now()}`
@@ -325,13 +787,19 @@ export function AppStateProvider({ children, gradingClient, gradingSchedulerOpti
     gradingIdentityStoreRef.current!.invalidateEssay(essayId)
     essaysRef.current = nextEssays
     setEssays(nextEssays)
-    setGradingResults((current) => current.filter((result) => result.essayId !== essayId))
+    const removedResult = gradingResultsRef.current.some((result) => result.essayId === essayId)
+    const nextResults = gradingResultsRef.current.filter((result) => result.essayId !== essayId)
+    gradingResultsRef.current = nextResults
+    setGradingResults(nextResults)
+    if (removedResult && classReviewSourceStateRef.current.has(target.taskId)) {
+      syncClassReviewSource(target.taskId, 'source_deleted')
+    }
     setTasks((currentTasks) => {
       const updated = updateTasksFromEssays(currentTasks, target.taskId, nextEssays, timestamp)
       tasksRef.current = updated
       return updated
     })
-  }, [])
+  }, [syncClassReviewSource])
 
   const markEssayManual = useCallback((essayId: string) => {
     const timestamp = new Date().toISOString()
@@ -481,10 +949,16 @@ export function AppStateProvider({ children, gradingClient, gradingSchedulerOpti
       if (!commitEssayTransition(settled, safeResponse.createdAt)) {
         return staleJobFailure(captured.requestId)
       }
-      setGradingResults((current) => [
-        adapted,
-        ...current.filter((item) => item.essayId !== captured.essayId),
-      ])
+      const nextResult: GradingResult = { ...adapted, resultRevision: adapted.resultRevision ?? 0 }
+      const nextResults = [
+        nextResult,
+        ...gradingResultsRef.current.filter((item) => item.essayId !== captured.essayId),
+      ]
+      gradingResultsRef.current = nextResults
+      setGradingResults(nextResults)
+      if (classReviewSourceStateRef.current.has(captured.taskId)) {
+        syncClassReviewSource(captured.taskId, 'ordinary_revision')
+      }
       return safeResponse
     }
 
@@ -503,7 +977,7 @@ export function AppStateProvider({ children, gradingClient, gradingSchedulerOpti
     record = { captured, request: built.request, job }
     gradingJobRecordsRef.current.set(requestId, record)
     return record
-  }, [commitEssayTransition])
+  }, [commitEssayTransition, syncClassReviewSource])
 
   const startTaskGrading = useCallback((taskId: string) => {
     const task = tasksRef.current.find((item) => item.id === taskId)
@@ -571,10 +1045,29 @@ export function AppStateProvider({ children, gradingClient, gradingSchedulerOpti
   }, [commitEssayTransition])
 
   const updateGradingResult = useCallback((essayId: string, patch: Partial<GradingResult>) => {
-    setGradingResults((current) => current.map((result) => result.essayId === essayId
-      ? { ...result, ...patch, teacherAdjusted: true, updatedAt: new Date().toISOString() }
-      : result))
-  }, [])
+    const timestamp = new Date().toISOString()
+    let changedTaskId: string | null = null
+    const nextResults = gradingResultsRef.current.map((result) => {
+      if (result.essayId !== essayId) return result
+      const essay = essaysRef.current.find((item) => item.id === essayId)
+      changedTaskId = essay?.taskId ?? null
+      const currentRevision = Number.isSafeInteger(result.resultRevision) && (result.resultRevision ?? 0) >= 0
+        ? result.resultRevision ?? 0
+        : 0
+      return {
+        ...result,
+        ...patch,
+        resultRevision: currentRevision + 1,
+        teacherAdjusted: true,
+        updatedAt: timestamp,
+      }
+    })
+    gradingResultsRef.current = nextResults
+    setGradingResults(nextResults)
+    if (changedTaskId && classReviewSourceStateRef.current.has(changedTaskId)) {
+      syncClassReviewSource(changedTaskId, 'ordinary_revision')
+    }
+  }, [syncClassReviewSource])
 
   const addClassReviewMaterial = useCallback((input: ClassReviewMaterialInput) => {
     const key = getClassReviewMaterialKey(input)
@@ -598,6 +1091,107 @@ export function AppStateProvider({ children, gradingClient, gradingSchedulerOpti
     return classReviewMaterials.some((material) => getClassReviewMaterialKey(material) === key)
   }, [classReviewMaterials])
 
+  const classReview = useMemo(() => ({
+    getSnapshot: getClassReviewSnapshot,
+    generate(taskId: string, intent: 'initial' | 'regenerate' = 'initial') {
+      const snapshot = getClassReviewSnapshot(taskId)
+      const generationId = `gen.${Date.now().toString(36)}.${hashHex(`${taskId}:${intent}:${snapshot.report.taskRevision}:${snapshot.report.reportRevision}:${classReviewOpaqueCounterRef.current}`).slice(0, 24)}`
+      const promise = classReviewCoordinatorRef.current!.generate({
+        taskKey: taskId,
+        generationId,
+        intent,
+        expectedTaskRevision: snapshot.report.taskRevision,
+        expectedReportRevision: snapshot.report.reportRevision,
+      })
+      bumpClassReviewVersion()
+      return promise.then((record) => {
+        bumpClassReviewVersion()
+        return record
+      }, (error) => {
+        bumpClassReviewVersion()
+        throw error
+      })
+    },
+    checkGeneration(taskId: string) {
+      return getClassReviewSnapshot(taskId)
+    },
+    applyCandidate(taskId: string, generationId?: string) {
+      const snapshot = getClassReviewSnapshot(taskId)
+      const active = snapshot.generation
+      const targetGenerationId = generationId ?? snapshot.candidate?.generationId
+      if (!active || !targetGenerationId || snapshot.report.reportRevision === null) {
+        throw new Error('class_review_candidate_conflict')
+      }
+      classReviewCoordinatorRef.current!.applyCandidate({
+        taskKey: taskId,
+        generationId: targetGenerationId,
+        expectedTaskRevision: snapshot.report.taskRevision,
+        expectedReportRevision: snapshot.report.reportRevision,
+        expectedGenerationRevision: active.generationRevision,
+        expectedAiTextEditRevision: snapshot.report.aiTextEditRevision,
+      })
+      bumpClassReviewVersion()
+    },
+    discardCandidate(taskId: string, generationId?: string) {
+      const snapshot = getClassReviewSnapshot(taskId)
+      const active = snapshot.generation
+      const targetGenerationId = generationId ?? snapshot.candidate?.generationId ?? active?.generationId
+      if (!active || !targetGenerationId) throw new Error('class_review_candidate_conflict')
+      classReviewCoordinatorRef.current!.discardCandidate({
+        taskKey: taskId,
+        generationId: targetGenerationId,
+        expectedGenerationRevision: active.generationRevision,
+      })
+      bumpClassReviewVersion()
+    },
+    beginAiTextEdit(taskId: string) {
+      ensureClassReviewWorkspace(taskId)
+      classReviewCoordinatorRef.current!.beginAiTextEdit(taskId)
+    },
+    saveAiTextEdit(taskId: string, summary: AiSummaryV1) {
+      ensureClassReviewWorkspace(taskId)
+      classReviewCoordinatorRef.current!.saveAiTextEdit(taskId, summary)
+      bumpClassReviewVersion()
+    },
+    cancelAiTextEdit(taskId: string) {
+      ensureClassReviewWorkspace(taskId)
+      classReviewCoordinatorRef.current!.cancelAiTextEdit(taskId)
+      bumpClassReviewVersion()
+    },
+    addIssue(input: AddClassReviewIssueInput) {
+      ensureClassReviewWorkspace(input.taskId)
+      classReviewCoordinatorRef.current!.applyIssueCommand(
+        input.taskId,
+        classReviewIssueCommandFromInput(input),
+      )
+      bumpClassReviewVersion()
+    },
+    removeIssue(taskId: string, evidenceId: string) {
+      ensureClassReviewWorkspace(taskId)
+      classReviewCoordinatorRef.current!.applyIssueCommand(taskId, { kind: 'remove', evidenceId })
+      bumpClassReviewVersion()
+    },
+    undoIssueRemoval(taskId: string) {
+      ensureClassReviewWorkspace(taskId)
+      classReviewCoordinatorRef.current!.applyIssueCommand(taskId, { kind: 'undo' })
+      bumpClassReviewVersion()
+    },
+    moveIssue(taskId: string, blockId: string, toIndex: number) {
+      ensureClassReviewWorkspace(taskId)
+      classReviewCoordinatorRef.current!.applyIssueCommand(taskId, { kind: 'move', blockId, toIndex })
+      bumpClassReviewVersion()
+    },
+    deleteSource(taskId: string, removedTeacherEvidenceIds: readonly string[] = []) {
+      syncClassReviewSource(taskId, 'source_deleted', removedTeacherEvidenceIds)
+    },
+  }), [
+    bumpClassReviewVersion,
+    classReviewIssueCommandFromInput,
+    ensureClassReviewWorkspace,
+    getClassReviewSnapshot,
+    syncClassReviewSource,
+  ])
+
   const isGradingInFlight = Object.values(taskGradingQueues)
     .some((snapshot) => snapshot.activeCount > 0)
 
@@ -609,6 +1203,7 @@ export function AppStateProvider({ children, gradingClient, gradingSchedulerOpti
     gradingResults,
     classInsights,
     classReviewMaterials,
+    classReview,
     createTask,
     assignTaskClass,
     confirmMockOcrEssay,
@@ -634,6 +1229,8 @@ export function AppStateProvider({ children, gradingClient, gradingSchedulerOpti
     gradingResults,
     classInsights,
     classReviewMaterials,
+    classReview,
+    classReviewVersion,
     createTask,
     assignTaskClass,
     confirmMockOcrEssay,

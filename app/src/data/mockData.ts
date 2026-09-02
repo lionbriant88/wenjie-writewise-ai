@@ -225,6 +225,7 @@ const resultFor = (essayId: string, seed: number): GradingResult => {
   return {
   id: `${essayId}-result`,
   essayId,
+  resultRevision: 0,
   totalScore: calculateTotalScore(dimensionScores.map(({ score }) => score), 15),
   dimensionScores,
   errorAnnotations: [

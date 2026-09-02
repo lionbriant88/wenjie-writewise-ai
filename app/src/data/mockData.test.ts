@@ -16,6 +16,10 @@ describe('mock grading result consistency', () => {
     expect(mockEssays.every((essay) => essay.sourceGeneration === 0)).toBe(true)
   })
 
+  it('initializes every synthetic grading result revision explicitly', () => {
+    expect(mockGradingResults.every((result) => result.resultRevision === 0)).toBe(true)
+  })
+
   it('keeps every unfinished canonical essay in the current actionable queue state', () => {
     const activeStatuses = mockEssays
       .filter((essay) => essay.status !== 'completed' && essay.status !== 'needs_review')
