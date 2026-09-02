@@ -9,11 +9,19 @@ import {
   type GatewayExecutionServices,
 } from '../src/server.js'
 import type { GatewayRuntimeConfig } from '../src/gatewayRuntimeConfig.js'
+import type { ClassReviewFramingCalibration } from '../src/classReviewSynthesis/framingCalibrations.js'
+import type { ClassReviewPromptTokenizer } from '../src/classReviewSynthesis/promptBudget.js'
+import type {
+  ClassReviewProviderOutputV1,
+  ClassReviewSynthesisRequestV1,
+} from '../src/classReviewSynthesis/types.js'
+import type { ClassReviewSynthesisProvider } from '../src/providers/classReviewSynthesisProviderTypes.js'
 import type { MultimodalProvider } from '../src/providers/multimodalProviderTypes.js'
 import {
   GradingProviderError,
   type ProviderAttemptObservation,
   type ProviderCallResult,
+  type ProviderUsageSnapshot,
 } from '../src/providers/providerTypes.js'
 import {
   createProviderTelemetryRecorder,
@@ -31,8 +39,32 @@ export const FAKE_ACCEPTANCE_SCENARIOS = [
 
 export type FakeAcceptanceScenario = typeof FAKE_ACCEPTANCE_SCENARIOS[number]
 
+export const FAKE_CLASS_REVIEW_ACCEPTANCE_SCENARIOS = [
+  'success',
+  'empty',
+  'rate-limit',
+  'pause-auth',
+  'result-unknown',
+  'invalid-schema',
+] as const
+
+export type FakeClassReviewAcceptanceScenario = typeof FAKE_CLASS_REVIEW_ACCEPTANCE_SCENARIOS[number]
+
+export const FAKE_CLASS_REVIEW_SEMANTIC_VARIANTS = [
+  'default',
+  'combine-low-frequency',
+  'subthreshold-and-omitted-must-cover',
+  'duplicate-cross-pattern-ownership',
+] as const
+
+export type FakeClassReviewSemanticVariant = typeof FAKE_CLASS_REVIEW_SEMANTIC_VARIANTS[number]
+
+export const FAKE_CLASS_REVIEW_SERVICE_BEARER = 'fake-class-review-service-bearer-v1'
+
 export interface FakeAcceptanceGatewayOptions {
   scenario: FakeAcceptanceScenario
+  classReviewScenario?: FakeClassReviewAcceptanceScenario
+  classReviewSemanticVariant?: FakeClassReviewSemanticVariant
   allowedOrigin?: string
   hardLimit?: number
   httpDeadlineMs?: number
@@ -41,6 +73,7 @@ export interface FakeAcceptanceGatewayOptions {
   successDelayMs?: number
   lateSuccessDelayMs?: number
   rateLimitRetryAfterMs?: number
+  classReviewTokenizer?: ClassReviewPromptTokenizer
   monotonicNow?: () => number
   executionTimers?: GatewayExecutionTimers
 }
@@ -58,6 +91,9 @@ export interface FakeAcceptanceSnapshot {
     authFailed: number
     rejected: number
   }
+  classReviewProviderCalls: number
+  classReviewProviderCompletions: number
+  classReviewObservations: ProviderAttemptObservation[]
   observations: ProviderAttemptObservation[]
   admission: ReturnType<GatewayExecutionServices['admission']['snapshot']>
   registry: ReturnType<GatewayExecutionServices['registry']['snapshot']>
@@ -79,6 +115,9 @@ interface FakeState {
   maxActiveProviderCalls: number
   ignoredAbortSignals: number
   outcomes: FakeAcceptanceSnapshot['outcomes']
+  classReviewProviderCalls: number
+  classReviewProviderCompletions: number
+  classReviewObservations: ProviderAttemptObservation[]
   observations: ProviderAttemptObservation[]
   callsByEssay: Map<string, number>
   mixedRolesByEssay: Map<string, MixedRole>
@@ -89,8 +128,8 @@ type ScriptedOutcome = 'success' | 'rate-limit' | 'auth-failure' | 'rejected' | 
 type MixedRole = ScriptedOutcome
 type NormalizedFakeAcceptanceGatewayOptions = Required<Omit<
   FakeAcceptanceGatewayOptions,
-  'monotonicNow' | 'executionTimers'
->> & Pick<FakeAcceptanceGatewayOptions, 'monotonicNow' | 'executionTimers'>
+  'monotonicNow' | 'executionTimers' | 'classReviewTokenizer'
+>> & Pick<FakeAcceptanceGatewayOptions, 'monotonicNow' | 'executionTimers' | 'classReviewTokenizer'>
 
 const SAMPLE_ID = /^sample-[a-z0-9]+(?:-[a-z0-9]+)*$/
 const BROWSER_UPLOAD_ESSAY_ID = /^task-[0-9]+-uploaded-upload-(?:(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})|[0-9]+)-[1-9][0-9]*$/i
@@ -102,6 +141,17 @@ const DEFAULT_HARD_LIMIT = 3
 const DEFAULT_RATE_LIMIT_RETRY_AFTER_MS = 1_000
 const DEFAULT_SUCCESS_DELAY_MS = 25
 const INVALID_CONFIGURATION = 'Invalid fake acceptance Gateway configuration.'
+const classReviewCalibration: ClassReviewFramingCalibration = {
+  apiBase: 'https://api.moonshot.cn/v1',
+  model: 'kimi-k3',
+  reasoningEffort: 'low',
+  policyVersion: 'class-review-policy-v1',
+  schemaVersion: 'kimi-class-review-output-v1',
+  projectionVersion: 'class-review-projection-v1',
+  budgetVersion: 'class-review-prompt-budget-v1',
+  wireSerializationVersion: 'class-review-wire-serialization-v1',
+  framingTokens: 512,
+}
 const defaultFakeTimers: GatewayExecutionTimers = {
   setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
   clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
@@ -130,6 +180,22 @@ export function parseFakeAcceptanceScenario(value: unknown): FakeAcceptanceScena
   return value as FakeAcceptanceScenario
 }
 
+export function parseFakeClassReviewScenario(value: unknown): FakeClassReviewAcceptanceScenario {
+  if (typeof value !== 'string'
+    || !FAKE_CLASS_REVIEW_ACCEPTANCE_SCENARIOS.includes(value as FakeClassReviewAcceptanceScenario)) {
+    throw new TypeError(INVALID_CONFIGURATION)
+  }
+  return value as FakeClassReviewAcceptanceScenario
+}
+
+export function parseFakeClassReviewSemanticVariant(value: unknown): FakeClassReviewSemanticVariant {
+  if (typeof value !== 'string'
+    || !FAKE_CLASS_REVIEW_SEMANTIC_VARIANTS.includes(value as FakeClassReviewSemanticVariant)) {
+    throw new TypeError(INVALID_CONFIGURATION)
+  }
+  return value as FakeClassReviewSemanticVariant
+}
+
 function runtimeConfig(options: NormalizedFakeAcceptanceGatewayOptions): GatewayRuntimeConfig {
   const terminalTtlMs = options.providerFinalDeadlineMs + options.settlementGraceMs + 60_000
   return {
@@ -151,7 +217,11 @@ function runtimeConfig(options: NormalizedFakeAcceptanceGatewayOptions): Gateway
       capMs: 60_000,
       pauseAfterMs: 900_000,
     },
-    classReviewSynthesis: { mode: 'disabled' },
+    classReviewSynthesis: {
+      mode: 'fake',
+      serviceToken: FAKE_CLASS_REVIEW_SERVICE_BEARER,
+      maxCompletionTokens: 3_072,
+    },
     kimi: {
       apiBase: 'https://api.moonshot.cn/v1',
       model: 'kimi-k3',
@@ -184,6 +254,140 @@ function observation(ordinal: number, providerElapsedMs: number): ProviderAttemp
       totalTokens: { status: 'known', value: 36 },
       cachedTokens: { status: 'known', value: 6 },
     },
+  }
+}
+
+function classReviewUsage(): ProviderUsageSnapshot {
+  return {
+    promptTokens: { status: 'known', value: 100 },
+    completionTokens: { status: 'known', value: 50 },
+    totalTokens: { status: 'known', value: 150 },
+    cachedTokens: { status: 'known', value: 20 },
+  }
+}
+
+function classReviewObservation(
+  ordinal: number,
+  providerElapsedMs: number,
+): ProviderAttemptObservation {
+  return {
+    attemptDiagnosticId: uuidFor(10_000 + ordinal),
+    finishReason: 'stop',
+    providerElapsedMs,
+    usage: classReviewUsage(),
+  }
+}
+
+function classReviewOutput(
+  request: ClassReviewSynthesisRequestV1,
+  scenario: FakeClassReviewAcceptanceScenario,
+  variant: FakeClassReviewSemanticVariant,
+): ClassReviewProviderOutputV1 {
+  const dimensionIds = request.statistics.dimensions.slice(0, 1).map((dimension) => dimension.dimensionId)
+  let patterns: ClassReviewProviderOutputV1['patterns'] = []
+  if (scenario !== 'empty') {
+    if (variant === 'combine-low-frequency') {
+      const lowFrequency = request.groups.filter((group) => !group.mustCover).slice(0, 2)
+      patterns = lowFrequency.length >= 2
+        ? [{
+            groupIds: lowFrequency.map((group) => group.groupId),
+            title: 'Gateway combined low-frequency issue',
+            diagnosis: 'Separate rare issues become common when their hidden essay support is unioned.',
+            teachingAction: 'Teach them together with one focused comparison.',
+            severity: 'medium',
+          }]
+        : []
+    } else if (variant === 'subthreshold-and-omitted-must-cover') {
+      const lowFrequency = request.groups.find((group) => !group.mustCover)
+      patterns = lowFrequency
+        ? [{
+            groupIds: [lowFrequency.groupId],
+            title: 'Gateway below-threshold issue',
+            diagnosis: 'This should be dropped by deterministic support validation.',
+            teachingAction: 'This action should not survive materialization.',
+            severity: 'low',
+          }]
+        : []
+    } else if (variant === 'duplicate-cross-pattern-ownership') {
+      const groupId = request.groups[0]?.groupId ?? 'unknown.group'
+      patterns = [
+        {
+          groupIds: [groupId],
+          title: 'Gateway duplicate owner A',
+          diagnosis: 'Duplicate ownership should fail.',
+          teachingAction: 'Reject the whole candidate.',
+          severity: 'medium',
+        },
+        {
+          groupIds: [groupId],
+          title: 'Gateway duplicate owner B',
+          diagnosis: 'Duplicate ownership should fail.',
+          teachingAction: 'Reject the whole candidate.',
+          severity: 'medium',
+        },
+      ]
+    } else {
+      patterns = request.groups.filter((group) => group.mustCover).slice(0, 1).map((group) => ({
+        groupIds: [group.groupId],
+        title: 'Gateway common issue',
+        diagnosis: 'Synthetic diagnosis for a common issue.',
+        teachingAction: 'Use focused revision.',
+        severity: 'medium',
+      }))
+    }
+  }
+  return {
+    overallComment: 'Synthetic class-review summary.',
+    strengths: [
+      {
+        title: 'Gateway strength',
+        detail: 'Synthetic strengths are visible.',
+        dimensionIds,
+      },
+    ],
+    patterns,
+    learningRecommendations: [
+      {
+        title: 'Gateway next step',
+        action: 'Use focused revision.',
+      },
+    ],
+  }
+}
+
+function invalidClassReviewOutput(request: ClassReviewSynthesisRequestV1): ClassReviewProviderOutputV1 {
+  const groupId = request.groups[0]?.groupId ?? 'unknown.group'
+  return {
+    overallComment: 'Synthetic class-review summary.',
+    strengths: [
+      {
+        title: 'Gateway strength',
+        detail: 'Synthetic strengths are visible.',
+        dimensionIds: [],
+      },
+    ],
+    patterns: [
+      {
+        groupIds: [groupId],
+        title: 'Gateway common issue',
+        diagnosis: 'PRIVATE-INVALID-SCHEMA',
+        teachingAction: 'Use focused revision.',
+        severity: 'medium',
+      },
+      {
+        groupIds: [groupId],
+        title: 'Gateway duplicate issue',
+        diagnosis: 'PRIVATE-INVALID-SCHEMA',
+        teachingAction: 'Use focused revision.',
+        severity: 'medium',
+      },
+    ],
+    learningRecommendations: [
+      {
+        title: 'Gateway next step',
+        action: 'Use focused revision.',
+      },
+    ],
   }
 }
 
@@ -351,8 +555,71 @@ function createScriptedProvider(
   }
 }
 
+function createScriptedClassReviewProvider(
+  options: NormalizedFakeAcceptanceGatewayOptions,
+  state: FakeState,
+): ClassReviewSynthesisProvider {
+  const recordCompletion = (
+    value: ClassReviewProviderOutputV1,
+    elapsedMs: number,
+  ): ProviderCallResult<ClassReviewProviderOutputV1> => {
+    state.classReviewProviderCompletions += 1
+    const item = classReviewObservation(state.classReviewProviderCompletions, elapsedMs)
+    state.classReviewObservations.push(item)
+    return { value, attempts: [item] }
+  }
+  return {
+    async synthesize(input) {
+      state.classReviewProviderCalls += 1
+      if (options.classReviewScenario === 'rate-limit') {
+        throw new GradingProviderError(
+          'provider_rate_limited',
+          'PRIVATE-RATE-LIMIT',
+          true,
+          undefined,
+          {
+            termination: 'confirmed',
+            retryAfterMs: options.rateLimitRetryAfterMs,
+            attemptObservations: [],
+          },
+        )
+      }
+      if (options.classReviewScenario === 'pause-auth') {
+        throw new GradingProviderError(
+          'provider_auth_failed',
+          'PRIVATE-AUTH',
+          false,
+          undefined,
+          { termination: 'confirmed', attemptObservations: [] },
+        )
+      }
+      if (options.classReviewScenario === 'result-unknown') {
+        throw new GradingProviderError(
+          'provider_unavailable',
+          'PRIVATE-UNKNOWN',
+          true,
+          undefined,
+          { termination: 'unknown', attemptObservations: [] },
+        )
+      }
+      if (options.classReviewScenario === 'invalid-schema') {
+        return recordCompletion(invalidClassReviewOutput(input.request), 1)
+      }
+      return recordCompletion(classReviewOutput(
+        input.request,
+        options.classReviewScenario,
+        options.classReviewSemanticVariant,
+      ), 1)
+    },
+  }
+}
+
 function normalizedOptions(options: FakeAcceptanceGatewayOptions): NormalizedFakeAcceptanceGatewayOptions {
   const scenario = parseFakeAcceptanceScenario(options.scenario)
+  const classReviewScenario = parseFakeClassReviewScenario(options.classReviewScenario ?? 'success')
+  const classReviewSemanticVariant = parseFakeClassReviewSemanticVariant(
+    options.classReviewSemanticVariant ?? 'default',
+  )
   const httpDeadlineMs = positiveInteger(options.httpDeadlineMs ?? DEFAULT_HTTP_DEADLINE_MS)
   const providerFinalDeadlineMs = positiveInteger(options.providerFinalDeadlineMs ?? DEFAULT_PROVIDER_FINAL_DEADLINE_MS)
   const settlementGraceMs = nonNegativeInteger(options.settlementGraceMs ?? DEFAULT_SETTLEMENT_GRACE_MS)
@@ -363,6 +630,8 @@ function normalizedOptions(options: FakeAcceptanceGatewayOptions): NormalizedFak
   const defaultLateDelayMs = providerFinalDeadlineMs + settlementGraceMs + 100
   const normalized = {
     scenario,
+    classReviewScenario,
+    classReviewSemanticVariant,
     allowedOrigin: loopbackHttpOrigin(options.allowedOrigin ?? DEFAULT_ALLOWED_ORIGIN),
     hardLimit: positiveInteger(options.hardLimit ?? DEFAULT_HARD_LIMIT),
     httpDeadlineMs,
@@ -371,6 +640,7 @@ function normalizedOptions(options: FakeAcceptanceGatewayOptions): NormalizedFak
     successDelayMs: nonNegativeInteger(options.successDelayMs ?? DEFAULT_SUCCESS_DELAY_MS),
     lateSuccessDelayMs: nonNegativeInteger(options.lateSuccessDelayMs ?? defaultLateDelayMs),
     rateLimitRetryAfterMs: nonNegativeInteger(options.rateLimitRetryAfterMs ?? DEFAULT_RATE_LIMIT_RETRY_AFTER_MS),
+    ...(options.classReviewTokenizer ? { classReviewTokenizer: options.classReviewTokenizer } : {}),
     ...(options.monotonicNow ? { monotonicNow: options.monotonicNow } : {}),
     ...(options.executionTimers ? { executionTimers: options.executionTimers } : {}),
   }
@@ -391,6 +661,9 @@ export function createFakeAcceptanceGateway(options: FakeAcceptanceGatewayOption
     maxActiveProviderCalls: 0,
     ignoredAbortSignals: 0,
     outcomes: { succeeded: 0, rateLimited: 0, authFailed: 0, rejected: 0 },
+    classReviewProviderCalls: 0,
+    classReviewProviderCompletions: 0,
+    classReviewObservations: [],
     observations: [],
     callsByEssay: new Map(),
     mixedRolesByEssay: new Map(),
@@ -405,6 +678,9 @@ export function createFakeAcceptanceGateway(options: FakeAcceptanceGatewayOption
   const executionServices = createExecutionServices()
   const gradingApp = createServer({
     multimodalProvider: createScriptedProvider(normalized, state),
+    classReviewProvider: createScriptedClassReviewProvider(normalized, state),
+    classReviewFramingCalibration: classReviewCalibration,
+    ...(normalized.classReviewTokenizer ? { classReviewTokenizer: normalized.classReviewTokenizer } : {}),
     runtimeConfig: config,
     timeoutMs: normalized.httpDeadlineMs,
     executionServices,
@@ -427,6 +703,9 @@ export function createFakeAcceptanceGateway(options: FakeAcceptanceGatewayOption
     maxActiveProviderCalls: state.maxActiveProviderCalls,
     ignoredAbortSignals: state.ignoredAbortSignals,
     outcomes: { ...state.outcomes },
+    classReviewProviderCalls: state.classReviewProviderCalls,
+    classReviewProviderCompletions: state.classReviewProviderCompletions,
+    classReviewObservations: structuredClone(state.classReviewObservations),
     observations: structuredClone(state.observations),
     admission: executionServices.admission.snapshot(),
     registry: executionServices.registry.snapshot(),
@@ -466,12 +745,14 @@ export function createFakeAcceptanceGatewayFromEnvironment(env: FakeEnvironment 
   const host = env.HOST?.trim() || '127.0.0.1'
   if (host !== '127.0.0.1') throw new TypeError(INVALID_CONFIGURATION)
   const scenario = parseFakeAcceptanceScenario(env.FAKE_ACCEPTANCE_SCENARIO)
+  const classReviewScenario = parseFakeClassReviewScenario(env.FAKE_CLASS_REVIEW_SCENARIO ?? 'success')
   const httpDeadlineMs = environmentInteger(env.FAKE_HTTP_DEADLINE_MS, DEFAULT_HTTP_DEADLINE_MS)
   const providerFinalDeadlineMs = environmentInteger(env.FAKE_PROVIDER_FINAL_DEADLINE_MS, DEFAULT_PROVIDER_FINAL_DEADLINE_MS)
   const settlementGraceMs = environmentInteger(env.FAKE_SETTLEMENT_GRACE_MS, DEFAULT_SETTLEMENT_GRACE_MS, 0)
   return {
     gateway: createFakeAcceptanceGateway({
       scenario,
+      classReviewScenario,
       allowedOrigin: env.FAKE_ALLOWED_ORIGIN ?? DEFAULT_ALLOWED_ORIGIN,
       hardLimit: environmentInteger(env.FAKE_PROVIDER_HARD_LIMIT, DEFAULT_HARD_LIMIT),
       httpDeadlineMs,

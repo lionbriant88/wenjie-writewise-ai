@@ -1,6 +1,34 @@
 # 当前开发状态
 
-最后更新：2026-08-29
+最后更新：2026-09-02
+
+## 2026-09-02：AI 班级总览本地功能原型已完成并通过 fake 验收
+
+- 已按 `docs/superpowers/plans/2026-08-29-ai-class-review-local-prototype.md` 完成本地功能原型阶段；本轮只在 React 内存状态与 Grading Gateway fake acceptance/loopback 范围内实施，没有接入真实 Kimi、没有启动或恢复 OCR Gateway，也没有补齐商业级后端持久化、认证、租户、对象存储或跨实例 registry。
+- 班级总览页已收口为一个纵向工作页，并明确显示“本地功能原型；刷新、重启、多设备和真实班级长期保存不受保证。”；页面依次呈现当前统计、AI 班级总体评价、共性问题与讲评建议、明确拼写错误和教师精选讲评素材，不恢复旧四个一级 Tab，也不展示“教师模式 / AI 模式”。
+- 班级统计与生成门槛现在遵循当前决策：纳入本任务全部有效成功作文，教师最终确认不是纳入门槛；单篇 final failed 不阻断其余成功作文进入班级总览；班级总结 CTA 只在队列 settled 且 `N_success >= 2` 时出现。页面 settled 判断已复用进度页队列口径，`grading_ready`、人工复核和 final failed 视为 settled，等待、运行、限流等待、结果未知和可重试失败仍会阻止生成。
+- 普通共性问题、频次、人数、比例、分数统计和明确拼写清单均由本地确定性聚合计算。明确、唯一、无需教师复核且无字迹歧义的低级拼写错误会不受频次门槛进入独立紧凑清单；普通共性问题继续使用 `requiredSupport = max(N_issue < 10 ? 2 : 3, ceil(N_issue × 20%))`。统计与清单查看、排序、拼写提升、教师从单篇加入问题和材料操作均不增加模型 completion。
+- 教师可在首次 AI 班级总结前从单篇结果加入未达门槛但有教学价值的问题；AI 问题与教师问题共用同一个可排序列表，“置顶”已落实为上移/下移的展示顺序调整，不建立额外 pinned 状态。教师精选素材仍与共性问题列表分离。
+- 本地 AI 班级总结由教师显式点击生成；浏览器业务侧默认使用 in-process fake synthesis client，首次成功生成时可应用总体评价、主要优点、学习建议和 Common issue。重新生成前会明确提示“这会消耗 1 次新的 AI 调用”；若 fake 重新生成失败，页面显示“班级总结生成失败，请稍后重试。”并保留老师已编辑的 AI 总评、教师加入的问题与排序。
+- Grading Gateway fake acceptance 现覆盖班级总结服务端 loopback：只允许服务端 Bearer 调用，拒绝浏览器 Origin；与逐篇批改共享 hard provider cap；非法请求与 prompt budget 超限在 Provider 前 0 调用失败；`empty`、`rate-limit`、`pause-auth`、`result-unknown`、`invalid-schema` 等场景返回脱敏、安全的固定结果；并通过 Gateway loopback 输出 + `app/classReviewMerge` materialization 验证多个低频组被模型合并后由确定性 merge 达到共性门槛、低于门槛 pattern 被丢弃、未被模型引用的 `mustCover` 零调用兜底、重复跨 pattern group 归属整体拒绝。该 loopback 仅用于 fake/本地验收，不能作为浏览器生产调用路径。
+- 修复了班级总结生成边界的一个安全一致性 bug：Provider 可见问题标题/例句/建议会按投影预算裁剪，隐藏安全源保留完整文本；冻结快照校验现在按同一可见化规则重建并比对，合法裁剪不再误报 `class_review_candidate_conflict`，替换成其他可见文本仍 fail closed。
+
+### 本轮精确自动化与浏览器验证
+
+| 范围 | 最终结果 |
+| --- | --- |
+| 新增班级总览纵向流程 | 1 个测试文件、1 个用例通过，覆盖 6 篇一键批改、5 篇成功纳入、1 篇 final failed 隔离、明确拼写自动进入清单、低频问题从单篇加入、问题排序、教师编辑总评、重新生成失败保留现有内容 |
+| 班级总览与相邻前端聚焦组 | 7 个测试文件、91 个用例通过 |
+| Grading Gateway fake acceptance 聚焦组 | 1 个测试文件、23 个用例通过 |
+| 网站全量 | 84 个测试文件、1325 个用例通过 |
+| Grading Gateway 全量 | 50 个测试文件、1290 个用例通过 |
+| 网站质量门 | Typecheck、lint、生产构建均通过；Vite 构建转换 429 个模块，仅保留已有大 chunk 提示 |
+| Gateway 质量门 | Typecheck、共享评分运行时和 grading policy fixtures 均通过；共享评分运行时输出 `shared scoring runtime ok` |
+| 范围与安全扫描 | 班级总览页面与问题卡片未命中旧 `mockClassInsights`/旧 mock 洞察/冗余 `role="button"`；班级总览与 Gateway class-review synthesis 生产路径未命中 OCR Gateway、`POST /ocr`、`VITE_OCR`；Gateway class-review synthesis 生产路径未命中学生姓名、班级名、任务名、材料上下文、sourceFile、Base64 或 Authorization 泄漏关键词；`git diff --check` 无空白错误，仅有 Windows CRLF 提示 |
+| 浏览器验收 | 本地 worktree Vite `127.0.0.1:5176` 验证 `task-1` 未 settled 时不显示生成按钮，`task-3` settled 时显示生成按钮、原型披露和明确拼写清单；点击 fake 生成后出现 `Class summary`、`Common issue` 与“重新生成”；移动端 `390×844` 下 `scrollWidth/bodyScrollWidth = 375`，无横向溢出 |
+
+- 本轮没有读取、写入或提交真实 API Key，没有发起真实 Kimi 或其他外部 Provider 调用，没有启动 OCR Gateway，也没有把学生姓名、图片、作文全文、原题材料或普通业务 ID 发送进班级总结 Prompt。
+- 当前仍只是本地原型：任务、报告 workspace、AI 文本编辑、教师问题、排序和精选素材都仍依赖 React 内存；刷新、重启、多标签长期恢复、新设备同步、租户权限、删除栅栏、跨实例唯一 generation 和生产数据保留规则仍须在后续“商业基础设施”计划中单独实施和评审。不得把本节 fake/浏览器证据表述为商品化发布完成或真实 Kimi 质量/成本验收通过。
 
 ## 2026-08-29：AI 班级总览生成与共性问题沉淀设计已批准（尚未实施）
 

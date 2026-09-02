@@ -113,6 +113,53 @@ async function materializeBlocksThroughPublicBoundary(input: { providerOutput: C
 }
 
 describe('frozen generation merge boundary', () => {
+  it('accepts legitimately truncated projected group text while still rejecting substituted visible text', () => {
+    const request = frozenRequest()
+    const baseHidden = hidden()
+    const longTitle = 'The reason is too general for classroom discussion.'
+    const projectedTitle = Array.from(longTitle).slice(0, 48).join('')
+    const selectedGroups = new Map(baseHidden.selectedGroups)
+    selectedGroups.set('g3', {
+      atomicTopic: topic('c'),
+      title: kept(longTitle, 'ev7'),
+      excerpt: null,
+      essayIds: ['e4'],
+      occurrenceCount: 1,
+    })
+    const source = { ...baseHidden, selectedGroups }
+    request.groups[2] = { ...request.groups[2], title: projectedTitle }
+
+    expect(() => cloneAndFreezeClassReviewGenerationSnapshot({
+      originalRequest: request,
+      hidden: source,
+      generationId: 'generation-truncated-visible-text',
+      invalidationEpoch: 0,
+      executionIdentity: 'execution-truncated-visible-text',
+      payloadDigest: 'digest-truncated-visible-text',
+      taskRevision: 1,
+      reportRevision: 1,
+      aiTextEditRevision: 0,
+      sourceRevisionEpoch: 0,
+      browserStatistics: browserReport().statistics,
+    })).not.toThrow()
+
+    const substituted = structuredClone(request)
+    substituted.groups[2] = { ...substituted.groups[2], title: 'Different visible text' }
+    expect(() => cloneAndFreezeClassReviewGenerationSnapshot({
+      originalRequest: substituted,
+      hidden: source,
+      generationId: 'generation-substituted-visible-text',
+      invalidationEpoch: 0,
+      executionIdentity: 'execution-substituted-visible-text',
+      payloadDigest: 'digest-substituted-visible-text',
+      taskRevision: 1,
+      reportRevision: 1,
+      aiTextEditRevision: 0,
+      sourceRevisionEpoch: 0,
+      browserStatistics: browserReport().statistics,
+    })).toThrow('class_review_candidate_conflict')
+  })
+
   it('maps Provider dimension aliases directly to original rubric dimensions and fails closed on hidden/browser disagreement', async () => {
     const request = frozenRequest()
     request.statistics.dimensions = [{ dimensionId: 'd1', label: 'Dimension 1', averageScore: 32, medianScore: 32, maxScore: 40, normalizedPerformance: 0.8 }]

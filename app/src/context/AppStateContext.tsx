@@ -52,6 +52,7 @@ import type {
   TaskStatus,
 } from '../types'
 import { getClassReviewMaterialKey } from '../utils/classReviewMaterials'
+import { isClassReviewQueueSettled } from '../utils/progressQueue'
 import {
   AppStateContext,
   type AddClassReviewIssueInput,
@@ -317,10 +318,13 @@ function buildInitialClassReviewReport(
   })
 }
 
-function taskIsSettledForClassReview(taskEssays: readonly Essay[]): boolean {
+function taskIsSettledForClassReview(
+  taskEssays: readonly Essay[],
+  snapshot?: TaskQueueSnapshot,
+  rubricGeneration = 0,
+): boolean {
   return taskEssays.length > 0
-    && taskEssays.every((essay) =>
-      essay.status === 'completed' || essay.status === 'manual' || essay.status === 'needs_review')
+    && isClassReviewQueueSettled([...taskEssays], snapshot, rubricGeneration)
 }
 
 const LOCAL_CLASS_REVIEW_GENERATION_TIMESTAMP = '1970-01-01T00:00:00.000Z'
@@ -468,6 +472,7 @@ export function AppStateProvider({
   const [classReviewVersion, setClassReviewVersion] = useState(0)
   const tasksRef = useRef(tasks)
   const essaysRef = useRef(essays)
+  const taskGradingQueuesRef = useRef(taskGradingQueues)
   const gradingResultsRef = useRef(gradingResults)
   const imageSubmissionIdsRef = useRef(new Set<string>())
   const mountedRef = useRef(true)
@@ -505,6 +510,7 @@ export function AppStateProvider({
 
   useEffect(() => { tasksRef.current = tasks }, [tasks])
   useEffect(() => { essaysRef.current = essays }, [essays])
+  useEffect(() => { taskGradingQueuesRef.current = taskGradingQueues }, [taskGradingQueues])
   useEffect(() => { gradingResultsRef.current = gradingResults }, [gradingResults])
   useEffect(() => {
     mountedRef.current = true
@@ -640,7 +646,12 @@ export function AppStateProvider({
     const snapshot = classReviewCoordinatorRef.current!.getSnapshot(taskId)
     const report = reportWithCurrentGeneration(snapshot.report, snapshot.generation)
     const taskEssays = essaysRef.current.filter((essay) => essay.taskId === taskId)
-    const isSettled = taskIsSettledForClassReview(taskEssays)
+    const task = tasksRef.current.find((item) => item.id === taskId)
+    const isSettled = taskIsSettledForClassReview(
+      taskEssays,
+      taskGradingQueuesRef.current[taskId],
+      task?.rubricGeneration ?? 0,
+    )
     return {
       ...snapshot,
       report,
@@ -654,7 +665,12 @@ export function AppStateProvider({
     const snapshot = classReviewCoordinatorRef.current!.getSnapshot(taskId)
     const report = reportWithCurrentGeneration(snapshot.report, snapshot.generation)
     const taskEssays = essaysRef.current.filter((essay) => essay.taskId === taskId)
-    const isSettled = taskIsSettledForClassReview(taskEssays)
+    const task = tasksRef.current.find((item) => item.id === taskId)
+    const isSettled = taskIsSettledForClassReview(
+      taskEssays,
+      taskGradingQueuesRef.current[taskId],
+      task?.rubricGeneration ?? 0,
+    )
     return {
       ...snapshot,
       report,

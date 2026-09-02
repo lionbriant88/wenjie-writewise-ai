@@ -126,11 +126,18 @@ export function ClassReviewPage() {
   const generate = (intent: 'initial' | 'regenerate') => {
     setGenerationNotice('')
     setOptimisticGenerating(true)
-    void classReview.generate(task.id, intent).catch(() => {
-      setGenerationNotice('班级总结生成失败，请稍后重试。')
-    }).finally(() => {
-      setOptimisticGenerating(false)
-    })
+    void classReview.generate(task.id, intent)
+      .then((record) => {
+        if (record.state === 'failed') {
+          setGenerationNotice('班级总结生成失败，请稍后重试。')
+        }
+      })
+      .catch(() => {
+        setGenerationNotice('班级总结生成失败，请稍后重试。')
+      })
+      .finally(() => {
+        setOptimisticGenerating(false)
+      })
   }
 
   const closeRegenerateDialog = () => {
@@ -146,6 +153,9 @@ export function ClassReviewPage() {
       description="先看当前统计，再把 AI 总评、共性问题、明确拼写和精选素材整理成课堂讲评方案。"
     >
       <div className="space-y-5">
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
+          本地功能原型；刷新、重启、多设备和真实班级长期保存不受保证。
+        </p>
         <CurrentStatisticsPanel statistics={report.statistics} />
         <ClassReviewGenerationStatus
           snapshot={snapshot}

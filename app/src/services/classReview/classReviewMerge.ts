@@ -1,9 +1,10 @@
 import { parseClassReviewReport } from './classReviewContracts'
 import { classReviewSupportThreshold } from './aggregateClassReview'
-import type {
-  ClassReviewProjectionHiddenStateV1,
-  HiddenMustCoverFallbackV1,
-  HiddenSelectedGroupV1,
+import {
+  DEFAULT_CLASS_REVIEW_PROJECTION_LIMITS,
+  type ClassReviewProjectionHiddenStateV1,
+  type HiddenMustCoverFallbackV1,
+  type HiddenSelectedGroupV1,
 } from './classReviewProjection'
 import { deriveCompositeTopicKey, type TopicHmac, type TopicIdentity } from './classReviewTopicKey'
 import { parseClassReviewSynthesisRequest, parseClassReviewSynthesisResult } from './synthesisContracts'
@@ -40,6 +41,74 @@ function checkedAdd(left: number, right: number): number {
   const sum = left + right
   if (!Number.isSafeInteger(sum) || sum < 0) fail('hidden_snapshot_invalid')
   return sum
+}
+
+function truncateCodePoints(value: string, maximum: number): string | null {
+  let count = 0
+  let end = 0
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index)
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1)
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return null
+      if (count === maximum) return value.slice(0, end)
+      index += 1
+      end = index + 1
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      return null
+    } else {
+      if (count === maximum) return value.slice(0, end)
+      end = index + 1
+    }
+    count += 1
+  }
+  return value.slice(0, end)
+}
+
+function codePointLength(value: string): number {
+  return Array.from(value).length
+}
+
+function expectedVisibleSelectedGroupText(selected: HiddenSelectedGroupV1): {
+  title: string | null
+  excerpt: {
+    originalText: string | null
+    suggestionOrDiagnosis: string | null
+  } | null
+} {
+  const limits = DEFAULT_CLASS_REVIEW_PROJECTION_LIMITS
+  const rawTitle = selected.title.status === 'kept' ? selected.title.text : null
+  let remaining = limits.maxGroupVisibleCodePoints
+  const title = rawTitle === null
+    ? null
+    : truncateCodePoints(rawTitle, Math.min(limits.maxTitleCodePoints, remaining))
+  remaining -= title === null ? 0 : codePointLength(title)
+
+  let excerpt: {
+    originalText: string | null
+    suggestionOrDiagnosis: string | null
+  } | null = selected.excerpt === null
+    ? null
+    : { originalText: null, suggestionOrDiagnosis: null }
+  if (
+    selected.excerpt !== null
+    && selected.excerpt.originalText.status === 'kept'
+    && selected.excerpt.suggestionOrDiagnosis.status === 'kept'
+    && remaining > 0
+  ) {
+    const originalText = truncateCodePoints(
+      selected.excerpt.originalText.text,
+      Math.min(limits.maxOriginalTextCodePoints, remaining),
+    )
+    remaining -= originalText === null ? 0 : codePointLength(originalText)
+    const suggestionOrDiagnosis = truncateCodePoints(
+      selected.excerpt.suggestionOrDiagnosis.text,
+      Math.min(limits.maxSuggestionOrDiagnosisCodePoints, remaining),
+    )
+    excerpt = { originalText, suggestionOrDiagnosis }
+  }
+
+  return { title, excerpt }
 }
 
 class ImmutableMapView<K, V> implements ReadonlyMap<K, V> {
@@ -405,13 +474,16 @@ function validateGenerationBoundary(
     if (sharedScope !== null && sharedScope !== selected.atomicTopic.taskScope) fail('class_review_candidate_conflict')
     sharedScope = selected.atomicTopic.taskScope
     identityOwners.add(identity)
-    const selectedTitle = selected.title.status === 'kept' ? selected.title.text : null
-    if (selectedTitle !== null && selectedTitle !== group.title) fail('class_review_candidate_conflict')
+    const visible = expectedVisibleSelectedGroupText(selected)
+    if (visible.title !== group.title) fail('class_review_candidate_conflict')
     if (group.excerpt) {
-      if (!selected.excerpt || selected.excerpt.originalText.status !== 'kept' || selected.excerpt.suggestionOrDiagnosis.status !== 'kept'
-        || selected.excerpt.originalText.text !== group.excerpt.originalText
-        || selected.excerpt.suggestionOrDiagnosis.text !== group.excerpt.suggestionOrDiagnosis) fail('class_review_candidate_conflict')
-    } else if (selected.excerpt?.originalText.status === 'kept' || selected.excerpt?.suggestionOrDiagnosis.status === 'kept') {
+      if (!visible.excerpt
+        || visible.excerpt.originalText !== group.excerpt.originalText
+        || visible.excerpt.suggestionOrDiagnosis !== group.excerpt.suggestionOrDiagnosis) fail('class_review_candidate_conflict')
+    } else if (visible.excerpt !== null && (
+      visible.excerpt.originalText !== null
+      || visible.excerpt.suggestionOrDiagnosis !== null
+    )) {
       fail('class_review_candidate_conflict')
     }
   }

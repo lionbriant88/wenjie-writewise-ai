@@ -57,7 +57,7 @@
 - 教师后来修改单篇结果时，已有 AI 报告默认保留为生成时快照，不自动重算、不阻断使用、不显示强制“已过期”警告；页面始终显示生成时间和当时纳入数量。教师明确重新生成时原子替换 AI 内容，保留教师添加的问题与排序；若 AI 文本已被教师编辑，必须先确认覆盖；AI 总结仍在编辑或有未保存草稿时不得触发重新生成，必须先保存或取消。
 - 教师证据与 system-generation 证据必须逐条区分并绑定精确 result revision；重新生成只替换系统证据，来源页不能用当前结果冒充已经清理或更新的历史 revision。教师项抑制同 topic 的 AI 项时保留当前 system variant；主动移出最后一个教师来源且该 variant 仍合法时恢复为 AI 项并保留位置，来源删除导致整批 AI 失效时则不得恢复。AI 单成员 topic key 必须直接复用 atomic key。任务/来源删除会使相关在途、结果未知和待应用 generation 永久失效，迟到 Provider 结果不得恢复已删除内容。
 - 商品化实现必须由权威任务服务持久化任务/结果 revision、generation run、成功报告、AI 文本编辑基线、教师问题、精选素材和唯一排序真源，并在生成、查看、编辑、来源访问和重新生成时校验教师身份、租户与任务归属。Grading Gateway 只承担服务间 synthesis 与全局 Provider 准入，不能充当公网用户安全边界。当前 React 内存状态和单进程 memory registry 只能支持本地原型；持久任务仓库、权限和数据保留规则未完成前不得宣称商业发布就绪。
-- 班级总结不修改逐篇 v2 合同。浏览器业务合同使用 `class-review-generation-command-v1` / `class-review-generation-status-v1` / `class-review-report-v1`；权威任务服务到 Grading Gateway 使用 `class-review-synthesis-request-v1` / `class-review-synthesis-result-v1`；Provider Schema 为 `kimi-class-review-output-v1`。完整批准设计与验收门槛见 `docs/superpowers/specs/2026-08-29-ai-class-review-generation-design.md`；该设计尚未实施，也未获得本轮真实 Kimi 调用授权。
+- 班级总结不修改逐篇 v2 合同。浏览器业务合同使用 `class-review-generation-command-v1` / `class-review-generation-status-v1` / `class-review-report-v1`；权威任务服务到 Grading Gateway 使用 `class-review-synthesis-request-v1` / `class-review-synthesis-result-v1`；Provider Schema 为 `kimi-class-review-output-v1`。完整批准设计与验收门槛见 `docs/superpowers/specs/2026-08-29-ai-class-review-generation-design.md`；本地功能原型已在 `codex/ai-pipeline-optimization` 分支完成 fake 验收，但商业级持久化、认证/租户、跨实例 registry、生产发布集成与真实 Kimi 班级总结质量/成本验收仍未完成，也未获得本轮真实 Kimi 调用授权。
 
 ## 当前作文输入决策
 
@@ -79,7 +79,7 @@
 
 ## 当前班级总览与共性问题决策
 
-- 本节设计已经用户逐项确认，但尚未实施。正式规格是 `docs/superpowers/specs/2026-08-29-ai-class-review-generation-design.md`；三阶段实施顺序固定为本地功能原型、单独评审后的商业基础设施、集成与发布，不得把计划文件描述成已完成功能。
+- 本节设计已经用户逐项确认，本地功能原型已完成；正式规格是 `docs/superpowers/specs/2026-08-29-ai-class-review-generation-design.md`；三阶段实施顺序固定为本地功能原型、单独评审后的商业基础设施、集成与发布。商业基础设施与集成发布尚未实施，不得把本地原型或计划文件描述成商品化完成。
 - 普通共性问题使用问题通道完整的有效成功作文 `N_issue`，门槛为 `max(N_issue < 10 ? 2 : 3, ceil(N_issue × 20%))`；同一作文在同一问题模式中只计一名学生，出现次数另计。成绩有效但问题通道不完整的结果不进入问题分母。
 - 明确、唯一、无字迹歧义的低级拼写错误不受频次限制，进入独立紧凑的明确拼写清单；`filling → feeling` 这类 certain `word_choice` 只有通过版本化的单词级近形、唯一修正和来源重叠规则才可纳入，系统不得用词典、OCR 或语义猜测补造修正。
 - 教师可从单篇结果加入未达门槛但有教学价值的问题并随时移出；AI 问题与教师问题共用唯一显示顺序，所谓“置顶”就是排序，不建立第二套 pinned 状态。教师精选素材继续与共性问题分离。

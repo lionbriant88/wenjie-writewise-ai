@@ -1,17 +1,33 @@
+import { readFileSync } from 'node:fs'
 import request from 'supertest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   FAKE_ACCEPTANCE_SCENARIOS,
+  FAKE_CLASS_REVIEW_ACCEPTANCE_SCENARIOS,
+  FAKE_CLASS_REVIEW_SERVICE_BEARER,
   createFakeAcceptanceGateway,
   createFakeAcceptanceGatewayFromEnvironment,
+  type FakeClassReviewSemanticVariant,
+  parseFakeClassReviewScenario,
   parseFakeAcceptanceScenario,
 } from './runFakeAcceptanceGateway.js'
 import type { GatewayExecutionTimers } from '../src/server.js'
+import type { ClassReviewSynthesisRequestV1 } from '../src/classReviewSynthesis/types.js'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const UPLOAD_UUID = '88781e92-1573-4429-9034-3670a9a518f7'
 const REMOTE_CLIENT_MODULE = '../../app/src/services/grading/remoteGradingClient.ts'
 const TASK_SCHEDULER_MODULE = '../../app/src/services/grading/taskGradingScheduler.ts'
+const CLASS_REVIEW_MERGE_MODULE = '../../app/src/services/classReview/classReviewMerge.ts'
+const classReviewFixture = JSON.parse(readFileSync(
+  new URL('../../test-fixtures/class-review/synthesis-contracts.json', import.meta.url),
+  'utf8',
+)) as {
+  requests: {
+    pureStatistics: ClassReviewSynthesisRequestV1
+    withGroups: ClassReviewSynthesisRequestV1
+  }
+}
 
 interface SyntheticRemoteRequest {
   requestVersion: 'multimodal-grading-request-v2'
@@ -27,6 +43,49 @@ interface SyntheticQueueSnapshot {
   status: string
   pauseReason?: string
   items: Record<string, { phase: string; errorCode?: string; retryable: boolean }>
+}
+
+interface GatewaySemanticGroupInput {
+  groupId: string
+  type: ClassReviewSynthesisRequestV1['groups'][number]['type']
+  subtype: ClassReviewSynthesisRequestV1['groups'][number]['subtype']
+  severity: ClassReviewSynthesisRequestV1['groups'][number]['severity']
+  title: string
+  mustCover: boolean
+  essayIds: string[]
+  occurrenceCount: number
+  excerpt: ClassReviewSynthesisRequestV1['groups'][number]['excerpt']
+}
+
+interface ClassReviewMergeApi {
+  cloneAndFreezeClassReviewGenerationSnapshot(input: {
+    originalRequest: unknown
+    hidden: unknown
+    generationId: string
+    invalidationEpoch: number
+    executionIdentity: string
+    payloadDigest: string
+    taskRevision: number
+    reportRevision: number | null
+    aiTextEditRevision: number
+    sourceRevisionEpoch: number
+    browserStatistics: unknown
+  }): unknown
+  createInternalIssueWorkspace(blocks: readonly unknown[], options?: { issueOrder?: readonly string[] }): unknown
+  materializeClassReviewCandidate(input: {
+    snapshot: unknown
+    untrustedResult: unknown
+    currentReport: unknown
+    currentIssueWorkspace: unknown
+    topicHmac: unknown
+    createOpaqueId: () => string
+    now: () => string
+  }): Promise<unknown>
+  applyMaterializedClassReviewCandidate(input: {
+    handle: unknown
+    currentReport: unknown
+    currentIssueWorkspace: unknown
+  }): { report: { issueBlocks: Array<Record<string, unknown>> } }
 }
 
 function uploadedEssayId(index: number): string {
@@ -65,6 +124,17 @@ function grade(
   return request(app)
     .post('/grading/grade-images')
     .field('metadata', JSON.stringify(metadata(requestId, essayId, confirmedTranscript)))
+}
+
+function synthesizeClassReview(
+  app: ReturnType<typeof createFakeAcceptanceGateway>['app'],
+  body: object = classReviewFixture.requests.withGroups,
+  bearer = FAKE_CLASS_REVIEW_SERVICE_BEARER,
+) {
+  return request(app)
+    .post('/grading/class-review-syntheses')
+    .set('Authorization', `Bearer ${bearer}`)
+    .send(body)
 }
 
 function remoteRequest(requestId: string, essayId: string): SyntheticRemoteRequest {
@@ -110,6 +180,210 @@ function gradingJob(
     rubricGeneration: 0,
     run,
   }
+}
+
+function createGatewayWithClassReviewSemanticVariant(
+  variant: FakeClassReviewSemanticVariant,
+): ReturnType<typeof createFakeAcceptanceGateway> {
+  return createFakeAcceptanceGateway({
+    scenario: 'success',
+    classReviewScenario: 'success',
+    successDelayMs: 0,
+    classReviewSemanticVariant: variant,
+  })
+}
+
+function topicIdentity(ordinal: number) {
+  const suffix = ordinal.toString(16).padStart(16, '0')
+  return {
+    kind: 'atomic',
+    keyVersion: 'topic-key-v1',
+    taskScope: `scope_v1_${'1'.repeat(32)}`,
+    key: `tk1.${suffix}`,
+    fingerprintDigest: `fp1.${suffix.padEnd(64, 'a')}`,
+  }
+}
+
+function kept(text: string, scrubbedEvidenceKey: string) {
+  return {
+    status: 'kept',
+    text,
+    redactionVersion: 'class-review-redaction-v1',
+    scrubbedEvidenceKey,
+  }
+}
+
+function semanticRequest(
+  groups: readonly GatewaySemanticGroupInput[],
+  explicitIssueEligibleEssayCount?: number,
+): ClassReviewSynthesisRequestV1 {
+  const issueEligibleEssayCount = explicitIssueEligibleEssayCount ?? Math.max(
+    ...groups.flatMap((group) => group.essayIds.map((essayId) => Number(essayId.replace(/\D/gu, '')))),
+  )
+  const projectedDistinctEssaySupportSum = groups.reduce((sum, group) => sum + group.essayIds.length, 0)
+  const projectedOccurrenceSum = groups.reduce((sum, group) => sum + group.occurrenceCount, 0)
+  return {
+    contractVersion: 'class-review-synthesis-request-v1',
+    requestId: 'gateway-semantic-request',
+    rubricRevisionDigest: 'r'.repeat(43),
+    policyVersion: 'class-review-policy-v1',
+    schemaVersion: 'kimi-class-review-output-v1',
+    projectionVersion: 'class-review-projection-v1',
+    budgetVersion: 'class-review-prompt-budget-v1',
+    statistics: {
+      includedEssayCount: issueEligibleEssayCount,
+      issueEligibleEssayCount,
+      totalEssayCount: issueEligibleEssayCount,
+      excludedEssayCount: 0,
+      score: {
+        fullScore: 15,
+        averageScore: 10,
+        medianScore: 10,
+        lowestScore: 8,
+        highestScore: 12,
+      },
+      scoreBands: [],
+      dimensions: [],
+      issueCounters: [],
+    },
+    groups: groups.map((group) => ({
+      groupId: group.groupId,
+      type: group.type,
+      subtype: group.subtype,
+      severity: group.severity,
+      title: group.title,
+      mustCover: group.mustCover,
+      distinctEssaySupport: group.essayIds.length,
+      occurrenceCount: group.occurrenceCount,
+      excerpt: group.excerpt,
+    })),
+    semanticCoverage: {
+      projectedGroupCount: groups.length,
+      eligibleGroupCount: groups.length,
+      groupCoverage: 1,
+      projectedDistinctEssaySupportSum,
+      eligibleDistinctEssaySupportSum: projectedDistinctEssaySupportSum,
+      supportWeightedCoverage: 1,
+      projectedOccurrenceSum,
+      eligibleOccurrenceSum: projectedOccurrenceSum,
+      occurrenceWeightedCoverage: 1,
+    },
+    outputLimits: { maxCompletionTokens: 3072, maxVisibleCodePoints: 2200, maxJsonUtf8Bytes: 16384 },
+  }
+}
+
+function hiddenForSemanticRequest(groups: readonly GatewaySemanticGroupInput[]) {
+  return {
+    dimensionAliases: new Map(),
+    selectedGroups: new Map(groups.map((group, index) => [group.groupId, {
+      atomicTopic: topicIdentity(index + 1),
+      title: kept(group.title, `title-${index + 1}`),
+      excerpt: group.excerpt === null
+        ? null
+        : {
+            originalText: kept(group.excerpt.originalText, `original-${index + 1}`),
+            suggestionOrDiagnosis: kept(group.excerpt.suggestionOrDiagnosis, `suggestion-${index + 1}`),
+          },
+      essayIds: group.essayIds,
+      occurrenceCount: group.occurrenceCount,
+    }])),
+    unprojectedMustCover: [],
+  }
+}
+
+function browserReportForSemanticRequest(requestValue: ClassReviewSynthesisRequestV1) {
+  return {
+    contractVersion: 'class-review-report-v1',
+    workspaceState: 'draft',
+    taskRevision: 1,
+    reportRevision: 1,
+    aiTextEditRevision: 0,
+    currentGeneration: null,
+    statistics: {
+      totalEssayCount: requestValue.statistics.totalEssayCount,
+      includedEssayCount: requestValue.statistics.includedEssayCount,
+      issueEligibleEssayCount: requestValue.statistics.issueEligibleEssayCount,
+      excludedEssayCount: requestValue.statistics.excludedEssayCount,
+      issueCoverageRate: 1,
+      fullScore: requestValue.statistics.score.fullScore,
+      scoreSummary: {
+        averageScore: requestValue.statistics.score.averageScore,
+        highestScore: requestValue.statistics.score.highestScore,
+        lowestScore: requestValue.statistics.score.lowestScore,
+      },
+      scoreBands: [],
+      dimensions: [],
+    },
+    issueBlocks: [],
+    issueOrder: [],
+    clearSpellingItems: [],
+    selectedMaterials: [],
+  }
+}
+
+function topicHmac() {
+  const claims = new Map<string, string>()
+  return {
+    registry: {
+      async claim(input: {
+        taskScope: string
+        kind: string
+        shortenedKey: string
+        fingerprintDigest: string
+      }): Promise<string> {
+        const key = JSON.stringify([input.taskScope, input.kind, input.shortenedKey, input.fingerprintDigest])
+        if (!claims.has(key)) claims.set(key, input.shortenedKey)
+        return claims.get(key)!
+      },
+    },
+    digest: async (_domain: string, bytes: Uint8Array): Promise<Uint8Array> => {
+      const out = new Uint8Array(32)
+      bytes.forEach((byte, index) => {
+        out[index % out.length] = (out[index % out.length] + byte + index) % 256
+      })
+      return out
+    },
+  }
+}
+
+async function materializeGatewayClassReviewResult(
+  requestValue: ClassReviewSynthesisRequestV1,
+  responseBody: unknown,
+  groups: readonly GatewaySemanticGroupInput[],
+): Promise<Array<Record<string, unknown>>> {
+  const merge = await vi.importActual(CLASS_REVIEW_MERGE_MODULE) as ClassReviewMergeApi
+  const currentReport = browserReportForSemanticRequest(requestValue)
+  const currentIssueWorkspace = merge.createInternalIssueWorkspace([], { issueOrder: [] })
+  const snapshot = merge.cloneAndFreezeClassReviewGenerationSnapshot({
+    originalRequest: requestValue,
+    hidden: hiddenForSemanticRequest(groups),
+    generationId: 'gateway-semantic-generation',
+    invalidationEpoch: 0,
+    executionIdentity: 'gateway-semantic-execution',
+    payloadDigest: 'gateway-semantic-payload',
+    taskRevision: 1,
+    reportRevision: 1,
+    aiTextEditRevision: 0,
+    sourceRevisionEpoch: 0,
+    browserStatistics: currentReport.statistics,
+  })
+  const handle = await merge.materializeClassReviewCandidate({
+    snapshot,
+    untrustedResult: responseBody,
+    currentReport,
+    currentIssueWorkspace,
+    topicHmac: topicHmac(),
+    createOpaqueId: (() => {
+      let next = 0
+      return () => `gateway-semantic-block-${++next}`
+    })(),
+    now: () => '2026-09-02T00:00:00.000Z',
+  })
+  return merge.applyMaterializedClassReviewCandidate({
+    handle,
+    currentReport,
+    currentIssueWorkspace,
+  }).report.issueBlocks
 }
 
 async function waitFor(check: () => boolean): Promise<void> {
@@ -165,6 +439,342 @@ describe('scripted fake acceptance Gateway', () => {
     expect(() => parseFakeAcceptanceScenario('failure')).toThrow(TypeError)
     expect(() => parseFakeAcceptanceScenario('kimi')).toThrow(TypeError)
     expect(() => parseFakeAcceptanceScenario(undefined)).toThrow(TypeError)
+  })
+
+  it('accepts exactly the approved class-review fake scenarios', () => {
+    expect(FAKE_CLASS_REVIEW_ACCEPTANCE_SCENARIOS).toEqual([
+      'success',
+      'empty',
+      'rate-limit',
+      'pause-auth',
+      'result-unknown',
+      'invalid-schema',
+    ])
+    for (const scenario of FAKE_CLASS_REVIEW_ACCEPTANCE_SCENARIOS) {
+      expect(parseFakeClassReviewScenario(scenario)).toBe(scenario)
+    }
+    expect(() => parseFakeClassReviewScenario('kimi')).toThrow(TypeError)
+    expect(() => parseFakeClassReviewScenario('browser')).toThrow(TypeError)
+    expect(() => parseFakeClassReviewScenario(undefined)).toThrow(TypeError)
+  })
+
+  it('exercises the class-review loopback route as server-only fake synthesis with one completion metric', async () => {
+    const gateway = createFakeAcceptanceGateway({
+      scenario: 'success',
+      classReviewScenario: 'success',
+      successDelayMs: 0,
+    })
+
+    const browserOrigin = await synthesizeClassReview(gateway.app)
+      .set('Origin', 'http://127.0.0.1:5174')
+      .expect(403)
+    expect(browserOrigin.body).toEqual({
+      error: {
+        code: 'browser_origin_forbidden',
+        message: 'Browser-origin requests are not allowed.',
+      },
+    })
+    expect(browserOrigin.headers).not.toHaveProperty('access-control-allow-origin')
+    expect(gateway.snapshot().classReviewProviderCalls).toBe(0)
+
+    const missingAuth = await request(gateway.app)
+      .post('/grading/class-review-syntheses')
+      .send(classReviewFixture.requests.withGroups)
+      .expect(401)
+    expect(missingAuth.headers['www-authenticate']).toBe('Bearer')
+    expect(missingAuth.body).toEqual({
+      error: {
+        code: 'service_auth_required',
+        message: 'Internal service authentication failed.',
+      },
+    })
+
+    const response = await synthesizeClassReview(gateway.app).expect(200)
+    expect(response.body).toMatchObject({
+      contractVersion: 'class-review-synthesis-result-v1',
+      requestId: classReviewFixture.requests.withGroups.requestId,
+      status: 'succeeded',
+      output: {
+        overallComment: 'Synthetic class-review summary.',
+        patterns: [{
+          groupIds: ['grammar.tense'],
+          title: 'Gateway common issue',
+        }],
+      },
+      finishReason: 'stop',
+      usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150, cachedTokens: 20 },
+    })
+    expect(gateway.snapshot()).toMatchObject({
+      providerCalls: 0,
+      providerCompletions: 0,
+      classReviewProviderCalls: 1,
+      classReviewProviderCompletions: 1,
+      telemetry: {
+        uniqueAttempts: 1,
+        totals: { totalTokens: { status: 'known', value: 150 } },
+      },
+    })
+  })
+
+  it('shares the hard provider cap between essay grading and class-review synthesis', async () => {
+    const gateway = createFakeAcceptanceGateway({
+      scenario: 'success',
+      classReviewScenario: 'success',
+      hardLimit: 1,
+      successDelayMs: 1_000,
+    })
+    const essay = Promise.resolve(grade(gateway.app, 'request-shared-cap-essay', 'sample-shared-cap'))
+    await waitFor(() => gateway.snapshot().activeProviderCalls === 1)
+
+    const blocked = await synthesizeClassReview(gateway.app).expect(429)
+    expect(blocked.body).toMatchObject({
+      status: 'failed',
+      safeFailureCode: 'provider_rate_limited',
+      retryable: true,
+      completionDisposition: 'not_started',
+    })
+    expect(gateway.snapshot()).toMatchObject({
+      providerCalls: 1,
+      classReviewProviderCalls: 0,
+      maxActiveProviderCalls: 1,
+    })
+
+    await essay
+  })
+
+  it('keeps class-review Provider calls at zero for invalid and budget-rejected input', async () => {
+    const invalid = createFakeAcceptanceGateway({
+      scenario: 'success',
+      classReviewScenario: 'success',
+      successDelayMs: 0,
+    })
+
+    const callerCacheKey = await synthesizeClassReview(invalid.app, {
+      ...classReviewFixture.requests.withGroups,
+      promptCacheKey: 'PRIVATE-CALLER-CACHE-KEY',
+    }).expect(400)
+    expect(callerCacheKey.body).toEqual({
+      error: { code: 'invalid_request', message: 'Class review synthesis request is invalid.' },
+    })
+    expect(JSON.stringify(callerCacheKey.body)).not.toMatch(/PRIVATE|CACHE|KEY/)
+    expect(invalid.snapshot().classReviewProviderCalls).toBe(0)
+
+    const budgetRejected = createFakeAcceptanceGateway({
+      scenario: 'success',
+      classReviewScenario: 'success',
+      successDelayMs: 0,
+      classReviewTokenizer: { count: () => 16_385 },
+    })
+    const response = await synthesizeClassReview(budgetRejected.app).expect(503)
+    expect(response.body).toMatchObject({
+      status: 'failed',
+      safeFailureCode: 'class_review_prompt_too_large',
+      completionDisposition: 'not_started',
+    })
+    expect(budgetRejected.snapshot().classReviewProviderCalls).toBe(0)
+  })
+
+  it('exposes class-review fake failure scenarios without leaking Provider text', async () => {
+    const cases = [
+      ['empty', 200, { status: 'succeeded', output: { patterns: [] } }],
+      ['rate-limit', 429, {
+        status: 'failed',
+        safeFailureCode: 'provider_rate_limited',
+        retryable: true,
+        completionDisposition: 'confirmed_zero_completion',
+      }],
+      ['pause-auth', 503, {
+        status: 'failed',
+        safeFailureCode: 'provider_auth_failed',
+        retryable: false,
+        completionDisposition: 'confirmed_zero_completion',
+      }],
+      ['result-unknown', 503, {
+        status: 'result_unknown',
+        safeFailureCode: 'provider_result_unknown',
+        completionDisposition: 'unknown',
+      }],
+      ['invalid-schema', 503, {
+        status: 'failed',
+        safeFailureCode: 'provider_invalid_response',
+        retryable: false,
+        completionDisposition: 'completed',
+      }],
+    ] as const
+
+    for (const [classReviewScenario, status, body] of cases) {
+      const gateway = createFakeAcceptanceGateway({
+        scenario: 'success',
+        classReviewScenario,
+        successDelayMs: 0,
+      })
+      const response = await synthesizeClassReview(
+        gateway.app,
+        classReviewScenario === 'empty'
+          ? classReviewFixture.requests.pureStatistics
+          : classReviewFixture.requests.withGroups,
+      ).expect(status)
+      expect(response.body).toMatchObject(body)
+      expect(JSON.stringify(response.body)).not.toMatch(/PRIVATE|AUTH|RATE-LIMIT|INVALID-SCHEMA/)
+      expect(gateway.snapshot().classReviewProviderCalls).toBe(1)
+    }
+  })
+
+  it('accepts a class-review pattern that combines individually low-frequency groups above the support threshold', async () => {
+    const groups: GatewaySemanticGroupInput[] = [
+      {
+        groupId: 'rare.structure',
+        type: 'structure',
+        subtype: null,
+        severity: 'medium',
+        title: 'Rare structure',
+        mustCover: false,
+        essayIds: ['e1'],
+        occurrenceCount: 1,
+        excerpt: null,
+      },
+      {
+        groupId: 'rare.logic',
+        type: 'logic',
+        subtype: 'weak_connection',
+        severity: 'medium',
+        title: 'Rare logic',
+        mustCover: false,
+        essayIds: ['e2'],
+        occurrenceCount: 1,
+        excerpt: null,
+      },
+    ]
+    const body = semanticRequest(groups)
+    const gateway = createGatewayWithClassReviewSemanticVariant('combine-low-frequency')
+
+    const response = await synthesizeClassReview(gateway.app, body).expect(200)
+
+    expect(response.body.output.patterns).toEqual([{
+      groupIds: ['rare.structure', 'rare.logic'],
+      title: 'Gateway combined low-frequency issue',
+      diagnosis: 'Separate rare issues become common when their hidden essay support is unioned.',
+      teachingAction: 'Teach them together with one focused comparison.',
+      severity: 'medium',
+    }])
+    const blocks = await materializeGatewayClassReviewResult(body, response.body, groups)
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]).toMatchObject({
+      origin: 'ai',
+      title: 'Gateway combined low-frequency issue',
+      systemStudentCount: 2,
+      combinedStudentCount: 2,
+      occurrenceCount: 2,
+      supportDenominator: 2,
+    })
+    expect(gateway.snapshot()).toMatchObject({
+      classReviewProviderCalls: 1,
+      classReviewProviderCompletions: 1,
+    })
+  })
+
+  it('drops a returned below-threshold class-review pattern while preserving omitted mustCover fallback with zero extra calls', async () => {
+    const groups: GatewaySemanticGroupInput[] = [
+      {
+        groupId: 'rare.wording',
+        type: 'word_choice',
+        subtype: null,
+        severity: 'low',
+        title: 'Rare wording',
+        mustCover: false,
+        essayIds: ['e1'],
+        occurrenceCount: 1,
+        excerpt: null,
+      },
+      {
+        groupId: 'must.grammar',
+        type: 'grammar',
+        subtype: null,
+        severity: 'high',
+        title: 'Must cover grammar',
+        mustCover: true,
+        essayIds: ['e2', 'e3'],
+        occurrenceCount: 2,
+        excerpt: {
+          originalText: 'He go to school.',
+          suggestionOrDiagnosis: 'Subject-verb agreement appears repeatedly.',
+        },
+      },
+    ]
+    const body = semanticRequest(groups, 4)
+    const gateway = createGatewayWithClassReviewSemanticVariant('subthreshold-and-omitted-must-cover')
+
+    const response = await synthesizeClassReview(gateway.app, body).expect(200)
+
+    expect(response.body.output.patterns).toEqual([{
+      groupIds: ['rare.wording'],
+      title: 'Gateway below-threshold issue',
+      diagnosis: 'This should be dropped by deterministic support validation.',
+      teachingAction: 'This action should not survive materialization.',
+      severity: 'low',
+    }])
+    const blocks = await materializeGatewayClassReviewResult(body, response.body, groups)
+    expect(blocks).toEqual([expect.objectContaining({
+      origin: 'ai',
+      title: 'Must cover grammar',
+      diagnosis: 'Subject-verb agreement appears repeatedly.',
+      systemStudentCount: 2,
+      combinedStudentCount: 2,
+      occurrenceCount: 2,
+      supportDenominator: 4,
+    })])
+    expect(blocks.some((block) => block.title === 'Gateway below-threshold issue')).toBe(false)
+    expect(gateway.snapshot()).toMatchObject({
+      classReviewProviderCalls: 1,
+      classReviewProviderCompletions: 1,
+    })
+  })
+
+  it('rejects duplicate cross-pattern class-review group ownership through the Gateway loopback route', async () => {
+    const body = semanticRequest([
+      {
+        groupId: 'must.grammar',
+        type: 'grammar',
+        subtype: null,
+        severity: 'high',
+        title: 'Must cover grammar',
+        mustCover: true,
+        essayIds: ['e1', 'e2'],
+        occurrenceCount: 2,
+        excerpt: {
+          originalText: 'He go to school.',
+          suggestionOrDiagnosis: 'Subject-verb agreement appears repeatedly.',
+        },
+      },
+      {
+        groupId: 'rare.structure',
+        type: 'structure',
+        subtype: null,
+        severity: 'low',
+        title: 'Rare structure',
+        mustCover: false,
+        essayIds: ['e3'],
+        occurrenceCount: 1,
+        excerpt: null,
+      },
+    ])
+    const gateway = createGatewayWithClassReviewSemanticVariant('duplicate-cross-pattern-ownership')
+
+    const response = await synthesizeClassReview(gateway.app, body).expect(503)
+
+    expect(response.body).toMatchObject({
+      status: 'failed',
+      safeFailureCode: 'provider_invalid_response',
+      retryable: false,
+      completionDisposition: 'completed',
+      finishReason: 'stop',
+      usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150, cachedTokens: 20 },
+    })
+    expect(JSON.stringify(response.body)).not.toMatch(/PRIVATE|AUTH|RATE-LIMIT|INVALID-SCHEMA/)
+    expect(gateway.snapshot()).toMatchObject({
+      classReviewProviderCalls: 1,
+      classReviewProviderCompletions: 1,
+    })
   })
 
   it('requires result-unknown late success to settle after the orphan boundary', () => {
