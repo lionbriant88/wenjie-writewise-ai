@@ -228,11 +228,23 @@ function attachHidden<T extends object>(
   return result as T & { readonly hidden: ClassReviewProjectionHiddenStateV1 }
 }
 
+const frozenReadonlyMapSnapshots = new WeakMap<
+  object,
+  readonly (readonly [unknown, unknown])[]
+>()
+
 class FrozenReadonlyMap<K, V> implements ReadonlyMap<K, V> {
   readonly #snapshot: Map<K, V>
 
   constructor(entries: Iterable<readonly [K, V]>) {
     this.#snapshot = new Map(entries)
+    frozenReadonlyMapSnapshots.set(
+      this,
+      Object.freeze(Array.from(
+        this.#snapshot,
+        ([key, value]) => Object.freeze([key, value] as const),
+      )),
+    )
     Object.freeze(this)
   }
 
@@ -270,6 +282,19 @@ class FrozenReadonlyMap<K, V> implements ReadonlyMap<K, V> {
   [Symbol.iterator](): MapIterator<[K, V]> {
     return this.entries()
   }
+}
+
+Object.freeze(FrozenReadonlyMap.prototype)
+
+export function snapshotClassReviewProjectionReadonlyMap<K, V>(
+  value: unknown,
+  maxEntries: number,
+): readonly (readonly [K, V])[] | null {
+  if (!Number.isSafeInteger(maxEntries) || maxEntries < 0) return null
+  if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return null
+  const snapshot = frozenReadonlyMapSnapshots.get(value)
+  if (snapshot === undefined || snapshot.length > maxEntries) return null
+  return snapshot as readonly (readonly [K, V])[]
 }
 
 function compareText(left: string, right: string): number {

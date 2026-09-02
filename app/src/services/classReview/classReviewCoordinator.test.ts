@@ -4,6 +4,7 @@ import { buildClassReviewProjection, DEFAULT_CLASS_REVIEW_PROJECTION_LIMITS, typ
 import type { ClassReviewAggregate } from './aggregateClassReview'
 import { createLocalClassReviewCoordinator, type ClassReviewSynthesisClient } from './classReviewCoordinator'
 import { createFakeClassReviewSynthesisClient } from './fakeClassReviewSynthesisClient'
+import { createInMemoryTopicKeyRegistry, deriveAtomicTopicKey, type TopicHmac } from './classReviewTopicKey'
 
 function draft(aiTextEditRevision = 0): ClassReviewReportDraftV1 {
   return { contractVersion: 'class-review-report-v1', workspaceState: 'draft', taskRevision: 1, reportRevision: 1, aiTextEditRevision, currentGeneration: null, statistics: { totalEssayCount: 3, includedEssayCount: 3, issueEligibleEssayCount: 3, excludedEssayCount: 0, issueCoverageRate: 1, fullScore: 100, scoreSummary: { averageScore: 80, highestScore: 90, lowestScore: 70 }, scoreBands: [], dimensions: [] }, issueBlocks: [], issueOrder: [], clearSpellingItems: [], selectedMaterials: [] }
@@ -48,15 +49,21 @@ function teacherAddCommand(block: ClassReviewIssueBlockV1, essayIdentity: string
 }
 
 function projection(): Extract<ClassReviewProjectionResult, { status: 'ready' }> {
-  return {
+  const ready = {
     status: 'ready',
     projection: {
       statistics: { includedEssayCount: 3, issueEligibleEssayCount: 3, totalEssayCount: 3, excludedEssayCount: 0, score: { fullScore: 100, averageScore: 80, highestScore: 90, lowestScore: 70, medianScore: 80 }, scoreBands: [], dimensions: [], issueCounters: [] },
       groups: [],
       semanticCoverage: { projectedGroupCount: 0, eligibleGroupCount: 0, groupCoverage: 1, projectedDistinctEssaySupportSum: 0, eligibleDistinctEssaySupportSum: 0, supportWeightedCoverage: 1, projectedOccurrenceSum: 0, eligibleOccurrenceSum: 0, occurrenceWeightedCoverage: 1 },
     },
-    hidden: { dimensionAliases: new Map(), selectedGroups: new Map(), unprojectedMustCover: [] },
-  }
+  } as unknown as Extract<ClassReviewProjectionResult, { status: 'ready' }>
+  Object.defineProperty(ready, 'hidden', {
+    value: { dimensionAliases: new Map(), selectedGroups: new Map(), unprojectedMustCover: [] },
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  })
+  return ready
 }
 
 function projectionWithGroup(): Extract<ClassReviewProjectionResult, { status: 'ready' }> {
@@ -289,17 +296,46 @@ describe('local class review coordinator', () => {
   })
 
   it('preserves the real projection builder non-enumerable hidden snapshot', async () => {
+    let fingerprintCalls = 0
+    const collisionHmac: TopicHmac = {
+      registry: createInMemoryTopicKeyRegistry(),
+      digest: async (domain, message) => {
+        if (domain === 'topic-fingerprint-v1') {
+          fingerprintCalls += 1
+          return new Uint8Array(32).fill(fingerprintCalls)
+        }
+        if (domain === 'topic-public-key-v1') return new Uint8Array(32).fill(0x2a)
+        return new Uint8Array(32).fill((message[0] ?? 0) + 0x10)
+      },
+    }
+    const fingerprint = {
+      opaqueTaskScope: `scope_v1_${'a'.repeat(32)}`,
+      type: 'grammar' as const,
+      subtype: null,
+      changeTypes: ['grammar'],
+      correction: null,
+      signature: 'first-collision-owner',
+    }
+    await deriveAtomicTopicKey(fingerprint, collisionHmac)
+    const collisionIdentity = await deriveAtomicTopicKey({
+      ...fingerprint,
+      signature: 'second-collision-owner',
+    }, collisionHmac)
+    expect(collisionIdentity.key).toMatch(/^tk1\.[0-9a-f]{16}\.[0-9a-f]{12}$/u)
     const issue = { fingerprint: 'grammar-1', type: 'grammar' as const, subtype: null, severity: 'medium' as const, title: 'Agreement', originalText: 'She go home.', suggestionOrDiagnosis: 'Use goes.', changeTypes: ['grammar'], distinctEssaySupport: 2, occurrenceCount: 3, essayIds: ['essay-a', 'essay-b'], mustCover: true }
-    const aggregate: ClassReviewAggregate = { totalEssayCount: 3, includedEssayCount: 3, issueEligibleEssayCount: 3, excludedEssayCount: 0, partialIssueChannelCount: 0, exclusions: [], fullScore: 100, scoreMedian: 80, scoreSummary: { averageScore: 80, highestScore: 90, lowestScore: 70 }, scoreBands: [], dimensions: [], fixedIssueCounters: [{ counterId: 'grammar', count: 3 }], issueGroups: [issue], commonIssueGroups: [issue], clearSpellingItems: [] }
+    const aggregate: ClassReviewAggregate = { totalEssayCount: 3, includedEssayCount: 3, issueEligibleEssayCount: 3, excludedEssayCount: 0, partialIssueChannelCount: 0, exclusions: [], fullScore: 100, scoreMedian: 80, scoreSummary: { averageScore: 80, highestScore: 90, lowestScore: 70 }, scoreBands: [{ bandId: 'private-band-id', lowerInclusive: 0, upperInclusive: 100, essayCount: 3 }], dimensions: [{ dimensionId: 'private-dimension-id', name: 'Content', averageScore: 32, medianScore: 33, maxScore: 40, normalizedPerformance: 0.8 }], fixedIssueCounters: [{ counterId: 'grammar', count: 3 }], issueGroups: [issue], commonIssueGroups: [issue], clearSpellingItems: [] }
     const kept = (text: string, key: string) => ({ status: 'kept' as const, text, redactionVersion: 'class-review-redaction-v1' as const, scrubbedEvidenceKey: key })
-    const built = buildClassReviewProjection({ aggregate, redactionContext: { prepare: () => ({ atomicTopic: { kind: 'atomic', keyVersion: 'topic-key-v1', taskScope: `scope_v1_${'a'.repeat(32)}`, key: 'tk1.aaaaaaaaaaaaaaaa', fingerprintDigest: `fp1.${'b'.repeat(64)}` }, title: kept('Agreement', `scrub_v1_${'1'.repeat(32)}`), excerpt: { originalText: kept('She go home.', `scrub_v1_${'2'.repeat(32)}`), suggestionOrDiagnosis: kept('Use goes.', `scrub_v1_${'3'.repeat(32)}`) } }) }, limits: DEFAULT_CLASS_REVIEW_PROJECTION_LIMITS })
+    const built = buildClassReviewProjection({ aggregate, redactionContext: { prepare: () => ({ atomicTopic: collisionIdentity, title: kept('Agreement', `scrub_v1_${'1'.repeat(32)}`), excerpt: { originalText: kept('She go home.', `scrub_v1_${'2'.repeat(32)}`), suggestionOrDiagnosis: kept('Use goes.', `scrub_v1_${'3'.repeat(32)}`) } }) }, limits: DEFAULT_CLASS_REVIEW_PROJECTION_LIMITS })
     expect(built.status).toBe('ready')
     if (built.status !== 'ready') throw new Error('projection not ready')
     expect(Object.getOwnPropertyDescriptor(built, 'hidden')?.enumerable).toBe(false)
-    expect(built.hidden.selectedGroups.values().next().value).toMatchObject({ atomicTopic: { fingerprintDigest: `fp1.${'b'.repeat(64)}` }, occurrenceCount: 3, essayIds: ['essay-a', 'essay-b'], excerpt: { originalText: { text: 'She go home.' } } })
+    expect(built.hidden.selectedGroups.values().next().value).toMatchObject({ atomicTopic: { fingerprintDigest: collisionIdentity.fingerprintDigest }, occurrenceCount: 3, essayIds: ['essay-a', 'essay-b'], excerpt: { originalText: { text: 'She go home.' } } })
     const fake = createFakeClassReviewSynthesisClient({ scenario: 'success' }); let id = 0
     const value = createLocalClassReviewCoordinator({ synthesisClient: fake, topicKeySecret: new Uint8Array(32).fill(7), now: () => '2026-08-30T00:00:00.000Z', createOpaqueId: () => `opaque-${++id}` })
-    value.registerWorkspace({ taskKey: 'task-built', taskRevision: 1, rubricRevisionDigest: validRubricDigest, report: draft(), projection: built })
+    const report = draft()
+    report.statistics.scoreBands = [{ bandId: 'private-band-id', lowerInclusive: 0, upperInclusive: 100, essayCount: 3 }]
+    report.statistics.dimensions = [{ dimensionId: 'private-dimension-id', name: 'Content', averageScore: 32, maxScore: 40, normalizedPerformance: 0.8 }]
+    value.registerWorkspace({ taskKey: 'task-built', taskRevision: 1, rubricRevisionDigest: validRubricDigest, report, projection: built })
     const registered = value.getSnapshot('task-built')
     syncRound3Sources(value, {
       kind: 'ordinary_revision',
@@ -478,8 +514,13 @@ describe('local class review coordinator', () => {
     const ready = projection()
     ready.projection.statistics = { ...ready.projection.statistics, totalEssayCount: includedEssayCount, includedEssayCount, issueEligibleEssayCount: includedEssayCount, excludedEssayCount: 0 }
     const value = createLocalClassReviewCoordinator({ synthesisClient: fake, topicKeySecret: new Uint8Array(32).fill(7), now: () => '2026-08-30T00:00:00.000Z', createOpaqueId: () => 'opaque' })
-    value.registerWorkspace({ taskKey: 'task-sample', taskRevision: 1, rubricRevisionDigest: validRubricDigest, report, projection: ready })
-    await expect(value.generate({ taskKey: 'task-sample', generationId: 'browser-sample', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })).rejects.toThrow('class_review_not_eligible')
+    if (includedEssayCount === 0) {
+      expect(() => value.registerWorkspace({ taskKey: 'task-sample', taskRevision: 1, rubricRevisionDigest: validRubricDigest, report, projection: ready }))
+        .toThrow('class_review_candidate_conflict')
+    } else {
+      value.registerWorkspace({ taskKey: 'task-sample', taskRevision: 1, rubricRevisionDigest: validRubricDigest, report, projection: ready })
+      await expect(value.generate({ taskKey: 'task-sample', generationId: 'browser-sample', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })).rejects.toThrow('class_review_not_eligible')
+    }
     expect(fake.getCallCountForTest()).toBe(0)
   })
 
@@ -510,10 +551,10 @@ describe('local class review coordinator', () => {
     const ready = projectionWithGroup()
     mutate(ready)
     const value = createLocalClassReviewCoordinator({ synthesisClient: fake, topicKeySecret: new Uint8Array(32).fill(7), now: () => '2026-08-30T00:00:00.000Z', createOpaqueId: () => 'opaque' })
-    value.registerWorkspace({ taskKey: 'task-boundary', taskRevision: 1, rubricRevisionDigest: validRubricDigest, report: draft(), projection: ready })
-    await expect(value.generate({ taskKey: 'task-boundary', generationId: 'browser-boundary', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })).rejects.toThrow('class_review_candidate_conflict')
+    expect(() => value.registerWorkspace({ taskKey: 'task-boundary', taskRevision: 1, rubricRevisionDigest: validRubricDigest, report: draft(), projection: ready }))
+      .toThrow('class_review_candidate_conflict')
     expect(fake.getCallCountForTest()).toBe(0)
-    expect(value.getSnapshot('task-boundary').generation).toBeNull()
+    expect(() => value.getSnapshot('task-boundary')).toThrow('class_review_not_eligible')
   })
 
   it('parses and deep-freezes exact outbound request bytes before the client and preserves the retry/result binding', async () => {
@@ -1109,22 +1150,22 @@ describe('Task 8 round 2 coordinator safety contracts', () => {
     { name: 'highest score', mutate: (report: ClassReviewReportDraftV1) => { report.statistics.scoreSummary!.highestScore += 1 } },
     { name: 'lowest score', mutate: (report: ClassReviewReportDraftV1) => { report.statistics.scoreSummary!.lowestScore += 1 } },
     { name: 'score band essay count', mutate: (report: ClassReviewReportDraftV1) => { report.statistics.scoreBands[0].essayCount += 1 } },
-    { name: 'dimension name', mutate: (report: ClassReviewReportDraftV1) => { report.statistics.dimensions[0].name = 'Changed name' } },
+    { name: 'dimension average score', mutate: (report: ClassReviewReportDraftV1) => { report.statistics.dimensions[0].averageScore += 1 } },
   ])('fails closed before Provider on full mappable-statistics drift: $name', async ({ mutate }) => {
     const fake = createFakeClassReviewSynthesisClient({ scenario: 'success' })
     const report = draft()
     report.statistics.scoreBands = [{ bandId: 'band-1', lowerInclusive: 0, upperInclusive: 100, essayCount: 3 }]
     report.statistics.dimensions = [{ dimensionId: 'language', name: 'Language', averageScore: 32, maxScore: 40, normalizedPerformance: 0.8 }]
     const ready = projection()
-    ready.projection.statistics.scoreBands = [{ bandId: 'band-1', lowerInclusive: 0, upperInclusive: 100, essayCount: 3 }]
-    ready.projection.statistics.dimensions = [{ dimensionId: 'd1', label: 'Language', averageScore: 32, medianScore: 32, maxScore: 40, normalizedPerformance: 0.8 }]
+    ready.projection.statistics.scoreBands = [{ bandId: 'b1', lowerInclusive: 0, upperInclusive: 100, essayCount: 3 }]
+    ready.projection.statistics.dimensions = [{ dimensionId: 'd1', label: 'Dimension 1', averageScore: 32, medianScore: 32, maxScore: 40, normalizedPerformance: 0.8 }]
     ready.hidden.dimensionAliases = new Map([['d1', 'language']])
     mutate(report)
     const value = createLocalClassReviewCoordinator({ synthesisClient: fake, topicKeySecret: new Uint8Array(32).fill(7), now: () => '2026-08-30T00:00:00.000Z', createOpaqueId: () => 'opaque' })
-    value.registerWorkspace({ taskKey: 'stats-drift', taskRevision: 1, rubricRevisionDigest: validRubricDigest, report, projection: ready })
-    await expect(value.generate({ taskKey: 'stats-drift', generationId: 'stats-drift-generation', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })).rejects.toThrow('class_review_candidate_conflict')
+    expect(() => value.registerWorkspace({ taskKey: 'stats-drift', taskRevision: 1, rubricRevisionDigest: validRubricDigest, report, projection: ready }))
+      .toThrow('class_review_candidate_conflict')
     expect(fake.getCallCountForTest()).toBe(0)
-    expect(value.getSnapshot('stats-drift').generation).toBeNull()
+    expect(() => value.getSnapshot('stats-drift')).toThrow('class_review_not_eligible')
   })
 
   it.each([
@@ -1143,8 +1184,8 @@ describe('Task 8 round 2 coordinator safety contracts', () => {
     const selected = ready.hidden.selectedGroups.get('g1')!
     ready.hidden.selectedGroups = new Map([['g1', { ...selected, essayIds: selected.essayIds.slice(0, support), occurrenceCount: support }]])
     const value = createLocalClassReviewCoordinator({ synthesisClient: fake, topicKeySecret: new Uint8Array(32).fill(7), now: () => '2026-08-30T00:00:00.000Z', createOpaqueId: () => 'opaque' })
-    value.registerWorkspace({ taskKey: 'threshold-drift', taskRevision: 1, rubricRevisionDigest: validRubricDigest, report: draft(), projection: ready })
-    await expect(value.generate({ taskKey: 'threshold-drift', generationId: 'threshold-drift-generation', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })).rejects.toThrow('class_review_candidate_conflict')
+    expect(() => value.registerWorkspace({ taskKey: 'threshold-drift', taskRevision: 1, rubricRevisionDigest: validRubricDigest, report: draft(), projection: ready }))
+      .toThrow('class_review_candidate_conflict')
     expect(fake.getCallCountForTest()).toBe(0)
   })
 
@@ -1521,7 +1562,7 @@ describe('Task 8 round 3 coordinator state and privacy contracts', () => {
     expect(deferred.calls()).toBe(1)
   })
 
-  it('returns the old terminal g1 replay immediately while a distinct g2 owner is in flight', async () => {
+  it('fully prepares an old terminal g1 replay and rejects it after a distinct g2 owner commits', async () => {
     let calls = 0
     let resolveSecond!: (value: ClassReviewSynthesisResultV1) => void
     const client: ClassReviewSynthesisClient = {
@@ -1551,10 +1592,10 @@ describe('Task 8 round 3 coordinator state and privacy contracts', () => {
     await Promise.resolve()
     await Promise.resolve()
     const settledBeforeG2 = replaySettled
+    expect(settledBeforeG2).toBe(false)
     resolveSecond(success(value.getSnapshot('task-1').requestId as string))
-    const [g2, replay] = await Promise.all([g2Pending, replayPromise])
-    expect(settledBeforeG2).toBe(true)
-    expect(replay.generationId).toBe(g1.generationId)
+    const g2 = await g2Pending
+    await expect(replayPromise).rejects.toThrow('active_generation_conflict')
     expect(g2.generationId).not.toBe(g1.generationId)
   })
 
@@ -2200,5 +2241,607 @@ describe('Task 8 round 4 reservation, source-capture, and imported-fact contract
     expect(value.getSnapshot('task-1')).toEqual(before)
     deferred.resolve(success(before.requestId as string))
     await pending
+  })
+})
+
+describe('Task 8 round 5 registry, identity, deletion, and canonical workspace contracts', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it('prepares all six HMAC identities again before an exact terminal proposed-alias replay', async () => {
+    const originalSign = globalThis.crypto.subtle.sign.bind(globalThis.crypto.subtle)
+    let signCalls = 0
+    vi.spyOn(globalThis.crypto.subtle, 'sign').mockImplementation((algorithm, key, data) => {
+      signCalls += 1
+      return originalSign(algorithm, key, data)
+    })
+    const fake = createFakeClassReviewSynthesisClient({ scenario: 'success' })
+    const value = coordinator(fake)
+    const command = {
+      taskKey: 'task-1', generationId: 'round5-terminal-replay', intent: 'initial' as const,
+      expectedTaskRevision: 1, expectedReportRevision: 1,
+    }
+    const first = await value.generate(command)
+    const beforeReplay = signCalls
+
+    await expect(value.generate(command)).resolves.toEqual(first)
+    expect(signCalls - beforeReplay).toBe(6)
+    expect(fake.getCallCountForTest()).toBe(1)
+  })
+
+  it('attaches a fully prepared secondary alias when its owner becomes terminal during the final HMAC', async () => {
+    const deferred = deferredClient()
+    const value = coordinator(deferred.client)
+    const originalSign = globalThis.crypto.subtle.sign.bind(globalThis.crypto.subtle)
+    let signCalls = 0
+    let releaseSecondary!: () => void
+    const secondaryGate = new Promise<void>((resolve) => { releaseSecondary = resolve })
+    vi.spyOn(globalThis.crypto.subtle, 'sign').mockImplementation(async (algorithm, key, data) => {
+      signCalls += 1
+      const call = signCalls
+      const signed = await originalSign(algorithm, key, data)
+      if (call === 12) await secondaryGate
+      return signed
+    })
+    const first = value.generate({
+      taskKey: 'task-1', generationId: 'round5-primary', intent: 'initial',
+      expectedTaskRevision: 1, expectedReportRevision: 1,
+    })
+    await vi.waitFor(() => expect(deferred.calls()).toBe(1))
+    const second = value.generate({
+      taskKey: 'task-1', generationId: 'round5-secondary', intent: 'initial',
+      expectedTaskRevision: 1, expectedReportRevision: 1,
+    })
+    await vi.waitFor(() => expect(signCalls).toBe(12))
+    deferred.resolve(success(value.getSnapshot('task-1').requestId as string))
+    const firstRecord = await first
+    expect(firstRecord.state).toBe('succeeded')
+    releaseSecondary()
+
+    await expect(second).resolves.toEqual(firstRecord)
+    expect(deferred.calls()).toBe(1)
+  })
+
+  it('terminalizes a fulfilled throwing Proxy as provider_invalid_response and clears private request identity', async () => {
+    let calls = 0
+    const value = coordinator({
+      synthesize: async (request) => {
+        calls += 1
+        return new Proxy({
+          contractVersion: 'class-review-synthesis-result-v1',
+          requestId: request.requestId,
+          status: 'succeeded',
+          timingsMs: { queueMs: 0, providerMs: 1, validationMs: 0, totalMs: 1 },
+        }, {
+          ownKeys() {
+            throw new Error('private-provider-proxy')
+          },
+        }) as ClassReviewSynthesisResultV1
+      },
+    })
+    const outcome = await value.generate({
+      taskKey: 'task-1', generationId: 'round5-provider-proxy', intent: 'initial',
+      expectedTaskRevision: 1, expectedReportRevision: 1,
+    }).then((record) => record, (error: unknown) => error)
+
+    expect(outcome).toMatchObject({
+      state: 'failed',
+      safeFailureCode: 'provider_invalid_response',
+      requestId: null,
+    })
+    expect(JSON.stringify(outcome)).not.toContain('private-provider-proxy')
+    expect(value.getSnapshot('task-1')).toMatchObject({
+      generation: { state: 'failed', safeFailureCode: 'provider_invalid_response' },
+      requestId: null,
+      providerSettlementKnown: true,
+    })
+    expect(calls).toBe(1)
+  })
+
+  it('checks task deletion after composite digesting before topic claim, opaque ID, or clock side effects', async () => {
+    const originalSign = globalThis.crypto.subtle.sign.bind(globalThis.crypto.subtle)
+    let signCalls = 0
+    let releaseComposite!: () => void
+    const compositeGate = new Promise<void>((resolve) => { releaseComposite = resolve })
+    vi.spyOn(globalThis.crypto.subtle, 'sign').mockImplementation(async (algorithm, key, data) => {
+      signCalls += 1
+      const call = signCalls
+      const signed = await originalSign(algorithm, key, data)
+      if (call === 7) await compositeGate
+      return signed
+    })
+    let idCalls = 0
+    let timeCalls = 0
+    const fake = createFakeClassReviewSynthesisClient({ scenario: 'success', variant: 'multi_group' })
+    const value = createLocalClassReviewCoordinator({
+      synthesisClient: fake,
+      topicKeySecret: new Uint8Array(32).fill(7),
+      now: () => { timeCalls += 1; return '2026-08-30T00:00:00.000Z' },
+      createOpaqueId: () => `round5-opaque-${++idCalls}`,
+    })
+    value.registerWorkspace({
+      taskKey: 'round5-delete-digest', taskRevision: 1, rubricRevisionDigest: validRubricDigest,
+      report: draft(), projection: projectionWithTwoGroups(),
+    })
+    const pending = value.generate({
+      taskKey: 'round5-delete-digest', generationId: 'round5-delete-owner', intent: 'initial',
+      expectedTaskRevision: 1, expectedReportRevision: 1,
+    })
+    await vi.waitFor(() => expect(signCalls).toBe(7))
+    const beforeDeleteIds = idCalls
+    const beforeDeleteTimes = timeCalls
+    syncRound3Sources(value, {
+      kind: 'task_deleted', taskKey: 'round5-delete-digest', expectedTaskRevision: 1,
+      expectedReportRevision: 1, expectedSourceRevisionEpoch: 0,
+    })
+    releaseComposite()
+    await pending
+
+    expect(idCalls).toBe(beforeDeleteIds)
+    expect(timeCalls).toBe(beforeDeleteTimes)
+    expect(fake.getCallCountForTest()).toBe(1)
+    expect(value.getSnapshot('round5-delete-digest')).toMatchObject({
+      taskDeleted: true, generation: null, candidate: null, requestId: null,
+    })
+  })
+
+  it('purges task identity immediately and returns only a content-free known late-settlement result', async () => {
+    const deferred = deferredClient()
+    const value = coordinator(deferred.client)
+    const pending = value.generate({
+      taskKey: 'task-1', generationId: 'round5-delete-late', intent: 'initial',
+      expectedTaskRevision: 1, expectedReportRevision: 1,
+    })
+    let settled = false
+    void pending.then(() => { settled = true })
+    await vi.waitFor(() => expect(deferred.calls()).toBe(1))
+    const requestId = value.getSnapshot('task-1').requestId as string
+    syncRound3Sources(value, {
+      kind: 'task_deleted', taskKey: 'task-1', expectedTaskRevision: 1,
+      expectedReportRevision: 1, expectedSourceRevisionEpoch: 0,
+    })
+    await vi.waitFor(() => expect(settled).toBe(true))
+    deferred.resolve(success(requestId))
+    const late = await pending
+    const serialized = JSON.stringify(late)
+
+    expect(late).toMatchObject({
+      state: 'invalidated',
+      safeFailureCode: 'class_review_task_invalidated',
+    })
+    for (const forbidden of [
+      'executionIdentity', 'snapshotTuple', 'fixedRevisions', 'payloadDigest', requestId,
+    ]) expect(serialized).not.toContain(forbidden)
+    await vi.waitFor(() => expect(value.getSnapshot('task-1')).toMatchObject({
+      taskDeleted: true,
+      generation: null,
+      requestId: null,
+      providerSettlementKnown: true,
+    }))
+    await expect(value.generate({
+      taskKey: 'task-1', generationId: 'round5-delete-replay', intent: 'initial',
+      expectedTaskRevision: 1, expectedReportRevision: null,
+    })).rejects.toThrow('class_review_task_invalidated')
+    expect(deferred.calls()).toBe(1)
+  })
+
+  it('cancels a confirmed-zero retry timer and settles the pending owner promptly on task deletion', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    const value = coordinator({
+      async synthesize(request) {
+        calls += 1
+        return {
+          contractVersion: 'class-review-synthesis-result-v1',
+          requestId: request.requestId,
+          status: 'failed',
+          safeFailureCode: 'provider_rate_limited',
+          retryable: true,
+          retryAfterMs: 60_000,
+          completionDisposition: 'confirmed_zero_completion',
+          finishReason: null,
+          usage: null,
+          timingsMs: { queueMs: 0, providerMs: 1, validationMs: 0, totalMs: 1 },
+        }
+      },
+    })
+    let settled = false
+    const pending = value.generate({
+      taskKey: 'task-1', generationId: 'round5-timer-delete', intent: 'initial',
+      expectedTaskRevision: 1, expectedReportRevision: 1,
+    }).finally(() => { settled = true })
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.waitFor(() => expect(value.getSnapshot('task-1').generation?.state).toBe('queued'))
+    expect(vi.getTimerCount()).toBe(1)
+    syncRound3Sources(value, {
+      kind: 'task_deleted', taskKey: 'task-1', expectedTaskRevision: 1,
+      expectedReportRevision: 1, expectedSourceRevisionEpoch: 0,
+    })
+    await Promise.resolve()
+    const timerCountAfterDelete = vi.getTimerCount()
+    const settledAfterDelete = settled
+    await vi.advanceTimersByTimeAsync(60_000)
+    await pending
+
+    expect(timerCountAfterDelete).toBe(0)
+    expect(settledAfterDelete).toBe(true)
+    expect(calls).toBe(1)
+  })
+
+  it('rejects a max-plus-one removed-evidence array from its bounded length descriptor before enumerating indices', () => {
+    const value = coordinator(createFakeClassReviewSynthesisClient({ scenario: 'success' }))
+    const before = value.getSnapshot('task-1')
+    let ownKeyReads = 0
+    let descriptorReads = 0
+    const tooMany = new Proxy(Array.from({ length: 513 }, (_, index) => `evidence-${index}`), {
+      ownKeys(target) {
+        ownKeyReads += 1
+        return Reflect.ownKeys(target)
+      },
+      getOwnPropertyDescriptor(target, key) {
+        descriptorReads += 1
+        return Reflect.getOwnPropertyDescriptor(target, key)
+      },
+    })
+
+    expect(() => syncRound3Sources(value, {
+      kind: 'source_deleted', taskKey: 'task-1', expectedTaskRevision: 1,
+      expectedReportRevision: 1, expectedSourceRevisionEpoch: 0,
+      removedTeacherEvidenceIds: tooMany, replacement: null,
+    })).toThrow('class_review_candidate_conflict')
+    expect(ownKeyReads).toBeLessThanOrEqual(1)
+    expect(descriptorReads).toBeLessThanOrEqual(1)
+    expect(value.getSnapshot('task-1')).toEqual(before)
+  })
+
+  it('rejects an impossible array own-key count before reading any element descriptor', () => {
+    const value = coordinator(createFakeClassReviewSynthesisClient({ scenario: 'success' }))
+    const before = value.getSnapshot('task-1')
+    let descriptorReads = 0
+    const source: string[] = []
+    const extraKeys = Array.from({ length: 600 }, (_, index) => `extra-${index}`)
+    const impossible = new Proxy(source, {
+      ownKeys() { return ['length', ...extraKeys] },
+      getOwnPropertyDescriptor(target, key) {
+        descriptorReads += 1
+        if (key === 'length') return Reflect.getOwnPropertyDescriptor(target, key)
+        return { value: key, enumerable: true, writable: true, configurable: true }
+      },
+    })
+
+    expect(() => syncRound3Sources(value, {
+      kind: 'source_deleted', taskKey: 'task-1', expectedTaskRevision: 1,
+      expectedReportRevision: 1, expectedSourceRevisionEpoch: 0,
+      removedTeacherEvidenceIds: impossible, replacement: null,
+    })).toThrow('class_review_candidate_conflict')
+    expect(descriptorReads).toBe(1)
+    expect(value.getSnapshot('task-1')).toEqual(before)
+  })
+
+  it('rejects a max-plus-one hidden selected-group Map before registering any workspace', () => {
+    const source = projectionWithGroup()
+    const selected = source.hidden.selectedGroups.get('g1')!
+    const selectedGroups = new Map(Array.from({ length: 65 }, (_, index) => [
+      `g${index + 1}`,
+      structuredClone(selected),
+    ] as const))
+    const ready = {
+      status: 'ready',
+      projection: source.projection,
+    } as Extract<ClassReviewProjectionResult, { status: 'ready' }>
+    Object.defineProperty(ready, 'hidden', {
+      value: { ...source.hidden, selectedGroups },
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    })
+    const value = createLocalClassReviewCoordinator({
+      synthesisClient: createFakeClassReviewSynthesisClient({ scenario: 'success' }),
+      topicKeySecret: new Uint8Array(32).fill(7),
+      now: () => '2026-08-30T00:00:00.000Z',
+      createOpaqueId: () => 'opaque',
+    })
+
+    expect(() => value.registerWorkspace({
+      taskKey: 'round5-too-many-hidden', taskRevision: 1, rubricRevisionDigest: validRubricDigest,
+      report: draft(), projection: ready,
+    })).toThrow('class_review_candidate_conflict')
+    expect(() => value.getSnapshot('round5-too-many-hidden')).toThrow('class_review_not_eligible')
+  })
+
+  it('pins native Map iteration and rejects an iterator whose entry count disagrees with size', () => {
+    const source = projectionWithGroup()
+    const donor = source.hidden.selectedGroups
+    const target = new Map()
+    const ready = {
+      status: 'ready',
+      projection: source.projection,
+    } as Extract<ClassReviewProjectionResult, { status: 'ready' }>
+    Object.defineProperty(ready, 'hidden', {
+      value: { ...source.hidden, selectedGroups: target },
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    })
+    const value = createLocalClassReviewCoordinator({
+      synthesisClient: createFakeClassReviewSynthesisClient({ scenario: 'success' }),
+      topicKeySecret: new Uint8Array(32).fill(7),
+      now: () => '2026-08-30T00:00:00.000Z',
+      createOpaqueId: () => 'opaque',
+    })
+    const originalEntries = Map.prototype.entries
+    Map.prototype.entries = function patchedEntries() {
+      return this === target ? originalEntries.call(donor) : originalEntries.call(this)
+    }
+    try {
+      expect(() => value.registerWorkspace({
+        taskKey: 'round5-native-map-intrinsic', taskRevision: 1,
+        rubricRevisionDigest: validRubricDigest, report: draft(), projection: ready,
+      })).toThrow('class_review_candidate_conflict')
+      expect(() => value.getSnapshot('round5-native-map-intrinsic')).toThrow('class_review_not_eligible')
+    } finally {
+      Map.prototype.entries = originalEntries
+    }
+  })
+
+  it.each(['enumerable-hidden', 'writable-hidden', 'configurable-hidden', 'forged-readonly-map'] as const)(
+    'rejects %s projection privacy forgery atomically',
+    (kind) => {
+      const source = projection()
+      let forgedEntriesCalls = 0
+      let ready: Extract<ClassReviewProjectionResult, { status: 'ready' }>
+      if (kind === 'enumerable-hidden') {
+        ready = {
+          status: 'ready',
+          projection: source.projection,
+          hidden: source.hidden,
+        }
+      } else if (kind === 'writable-hidden' || kind === 'configurable-hidden') {
+        ready = {
+          status: 'ready',
+          projection: source.projection,
+        } as Extract<ClassReviewProjectionResult, { status: 'ready' }>
+        Object.defineProperty(ready, 'hidden', {
+          value: source.hidden,
+          enumerable: false,
+          writable: kind === 'writable-hidden',
+          configurable: kind === 'configurable-hidden',
+        })
+      } else {
+        const backing = new Map()
+        const forgedPrototype = Object.freeze({
+          entries() {
+            forgedEntriesCalls += 1
+            return backing.entries()
+          },
+        })
+        const forgedMap = Object.freeze(Object.create(forgedPrototype)) as ReadonlyMap<string, never>
+        ready = {
+          status: 'ready',
+          projection: source.projection,
+        } as Extract<ClassReviewProjectionResult, { status: 'ready' }>
+        Object.defineProperty(ready, 'hidden', {
+          value: {
+            dimensionAliases: forgedMap,
+            selectedGroups: forgedMap,
+            unprojectedMustCover: [],
+          },
+          enumerable: false,
+          writable: false,
+          configurable: false,
+        })
+      }
+      const value = createLocalClassReviewCoordinator({
+        synthesisClient: createFakeClassReviewSynthesisClient({ scenario: 'success' }),
+        topicKeySecret: new Uint8Array(32).fill(7),
+        now: () => '2026-08-30T00:00:00.000Z',
+        createOpaqueId: () => 'opaque',
+      })
+
+      expect(() => value.registerWorkspace({
+        taskKey: `round5-${kind}`, taskRevision: 1, rubricRevisionDigest: validRubricDigest,
+        report: draft(), projection: ready,
+      })).toThrow('class_review_candidate_conflict')
+      expect(forgedEntriesCalls).toBe(0)
+      expect(() => value.getSnapshot(`round5-${kind}`)).toThrow('class_review_not_eligible')
+    },
+  )
+
+  it.each(['task-revision', 'current-generation', 'projection-statistics'] as const)(
+    'rejects incoherent initial registration: %s',
+    (kind) => {
+      const report = draft()
+      const ready = projection()
+      let inputTaskRevision = 1
+      if (kind === 'task-revision') inputTaskRevision = 2
+      if (kind === 'current-generation') {
+        report.currentGeneration = {
+          generationId: 'imported-generation',
+          generationRevision: 0,
+          state: 'queued',
+          createdAt: '2026-08-30T00:00:00.000Z',
+        }
+      }
+      if (kind === 'projection-statistics') {
+        ready.projection.statistics = {
+          ...ready.projection.statistics,
+          totalEssayCount: 4,
+          excludedEssayCount: 1,
+        }
+      }
+      const value = createLocalClassReviewCoordinator({
+        synthesisClient: createFakeClassReviewSynthesisClient({ scenario: 'success' }),
+        topicKeySecret: new Uint8Array(32).fill(7),
+        now: () => '2026-08-30T00:00:00.000Z',
+        createOpaqueId: () => 'opaque',
+      })
+
+      expect(() => value.registerWorkspace({
+        taskKey: `round5-register-${kind}`,
+        taskRevision: inputTaskRevision,
+        rubricRevisionDigest: validRubricDigest,
+        report,
+        projection: ready,
+      })).toThrow('class_review_candidate_conflict')
+      expect(() => value.getSnapshot(`round5-register-${kind}`)).toThrow('class_review_not_eligible')
+    },
+  )
+
+  it('binds an imported system denominator to the applied report issue-eligible snapshot', () => {
+    const systemBlock: ClassReviewIssueBlockV1 = {
+      blockId: 'round5-system-denominator',
+      topicKey: 'tk1.aaaaaaaaaaaaaaaa',
+      origin: 'ai',
+      title: 'System title',
+      diagnosis: 'System diagnosis',
+      teachingAction: 'System action',
+      severity: 'medium',
+      teacherStudentCount: 0,
+      systemStudentCount: 2,
+      combinedStudentCount: 2,
+      occurrenceCount: 2,
+      supportDenominator: 999,
+      anonymousExamples: [],
+      evidenceRefs: [],
+    }
+    const report = aiAvailable()
+    report.issueBlocks = [systemBlock]
+    report.issueOrder = [systemBlock.blockId]
+    const value = createLocalClassReviewCoordinator({
+      synthesisClient: createFakeClassReviewSynthesisClient({ scenario: 'success' }),
+      topicKeySecret: new Uint8Array(32).fill(7),
+      now: () => '2026-08-30T00:00:00.000Z',
+      createOpaqueId: () => 'opaque',
+    })
+
+    expect(() => value.registerWorkspace({
+      taskKey: 'round5-system-denominator', taskRevision: 1,
+      rubricRevisionDigest: validRubricDigest, report, projection: projection(),
+      systemEvidenceFacts: [{
+        topicKey: systemBlock.topicKey,
+        essayIdentities: ['essay-a', 'essay-b'],
+        occurrenceCount: 2,
+      }],
+    })).toThrow('class_review_candidate_conflict')
+  })
+
+  it('stores the reparsed canonical mixed projection rather than caller-forged examples and refs', () => {
+    const teacherRef = {
+      evidenceId: 'round5-teacher-ref', selectionOrigin: 'teacher_selected' as const,
+      sourceLocator: 'teacher-source', sourceResultRevision: 1, anonymousExample: 'Teacher real',
+    }
+    const systemRef = {
+      evidenceId: 'round5-system-ref', selectionOrigin: 'system_generation' as const,
+      sourceLocator: 'system-source', sourceResultRevision: 1, anonymousExample: 'System real',
+    }
+    const systemBlock: ClassReviewIssueBlockV1 = {
+      blockId: 'round5-system-block', topicKey: 'tk1.aaaaaaaaaaaaaaaa', origin: 'ai',
+      title: 'System title', diagnosis: 'System diagnosis', teachingAction: 'System action', severity: 'medium',
+      teacherStudentCount: 0, systemStudentCount: 2, combinedStudentCount: 2,
+      occurrenceCount: 2, supportDenominator: 3, anonymousExamples: ['System real'], evidenceRefs: [systemRef],
+    }
+    const mixed: ClassReviewIssueBlockV1 = {
+      ...systemBlock,
+      blockId: 'round5-mixed-block',
+      origin: 'teacher',
+      title: 'Teacher title',
+      diagnosis: 'Teacher diagnosis',
+      teachingAction: 'Teacher action',
+      teacherStudentCount: 1,
+      combinedStudentCount: 3,
+      occurrenceCount: 3,
+      anonymousExamples: ['Caller forged'],
+      evidenceRefs: [teacherRef],
+    }
+    const report = aiAvailable()
+    report.issueBlocks = [mixed]
+    report.issueOrder = [mixed.blockId]
+    const systemFact = {
+      topicKey: mixed.topicKey,
+      essayIdentities: ['essay-system-a', 'essay-system-b'],
+      occurrenceCount: 2,
+    }
+    const value = createLocalClassReviewCoordinator({
+      synthesisClient: createFakeClassReviewSynthesisClient({ scenario: 'success' }),
+      topicKeySecret: new Uint8Array(32).fill(7),
+      now: () => '2026-08-30T00:00:00.000Z',
+      createOpaqueId: () => 'opaque',
+    })
+    value.registerWorkspace({
+      taskKey: 'round5-canonical-mixed', taskRevision: 1, rubricRevisionDigest: validRubricDigest,
+      report, projection: projection(),
+      teacherEvidenceFacts: [{
+        topicKey: mixed.topicKey, evidenceId: teacherRef.evidenceId,
+        essayIdentity: 'essay-teacher', occurrenceCount: 1, evidenceRef: teacherRef,
+      }],
+      systemEvidenceFacts: [systemFact],
+      suppressedSystemVariants: new Map([[mixed.topicKey, {
+        block: systemBlock,
+        generationId: report.appliedGenerationId,
+        invalidationEpoch: 0,
+        systemEvidenceFact: systemFact,
+      }]]),
+    })
+
+    expect(value.getSnapshot('round5-canonical-mixed').report.issueBlocks).toEqual([{
+      ...mixed,
+      anonymousExamples: ['System real', 'Teacher real'],
+      evidenceRefs: [teacherRef, systemRef],
+    }])
+  })
+
+  function teacherWorkspace(taskKey: string, blocks: readonly ClassReviewIssueBlockV1[]) {
+    const report = draft()
+    report.issueBlocks = structuredClone([...blocks])
+    report.issueOrder = blocks.map((block) => block.blockId)
+    const value = createLocalClassReviewCoordinator({
+      synthesisClient: createFakeClassReviewSynthesisClient({ scenario: 'success' }),
+      topicKeySecret: new Uint8Array(32).fill(7),
+      now: () => '2026-08-30T00:00:00.000Z',
+      createOpaqueId: () => 'opaque',
+    })
+    value.registerWorkspace({
+      taskKey, taskRevision: 1, rubricRevisionDigest: validRubricDigest,
+      report, projection: projection(),
+      teacherEvidenceFacts: blocks.map((block) => ({
+        topicKey: block.topicKey,
+        evidenceId: block.evidenceRefs[0].evidenceId,
+        essayIdentity: `essay-${block.blockId}`,
+        occurrenceCount: 1,
+        evidenceRef: block.evidenceRefs[0],
+      })),
+    })
+    return value
+  }
+
+  it('clears whole-workspace undo after a later successful teacher add', () => {
+    const first = teacherBlock('round5-remove-before-add')
+    const added = teacherBlock('round5-added-after-remove')
+    const value = teacherWorkspace('round5-undo-add', [first])
+    value.applyIssueCommand('round5-undo-add', { kind: 'remove', evidenceId: first.evidenceRefs[0].evidenceId })
+    value.applyIssueCommand('round5-undo-add', teacherAddCommand(added, 'essay-added'))
+    const beforeUndo = value.getSnapshot('round5-undo-add')
+
+    expect(() => value.applyIssueCommand('round5-undo-add', { kind: 'undo' }))
+      .toThrow('class_review_candidate_conflict')
+    expect(value.getSnapshot('round5-undo-add')).toEqual(beforeUndo)
+    expect(beforeUndo.report.issueOrder).toEqual([added.blockId])
+  })
+
+  it('clears whole-workspace undo after a later successful teacher move', () => {
+    const removed = teacherBlock('round5-remove-before-move')
+    const second = teacherBlock('round5-move-second')
+    const third = teacherBlock('round5-move-third')
+    const value = teacherWorkspace('round5-undo-move', [removed, second, third])
+    value.applyIssueCommand('round5-undo-move', { kind: 'remove', evidenceId: removed.evidenceRefs[0].evidenceId })
+    value.applyIssueCommand('round5-undo-move', { kind: 'move', blockId: third.blockId, toIndex: 0 })
+    const beforeUndo = value.getSnapshot('round5-undo-move')
+
+    expect(() => value.applyIssueCommand('round5-undo-move', { kind: 'undo' }))
+      .toThrow('class_review_candidate_conflict')
+    expect(value.getSnapshot('round5-undo-move')).toEqual(beforeUndo)
+    expect(beforeUndo.report.issueOrder).toEqual([third.blockId, second.blockId])
   })
 })

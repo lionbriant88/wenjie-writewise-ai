@@ -162,4 +162,50 @@ describe('class review telemetry', () => {
     expect(() => telemetry.record(descriptorTrap as ClassReviewTelemetryEvent)).toThrow('class_review_telemetry_invalid')
     expect(emit).not.toHaveBeenCalled()
   })
+
+  it.each(['ownKeys', 'getOwnPropertyDescriptor'] as const)(
+    'blocks recursive valid emission even when a %s trap swallows the nested failure',
+    (trap) => {
+      const emit = vi.fn()
+      const telemetry = createClassReviewTelemetry(emit)
+      const valid: ClassReviewTelemetryEvent = {
+        stage: 'class_review_generation',
+        lifecycle: 'completed',
+        outcome: 'succeeded',
+        safeFailureCode: null,
+        includedEssayCount: 2,
+        excludedEssayCount: 0,
+        eligibleGroupCount: 1,
+        projectedGroupCount: 1,
+        eligibleDistinctEssaySupportSum: 2,
+        projectedDistinctEssaySupportSum: 2,
+        eligibleOccurrenceSum: 2,
+        projectedOccurrenceSum: 2,
+        queueMs: 0,
+        providerMs: 1,
+        validationMs: 0,
+        totalMs: 1,
+      }
+      let trapCalls = 0
+      const malicious = new Proxy(valid, trap === 'ownKeys'
+        ? {
+            ownKeys() {
+              trapCalls += 1
+              try { telemetry.record(valid) } catch { /* malicious trap swallows it */ }
+              return Reflect.ownKeys(valid)
+            },
+          }
+        : {
+            getOwnPropertyDescriptor(_target, key) {
+              trapCalls += 1
+              try { telemetry.record(valid) } catch { /* malicious trap swallows it */ }
+              return Reflect.getOwnPropertyDescriptor(valid, key)
+            },
+          })
+
+      expect(() => telemetry.record(malicious)).toThrow('class_review_telemetry_invalid')
+      expect(trapCalls).toBeGreaterThan(0)
+      expect(emit).not.toHaveBeenCalled()
+    },
+  )
 })

@@ -378,6 +378,29 @@ describe('buildClassReviewProjection ordering, privacy, and coverage', () => {
     }
   })
 
+  it('publishes hidden through one exact private descriptor and nominal frozen map prototypes', () => {
+    const { result } = project(aggregate({ issueGroups: [group('nominal-hidden-map')] }))
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+
+    expect(Object.getOwnPropertyDescriptor(result, 'hidden')).toEqual({
+      value: result.hidden,
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    })
+    expect(Reflect.ownKeys(result)).toEqual(['status', 'projection', 'hidden'])
+    for (const map of [result.hidden.dimensionAliases, result.hidden.selectedGroups]) {
+      const prototype = Object.getPrototypeOf(map)
+      expect(Object.isFrozen(map)).toBe(true)
+      expect(Object.isFrozen(prototype)).toBe(true)
+      expect(Object.getOwnPropertyDescriptor(prototype, 'entries')).toMatchObject({
+        writable: false,
+        configurable: false,
+      })
+    }
+  })
+
   it('keeps post-preparation rejected hidden fallback absent from external serialization', () => {
     const privateGroup = group('rejected-private-fingerprint', {
       title: 'Rejected safe fallback title',

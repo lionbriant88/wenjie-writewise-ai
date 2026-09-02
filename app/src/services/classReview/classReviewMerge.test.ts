@@ -100,7 +100,7 @@ async function materializeBlocksThroughPublicBoundary(input: { providerOutput: C
 describe('frozen generation merge boundary', () => {
   it('maps Provider dimension aliases directly to original rubric dimensions and fails closed on hidden/browser disagreement', async () => {
     const request = frozenRequest()
-    request.statistics.dimensions = [{ dimensionId: 'd1', label: 'Content', averageScore: 32, medianScore: 32, maxScore: 40, normalizedPerformance: 0.8 }]
+    request.statistics.dimensions = [{ dimensionId: 'd1', label: 'Dimension 1', averageScore: 32, medianScore: 32, maxScore: 40, normalizedPerformance: 0.8 }]
     const mappedHidden = hidden()
     mappedHidden.dimensionAliases = new Map([['d1', 'rubric-content']])
     const current = browserReport()
@@ -123,8 +123,10 @@ describe('frozen generation merge boundary', () => {
   })
 
   it('uses issueOrder as the sole visible order and retains latest deterministic statistics', async () => {
-    const first: ClassReviewIssueBlockV1 = { blockId: 'block-a', topicKey: 'teacher.a', origin: 'teacher', title: 'A', diagnosis: 'A', teachingAction: 'A', severity: 'medium', teacherStudentCount: 1, systemStudentCount: 0, combinedStudentCount: 1, occurrenceCount: 1, supportDenominator: null, anonymousExamples: [], evidenceRefs: [] }
-    const second: ClassReviewIssueBlockV1 = { ...first, blockId: 'block-b', topicKey: 'teacher.b', title: 'B' }
+    const firstRef = { evidenceId: 'teacher-a', selectionOrigin: 'teacher_selected' as const, sourceLocator: 'source-a', sourceResultRevision: 1, anonymousExample: null }
+    const secondRef = { evidenceId: 'teacher-b', selectionOrigin: 'teacher_selected' as const, sourceLocator: 'source-b', sourceResultRevision: 1, anonymousExample: null }
+    const first: ClassReviewIssueBlockV1 = { blockId: 'block-a', topicKey: 'teacher.a', origin: 'teacher', title: 'A', diagnosis: 'A', teachingAction: 'A', severity: 'medium', teacherStudentCount: 1, systemStudentCount: 0, combinedStudentCount: 1, occurrenceCount: 1, supportDenominator: null, anonymousExamples: [], evidenceRefs: [firstRef] }
+    const second: ClassReviewIssueBlockV1 = { ...first, blockId: 'block-b', topicKey: 'teacher.b', title: 'B', evidenceRefs: [secondRef] }
     const current = browserReport()
     current.issueBlocks = [first, second]
     current.issueOrder = ['block-b', 'block-a']
@@ -135,7 +137,14 @@ describe('frozen generation merge boundary', () => {
     const emptyHidden: ClassReviewProjectionHiddenStateV1 = { dimensionAliases: new Map(), selectedGroups: new Map(), unprojectedMustCover: [] }
     const snapshot = cloneAndFreezeClassReviewGenerationSnapshot({ originalRequest: request, hidden: emptyHidden, generationId: 'generation-order', invalidationEpoch: 0, executionIdentity: 'execution-order', payloadDigest: 'digest-order', taskRevision: 1, reportRevision: 1, aiTextEditRevision: 0, sourceRevisionEpoch: 0, browserStatistics: browserReport().statistics })
     const result: ClassReviewSynthesisResultV1 = { contractVersion: 'class-review-synthesis-result-v1', requestId: request.requestId, status: 'succeeded', output: output([]), semanticCoverage: request.semanticCoverage, finishReason: 'stop', usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2, cachedTokens: 0 }, timingsMs: { queueMs: 0, providerMs: 1, validationMs: 0, totalMs: 1 } }
-    const materialized = await materializeClassReviewCandidate({ snapshot, untrustedResult: result, currentReport: current, topicHmac: hmac(), createOpaqueId: () => 'new', now: () => '2026-08-30T00:00:00.000Z' })
+    const currentIssueWorkspace = createInternalIssueWorkspace(current.issueBlocks, {
+      issueOrder: current.issueOrder,
+      teacherEvidenceFacts: [
+        { topicKey: first.topicKey, evidenceId: firstRef.evidenceId, essayIdentity: 'essay-a', occurrenceCount: 1, evidenceRef: firstRef },
+        { topicKey: second.topicKey, evidenceId: secondRef.evidenceId, essayIdentity: 'essay-b', occurrenceCount: 1, evidenceRef: secondRef },
+      ],
+    })
+    const materialized = await materializeClassReviewCandidate({ snapshot, untrustedResult: result, currentReport: current, currentIssueWorkspace, topicHmac: hmac(), createOpaqueId: () => 'new', now: () => '2026-08-30T00:00:00.000Z' })
     expect(materialized.report.issueOrder).toEqual(['block-b', 'block-a'])
     expect(materialized.report.issueBlocks.map((block) => block.blockId)).toEqual(['block-b', 'block-a'])
     expect(materialized.report.statistics).toEqual(current.statistics)
@@ -500,6 +509,26 @@ describe('Task 8 round 3 candidate and canonical fact admission', () => {
       systemEvidenceFacts: [{
         topicKey: mixed.topicKey, essayIdentities: ['essay-teacher', 'essay-system'], occurrenceCount: 3,
       }],
+      suppressed: new Map([[mixed.topicKey, {
+        block: {
+          ...mixed,
+          blockId: 'system-mixed',
+          origin: 'ai',
+          teacherStudentCount: 0,
+          systemStudentCount: 2,
+          combinedStudentCount: 2,
+          occurrenceCount: 3,
+          anonymousExamples: ['System example'],
+          evidenceRefs: [systemRef],
+        },
+        generationId: 'applied-generation',
+        invalidationEpoch: 0,
+        systemEvidenceFact: {
+          topicKey: mixed.topicKey,
+          essayIdentities: ['essay-teacher', 'essay-system'],
+          occurrenceCount: 3,
+        },
+      }]]),
     })
     const vanished = mergeInternalIssueWorkspace({
       workspace, nextSystem: [], generationId: 'next-generation', invalidationEpoch: 0,
@@ -803,6 +832,26 @@ describe('Task 8 round 3 candidate and canonical fact admission', () => {
         essayIdentities: ['essay-old-a', 'essay-old-b'],
         occurrenceCount: 4,
       }],
+      suppressed: new Map([[oldMixed.topicKey, {
+        block: {
+          ...oldMixed,
+          blockId: 'old-system-id',
+          origin: 'ai',
+          teacherStudentCount: 0,
+          systemStudentCount: 2,
+          combinedStudentCount: 2,
+          occurrenceCount: 4,
+          anonymousExamples: ['Old system'],
+          evidenceRefs: [oldSystemRef],
+        },
+        generationId: 'old-generation',
+        invalidationEpoch: 0,
+        systemEvidenceFact: {
+          topicKey: oldMixed.topicKey,
+          essayIdentities: ['essay-old-a', 'essay-old-b'],
+          occurrenceCount: 4,
+        },
+      }]]),
     })
     const nextSystem: ClassReviewIssueBlockV1 = {
       ...oldMixed,
@@ -892,6 +941,26 @@ describe('Task 8 round 3 candidate and canonical fact admission', () => {
         essayIdentities: ['essay-system-a', 'essay-system-b'],
         occurrenceCount: 3,
       }],
+      suppressed: new Map([[mixed.topicKey, {
+        block: {
+          ...mixed,
+          blockId: 'system-current-id',
+          origin: 'ai',
+          teacherStudentCount: 0,
+          systemStudentCount: 2,
+          combinedStudentCount: 2,
+          occurrenceCount: 3,
+          anonymousExamples: ['System current'],
+          evidenceRefs: [systemRef],
+        },
+        generationId: 'applied-generation',
+        invalidationEpoch: 0,
+        systemEvidenceFact: {
+          topicKey: mixed.topicKey,
+          essayIdentities: ['essay-system-a', 'essay-system-b'],
+          occurrenceCount: 3,
+        },
+      }]]),
     })
     const rebuilt = projectInternalIssueWorkspace(removeTeacherEvidence(
       workspace,
@@ -1082,5 +1151,108 @@ describe('Task 8 round 3 candidate and canonical fact admission', () => {
       createOpaqueId: () => `latest-preview-system-block-${++nextPreviewBlockId}`,
       now: () => '2026-08-30T00:00:00.000Z',
     })).resolves.toBeDefined()
+  })
+
+  it('rejects a mixed block unless its canonical system fact and suppressed system-only variant are both present', () => {
+    const teacherRef = {
+      evidenceId: 'teacher-missing-suppressed',
+      selectionOrigin: 'teacher_selected' as const,
+      sourceLocator: 'teacher-source',
+      sourceResultRevision: 1,
+      anonymousExample: null,
+    }
+    const mixed: ClassReviewIssueBlockV1 = {
+      blockId: 'mixed-missing-suppressed',
+      topicKey: 'tk1.aaaaaaaaaaaaaaaa',
+      origin: 'teacher',
+      title: 'Teacher title',
+      diagnosis: 'Teacher diagnosis',
+      teachingAction: 'Teacher action',
+      severity: 'medium',
+      teacherStudentCount: 1,
+      systemStudentCount: 2,
+      combinedStudentCount: 3,
+      occurrenceCount: 3,
+      supportDenominator: 3,
+      anonymousExamples: [],
+      evidenceRefs: [teacherRef],
+    }
+
+    expect(() => createInternalIssueWorkspace([mixed], {
+      issueOrder: [mixed.blockId],
+      teacherEvidenceFacts: [{
+        topicKey: mixed.topicKey,
+        evidenceId: teacherRef.evidenceId,
+        essayIdentity: 'essay-teacher',
+        occurrenceCount: 1,
+        evidenceRef: teacherRef,
+      }],
+      systemEvidenceFacts: [{
+        topicKey: mixed.topicKey,
+        essayIdentities: ['essay-system-a', 'essay-system-b'],
+        occurrenceCount: 2,
+      }],
+    })).toThrow('class_review_candidate_conflict')
+
+    expect(() => createInternalIssueWorkspace([mixed], {
+      issueOrder: [mixed.blockId],
+      teacherEvidenceFacts: [{
+        topicKey: mixed.topicKey,
+        evidenceId: teacherRef.evidenceId,
+        essayIdentity: 'essay-teacher',
+        occurrenceCount: 1,
+        evidenceRef: teacherRef,
+      }],
+      systemEvidenceFacts: [{
+        topicKey: mixed.topicKey,
+        essayIdentities: ['essay-system-a', 'essay-system-b'],
+        occurrenceCount: 2,
+      }],
+      suppressed: new Map([[mixed.topicKey, {
+        block: {
+          ...mixed,
+          blockId: 'suppressed-system',
+          origin: 'ai',
+          title: '',
+          teacherStudentCount: 0,
+          systemStudentCount: 2,
+          combinedStudentCount: 2,
+          occurrenceCount: 2,
+          anonymousExamples: [],
+          evidenceRefs: [],
+        },
+        generationId: 'applied-generation',
+        invalidationEpoch: 0,
+        systemEvidenceFact: {
+          topicKey: mixed.topicKey,
+          essayIdentities: ['essay-system-a', 'essay-system-b'],
+          occurrenceCount: 2,
+        },
+      }]]),
+    })).toThrow('class_review_candidate_conflict')
+  })
+
+  it('rejects a teacher-origin block with no canonical teacher evidence fact', () => {
+    const forged: ClassReviewIssueBlockV1 = {
+      blockId: 'teacher-free-text',
+      topicKey: 'teacher.free-text',
+      origin: 'teacher',
+      title: 'Caller title',
+      diagnosis: 'Caller diagnosis',
+      teachingAction: 'Caller action',
+      severity: 'medium',
+      teacherStudentCount: 9,
+      systemStudentCount: 0,
+      combinedStudentCount: 9,
+      occurrenceCount: 99,
+      supportDenominator: null,
+      anonymousExamples: ['Caller forged example'],
+      evidenceRefs: [],
+    }
+
+    expect(() => createInternalIssueWorkspace([forged], {
+      issueOrder: [forged.blockId],
+      teacherEvidenceFacts: [],
+    })).toThrow('class_review_candidate_conflict')
   })
 })

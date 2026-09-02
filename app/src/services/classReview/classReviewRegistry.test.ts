@@ -30,8 +30,30 @@ function reserve(
     actionableIdentity,
     commandCore: `${proposedGenerationId}|${actionableIdentity}`,
     generationRevision: 0,
-    ...input,
+    executionIdentity: input.executionIdentity,
+    payloadDigest: input.payloadDigest,
+    state: input.state,
   }).record
+}
+
+function reservationInput(overrides: Partial<Parameters<ReturnType<typeof createLocalClassReviewRegistry>['reserveOrAttach']>[0]> = {}) {
+  return {
+    opaqueTaskScope: scopeA,
+    proposedGenerationId: 'browser-primary',
+    serviceGenerationId: 'service-primary',
+    requestId: 'request-primary',
+    requestBytes: 'request-bytes',
+    snapshotTuple: 'snapshot-primary',
+    fixedRevisions: 'revisions-primary',
+    payloadDigest: 'digest-primary',
+    commandIdentity: 'command-primary',
+    actionableIdentity: 'action-primary',
+    commandCore: 'core-primary',
+    executionIdentity: 'execution-primary',
+    state: 'running' as const,
+    generationRevision: 0,
+    ...overrides,
+  }
 }
 
 const scoped = (generationId: string, opaqueTaskScope = scopeA) => ({ opaqueTaskScope, generationId })
@@ -72,7 +94,7 @@ describe('local class review generation registry', () => {
   it('attaches exact actionable identity and records every proposed alias', () => {
     const registry = createLocalClassReviewRegistry()
     const first = reserve(registry, { generationId: 'g1', executionIdentity: 'x', payloadDigest: 'h', state: 'queued', proposedGenerationId: 'client-1' })
-    const attached = reserve(registry, { generationId: 'ignored', executionIdentity: 'other', payloadDigest: 'h', state: 'queued', proposedGenerationId: 'client-2' })
+    const attached = reserve(registry, { generationId: 'ignored', executionIdentity: 'x', payloadDigest: 'h', state: 'queued', proposedGenerationId: 'client-2' })
     expect(attached).toEqual(first)
     expect(registry.readProposed({ opaqueTaskScope: scopeA, proposedGenerationId: 'client-2' })).toEqual(first)
     expect(() => reserve(registry, { generationId: 'g3', executionIdentity: 'x', payloadDigest: 'changed', state: 'queued' })).toThrow('active_generation_conflict')
@@ -82,7 +104,7 @@ describe('local class review generation registry', () => {
     const registry = createLocalClassReviewRegistry()
     reserve(registry, { generationId: 'g1', executionIdentity: 'x', payloadDigest: 'h', state: 'running', proposedGenerationId: 'client-1' })
     registry.markFailed({ ...scoped('g1'), expectedRevision: 0, expectedState: 'running', safeFailureCode: 'provider_auth_failed' })
-    const replay = reserve(registry, { generationId: 'ignored', executionIdentity: 'new', payloadDigest: 'h', state: 'queued', proposedGenerationId: 'client-1' })
+    const replay = reserve(registry, { generationId: 'ignored', executionIdentity: 'x', payloadDigest: 'h', state: 'queued', proposedGenerationId: 'client-1' })
     expect(replay).toMatchObject({ generationId: 'g1', state: 'failed' })
     expect(() => reserve(registry, { generationId: 'ignored-again', executionIdentity: 'new', payloadDigest: 'drifted', state: 'queued', proposedGenerationId: 'client-1' })).toThrow('active_generation_conflict')
     const fresh = reserve(registry, { generationId: 'g2', executionIdentity: 'new', payloadDigest: 'new', state: 'queued', proposedGenerationId: 'client-2' })
@@ -222,7 +244,7 @@ describe('local class review generation registry', () => {
     })).toMatchObject({ state: 'discarded', requestId: null })
   })
 
-  it('lets reentrant invalidation win over an outer candidate-apply transition', async () => {
+  it('holds the registry mutation barrier through candidate apply callbacks', async () => {
     const registry = createLocalClassReviewRegistry()
     reserve(registry, {
       generationId: 'reentrant-apply',
@@ -250,11 +272,328 @@ describe('local class review generation registry', () => {
       },
     })).toThrow('class_review_candidate_conflict')
     expect(registry.readGeneration(scoped('reentrant-apply'))).toMatchObject({
-      state: 'invalidated',
-      generationRevision: 2,
-      invalidationFence: 1,
-      candidateAvailable: false,
-      safeFailureCode: 'class_review_source_invalidated',
+      state: 'succeeded_unapplied',
+      generationRevision: 1,
+      invalidationFence: 0,
+      candidateAvailable: true,
     })
+  })
+
+  it('validates every reservation scalar before creating any registry index', () => {
+    const registry = createLocalClassReviewRegistry()
+    const poisonousIdentity = new Proxy({}, {
+      ownKeys() { throw new Error('must-not-traverse-nested-reservation-value') },
+    })
+
+    expect(() => registry.reserveOrAttach(reservationInput({
+      executionIdentity: poisonousIdentity as never,
+    }))).toThrow('class_review_candidate_conflict')
+    expect(registry.readActionable(scopeA)).toBeNull()
+    expect(registry.readProposed({
+      opaqueTaskScope: scopeA,
+      proposedGenerationId: 'browser-primary',
+    })).toBeNull()
+    expect(registry.readGeneration(scoped('service-primary'))).toBeNull()
+  })
+
+  it('requires a strict true confirmed-zero settlement literal before requeueing', () => {
+    const registry = createLocalClassReviewRegistry()
+    registry.reserveOrAttach(reservationInput())
+    const before = registry.readGeneration(scoped('service-primary'))
+
+    expect(() => registry.requeueConfirmedZero({
+      ...scoped('service-primary'), expectedRevision: 0,
+      executionIdentity: 'execution-primary', payloadHash: 'digest-primary',
+      localCallSettled: false as never,
+    })).toThrow('class_review_candidate_conflict')
+    expect(registry.readGeneration(scoped('service-primary'))).toEqual(before)
+  })
+
+  it.each([
+    'reserveOrAttach',
+    'markRunning',
+    'markResultUnknown',
+    'markFailed',
+    'commitSucceeded',
+    'invalidateTaskScope',
+    'requeueConfirmedZero',
+    'applyCandidate',
+    'discardCandidate',
+  ] as const)('rejects an extra own data key before the %s mutator can change registry state', async (method) => {
+    const registry = createLocalClassReviewRegistry()
+    if (method !== 'reserveOrAttach') {
+      registry.reserveOrAttach(reservationInput({
+        state: method === 'markRunning' ? 'queued' : 'running',
+      }))
+    }
+    registry.reserveOrAttach(reservationInput({
+      opaqueTaskScope: scopeB,
+      proposedGenerationId: 'sentinel-proposed',
+      serviceGenerationId: 'sentinel-service',
+      state: 'running',
+    }))
+    if (method === 'applyCandidate' || method === 'discardCandidate') {
+      registry.commitSucceeded({
+        ...scoped('service-primary'),
+        expectedRevision: 0,
+        expectedFence: 0,
+        candidate: await candidate('service-primary', 'execution-primary', 'digest-primary'),
+        unapplied: true,
+      })
+    }
+    const before = registry.readGeneration(scoped('service-primary'))
+    const sentinelBefore = registry.readGeneration(scoped('sentinel-service', scopeB))
+    let applyCalls = 0
+    let reentryCalls = 0
+    const invalid = (() => {
+      switch (method) {
+        case 'reserveOrAttach': return { ...reservationInput(), privateExtra: true }
+        case 'markRunning': return { ...scoped('service-primary'), expectedRevision: 0, privateExtra: true }
+        case 'markResultUnknown': return { ...scoped('service-primary'), expectedRevision: 0, safeFailureCode: 'provider_result_unknown' as const, privateExtra: true }
+        case 'markFailed': return { ...scoped('service-primary'), expectedRevision: 0, expectedState: 'running' as const, safeFailureCode: 'provider_auth_failed' as const, privateExtra: true }
+        case 'commitSucceeded': return { ...scoped('service-primary'), expectedRevision: 0, expectedFence: 0, candidate: null, unapplied: false, privateExtra: true }
+        case 'invalidateTaskScope': return { opaqueTaskScope: scopeA, safeFailureCode: 'class_review_source_invalidated' as const, privateExtra: true }
+        case 'requeueConfirmedZero': return { ...scoped('service-primary'), expectedRevision: 0, executionIdentity: 'execution-primary', payloadHash: 'digest-primary', localCallSettled: true as const, privateExtra: true }
+        case 'applyCandidate': return { ...scoped('service-primary'), expectedRevision: 1, apply: () => { applyCalls += 1; return 'applied' }, privateExtra: true }
+        case 'discardCandidate': return { ...scoped('service-primary'), expectedRevision: 1, privateExtra: true }
+      }
+    })()
+    Object.defineProperty(invalid, 'opaqueTaskScope', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        reentryCalls += 1
+        registry.invalidateTaskScope({
+          opaqueTaskScope: scopeB,
+          safeFailureCode: 'class_review_source_invalidated',
+        })
+        return scopeA
+      },
+    })
+
+    expect(() => (registry[method] as (input: unknown) => unknown)(invalid))
+      .toThrow('class_review_candidate_conflict')
+    expect(reentryCalls).toBe(0)
+    expect(applyCalls).toBe(0)
+    expect(registry.readGeneration(scoped('service-primary'))).toEqual(before)
+    expect(registry.readGeneration(scoped('sentinel-service', scopeB))).toEqual(sentinelBefore)
+  })
+
+  it.each(['missing', 'symbol', 'non-enumerable', 'accessor', 'throwing-proxy'] as const)(
+    'rejects a reserve envelope with %s descriptor shape before creating indices',
+    (kind) => {
+      const registry = createLocalClassReviewRegistry()
+      let getterCalls = 0
+      const base = reservationInput() as Record<PropertyKey, unknown>
+      let invalid: unknown = base
+      if (kind === 'missing') delete base.payloadDigest
+      if (kind === 'symbol') base[Symbol('private')] = true
+      if (kind === 'non-enumerable') {
+        Object.defineProperty(base, 'privateExtra', { enumerable: false, value: true })
+      }
+      if (kind === 'accessor') {
+        Object.defineProperty(base, 'actionableIdentity', {
+          enumerable: true,
+          configurable: true,
+          get() {
+            getterCalls += 1
+            return 'action-primary'
+          },
+        })
+      }
+      if (kind === 'throwing-proxy') {
+        invalid = new Proxy(base, {
+          ownKeys() {
+            throw new Error('private-registry-own-keys')
+          },
+        })
+      }
+
+      expect(() => registry.reserveOrAttach(invalid as never))
+        .toThrow('class_review_candidate_conflict')
+      expect(getterCalls).toBe(0)
+      expect(registry.readActionable(scopeA)).toBeNull()
+      expect(registry.readProposed({
+        opaqueTaskScope: scopeA,
+        proposedGenerationId: 'browser-primary',
+      })).toBeNull()
+    },
+  )
+
+  it('captures invalidate scope once without invoking an accessor that can split scope indices', () => {
+    const registry = createLocalClassReviewRegistry()
+    registry.reserveOrAttach(reservationInput())
+    registry.reserveOrAttach(reservationInput({
+      opaqueTaskScope: scopeB,
+      proposedGenerationId: 'browser-secondary-scope',
+      serviceGenerationId: 'service-secondary-scope',
+    }))
+    const beforeA = registry.readGeneration(scoped('service-primary'))
+    const beforeB = registry.readGeneration(scoped('service-secondary-scope', scopeB))
+    let getterCalls = 0
+    const input = {
+      safeFailureCode: 'class_review_source_invalidated' as const,
+    } as { opaqueTaskScope: string; safeFailureCode: 'class_review_source_invalidated' }
+    Object.defineProperty(input, 'opaqueTaskScope', {
+      enumerable: true,
+      get() {
+        getterCalls += 1
+        return getterCalls === 1 ? scopeA : scopeB
+      },
+    })
+
+    expect(() => registry.invalidateTaskScope(input)).toThrow('class_review_candidate_conflict')
+    expect(getterCalls).toBe(0)
+    expect(registry.readGeneration(scoped('service-primary'))).toEqual(beforeA)
+    expect(registry.readGeneration(scoped('service-secondary-scope', scopeB))).toEqual(beforeB)
+  })
+
+  it('does not let a reentrant getter resurrect an invalidated running record as queued', () => {
+    const registry = createLocalClassReviewRegistry()
+    registry.reserveOrAttach(reservationInput())
+    let getterCalls = 0
+    const input = {
+      ...scoped('service-primary'),
+      expectedRevision: 0,
+      payloadHash: 'digest-primary',
+      localCallSettled: true as const,
+    } as ReturnType<typeof scoped> & {
+      expectedRevision: number
+      executionIdentity: string
+      payloadHash: string
+      localCallSettled: true
+    }
+    Object.defineProperty(input, 'executionIdentity', {
+      enumerable: true,
+      get() {
+        getterCalls += 1
+        registry.invalidateTaskScope({
+          opaqueTaskScope: scopeA,
+          safeFailureCode: 'class_review_source_invalidated',
+        })
+        return 'execution-primary'
+      },
+    })
+
+    expect(() => registry.requeueConfirmedZero(input)).toThrow('class_review_candidate_conflict')
+    expect(getterCalls).toBe(0)
+    expect(registry.readGeneration(scoped('service-primary'))).toMatchObject({
+      state: 'running',
+      generationRevision: 0,
+      boundedRequeueCount: 0,
+    })
+  })
+
+  it.each([
+    ['actionableIdentity', 'action-drift'],
+    ['executionIdentity', 'execution-drift'],
+    ['snapshotTuple', 'snapshot-drift'],
+    ['fixedRevisions', 'revisions-drift'],
+    ['payloadDigest', 'digest-drift'],
+  ] as const)('rejects same-proposed terminal replay when %s drifts from the complete alias tuple', (field, drift) => {
+    const registry = createLocalClassReviewRegistry()
+    const original = reservationInput()
+    registry.reserveOrAttach(original)
+    registry.markFailed({
+      ...scoped('service-primary'),
+      expectedRevision: 0,
+      expectedState: 'running',
+      safeFailureCode: 'provider_auth_failed',
+    })
+
+    expect(() => registry.reserveOrAttach({ ...original, [field]: drift }))
+      .toThrow('active_generation_conflict')
+    expect(registry.readProposed({
+      opaqueTaskScope: scopeA,
+      proposedGenerationId: 'browser-primary',
+    })).toMatchObject({ state: 'failed', generationId: 'service-primary' })
+  })
+
+  it.each([
+    ['executionIdentity', 'execution-drift'],
+    ['snapshotTuple', 'snapshot-drift'],
+    ['fixedRevisions', 'revisions-drift'],
+    ['payloadDigest', 'digest-drift'],
+  ] as const)('rejects a secondary proposed alias whose %s differs from the actionable owner tuple', (field, drift) => {
+    const registry = createLocalClassReviewRegistry()
+    const original = reservationInput()
+    registry.reserveOrAttach(original)
+    const secondary = {
+      ...original,
+      proposedGenerationId: 'browser-secondary',
+      serviceGenerationId: 'unused-secondary-service',
+      commandIdentity: 'command-secondary',
+      commandCore: 'core-secondary',
+      [field]: drift,
+    }
+
+    expect(() => registry.reserveOrAttach(secondary)).toThrow('active_generation_conflict')
+    expect(registry.readProposed({
+      opaqueTaskScope: scopeA,
+      proposedGenerationId: 'browser-secondary',
+    })).toBeNull()
+  })
+
+  it.each(['readGeneration', 'readProposed', 'replayExactProposed'] as const)(
+    'captures the %s command without invoking caller accessors',
+    (method) => {
+      const registry = createLocalClassReviewRegistry()
+      registry.reserveOrAttach(reservationInput())
+      let getterCalls = 0
+      const base = method === 'readGeneration'
+        ? { generationId: 'service-primary' }
+        : method === 'readProposed'
+          ? { proposedGenerationId: 'browser-primary' }
+          : {
+              proposedGenerationId: 'browser-primary',
+              commandCore: 'core-primary',
+              commandIdentity: 'command-primary',
+              actionableIdentity: 'action-primary',
+              executionIdentity: 'execution-primary',
+              snapshotTuple: 'snapshot-primary',
+              fixedRevisions: 'revisions-primary',
+              payloadDigest: 'digest-primary',
+            }
+      const input = { ...base } as Record<string, unknown>
+      Object.defineProperty(input, 'opaqueTaskScope', {
+        enumerable: true,
+        get() {
+          getterCalls += 1
+          return scopeA
+        },
+      })
+
+      expect(() => (registry[method] as (value: unknown) => unknown)(input))
+        .toThrow('class_review_candidate_conflict')
+      expect(getterCalls).toBe(0)
+    },
+  )
+
+  it('permanently purges records, aliases, actionable state, candidate handles, and stale mutators for a task scope', async () => {
+    const registry = createLocalClassReviewRegistry()
+    registry.reserveOrAttach(reservationInput())
+    registry.commitSucceeded({
+      ...scoped('service-primary'),
+      expectedRevision: 0,
+      expectedFence: 0,
+      candidate: await candidate('service-primary', 'execution-primary', 'digest-primary'),
+      unapplied: true,
+    })
+    const purge = (registry as typeof registry & {
+      purgeTaskScope?: (input: { opaqueTaskScope: string }) => void
+    }).purgeTaskScope
+
+    expect(purge).toBeTypeOf('function')
+    if (!purge) return
+    purge({ opaqueTaskScope: scopeA })
+    expect(registry.readGeneration(scoped('service-primary'))).toBeNull()
+    expect(registry.readProposed({ opaqueTaskScope: scopeA, proposedGenerationId: 'browser-primary' })).toBeNull()
+    expect(registry.readActionable(scopeA)).toBeNull()
+    expect(() => registry.discardCandidate({
+      ...scoped('service-primary'), expectedRevision: 1,
+    })).toThrow('class_review_task_invalidated')
+    expect(() => registry.reserveOrAttach(reservationInput({
+      proposedGenerationId: 'late-browser', serviceGenerationId: 'late-service',
+    }))).toThrow('class_review_task_invalidated')
   })
 })

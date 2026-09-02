@@ -76,8 +76,17 @@ export interface ClassReviewTelemetryEvent {
 }
 
 export function createClassReviewTelemetry(emit: (event: ClassReviewTelemetryEvent) => void) {
+  let recordInProgress = false
+  let recursiveAttemptDetected = false
   return {
     record(input: ClassReviewTelemetryEvent) {
+      if (recordInProgress) {
+        recursiveAttemptDetected = true
+        throw new Error('class_review_telemetry_invalid')
+      }
+      recordInProgress = true
+      recursiveAttemptDetected = false
+      try {
       const descriptors = new Map<PropertyKey, PropertyDescriptor>()
       let suppliedKeys: PropertyKey[]
       try {
@@ -156,7 +165,12 @@ export function createClassReviewTelemetry(emit: (event: ClassReviewTelemetryEve
         throw new Error('class_review_telemetry_invalid')
       }
 
+      if (recursiveAttemptDetected) throw new Error('class_review_telemetry_invalid')
       emit(Object.freeze({ ...value }))
+      } finally {
+        recordInProgress = false
+        recursiveAttemptDetected = false
+      }
     },
   }
 }

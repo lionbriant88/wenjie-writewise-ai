@@ -13,7 +13,10 @@ import {
   type SystemEvidenceFact,
   type TeacherEvidenceFact,
 } from './classReviewMerge'
-import type { ClassReviewProjectionResult } from './classReviewProjection'
+import {
+  snapshotClassReviewProjectionReadonlyMap,
+  type ClassReviewProjectionResult,
+} from './classReviewProjection'
 import {
   createLocalClassReviewRegistry,
   type LocalGenerationRecord,
@@ -88,11 +91,11 @@ interface DiscardCandidateCommandInput {
   expectedGenerationRevision: number
 }
 
-interface ActiveExecution {
+interface ExecutionLease {
   opaqueTaskScope: string
   generationId: string
-  request: ClassReviewSynthesisRequestV1
-  snapshot: Readonly<GenerationSnapshot>
+  request: ClassReviewSynthesisRequestV1 | null
+  snapshot: Readonly<GenerationSnapshot> | null
   startAiTextEditRevision: number
 }
 
@@ -100,6 +103,7 @@ interface InFlightOwner {
   opaqueTaskScope: string
   generationId: string
   promise: Promise<LocalGenerationRecord>
+  resolve(record: LocalGenerationRecord): void
 }
 
 interface Workspace {
@@ -111,7 +115,7 @@ interface Workspace {
   issueWorkspace: InternalIssueWorkspace
   opaqueTaskScope: string | null
   lastGenerationId: string | null
-  activeExecution: ActiveExecution | null
+  activeExecution: ExecutionLease | null
   inFlight: InFlightOwner | null
   providerSettlementKnown: boolean
   sourceRevisionEpoch: number
@@ -119,6 +123,7 @@ interface Workspace {
   sourceReady: boolean
   taskDeleted: boolean
   undoIssueWorkspace: InternalIssueWorkspace | null
+  cancelRetry: (() => void) | null
 }
 
 interface PreparedReservation {
@@ -148,6 +153,7 @@ interface PreparedReservation {
     invalidationEpoch: number
     projectionIdentity: ReadyProjection
     statisticsIdentity: ClassReviewStatisticsV1
+    ownerGenerationId: string | null
   }>
 }
 
@@ -243,7 +249,11 @@ function frozenClone<T>(value: T): T {
   return clone
 }
 
-type ExpectedEnumerability = boolean | 'either'
+type ExpectedEnumerability = boolean | 'either' | Readonly<{
+  enumerable: boolean
+  writable: boolean
+  configurable: boolean
+}>
 
 function captureOneOfDataRecords(
   input: unknown,
@@ -271,10 +281,16 @@ function captureOneOfDataRecords(
     for (const key of expectedKeys) {
       const descriptor = descriptors.get(key)
       const expectedEnumerability = enumerability[key] ?? true
+      const expectedEnumerableFlag = typeof expectedEnumerability === 'object'
+        ? expectedEnumerability.enumerable
+        : expectedEnumerability
       if (!descriptor
-        || (expectedEnumerability !== 'either'
-          && descriptor.enumerable !== expectedEnumerability)
-        || !('value' in descriptor) || descriptor.get !== undefined || descriptor.set !== undefined) {
+        || (expectedEnumerableFlag !== 'either'
+          && descriptor.enumerable !== expectedEnumerableFlag)
+        || !('value' in descriptor) || descriptor.get !== undefined || descriptor.set !== undefined
+        || (typeof expectedEnumerability === 'object'
+          && (descriptor.writable !== expectedEnumerability.writable
+            || descriptor.configurable !== expectedEnumerability.configurable))) {
         throw new Error('invalid')
       }
       captured[key] = descriptor.value
@@ -293,25 +309,42 @@ function captureExactDataRecord(
   return captureOneOfDataRecords(input, [expectedKeys], enumerability)
 }
 
-function captureExactArray(input: unknown): unknown[] {
+const CAPTURE_LIMITS = Object.freeze({
+  dimensions: 10,
+  scoreBands: 20,
+  counters: 32,
+  groups: 64,
+  records: 512,
+  examples: 3,
+  dimensionIds: 10,
+})
+
+function captureExactArray(input: unknown, maximum: number): unknown[] {
   try {
     if (!Array.isArray(input)) throw new Error('invalid')
+    const lengthDescriptor = Reflect.getOwnPropertyDescriptor(input, 'length')
+    const lengthValue = lengthDescriptor && 'value' in lengthDescriptor
+      ? lengthDescriptor.value
+      : undefined
+    if (!lengthDescriptor || lengthDescriptor.enumerable !== false
+      || !Number.isSafeInteger(lengthValue)
+      || (lengthValue as number) < 0
+      || (lengthValue as number) > maximum) {
+      throw new Error('invalid')
+    }
+    const length = lengthValue as number
     const keys = Reflect.ownKeys(input)
+    if (keys.length !== length + 1) throw new Error('invalid')
     const descriptors = new Map<PropertyKey, PropertyDescriptor>()
     for (const key of keys) {
+      if (key === 'length') {
+        descriptors.set(key, lengthDescriptor)
+        continue
+      }
       const descriptor = Reflect.getOwnPropertyDescriptor(input, key)
       if (!descriptor) throw new Error('invalid')
       descriptors.set(key, descriptor)
     }
-    const lengthDescriptor = descriptors.get('length')
-    if (!lengthDescriptor || lengthDescriptor.enumerable !== false
-      || !('value' in lengthDescriptor)
-      || !Number.isSafeInteger(lengthDescriptor.value)
-      || lengthDescriptor.value < 0) {
-      throw new Error('invalid')
-    }
-    const length = lengthDescriptor.value as number
-    if (keys.length !== length + 1) throw new Error('invalid')
     const captured: unknown[] = []
     for (let index = 0; index < length; index += 1) {
       const descriptor = descriptors.get(String(index))
@@ -332,8 +365,8 @@ function captureExactArray(input: unknown): unknown[] {
   }
 }
 
-function captureExactStringArray(input: unknown): string[] {
-  const captured = captureExactArray(input)
+function captureExactStringArray(input: unknown, maximum: number = CAPTURE_LIMITS.records): string[] {
+  const captured = captureExactArray(input, maximum)
   if (captured.some((value) => typeof value !== 'string' || value.length === 0)) {
     return fail('class_review_candidate_conflict')
   }
@@ -343,33 +376,39 @@ function captureExactStringArray(input: unknown): string[] {
 const mapIteratorNext = Object.getPrototypeOf(new Map().entries()).next as (
   this: MapIterator<unknown>,
 ) => IteratorResult<unknown>
+const mapSizeGetter = Reflect.getOwnPropertyDescriptor(Map.prototype, 'size')?.get
+const mapEntries = Map.prototype.entries as (this: Map<unknown, unknown>) => MapIterator<unknown>
 
 function captureExactReadonlyMap(
   input: unknown,
-  trustedReadonlyMapPrototypes: ReadonlySet<object>,
+  maximum: number,
 ): readonly (readonly [unknown, unknown])[] {
   try {
     if (!input || typeof input !== 'object') throw new Error('invalid')
-    if (Reflect.ownKeys(input).length !== 0) throw new Error('invalid')
+    const trustedSnapshot = snapshotClassReviewProjectionReadonlyMap(input, maximum)
+    if (trustedSnapshot !== null) return trustedSnapshot
+    if (!Number.isSafeInteger(maximum) || maximum < 0
+      || Reflect.ownKeys(input).length !== 0
+      || Reflect.getPrototypeOf(input) !== Map.prototype
+      || typeof mapSizeGetter !== 'function') throw new Error('invalid')
+    const size = Reflect.apply(mapSizeGetter, input, []) as unknown
+    if (!Number.isSafeInteger(size) || (size as number) < 0 || (size as number) > maximum) {
+      throw new Error('invalid')
+    }
     const prototype = Reflect.getPrototypeOf(input)
     let iterator: unknown
     if (prototype === Map.prototype) {
-      iterator = Map.prototype.entries.call(input as Map<unknown, unknown>)
-    } else {
-      if (!prototype || !trustedReadonlyMapPrototypes.has(prototype)) throw new Error('invalid')
-      const descriptor = Reflect.getOwnPropertyDescriptor(prototype, 'entries')
-      if (!descriptor || !('value' in descriptor) || typeof descriptor.value !== 'function') {
-        throw new Error('invalid')
-      }
-      iterator = Reflect.apply(descriptor.value, input, [])
-    }
+      iterator = Reflect.apply(mapEntries, input, [])
+    } else throw new Error('invalid')
     const entries: Array<readonly [unknown, unknown]> = []
     while (true) {
       const step = Reflect.apply(mapIteratorNext, iterator, []) as IteratorResult<unknown>
       if (step.done) break
       if (!Array.isArray(step.value) || step.value.length !== 2) throw new Error('invalid')
       entries.push([step.value[0], step.value[1]])
+      if (entries.length > maximum) throw new Error('invalid')
     }
+    if (entries.length !== size) throw new Error('invalid')
     return entries
   } catch {
     return fail('class_review_candidate_conflict')
@@ -391,10 +430,10 @@ function captureClassReviewStatistics(input: unknown): ClassReviewStatisticsV1 {
   const scoreSummary = value.scoreSummary === null
     ? null
     : captureExactDataRecord(value.scoreSummary, ['averageScore', 'highestScore', 'lowestScore'])
-  const scoreBands = captureExactArray(value.scoreBands).map((band) =>
+  const scoreBands = captureExactArray(value.scoreBands, CAPTURE_LIMITS.scoreBands).map((band) =>
     captureExactDataRecord(band, ['bandId', 'lowerInclusive', 'upperInclusive', 'essayCount']),
   )
-  const dimensions = captureExactArray(value.dimensions).map((dimension) =>
+  const dimensions = captureExactArray(value.dimensions, CAPTURE_LIMITS.dimensions).map((dimension) =>
     captureExactDataRecord(dimension, [
       'dimensionId',
       'name',
@@ -448,10 +487,10 @@ function captureSynthesisStatistics(input: unknown): ClassReviewSynthesisRequest
     'lowestScore',
     'highestScore',
   ])
-  const scoreBands = captureExactArray(value.scoreBands).map((band) =>
+  const scoreBands = captureExactArray(value.scoreBands, CAPTURE_LIMITS.scoreBands).map((band) =>
     captureExactDataRecord(band, ['bandId', 'lowerInclusive', 'upperInclusive', 'essayCount']),
   )
-  const dimensions = captureExactArray(value.dimensions).map((dimension) =>
+  const dimensions = captureExactArray(value.dimensions, CAPTURE_LIMITS.dimensions).map((dimension) =>
     captureExactDataRecord(dimension, [
       'dimensionId',
       'label',
@@ -461,7 +500,7 @@ function captureSynthesisStatistics(input: unknown): ClassReviewSynthesisRequest
       'normalizedPerformance',
     ]),
   )
-  const issueCounters = captureExactArray(value.issueCounters).map((counter) =>
+  const issueCounters = captureExactArray(value.issueCounters, CAPTURE_LIMITS.counters).map((counter) =>
     captureExactDataRecord(counter, ['counterId', 'count']),
   )
   return {
@@ -587,37 +626,11 @@ function captureHiddenFallback(input: unknown): Record<string, unknown> {
   }
 }
 
-function admitTrustedReadonlyMapPrototype(
-  input: unknown,
-  trustedReadonlyMapPrototypes: Set<object>,
-): void {
-  try {
-    if (!input || typeof input !== 'object') throw new Error('invalid')
-    const prototype = Reflect.getPrototypeOf(input)
-    if (prototype === Map.prototype) return
-    const entriesDescriptor = prototype
-      ? Reflect.getOwnPropertyDescriptor(prototype, 'entries')
-      : undefined
-    if (!prototype || !Object.isFrozen(input) || Reflect.ownKeys(input).length !== 0
-      || !entriesDescriptor || !('value' in entriesDescriptor)
-      || typeof entriesDescriptor.value !== 'function') {
-      throw new Error('invalid')
-    }
-    trustedReadonlyMapPrototypes.add(prototype)
-  } catch {
-    fail('class_review_candidate_conflict')
-  }
-}
-
-function captureReadyProjection(
-  input: unknown,
-  trustedReadonlyMapPrototypes: Set<object>,
-  admitReadonlyMapPrototypes = false,
-): ReadyProjection {
+function captureReadyProjection(input: unknown): ReadyProjection {
   const value = captureExactDataRecord(
     input,
     ['status', 'projection', 'hidden'],
-    { hidden: 'either' },
+    { hidden: { enumerable: false, writable: false, configurable: false } },
   )
   if (value.status !== 'ready') return fail('class_review_candidate_conflict')
   const projection = captureExactDataRecord(value.projection, [
@@ -630,14 +643,10 @@ function captureReadyProjection(
     'selectedGroups',
     'unprojectedMustCover',
   ])
-  if (admitReadonlyMapPrototypes) {
-    admitTrustedReadonlyMapPrototype(hidden.dimensionAliases, trustedReadonlyMapPrototypes)
-    admitTrustedReadonlyMapPrototype(hidden.selectedGroups, trustedReadonlyMapPrototypes)
-  }
   const dimensionAliases = new Map<string, string>()
   for (const [key, alias] of captureExactReadonlyMap(
     hidden.dimensionAliases,
-    trustedReadonlyMapPrototypes,
+    CAPTURE_LIMITS.dimensions,
   )) {
     if (typeof key !== 'string' || typeof alias !== 'string') {
       return fail('class_review_candidate_conflict')
@@ -647,24 +656,30 @@ function captureReadyProjection(
   const selectedGroups = new Map<string, ReturnType<typeof captureHiddenSelectedGroup>>()
   for (const [key, group] of captureExactReadonlyMap(
     hidden.selectedGroups,
-    trustedReadonlyMapPrototypes,
+    CAPTURE_LIMITS.groups,
   )) {
     if (typeof key !== 'string') return fail('class_review_candidate_conflict')
     selectedGroups.set(key, captureHiddenSelectedGroup(group))
   }
-  return {
+  const capturedProjection = {
     status: value.status,
     projection: {
       statistics: captureSynthesisStatistics(projection.statistics),
-      groups: captureExactArray(projection.groups).map(captureSynthesisGroup),
+      groups: captureExactArray(projection.groups, CAPTURE_LIMITS.groups).map(captureSynthesisGroup),
       semanticCoverage: captureSemanticCoverage(projection.semanticCoverage),
     },
-    hidden: {
+  }
+  Object.defineProperty(capturedProjection, 'hidden', {
+    value: {
       dimensionAliases,
       selectedGroups,
-      unprojectedMustCover: captureExactArray(hidden.unprojectedMustCover).map(captureHiddenFallback),
+      unprojectedMustCover: captureExactArray(hidden.unprojectedMustCover, CAPTURE_LIMITS.records).map(captureHiddenFallback),
     },
-  } as unknown as ReadyProjection
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  })
+  return capturedProjection as unknown as ReadyProjection
 }
 
 function captureEvidenceRef(input: unknown): EvidenceRefV1 {
@@ -696,8 +711,8 @@ function captureIssueBlock(input: unknown): ClassReviewIssueBlockV1 {
   ])
   return {
     ...value,
-    anonymousExamples: captureExactStringArray(value.anonymousExamples),
-    evidenceRefs: captureExactArray(value.evidenceRefs).map(captureEvidenceRef),
+    anonymousExamples: captureExactStringArray(value.anonymousExamples, CAPTURE_LIMITS.examples),
+    evidenceRefs: captureExactArray(value.evidenceRefs, CAPTURE_LIMITS.records).map(captureEvidenceRef),
   } as unknown as ClassReviewIssueBlockV1
 }
 
@@ -709,11 +724,11 @@ function captureAiSummary(input: unknown): AiSummaryV1 {
   ])
   return {
     overallComment: value.overallComment,
-    strengths: captureExactArray(value.strengths).map((strength) => {
+    strengths: captureExactArray(value.strengths, CAPTURE_LIMITS.records).map((strength) => {
       const item = captureExactDataRecord(strength, ['title', 'detail', 'dimensionIds'])
-      return { ...item, dimensionIds: captureExactStringArray(item.dimensionIds) }
+      return { ...item, dimensionIds: captureExactStringArray(item.dimensionIds, CAPTURE_LIMITS.dimensionIds) }
     }),
-    learningRecommendations: captureExactArray(value.learningRecommendations).map((recommendation) =>
+    learningRecommendations: captureExactArray(value.learningRecommendations, CAPTURE_LIMITS.records).map((recommendation) =>
       captureExactDataRecord(recommendation, ['title', 'action']),
     ),
   } as unknown as AiSummaryV1
@@ -764,7 +779,7 @@ function captureClassReviewReport(input: unknown): ClassReviewReportV1 {
     'aiSummary',
   ] as const
   const value = captureOneOfDataRecords(input, [commonKeys, aiKeys])
-  const clearSpellingItems = captureExactArray(value.clearSpellingItems).map((item) =>
+  const clearSpellingItems = captureExactArray(value.clearSpellingItems, CAPTURE_LIMITS.records).map((item) =>
     captureExactDataRecord(item, [
       'itemId',
       'topicKey',
@@ -776,7 +791,7 @@ function captureClassReviewReport(input: unknown): ClassReviewReportV1 {
       'anonymousExample',
     ]),
   )
-  const selectedMaterials = captureExactArray(value.selectedMaterials).map((material) =>
+  const selectedMaterials = captureExactArray(value.selectedMaterials, CAPTURE_LIMITS.records).map((material) =>
     captureExactDataRecord(material, [
       'materialId',
       'type',
@@ -798,8 +813,8 @@ function captureClassReviewReport(input: unknown): ClassReviewReportV1 {
     aiTextEditRevision: value.aiTextEditRevision,
     currentGeneration: captureCurrentGeneration(value.currentGeneration),
     statistics: captureClassReviewStatistics(value.statistics),
-    issueBlocks: captureExactArray(value.issueBlocks).map(captureIssueBlock),
-    issueOrder: captureExactStringArray(value.issueOrder),
+    issueBlocks: captureExactArray(value.issueBlocks, CAPTURE_LIMITS.records).map(captureIssueBlock),
+    issueOrder: captureExactStringArray(value.issueOrder, CAPTURE_LIMITS.records),
     clearSpellingItems,
     selectedMaterials,
   }
@@ -850,7 +865,7 @@ function captureSystemEvidenceFact(input: unknown): SystemEvidenceFact {
   ])
   return {
     topicKey: value.topicKey,
-    essayIdentities: captureExactStringArray(value.essayIdentities),
+    essayIdentities: captureExactStringArray(value.essayIdentities, CAPTURE_LIMITS.records),
     occurrenceCount: value.occurrenceCount,
     ...(Object.hasOwn(value, 'identityMode') ? { identityMode: value.identityMode } : {}),
   } as unknown as SystemEvidenceFact
@@ -871,10 +886,7 @@ function captureSuppressedSystemVariant(input: unknown): SuppressedSystemVariant
   } as unknown as SuppressedSystemVariant
 }
 
-function captureRegisterWorkspaceInput(
-  input: unknown,
-  trustedReadonlyMapPrototypes: Set<object>,
-): RegisterWorkspaceInput {
+function captureRegisterWorkspaceInput(input: unknown): RegisterWorkspaceInput {
   const required = ['taskKey', 'taskRevision', 'rubricRevisionDigest', 'report', 'projection']
   const optional = ['teacherEvidenceFacts', 'systemEvidenceFacts', 'suppressedSystemVariants']
   const shapes: string[][] = []
@@ -894,7 +906,7 @@ function captureRegisterWorkspaceInput(
   if (Object.hasOwn(value, 'suppressedSystemVariants')) {
     for (const [topicKey, variant] of captureExactReadonlyMap(
       value.suppressedSystemVariants,
-      trustedReadonlyMapPrototypes,
+      CAPTURE_LIMITS.records,
     )) {
       if (typeof topicKey !== 'string' || topicKey.length === 0) {
         return fail('class_review_candidate_conflict')
@@ -907,12 +919,12 @@ function captureRegisterWorkspaceInput(
     taskRevision: value.taskRevision,
     rubricRevisionDigest: value.rubricRevisionDigest,
     report: captureClassReviewReport(value.report),
-    projection: captureReadyProjection(value.projection, trustedReadonlyMapPrototypes, true),
+    projection: captureReadyProjection(value.projection),
     ...(Object.hasOwn(value, 'teacherEvidenceFacts')
-      ? { teacherEvidenceFacts: captureExactArray(value.teacherEvidenceFacts).map(captureTeacherEvidenceFact) }
+      ? { teacherEvidenceFacts: captureExactArray(value.teacherEvidenceFacts, CAPTURE_LIMITS.records).map(captureTeacherEvidenceFact) }
       : {}),
     ...(Object.hasOwn(value, 'systemEvidenceFacts')
-      ? { systemEvidenceFacts: captureExactArray(value.systemEvidenceFacts).map(captureSystemEvidenceFact) }
+      ? { systemEvidenceFacts: captureExactArray(value.systemEvidenceFacts, CAPTURE_LIMITS.records).map(captureSystemEvidenceFact) }
       : {}),
     ...(Object.hasOwn(value, 'suppressedSystemVariants') ? { suppressedSystemVariants } : {}),
   } as unknown as RegisterWorkspaceInput
@@ -991,7 +1003,7 @@ function captureTeacherIssueCommand(input: unknown): TeacherIssueCommand {
     return {
       ...value,
       kind: value.kind,
-      evidence: captureExactArray(value.evidence).map((source) => {
+      evidence: captureExactArray(value.evidence, CAPTURE_LIMITS.records).map((source) => {
         const item = captureExactDataRecord(source, ['ref', 'essayIdentity', 'occurrenceCount'])
         return {
           ref: captureEvidenceRef(item.ref),
@@ -1033,7 +1045,6 @@ export function createLocalClassReviewCoordinator(options: {
   const terminalReportRevisionByGeneration = new Map<string, number | null>()
   const acceptedAliasIdentities = new Map<string, AcceptedAliasIdentity>()
   const acceptedGenerationIdentities = new Map<string, AcceptedAliasIdentity>()
-  const trustedReadonlyMapPrototypes = new Set<object>()
   let mutationCaptureInProgress = false
   const terminalFenceKey = (opaqueTaskScope: string, generationId: string): string =>
     JSON.stringify([opaqueTaskScope, generationId])
@@ -1041,6 +1052,15 @@ export function createLocalClassReviewCoordinator(options: {
     JSON.stringify([opaqueTaskScope, proposedGenerationId])
   const isTerminalAudit = (state: LocalGenerationRecord['state']): boolean =>
     state === 'failed' || state === 'succeeded' || state === 'discarded' || state === 'invalidated'
+  const taskInvalidatedSettlement = Object.freeze({
+    requestId: null,
+    state: 'invalidated',
+    generationRevision: 0,
+    invalidationFence: 0,
+    boundedRequeueCount: 0,
+    candidateAvailable: false,
+    safeFailureCode: 'class_review_task_invalidated',
+  }) as unknown as LocalGenerationRecord
 
   function assertMutationAllowed(): void {
     if (mutationCaptureInProgress) fail('class_review_candidate_conflict')
@@ -1169,15 +1189,21 @@ export function createLocalClassReviewCoordinator(options: {
   }
 
   function cloneReadyProjection(input: ReadyProjection): ReadyProjection {
-    return {
+    const clone = {
       status: 'ready',
       projection: structuredClone(input.projection),
-      hidden: {
+    }
+    Object.defineProperty(clone, 'hidden', {
+      value: {
         dimensionAliases: new Map(input.hidden.dimensionAliases),
         selectedGroups: new Map([...input.hidden.selectedGroups].map(([key, value]) => [key, structuredClone(value)])),
         unprojectedMustCover: structuredClone([...input.hidden.unprojectedMustCover]),
       },
-    }
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    })
+    return clone as ReadyProjection
   }
 
   function cloneInternal(workspace: InternalIssueWorkspace): InternalIssueWorkspace {
@@ -1341,6 +1367,35 @@ export function createLocalClassReviewCoordinator(options: {
     return generationId
   }
 
+  function acceptedOwnerTerminalTransitionGeneration(
+    workspace: Workspace,
+    fence: PreparedReservation['sourceFence'],
+    _actionableReplayCore: string,
+    _prepared?: PreparedReservation,
+  ): string | null {
+    const generationId = fence.ownerGenerationId
+    if (!generationId || !workspace.opaqueTaskScope) return null
+    const accepted = acceptedGenerationIdentities.get(terminalFenceKey(
+      workspace.opaqueTaskScope,
+      generationId,
+    ))
+    const record = registry.readGeneration({
+      opaqueTaskScope: workspace.opaqueTaskScope,
+      generationId,
+    })
+    if (!accepted || !record || accepted.generationId !== generationId) {
+      return null
+    }
+    const isAppliedOwner = record.state === 'succeeded'
+      && workspace.report.workspaceState === 'ai_available'
+      && workspace.report.appliedGenerationId === generationId
+    if (!isAppliedOwner) return null
+    const terminalRevision = terminalReportRevisionByGeneration.get(
+      terminalFenceKey(workspace.opaqueTaskScope, generationId),
+    )
+    return terminalRevision === workspace.report.reportRevision ? generationId : null
+  }
+
   async function prepareReservation(
     workspace: Workspace,
     command: {
@@ -1368,6 +1423,9 @@ export function createLocalClassReviewCoordinator(options: {
       invalidationEpoch: workspace.invalidationEpoch,
       projectionIdentity: workspace.projection,
       statisticsIdentity: workspace.report.statistics,
+      ownerGenerationId: workspace.opaqueTaskScope
+        ? registry.readActionable(workspace.opaqueTaskScope)?.generationId ?? null
+        : null,
     })
     const commandCore = buildCommandCore(workspace, command)
     const actionableReplayCore = buildActionableReplayCore(workspace, command)
@@ -1375,6 +1433,11 @@ export function createLocalClassReviewCoordinator(options: {
     const capturedProjection = cloneReadyProjection(workspace.projection)
     const assertSourceFence = (): void => {
       const acceptedNoneTransition = acceptedNoneTransitionGeneration(
+        workspace,
+        sourceFence,
+        actionableReplayCore,
+      ) !== null
+      const acceptedOwnerTransition = acceptedOwnerTerminalTransitionGeneration(
         workspace,
         sourceFence,
         actionableReplayCore,
@@ -1390,7 +1453,7 @@ export function createLocalClassReviewCoordinator(options: {
         || workspace.report.aiTextEditRevision !== sourceFence.aiTextEditRevision
         || workspace.sourceRevisionEpoch !== capturedSourceRevisionEpoch
         || workspace.projection !== sourceFence.projectionIdentity
-        || (!reportMatches && !acceptedNoneTransition)) {
+        || (!reportMatches && !acceptedNoneTransition && !acceptedOwnerTransition)) {
         fail('class_review_source_invalidated')
       }
     }
@@ -1494,6 +1557,12 @@ export function createLocalClassReviewCoordinator(options: {
       prepared.actionableReplayCore,
       prepared,
     )
+    const acceptedOwnerTransition = acceptedOwnerTerminalTransitionGeneration(
+      workspace,
+      fence,
+      prepared.actionableReplayCore,
+      prepared,
+    )
     const reportMatches = workspace.report.workspaceState === fence.workspaceState
       && workspace.report.reportRevision === fence.reportRevision
       && workspace.report.statistics === fence.statisticsIdentity
@@ -1506,10 +1575,10 @@ export function createLocalClassReviewCoordinator(options: {
       || workspace.sourceRevisionEpoch !== fence.sourceRevisionEpoch
       || workspace.invalidationEpoch !== fence.invalidationEpoch
       || workspace.projection !== fence.projectionIdentity
-      || (!reportMatches && acceptedNoneTransition === null)) {
+      || (!reportMatches && acceptedNoneTransition === null && acceptedOwnerTransition === null)) {
       fail('class_review_source_invalidated')
     }
-    return acceptedNoneTransition
+    return acceptedNoneTransition ?? acceptedOwnerTransition
   }
 
   function asDraft(report: ClassReviewReportV1): ClassReviewReportV1 {
@@ -1521,7 +1590,34 @@ export function createLocalClassReviewCoordinator(options: {
     return error instanceof Error && error.message === 'provider_invalid_response' ? 'provider_invalid_response' : 'class_review_candidate_conflict'
   }
 
-  async function dispatch(workspace: Workspace, execution: ActiveExecution): Promise<LocalGenerationRecord> {
+  async function waitForRetryDelay(workspace: Workspace, milliseconds: number): Promise<boolean> {
+    let active = true
+    let cancel!: () => void
+    const elapsed = await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => {
+        if (!active) return
+        active = false
+        resolve(true)
+      }, milliseconds)
+      cancel = () => {
+        if (!active) return
+        active = false
+        clearTimeout(timer)
+        resolve(false)
+      }
+      workspace.cancelRetry = cancel
+    })
+    if (workspace.cancelRetry === cancel) workspace.cancelRetry = null
+    return elapsed
+  }
+
+  function scrubExecutionLease(execution: ExecutionLease | null): void {
+    if (!execution) return
+    execution.request = null
+    execution.snapshot = null
+  }
+
+  async function dispatch(workspace: Workspace, execution: ExecutionLease): Promise<LocalGenerationRecord> {
     const scopedGeneration = {
       opaqueTaskScope: execution.opaqueTaskScope,
       generationId: execution.generationId,
@@ -1538,10 +1634,12 @@ export function createLocalClassReviewCoordinator(options: {
     if (record.state !== 'running') return record
     const runningRevision = record.generationRevision
     const fence = record.invalidationFence
+    if (execution.request === null) return record
     let untrusted: unknown
     try {
       untrusted = await options.synthesisClient.synthesize(execution.request)
     } catch {
+      if (workspace.taskDeleted) return taskInvalidatedSettlement
       const current = registry.readGeneration(scopedGeneration)
       if (current?.state === 'running' && current.invalidationFence === fence) {
         return registry.markResultUnknown({
@@ -1553,7 +1651,11 @@ export function createLocalClassReviewCoordinator(options: {
       }
       return current ?? record
     }
+    if (workspace.taskDeleted || workspace.activeExecution === execution) {
+      workspace.providerSettlementKnown = true
+    }
     const current = registry.readGeneration(scopedGeneration)
+    if (workspace.taskDeleted) return taskInvalidatedSettlement
     if (
       !current
       || current.state === 'invalidated'
@@ -1562,8 +1664,25 @@ export function createLocalClassReviewCoordinator(options: {
     ) {
       return current ?? record
     }
-    workspace.providerSettlementKnown = true
-    const parsed = parseClassReviewSynthesisResult(untrusted, execution.request)
+    const request = execution.request
+    if (request === null) return current
+    let parsed: ReturnType<typeof parseClassReviewSynthesisResult>
+    try {
+      parsed = parseClassReviewSynthesisResult(untrusted, request)
+    } catch {
+      if (workspace.taskDeleted) return taskInvalidatedSettlement
+      const latest = registry.readGeneration(scopedGeneration)
+      if (!latest || latest.state !== 'running' || latest.invalidationFence !== fence) {
+        return latest ?? record
+      }
+      return rememberTerminalReportRevision(workspace, registry.markFailed({
+        opaqueTaskScope: execution.opaqueTaskScope,
+        generationId: latest.generationId,
+        expectedRevision: latest.generationRevision,
+        expectedState: 'running',
+        safeFailureCode: 'provider_invalid_response',
+      }))
+    }
     if (!parsed.ok) {
       return rememberTerminalReportRevision(workspace, registry.markFailed({
         opaqueTaskScope: execution.opaqueTaskScope,
@@ -1598,7 +1717,11 @@ export function createLocalClassReviewCoordinator(options: {
           payloadHash: current.payloadDigest,
           localCallSettled: true,
         })
-        await new Promise<void>((resolve) => setTimeout(resolve, result.retryAfterMs!))
+        const elapsed = await waitForRetryDelay(workspace, result.retryAfterMs!)
+        if (!elapsed) {
+          if (workspace.taskDeleted) return taskInvalidatedSettlement
+          return registry.readGeneration(scopedGeneration) ?? queued
+        }
         const afterDelay = registry.readGeneration(scopedGeneration)
         return afterDelay?.state === 'queued' ? dispatch(workspace, execution) : afterDelay ?? queued
       }
@@ -1611,8 +1734,16 @@ export function createLocalClassReviewCoordinator(options: {
       }))
     }
     try {
+      const snapshot = execution.snapshot
+      if (snapshot === null) return current
+      const executionIsActive = (): boolean => {
+        if (workspace.taskDeleted || !workspace.sourceReady
+          || workspace.invalidationEpoch !== snapshot.invalidationEpoch) return false
+        const latest = registry.readGeneration(scopedGeneration)
+        return latest?.state === 'running' && latest.invalidationFence === fence
+      }
       const materialized = await materializeClassReviewCandidate({
-        snapshot: execution.snapshot,
+        snapshot,
         untrustedResult: result,
         currentReport: workspace.report,
         currentIssueWorkspace: workspace.issueWorkspace,
@@ -1620,14 +1751,20 @@ export function createLocalClassReviewCoordinator(options: {
           currentReport: workspace.report,
           currentIssueWorkspace: workspace.issueWorkspace,
         }),
-        topicHmac,
-        createOpaqueId: options.createOpaqueId,
-        now: options.now,
+        topicHmac: { ...topicHmac, isActive: executionIsActive },
+        createOpaqueId: () => {
+          if (!executionIsActive()) fail('class_review_candidate_conflict')
+          return options.createOpaqueId()
+        },
+        now: () => {
+          if (!executionIsActive()) fail('class_review_candidate_conflict')
+          return options.now()
+        },
       })
       const latest = registry.readGeneration(scopedGeneration)
       if (!latest || latest.state !== 'running'
         || latest.invalidationFence !== fence
-        || workspace.invalidationEpoch !== execution.snapshot.invalidationEpoch
+        || workspace.invalidationEpoch !== snapshot.invalidationEpoch
         || workspace.taskDeleted || !workspace.sourceReady) return latest ?? current
       const unapplied = workspace.report.aiTextEditRevision !== execution.startAiTextEditRevision
       const preview = applyMaterializedClassReviewCandidate({
@@ -1652,6 +1789,7 @@ export function createLocalClassReviewCoordinator(options: {
       }
       return rememberTerminalReportRevision(workspace, committed)
     } catch (error) {
+      if (workspace.taskDeleted) return taskInvalidatedSettlement
       const latest = registry.readGeneration(scopedGeneration)
       if (!latest || latest.state !== 'running') return latest ?? current
       return rememberTerminalReportRevision(workspace, registry.markFailed({
@@ -1676,8 +1814,6 @@ export function createLocalClassReviewCoordinator(options: {
     if (!workspace.sourceReady || workspace.projection === null) {
       return Promise.reject(new Error('class_review_source_invalidated'))
     }
-    const commandCore = buildCommandCore(workspace, command)
-    const actionableReplayCore = buildActionableReplayCore(workspace, command)
     const knownProposed = workspace.opaqueTaskScope
       ? registry.readProposed({
           opaqueTaskScope: workspace.opaqueTaskScope,
@@ -1687,57 +1823,6 @@ export function createLocalClassReviewCoordinator(options: {
     const knownActionable = workspace.opaqueTaskScope
       ? registry.readActionable(workspace.opaqueTaskScope)
       : null
-    if (workspace.opaqueTaskScope && knownProposed) {
-      const accepted = acceptedAliasIdentities.get(aliasFenceKey(
-        workspace.opaqueTaskScope,
-        command.generationId,
-      ))
-      if (accepted) {
-        try {
-          if (accepted.commandCore !== commandCore
-            || accepted.actionableReplayCore !== actionableReplayCore
-            || accepted.generationId !== knownProposed.generationId) {
-            fail('active_generation_conflict')
-          }
-          const replay = registry.replayExactProposed({
-            opaqueTaskScope: workspace.opaqueTaskScope,
-            proposedGenerationId: command.generationId,
-            commandCore: accepted.commandCore,
-            commandIdentity: accepted.commandIdentity,
-            actionableIdentity: accepted.actionableIdentity,
-            executionIdentity: accepted.executionIdentity,
-            snapshotTuple: accepted.snapshotTuple,
-            fixedRevisions: accepted.fixedRevisions,
-            payloadDigest: accepted.payloadDigest,
-          })
-          if (!replay) fail('active_generation_conflict')
-          if (isTerminalAudit(replay.state)) {
-            const terminalRevision = terminalReportRevisionByGeneration.get(
-              terminalFenceKey(workspace.opaqueTaskScope, replay.generationId),
-            )
-            if (terminalRevision === undefined || terminalRevision !== workspace.report.reportRevision) {
-              fail('active_generation_conflict')
-            }
-          }
-          const owner = workspace.inFlight
-          const ownsReplay = owner !== null
-            && owner.opaqueTaskScope === workspace.opaqueTaskScope
-            && owner.generationId === replay.generationId
-          return ownsReplay ? owner.promise : Promise.resolve(replay)
-        } catch (error) {
-          return Promise.reject(error)
-        }
-      }
-    }
-    if (workspace.opaqueTaskScope && !knownProposed && knownActionable) {
-      const accepted = acceptedGenerationIdentities.get(terminalFenceKey(
-        workspace.opaqueTaskScope,
-        knownActionable.generationId,
-      ))
-      if (accepted && accepted.actionableReplayCore !== actionableReplayCore) {
-        return Promise.reject(new Error('active_generation_conflict'))
-      }
-    }
     if (!knownProposed && !knownActionable) {
       const revisionsMatch = command.expectedTaskRevision === workspace.taskRevision
         && command.expectedReportRevision === workspace.report.reportRevision
@@ -1748,19 +1833,21 @@ export function createLocalClassReviewCoordinator(options: {
         return Promise.reject(error)
       }
     }
-    return (async () => {
+    let resolveGenerate!: (record: LocalGenerationRecord) => void
+    let rejectGenerate!: (error: unknown) => void
+    const generationPromise = new Promise<LocalGenerationRecord>((resolve, reject) => {
+      resolveGenerate = resolve
+      rejectGenerate = reject
+    })
+    const ownerStarted = Symbol('owner-started')
+    void (async (): Promise<LocalGenerationRecord | typeof ownerStarted> => {
       const prepared = await prepareReservation(workspace, command)
       const proposed = registry.readProposed({
         opaqueTaskScope: prepared.opaqueTaskScope,
         proposedGenerationId: command.generationId,
       })
       const actionable = registry.readActionable(prepared.opaqueTaskScope)
-      const acceptedNoneGeneration = acceptedNoneTransitionGeneration(
-        workspace,
-        prepared.sourceFence,
-        prepared.actionableReplayCore,
-        prepared,
-      )
+      const fencedTransitionGeneration = assertPreparedSourceFence(workspace, prepared)
       if (proposed && isTerminalAudit(proposed.state)) {
         const terminalRevision = terminalReportRevisionByGeneration.get(
           terminalFenceKey(prepared.opaqueTaskScope, proposed.generationId),
@@ -1769,13 +1856,13 @@ export function createLocalClassReviewCoordinator(options: {
           fail('active_generation_conflict')
         }
       }
-      if (!proposed && !actionable && acceptedNoneGeneration === null) {
+      if (!proposed && !actionable && fencedTransitionGeneration === null) {
         const revisionsMatch = command.expectedTaskRevision === workspace.taskRevision
           && command.expectedReportRevision === workspace.report.reportRevision
         if (!revisionsMatch) fail('active_generation_conflict')
         checkEligibility(workspace, command.intent)
       }
-      const fencedNoneGeneration = assertPreparedSourceFence(workspace, prepared)
+      const attachmentGenerationId = knownActionable?.generationId ?? fencedTransitionGeneration ?? null
       const reservation = registry.reserveOrAttach({
         opaqueTaskScope: prepared.opaqueTaskScope,
         proposedGenerationId: prepared.proposedGenerationId,
@@ -1791,9 +1878,7 @@ export function createLocalClassReviewCoordinator(options: {
         commandCore: prepared.commandCore,
         state: 'queued',
         generationRevision: 0,
-        attachmentGenerationId: knownActionable?.generationId
-          ?? fencedNoneGeneration
-          ?? undefined,
+        ...(attachmentGenerationId === null ? {} : { attachmentGenerationId }),
       })
       rememberAcceptedIdentity(prepared, reservation.record)
       if (reservation.kind === 'attached') {
@@ -1806,7 +1891,7 @@ export function createLocalClassReviewCoordinator(options: {
       workspace.opaqueTaskScope = prepared.opaqueTaskScope
       workspace.lastGenerationId = reservation.record.generationId
       workspace.report = asDraft(workspace.report)
-      const execution: ActiveExecution = {
+      const execution: ExecutionLease = {
         opaqueTaskScope: prepared.opaqueTaskScope,
         generationId: reservation.record.generationId,
         request: prepared.request,
@@ -1815,26 +1900,28 @@ export function createLocalClassReviewCoordinator(options: {
       }
       workspace.activeExecution = execution
       workspace.providerSettlementKnown = false
-      let resolveOwner!: (record: LocalGenerationRecord) => void
-      let rejectOwner!: (error: unknown) => void
-      const ownerSettlement = new Promise<LocalGenerationRecord>((resolve, reject) => {
-        resolveOwner = resolve
-        rejectOwner = reject
-      })
-      let owner!: InFlightOwner
-      const ownerPromise = ownerSettlement.finally(() => {
-        if (workspace.inFlight === owner) workspace.inFlight = null
-        if (workspace.activeExecution === execution) workspace.activeExecution = null
-      })
-      owner = {
+      const owner: InFlightOwner = {
         opaqueTaskScope: prepared.opaqueTaskScope,
         generationId: reservation.record.generationId,
-        promise: ownerPromise,
+        promise: generationPromise,
+        resolve: resolveGenerate,
       }
+      void generationPromise.then(() => {
+        if (workspace.inFlight === owner) workspace.inFlight = null
+        if (workspace.activeExecution === execution) workspace.activeExecution = null
+        scrubExecutionLease(execution)
+      }, () => {
+        if (workspace.inFlight === owner) workspace.inFlight = null
+        if (workspace.activeExecution === execution) workspace.activeExecution = null
+        scrubExecutionLease(execution)
+      })
       workspace.inFlight = owner
-      void dispatch(workspace, execution).then(resolveOwner, rejectOwner)
-      return ownerPromise
-    })()
+      void dispatch(workspace, execution).then(resolveGenerate, rejectGenerate)
+      return ownerStarted
+    })().then((result) => {
+      if (result !== ownerStarted) resolveGenerate(result)
+    }, rejectGenerate)
+    return generationPromise
   }
 
   function activeLocksAiText(workspace: Workspace): boolean {
@@ -1976,10 +2063,7 @@ export function createLocalClassReviewCoordinator(options: {
       'projection',
     ])
     const statistics = captureClassReviewStatistics(captured.statistics)
-    const projection = cloneReadyProjection(captureReadyProjection(
-      captured.projection,
-      trustedReadonlyMapPrototypes,
-    ))
+    const projection = cloneReadyProjection(captureReadyProjection(captured.projection))
     const request = buildRequest(
       captured.rubricRevisionDigest as string,
       projection,
@@ -2111,6 +2195,7 @@ export function createLocalClassReviewCoordinator(options: {
       workspace.projection = validatedReplacement.projection
       workspace.sourceReady = true
       workspace.sourceRevisionEpoch = nextSourceRevisionEpoch
+      workspace.undoIssueWorkspace = null
       return
     }
 
@@ -2142,18 +2227,18 @@ export function createLocalClassReviewCoordinator(options: {
         selectedMaterials: [],
       })
       const emptyIssues = createInternalIssueWorkspace([])
+      const settleOwner = workspace.inFlight?.resolve ?? null
+      workspace.cancelRetry?.()
+      workspace.cancelRetry = null
       if (workspace.opaqueTaskScope) {
-        registry.invalidateTaskScope({
-          opaqueTaskScope: workspace.opaqueTaskScope,
-          safeFailureCode: 'class_review_task_invalidated',
-        })
+        registry.purgeTaskScope({ opaqueTaskScope: workspace.opaqueTaskScope })
         clearAcceptedIdentities(workspace.opaqueTaskScope)
       }
       workspace.invalidationEpoch = nextInvalidationEpoch
       workspace.sourceRevisionEpoch = nextSourceRevisionEpoch
+      scrubExecutionLease(workspace.activeExecution)
       workspace.activeExecution = null
       workspace.inFlight = null
-      workspace.providerSettlementKnown = false
       workspace.taskDeleted = true
       workspace.sourceReady = false
       workspace.projection = null
@@ -2161,6 +2246,8 @@ export function createLocalClassReviewCoordinator(options: {
       workspace.issueWorkspace = emptyIssues
       workspace.undoIssueWorkspace = null
       workspace.lastGenerationId = null
+      workspace.opaqueTaskScope = null
+      settleOwner?.(taskInvalidatedSettlement)
       return
     }
 
@@ -2198,14 +2285,19 @@ export function createLocalClassReviewCoordinator(options: {
       clearSpellingItems: [],
       selectedMaterials: workspace.report.selectedMaterials,
     })
+    const settleOwner = workspace.inFlight?.resolve ?? null
+    workspace.cancelRetry?.()
+    workspace.cancelRetry = null
+    let invalidatedRecord: LocalGenerationRecord | null = null
     if (workspace.opaqueTaskScope) {
-      registry.invalidateTaskScope({
+      invalidatedRecord = registry.invalidateTaskScope({
         opaqueTaskScope: workspace.opaqueTaskScope,
         safeFailureCode: 'class_review_source_invalidated',
       })
     }
     workspace.invalidationEpoch = nextInvalidationEpoch
     workspace.sourceRevisionEpoch = nextSourceRevisionEpoch
+    scrubExecutionLease(workspace.activeExecution)
     workspace.activeExecution = null
     workspace.inFlight = null
     workspace.providerSettlementKnown = false
@@ -2216,42 +2308,77 @@ export function createLocalClassReviewCoordinator(options: {
     workspace.rubricRevisionDigest = validatedReplacement?.rubricRevisionDigest ?? workspace.rubricRevisionDigest
     workspace.projection = validatedReplacement?.projection ?? null
     workspace.sourceReady = validatedReplacement !== null
+    if (invalidatedRecord) settleOwner?.(invalidatedRecord)
   }
 
   return {
     registerWorkspace(source) {
-      const stagedReadonlyMapPrototypes = new Set(trustedReadonlyMapPrototypes)
-      const input = captureMutationInput(() => captureRegisterWorkspaceInput(
-        source,
-        stagedReadonlyMapPrototypes,
-      ))
+      const input = captureMutationInput(() => captureRegisterWorkspaceInput(source))
       if (workspaces.has(input.taskKey)) fail('class_review_workspace_already_registered')
       const parsed = parseClassReviewReport(input.report)
       if (!parsed.ok) fail('class_review_candidate_conflict')
-      const report = structuredClone(parsed.value)
+      let report = structuredClone(parsed.value)
+      if (input.taskRevision !== report.taskRevision || report.currentGeneration !== null) {
+        fail('class_review_candidate_conflict')
+      }
       const mixedSystemTopics = new Set(report.issueBlocks
         .filter((block) => block.origin === 'teacher' && block.systemStudentCount > 0)
         .map((block) => block.topicKey))
       const suppressedSystemVariants = new Map(input.suppressedSystemVariants ?? [])
       if (mixedSystemTopics.size !== suppressedSystemVariants.size
         || [...mixedSystemTopics].some((topicKey) => !suppressedSystemVariants.has(topicKey))
-        || (suppressedSystemVariants.size > 0 && report.workspaceState !== 'ai_available')
-        || (report.workspaceState === 'ai_available'
-          && [...suppressedSystemVariants.values()].some((variant) =>
-            variant.generationId !== report.appliedGenerationId
-              || variant.invalidationEpoch !== 0))) {
+        || (suppressedSystemVariants.size > 0 && report.workspaceState !== 'ai_available')) {
         fail('class_review_candidate_conflict')
       }
+      if (report.workspaceState === 'ai_available') {
+        const appliedGenerationId = report.appliedGenerationId
+        if ([...suppressedSystemVariants.values()].some((variant) =>
+          variant.generationId !== appliedGenerationId || variant.invalidationEpoch !== 0)) {
+          fail('class_review_candidate_conflict')
+        }
+      }
       const projection = cloneReadyProjection(input.projection)
+      const registrationRequest = buildRequest(
+        input.rubricRevisionDigest,
+        projection,
+        'registration-validation',
+      )
+      cloneAndFreezeClassReviewGenerationSnapshot({
+        originalRequest: registrationRequest,
+        hidden: projection.hidden,
+        generationId: 'registration-validation',
+        invalidationEpoch: 0,
+        executionIdentity: 'registration-validation',
+        payloadDigest: 'registration-validation',
+        taskRevision: input.taskRevision,
+        reportRevision: report.reportRevision,
+        aiTextEditRevision: report.aiTextEditRevision,
+        sourceRevisionEpoch: 0,
+        browserStatistics: report.statistics,
+      })
       const issueWorkspace = createInternalIssueWorkspace(report.issueBlocks, {
         issueOrder: report.issueOrder,
         teacherEvidenceFacts: input.teacherEvidenceFacts,
         systemEvidenceFacts: input.systemEvidenceFacts ?? [],
         suppressed: suppressedSystemVariants,
       })
-      for (const prototype of stagedReadonlyMapPrototypes) {
-        trustedReadonlyMapPrototypes.add(prototype)
+      const systemBlocks = issueWorkspace.visible.filter((block) => block.systemStudentCount > 0)
+      if (systemBlocks.length > 0) {
+        if (report.workspaceState !== 'ai_available') {
+          fail('class_review_candidate_conflict')
+        }
+        const issueEligibleEssayCount = report.snapshotMetadata.issueEligibleEssayCount
+        if (systemBlocks.some((block) => block.supportDenominator !== issueEligibleEssayCount
+          || block.systemStudentCount > issueEligibleEssayCount)) fail('class_review_candidate_conflict')
       }
+      const canonicalIssueBlocks = projectInternalIssueWorkspace(issueWorkspace)
+      const canonicalReport = parseClassReviewReport({
+        ...report,
+        issueBlocks: canonicalIssueBlocks,
+        issueOrder: canonicalIssueBlocks.map((block) => block.blockId),
+      })
+      if (!canonicalReport.ok) fail('class_review_candidate_conflict')
+      report = canonicalReport.value
       workspaces.set(input.taskKey, {
         taskKey: input.taskKey,
         taskRevision: input.taskRevision,
@@ -2269,6 +2396,7 @@ export function createLocalClassReviewCoordinator(options: {
         sourceReady: true,
         taskDeleted: false,
         undoIssueWorkspace: null,
+        cancelRetry: null,
       })
     },
     generate,
@@ -2281,7 +2409,7 @@ export function createLocalClassReviewCoordinator(options: {
         candidate: generation?.candidateAvailable
           ? { available: true as const, generationId: generation.generationId }
           : null,
-        requestId: workspace.activeExecution?.request.requestId ?? null,
+        requestId: workspace.activeExecution?.request?.requestId ?? null,
         boundedRequeueCount: generation?.boundedRequeueCount ?? 0,
         providerSettlementKnown: workspace.providerSettlementKnown,
         sourceReady: workspace.sourceReady,
@@ -2336,6 +2464,7 @@ export function createLocalClassReviewCoordinator(options: {
         terminalFenceKey(discarded.opaqueTaskScope, discarded.generationId),
         workspace.report.reportRevision,
       )
+      workspace.undoIssueWorkspace = null
     },
     syncSources(command) {
       syncSources(command)
@@ -2380,6 +2509,7 @@ export function createLocalClassReviewCoordinator(options: {
       try {
         if (command.kind === 'add') {
           addTeacherIssue(workspace, command)
+          workspace.undoIssueWorkspace = null
         } else if (command.kind === 'remove') {
           if (!workspace.issueWorkspace.teacherFacts.has(command.evidenceId)) {
             fail('class_review_candidate_conflict')
@@ -2418,6 +2548,7 @@ export function createLocalClassReviewCoordinator(options: {
           })
           if (!parsed.ok) fail('class_review_candidate_conflict')
           workspace.report = parsed.value
+          workspace.undoIssueWorkspace = null
           return
         }
         syncReportIssues(workspace)

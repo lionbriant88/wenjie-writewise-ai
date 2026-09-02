@@ -27,6 +27,7 @@ export interface TopicKeyRegistry {
 export interface TopicHmac {
   digest(domain: TopicHmacDomain, message: Uint8Array): Promise<Uint8Array>
   registry: TopicKeyRegistry
+  isActive?(): boolean
 }
 
 export interface AtomicTopicFingerprint {
@@ -152,6 +153,18 @@ async function safeDigest(
   }
 }
 
+function assertActive(hmac: TopicHmac): void {
+  let guard: TopicHmac['isActive']
+  try {
+    guard = hmac.isActive
+    if (guard === undefined) return
+    if (typeof guard === 'function' && guard.call(hmac) === true) return
+  } catch {
+    // Normalize an injected guard failure below.
+  }
+  fail('topic_generation_inactive')
+}
+
 async function deriveIdentity(
   kind: TopicIdentity['kind'],
   taskScope: string,
@@ -162,20 +175,28 @@ async function deriveIdentity(
   if (!hmac || typeof hmac.digest !== 'function' || !hmac.registry) {
     return fail('topic_hmac_invalid')
   }
-  const fingerprintHex = bytesToHex(
-    await safeDigest(hmac, 'topic-fingerprint-v1', encodeCanonical(canonical)),
+  assertActive(hmac)
+  const fingerprintBytes = await safeDigest(
+    hmac,
+    'topic-fingerprint-v1',
+    encodeCanonical(canonical),
   )
+  assertActive(hmac)
+  const fingerprintHex = bytesToHex(fingerprintBytes)
   const fingerprintDigest = `fp1.${fingerprintHex}`
   const digestBytes = hexToBytes(fingerprintHex)
-  const publicKeyHex = bytesToHex(await safeDigest(hmac, 'topic-public-key-v1', digestBytes))
-  const suffixHex = bytesToHex(
-    await safeDigest(hmac, 'topic-collision-suffix-v1', digestBytes),
-  )
+  const publicKeyBytes = await safeDigest(hmac, 'topic-public-key-v1', digestBytes)
+  assertActive(hmac)
+  const publicKeyHex = bytesToHex(publicKeyBytes)
+  const suffixBytes = await safeDigest(hmac, 'topic-collision-suffix-v1', digestBytes)
+  assertActive(hmac)
+  const suffixHex = bytesToHex(suffixBytes)
   const shortenedKey = `tk1.${publicKeyHex.slice(0, 16)}`
   const collisionSuffix = suffixHex.slice(0, 12)
-  let key: string
+  assertActive(hmac)
+  let claimedKey: unknown
   try {
-    const claimedKey = await hmac.registry.claim({
+    claimedKey = await hmac.registry.claim({
       taskScope,
       keyVersion: KEY_VERSION,
       kind,
@@ -183,14 +204,14 @@ async function deriveIdentity(
       fingerprintDigest,
       collisionSuffix,
     })
-    if (!isClaimedTopicKey(claimedKey, shortenedKey, collisionSuffix)) {
-      return fail('topic_registry_failed')
-    }
-    key = claimedKey
   } catch {
     return fail('topic_registry_failed')
   }
-  return { kind, keyVersion: KEY_VERSION, taskScope, key, fingerprintDigest }
+  assertActive(hmac)
+  if (!isClaimedTopicKey(claimedKey, shortenedKey, collisionSuffix)) {
+    return fail('topic_registry_failed')
+  }
+  return { kind, keyVersion: KEY_VERSION, taskScope, key: claimedKey, fingerprintDigest }
 }
 
 export function createInMemoryTopicKeyRegistry(): TopicKeyRegistry {

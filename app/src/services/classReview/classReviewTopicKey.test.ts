@@ -332,4 +332,53 @@ describe('class review topic identity', () => {
       }
     }
   })
+
+  it('rechecks an active fence after awaited digesting before any topic claim side effect', async () => {
+    const members = [
+      {
+        kind: 'atomic' as const,
+        keyVersion: 'topic-key-v1' as const,
+        taskScope: baseFingerprint.opaqueTaskScope,
+        key: 'tk1.aaaaaaaaaaaaaaaa',
+        fingerprintDigest: `fp1.${'a'.repeat(64)}`,
+      },
+      {
+        kind: 'atomic' as const,
+        keyVersion: 'topic-key-v1' as const,
+        taskScope: baseFingerprint.opaqueTaskScope,
+        key: 'tk1.bbbbbbbbbbbbbbbb',
+        fingerprintDigest: `fp1.${'b'.repeat(64)}`,
+      },
+    ]
+    let active = true
+    let digestCalls = 0
+    let claimCalls = 0
+    let releaseFirstDigest!: () => void
+    const firstDigest = new Promise<void>((resolve) => { releaseFirstDigest = resolve })
+    const hmac = {
+      digest: async (domain: Parameters<TopicHmac['digest']>[0], message: Uint8Array) => {
+        digestCalls += 1
+        if (digestCalls === 1) await firstDigest
+        return deterministicBytes(domain, message)
+      },
+      registry: {
+        claim: async (input: Parameters<TopicKeyRegistry['claim']>[0]) => {
+          claimCalls += 1
+          return input.shortenedKey
+        },
+      },
+      isActive: () => active,
+    } as TopicHmac & { isActive: () => boolean }
+
+    const pending = deriveCompositeTopicKey(members, hmac)
+    await Promise.resolve()
+    expect(digestCalls).toBe(1)
+    active = false
+    releaseFirstDigest()
+    const outcome = await pending.then(() => null, (error: unknown) => error)
+
+    expect(outcome).toBeInstanceOf(Error)
+    expect(claimCalls).toBe(0)
+    expect(digestCalls).toBe(1)
+  })
 })

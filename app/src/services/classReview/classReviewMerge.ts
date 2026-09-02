@@ -318,7 +318,7 @@ function validateTopicIdentity(identity: TopicIdentity): void {
   if (identity.kind !== 'atomic'
     || identity.keyVersion !== 'topic-key-v1'
     || !/^scope_v1_[0-9a-f]{32,64}$/u.test(identity.taskScope)
-    || !/^tk1\.[0-9a-f]{16}(?:\.[0-9a-f]{8}(?:\.(?:[2-9]|[1-9]\d+))?)?$/u.test(identity.key)
+    || !/^tk1\.[0-9a-f]{16}(?:\.[0-9a-f]{12}(?:\.(?:[2-9]|[1-9]\d+))?)?$/u.test(identity.key)
     || !/^fp1\.[0-9a-f]{64}$/u.test(identity.fingerprintDigest)) {
     fail('class_review_candidate_conflict')
   }
@@ -343,30 +343,36 @@ function validateGenerationBoundary(
     fail('class_review_candidate_conflict')
   }
 
-  if (requestCounts.scoreBands.length !== browser.scoreBands.length) fail('class_review_candidate_conflict')
+  const browserBands = [...browser.scoreBands].sort((left, right) => (
+    left.lowerInclusive - right.lowerInclusive
+    || left.upperInclusive - right.upperInclusive
+    || compare(left.bandId, right.bandId)
+  ))
+  if (requestCounts.scoreBands.length !== browserBands.length) fail('class_review_candidate_conflict')
   for (let index = 0; index < requestCounts.scoreBands.length; index += 1) {
     const projected = requestCounts.scoreBands[index]
-    const current = browser.scoreBands[index]
-    if (projected.bandId !== current.bandId
+    const current = browserBands[index]
+    if (projected.bandId !== `b${index + 1}`
       || projected.lowerInclusive !== current.lowerInclusive
       || projected.upperInclusive !== current.upperInclusive
       || projected.essayCount !== current.essayCount) fail('class_review_candidate_conflict')
   }
 
-  const requestDimensions = new Map(requestCounts.dimensions.map((dimension) => [dimension.dimensionId, dimension]))
-  if (requestDimensions.size !== requestCounts.dimensions.length
-    || hidden.dimensionAliases.size !== requestDimensions.size
-    || browser.dimensions.length !== requestDimensions.size) {
+  if (hidden.dimensionAliases.size !== requestCounts.dimensions.length
+    || browser.dimensions.length !== requestCounts.dimensions.length) {
     fail('class_review_candidate_conflict')
   }
   const originalDimensions = new Map(browser.dimensions.map((dimension) => [dimension.dimensionId, dimension]))
   if (originalDimensions.size !== browser.dimensions.length) fail('class_review_candidate_conflict')
   const seenOriginals = new Set<string>()
-  for (const [alias, original] of hidden.dimensionAliases) {
-    const projected = requestDimensions.get(alias)
-    const current = originalDimensions.get(original)
-    if (!projected || !current || seenOriginals.has(original)
-      || projected.label !== current.name
+  for (let index = 0; index < requestCounts.dimensions.length; index += 1) {
+    const alias = `d${index + 1}`
+    const original = hidden.dimensionAliases.get(alias)
+    const projected = requestCounts.dimensions[index]
+    const current = original === undefined ? undefined : originalDimensions.get(original)
+    if (projected.dimensionId !== alias
+      || projected.label !== `Dimension ${index + 1}`
+      || !original || !current || seenOriginals.has(original)
       || projected.averageScore !== current.averageScore
       || projected.maxScore !== current.maxScore
       || projected.normalizedPerformance !== current.normalizedPerformance) {
@@ -374,6 +380,7 @@ function validateGenerationBoundary(
     }
     seenOriginals.add(original)
   }
+  if (seenOriginals.size !== hidden.dimensionAliases.size) fail('class_review_candidate_conflict')
 
   const requestGroups = new Map(request.groups.map((group) => [group.groupId, group]))
   if (requestGroups.size !== request.groups.length || hidden.selectedGroups.size !== requestGroups.size) fail('class_review_candidate_conflict')
@@ -717,6 +724,63 @@ function rebuildTeacherOwnedBlock(input: {
   }
 }
 
+function canonicalStandaloneIssueBlock(input: ClassReviewIssueBlockV1): ClassReviewIssueBlockV1 {
+  let candidate: unknown
+  try {
+    candidate = {
+      contractVersion: 'class-review-report-v1',
+      workspaceState: 'ai_available',
+      taskRevision: 0,
+      reportRevision: 0,
+      aiTextEditRevision: 0,
+      currentGeneration: null,
+      statistics: {
+        totalEssayCount: 0,
+        includedEssayCount: 0,
+        issueEligibleEssayCount: 0,
+        excludedEssayCount: 0,
+        issueCoverageRate: 1,
+        fullScore: 1,
+        scoreSummary: null,
+        scoreBands: [],
+        dimensions: [],
+      },
+      issueBlocks: [structuredClone(input)],
+      issueOrder: [input.blockId],
+      clearSpellingItems: [],
+      selectedMaterials: [],
+      appliedGenerationId: 'validation-generation',
+      generatedAt: '2000-01-01T00:00:00.000Z',
+      snapshotMetadata: {
+        totalEssayCount: 0,
+        includedEssayCount: 0,
+        issueEligibleEssayCount: 0,
+        semanticCoverage: {
+          projectedGroupCount: 0,
+          eligibleGroupCount: 0,
+          groupCoverage: 1,
+          projectedDistinctEssaySupportSum: 0,
+          eligibleDistinctEssaySupportSum: 0,
+          supportWeightedCoverage: 1,
+          projectedOccurrenceSum: 0,
+          eligibleOccurrenceSum: 0,
+          occurrenceWeightedCoverage: 1,
+        },
+      },
+      aiSummary: {
+        overallComment: 'Validation',
+        strengths: [],
+        learningRecommendations: [],
+      },
+    }
+  } catch {
+    return fail('class_review_candidate_conflict')
+  }
+  const parsed = parseClassReviewReport(candidate)
+  if (!parsed.ok || parsed.value.issueBlocks.length !== 1) fail('class_review_candidate_conflict')
+  return parsed.value.issueBlocks[0]
+}
+
 export function createInternalIssueWorkspace(
   blocks: readonly ClassReviewIssueBlockV1[],
   options?: {
@@ -773,8 +837,9 @@ export function createInternalIssueWorkspace(
   }
   const suppressed = new Map<string, SuppressedSystemVariant>()
   for (const [key, source] of options?.suppressed ?? []) {
+    const canonicalBlock = canonicalStandaloneIssueBlock(source.block)
     const visibleOwner = visible.find((block) => block.topicKey === key)
-    if (suppressed.has(key) || key !== source.block.topicKey
+    if (suppressed.has(key) || key !== canonicalBlock.topicKey
       || key !== source.systemEvidenceFact.topicKey
       || !visibleOwner
       || visibleOwner.origin !== 'teacher'
@@ -783,16 +848,20 @@ export function createInternalIssueWorkspace(
       || !source.generationId
       || !Number.isSafeInteger(source.invalidationEpoch)
       || source.invalidationEpoch < 0
-      || source.block.origin !== 'ai'
-      || source.block.teacherStudentCount !== 0
-      || source.block.systemStudentCount <= 0
-      || source.block.combinedStudentCount !== source.block.systemStudentCount
-      || source.block.evidenceRefs.some((ref) => ref.selectionOrigin === 'teacher_selected')) {
+      || canonicalBlock.origin !== 'ai'
+      || canonicalBlock.teacherStudentCount !== 0
+      || canonicalBlock.systemStudentCount <= 0
+      || canonicalBlock.combinedStudentCount !== canonicalBlock.systemStudentCount
+      || canonicalBlock.supportDenominator === null
+      || !Number.isSafeInteger(canonicalBlock.supportDenominator)
+      || canonicalBlock.supportDenominator <= 0
+      || canonicalBlock.systemStudentCount > canonicalBlock.supportDenominator
+      || canonicalBlock.evidenceRefs.some((ref) => ref.selectionOrigin === 'teacher_selected')) {
       fail('class_review_candidate_conflict')
     }
     const systemEvidenceFact = canonicalSystemFact(source.systemEvidenceFact)
     const variant: SuppressedSystemVariant = {
-      block: structuredClone(source.block),
+      block: canonicalBlock,
       generationId: source.generationId,
       invalidationEpoch: source.invalidationEpoch,
       systemEvidenceFact,
@@ -812,6 +881,9 @@ export function createInternalIssueWorkspace(
     }
     if (visibleSystemTopics.has(block.topicKey)) fail('class_review_candidate_conflict')
     visibleSystemTopics.add(block.topicKey)
+    if (block.origin === 'teacher' && !suppressed.has(block.topicKey)) {
+      fail('class_review_candidate_conflict')
+    }
     systemTopicOwners.add(block.topicKey)
   }
   for (const [topicKey, variant] of suppressed) {
@@ -841,6 +913,10 @@ export function createInternalIssueWorkspace(
       if (facts.length > 0 || !systemFact
         || block.teacherStudentCount !== 0
         || block.systemStudentCount !== block.combinedStudentCount
+        || block.supportDenominator === null
+        || !Number.isSafeInteger(block.supportDenominator)
+        || block.supportDenominator <= 0
+        || block.systemStudentCount > block.supportDenominator
         || block.occurrenceCount < block.systemStudentCount
         || block.occurrenceCount !== systemFact.occurrenceCount
         || (systemFact.identityMode === 'exact'
@@ -859,10 +935,7 @@ export function createInternalIssueWorkspace(
       continue
     }
     if (facts.length === 0) {
-      if (block.evidenceRefs.some((ref) => ref.selectionOrigin === 'teacher_selected')
-        || systemFact) fail('class_review_candidate_conflict')
-      visible[index] = structuredClone(block)
-      continue
+      fail('class_review_candidate_conflict')
     }
     const rebuilt = rebuildTeacherOwnedBlock({
       teacherBlock: block,
