@@ -297,6 +297,38 @@ export function snapshotClassReviewProjectionReadonlyMap<K, V>(
   return snapshot as readonly (readonly [K, V])[]
 }
 
+function deepFreezeProjectionValue<T>(value: T): T {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value
+  if (Array.isArray(value)) {
+    value.forEach(deepFreezeProjectionValue)
+  } else {
+    Object.values(value).forEach(deepFreezeProjectionValue)
+  }
+  Object.freeze(value)
+  return value
+}
+
+export function cloneClassReviewProjectionHiddenState(input: {
+  dimensionAliases: Iterable<readonly [string, string]>
+  selectedGroups: Iterable<readonly [string, HiddenSelectedGroupV1]>
+  unprojectedMustCover: readonly HiddenMustCoverFallbackV1[]
+}): ClassReviewProjectionHiddenStateV1 {
+  return Object.freeze({
+    dimensionAliases: new FrozenReadonlyMap(
+      Array.from(input.dimensionAliases, ([key, value]) => [key, value] as const),
+    ),
+    selectedGroups: new FrozenReadonlyMap(
+      Array.from(input.selectedGroups, ([key, value]) => [
+        key,
+        deepFreezeProjectionValue(structuredClone(value)),
+      ] as const),
+    ),
+    unprojectedMustCover: Object.freeze(
+      structuredClone([...input.unprojectedMustCover]).map(deepFreezeProjectionValue),
+    ),
+  })
+}
+
 function compareText(left: string, right: string): number {
   return left === right ? 0 : left < right ? -1 : 1
 }
@@ -777,12 +809,12 @@ function buildHiddenState(
   eligible: readonly PreparedCandidate[],
 ): ClassReviewProjectionHiddenStateV1 {
   const selectedSources = new Set(selected.map(({ source }) => source))
-  return Object.freeze({
-    dimensionAliases: new FrozenReadonlyMap(dimensionAliases.entries()),
-    selectedGroups: new FrozenReadonlyMap(selectedGroups.entries()),
-    unprojectedMustCover: Object.freeze(eligible
+  return cloneClassReviewProjectionHiddenState({
+    dimensionAliases: dimensionAliases.entries(),
+    selectedGroups: selectedGroups.entries(),
+    unprojectedMustCover: eligible
       .filter((candidate) => candidate.mustCover && !selectedSources.has(candidate.source))
-      .map(hiddenFallback)),
+      .map(hiddenFallback),
   })
 }
 

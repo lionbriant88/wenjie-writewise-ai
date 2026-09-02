@@ -3,7 +3,7 @@ import type { ClassReviewIssueBlockV1, ClassReviewProviderOutputV1, ClassReviewR
 import type { ClassReviewProjectionHiddenStateV1 } from './classReviewProjection'
 import { createInMemoryTopicKeyRegistry, type TopicHmac, type TopicIdentity } from './classReviewTopicKey'
 import { classReviewSupportThreshold } from './aggregateClassReview'
-import { applyMaterializedClassReviewCandidate, cloneAndFreezeClassReviewGenerationSnapshot, createInternalIssueWorkspace, invalidateInternalSystemVariants, materializeClassReviewCandidate as materializeClassReviewCandidateHandle, mergeInternalIssueWorkspace, projectInternalIssueWorkspace, removeTeacherEvidence } from './classReviewMerge'
+import { applyMaterializedClassReviewCandidate, cloneAndFreezeClassReviewGenerationSnapshot, createInternalIssueWorkspace, invalidateInternalSystemVariants, materializeClassReviewCandidate as materializeClassReviewCandidateHandle, mergeInternalIssueWorkspace, projectInternalIssueWorkspace, removeTeacherEvidence, type SystemEvidenceFact } from './classReviewMerge'
 import * as classReviewMergeModule from './classReviewMerge'
 
 function topic(key: string): TopicIdentity {
@@ -50,6 +50,21 @@ function frozenRequest(): ClassReviewSynthesisRequestV1 {
 
 function browserReport(): ClassReviewReportV1 {
   return { contractVersion: 'class-review-report-v1', workspaceState: 'draft', taskRevision: 1, reportRevision: 1, aiTextEditRevision: 0, currentGeneration: null, statistics: { totalEssayCount: 4, includedEssayCount: 4, issueEligibleEssayCount: 4, excludedEssayCount: 0, issueCoverageRate: 1, fullScore: 100, scoreSummary: { averageScore: 80, highestScore: 90, lowestScore: 70 }, scoreBands: [], dimensions: [] }, issueBlocks: [], issueOrder: [], clearSpellingItems: [], selectedMaterials: [] }
+}
+
+function systemFactFor(
+  block: ClassReviewIssueBlockV1,
+  overrides: Partial<SystemEvidenceFact> = {},
+): SystemEvidenceFact {
+  return {
+    topicKey: block.topicKey,
+    essayIdentities: Array.from({ length: block.systemStudentCount }, (_, index) =>
+      `essay-${block.blockId}-${index + 1}`,
+    ),
+    occurrenceCount: block.occurrenceCount,
+    systemBlock: block,
+    ...overrides,
+  }
 }
 
 async function materializeClassReviewCandidate(input: {
@@ -302,21 +317,26 @@ describe('internal mixed teacher/system workspace', () => {
     const createOpaqueId = (() => { let n = 0; return () => `new-${++n}` })()
     const firstTeacher = teacher('t1', 'teacher.1')
     const secondTeacher = teacher('t2', 'teacher.2')
-    const workspace = createInternalIssueWorkspace([firstTeacher, ai('old-a', 'tk1.a'), secondTeacher, ai('vanished', 'tk1.z')], {
+    const oldA = ai('old-a', 'tk1.a')
+    const vanished = ai('vanished', 'tk1.z')
+    const workspace = createInternalIssueWorkspace([firstTeacher, oldA, secondTeacher, vanished], {
       issueOrder: ['t1', 'old-a', 't2', 'vanished'],
       teacherEvidenceFacts: [
         { topicKey: firstTeacher.topicKey, evidenceId: 't-t1', essayIdentity: 'essay-t1', occurrenceCount: 1 },
         { topicKey: secondTeacher.topicKey, evidenceId: 't-t2', essayIdentity: 'essay-t2', occurrenceCount: 1 },
       ],
       systemEvidenceFacts: [
-        { topicKey: 'tk1.a', essayIdentities: ['essay-a-1', 'essay-a-2'], occurrenceCount: 2 },
-        { topicKey: 'tk1.z', essayIdentities: ['essay-z-1', 'essay-z-2'], occurrenceCount: 2 },
+        systemFactFor(oldA, { essayIdentities: ['essay-a-1', 'essay-a-2'] }),
+        systemFactFor(vanished, { essayIdentities: ['essay-z-1', 'essay-z-2'] }),
       ],
     })
-    const merged = mergeInternalIssueWorkspace({ workspace, nextSystem: [ai('new-c', 'tk1.c'), ai('new-a', 'tk1.a'), ai('new-b', 'tk1.b')], generationId: 'generation-1', invalidationEpoch: 0, createOpaqueId, systemEvidenceFacts: [
-      { topicKey: 'tk1.a', essayIdentities: ['essay-a-1', 'essay-a-2'], occurrenceCount: 2 },
-      { topicKey: 'tk1.b', essayIdentities: ['essay-b-1', 'essay-b-2'], occurrenceCount: 2 },
-      { topicKey: 'tk1.c', essayIdentities: ['essay-c-1', 'essay-c-2'], occurrenceCount: 2 },
+    const newC = ai('new-c', 'tk1.c')
+    const newA = ai('new-a', 'tk1.a')
+    const newB = ai('new-b', 'tk1.b')
+    const merged = mergeInternalIssueWorkspace({ workspace, nextSystem: [newC, newA, newB], generationId: 'generation-1', invalidationEpoch: 0, createOpaqueId, systemEvidenceFacts: [
+      systemFactFor(newA, { essayIdentities: ['essay-a-1', 'essay-a-2'] }),
+      systemFactFor(newB, { essayIdentities: ['essay-b-1', 'essay-b-2'] }),
+      systemFactFor(newC, { essayIdentities: ['essay-c-1', 'essay-c-2'] }),
     ] })
     expect(projectInternalIssueWorkspace(merged).map((item) => [item.topicKey, item.blockId])).toEqual([['teacher.1', 't1'], ['tk1.a', 'old-a'], ['teacher.2', 't2'], ['tk1.b', 'new-b'], ['tk1.c', 'new-c']])
   })
@@ -326,9 +346,10 @@ describe('internal mixed teacher/system workspace', () => {
     teacherBlock.evidenceRefs = [{ evidenceId: 'teacher-evidence', selectionOrigin: 'teacher_selected', sourceLocator: 'teacher-source', sourceResultRevision: 1, anonymousExample: null }]
     teacherBlock.occurrenceCount = 2
     const system = ai('system', 'tk1.a')
+    system.occurrenceCount = 3
     system.evidenceRefs = [{ evidenceId: 'system-evidence', selectionOrigin: 'system_generation', sourceLocator: 'system-source', sourceResultRevision: 1, anonymousExample: null }]
     const base = createInternalIssueWorkspace([teacherBlock], { issueOrder: ['t'], teacherEvidenceFacts: [{ topicKey: 'tk1.a', evidenceId: 'teacher-evidence', essayIdentity: 'essay-overlap', occurrenceCount: 2 }] })
-    const mixed = mergeInternalIssueWorkspace({ workspace: base, nextSystem: [system], generationId: 'generation-1', invalidationEpoch: 0, createOpaqueId: () => 'must-not-run', systemEvidenceFacts: [{ topicKey: 'tk1.a', essayIdentities: ['essay-overlap', 'essay-system'], occurrenceCount: 3 }] })
+    const mixed = mergeInternalIssueWorkspace({ workspace: base, nextSystem: [system], generationId: 'generation-1', invalidationEpoch: 0, createOpaqueId: () => 'must-not-run', systemEvidenceFacts: [systemFactFor(system, { essayIdentities: ['essay-overlap', 'essay-system'], occurrenceCount: 3 })] })
     expect(projectInternalIssueWorkspace(mixed)[0]).toMatchObject({ origin: 'teacher', teacherStudentCount: 1, systemStudentCount: 2, combinedStudentCount: 2, occurrenceCount: 3 })
     expect(projectInternalIssueWorkspace(mixed)[0].evidenceRefs.map((ref) => ref.selectionOrigin)).toEqual(['teacher_selected', 'system_generation'])
     const restored = removeTeacherEvidence(mixed, 'teacher-evidence')
@@ -486,7 +507,7 @@ describe('Task 8 round 3 candidate and canonical fact admission', () => {
     }
     expect(() => createInternalIssueWorkspace([block], {
       issueOrder: [block.blockId],
-      systemEvidenceFacts: [{ topicKey: block.topicKey, essayIdentities: ['essay-only-one'], occurrenceCount: 2 }],
+      systemEvidenceFacts: [systemFactFor(block, { essayIdentities: ['essay-only-one'] })],
     })).toThrow('class_review_candidate_conflict')
   })
 
@@ -508,6 +529,17 @@ describe('Task 8 round 3 candidate and canonical fact admission', () => {
       }],
       systemEvidenceFacts: [{
         topicKey: mixed.topicKey, essayIdentities: ['essay-teacher', 'essay-system'], occurrenceCount: 3,
+        systemBlock: {
+          ...mixed,
+          blockId: 'system-mixed',
+          origin: 'ai',
+          teacherStudentCount: 0,
+          systemStudentCount: 2,
+          combinedStudentCount: 2,
+          occurrenceCount: 3,
+          anonymousExamples: ['System example'],
+          evidenceRefs: [systemRef],
+        },
       }],
       suppressed: new Map([[mixed.topicKey, {
         block: {
@@ -527,6 +559,17 @@ describe('Task 8 round 3 candidate and canonical fact admission', () => {
           topicKey: mixed.topicKey,
           essayIdentities: ['essay-teacher', 'essay-system'],
           occurrenceCount: 3,
+          systemBlock: {
+            ...mixed,
+            blockId: 'system-mixed',
+            origin: 'ai',
+            teacherStudentCount: 0,
+            systemStudentCount: 2,
+            combinedStudentCount: 2,
+            occurrenceCount: 3,
+            anonymousExamples: ['System example'],
+            evidenceRefs: [systemRef],
+          },
         },
       }]]),
     })
@@ -578,7 +621,7 @@ describe('Task 8 round 3 candidate and canonical fact admission', () => {
       generationId: 'fallback-generation',
       invalidationEpoch: 0,
       createOpaqueId: () => 'unused',
-      systemEvidenceFacts: [{ topicKey: fallback.topicKey, essayIdentities: [], occurrenceCount: 2 }],
+      systemEvidenceFacts: [systemFactFor(fallback, { essayIdentities: [], identityMode: 'unavailable_fallback' })],
     })).toThrow('class_review_candidate_conflict')
   })
 
@@ -593,7 +636,7 @@ describe('Task 8 round 3 candidate and canonical fact admission', () => {
     }
     const workspace = createInternalIssueWorkspace([block], {
       issueOrder: [block.blockId],
-      systemEvidenceFacts: [{ topicKey: block.topicKey, essayIdentities: [astral, bmp], occurrenceCount: 2 }],
+      systemEvidenceFacts: [systemFactFor(block, { essayIdentities: [astral, bmp] })],
     })
     expect(workspace.systemFacts.get(block.topicKey)?.essayIdentities).toEqual([bmp, astral])
   })
@@ -777,6 +820,7 @@ describe('Task 8 round 3 candidate and canonical fact admission', () => {
         topicKey: systemBlock.topicKey,
         essayIdentities: ['essay-system-a', 'essay-system-b'],
         occurrenceCount: 2,
+        systemBlock,
       }],
     })
     const storedTeacher = workspace.teacherFacts.get(teacherRef.evidenceId)!
@@ -831,6 +875,17 @@ describe('Task 8 round 3 candidate and canonical fact admission', () => {
         topicKey: oldMixed.topicKey,
         essayIdentities: ['essay-old-a', 'essay-old-b'],
         occurrenceCount: 4,
+        systemBlock: {
+          ...oldMixed,
+          blockId: 'old-system-id',
+          origin: 'ai',
+          teacherStudentCount: 0,
+          systemStudentCount: 2,
+          combinedStudentCount: 2,
+          occurrenceCount: 4,
+          anonymousExamples: ['Old system'],
+          evidenceRefs: [oldSystemRef],
+        },
       }],
       suppressed: new Map([[oldMixed.topicKey, {
         block: {
@@ -850,6 +905,17 @@ describe('Task 8 round 3 candidate and canonical fact admission', () => {
           topicKey: oldMixed.topicKey,
           essayIdentities: ['essay-old-a', 'essay-old-b'],
           occurrenceCount: 4,
+          systemBlock: {
+            ...oldMixed,
+            blockId: 'old-system-id',
+            origin: 'ai',
+            teacherStudentCount: 0,
+            systemStudentCount: 2,
+            combinedStudentCount: 2,
+            occurrenceCount: 4,
+            anonymousExamples: ['Old system'],
+            evidenceRefs: [oldSystemRef],
+          },
         },
       }]]),
     })
@@ -878,6 +944,7 @@ describe('Task 8 round 3 candidate and canonical fact admission', () => {
         topicKey: nextSystem.topicKey,
         essayIdentities: ['essay-new-a', 'essay-new-b'],
         occurrenceCount: 3,
+        systemBlock: nextSystem,
       }],
     })
     expect(projectInternalIssueWorkspace(merged)[0]).toMatchObject({
@@ -940,6 +1007,17 @@ describe('Task 8 round 3 candidate and canonical fact admission', () => {
         topicKey: mixed.topicKey,
         essayIdentities: ['essay-system-a', 'essay-system-b'],
         occurrenceCount: 3,
+        systemBlock: {
+          ...mixed,
+          blockId: 'system-current-id',
+          origin: 'ai',
+          teacherStudentCount: 0,
+          systemStudentCount: 2,
+          combinedStudentCount: 2,
+          occurrenceCount: 3,
+          anonymousExamples: ['System current'],
+          evidenceRefs: [systemRef],
+        },
       }],
       suppressed: new Map([[mixed.topicKey, {
         block: {
@@ -959,6 +1037,17 @@ describe('Task 8 round 3 candidate and canonical fact admission', () => {
           topicKey: mixed.topicKey,
           essayIdentities: ['essay-system-a', 'essay-system-b'],
           occurrenceCount: 3,
+          systemBlock: {
+            ...mixed,
+            blockId: 'system-current-id',
+            origin: 'ai',
+            teacherStudentCount: 0,
+            systemStudentCount: 2,
+            combinedStudentCount: 2,
+            occurrenceCount: 3,
+            anonymousExamples: ['System current'],
+            evidenceRefs: [systemRef],
+          },
         },
       }]]),
     })
@@ -1035,6 +1124,7 @@ describe('Task 8 round 3 candidate and canonical fact admission', () => {
         topicKey: systemBlock.topicKey,
         essayIdentities: ['essay-system-a', 'essay-system-b'],
         occurrenceCount: 2,
+        systemBlock,
       }],
     })
     const stale = removeTeacherEvidence(mixed, teacherRef.evidenceId, {
@@ -1254,5 +1344,60 @@ describe('Task 8 round 3 candidate and canonical fact admission', () => {
       issueOrder: [forged.blockId],
       teacherEvidenceFacts: [],
     })).toThrow('class_review_candidate_conflict')
+  })
+
+  it('rebuilds ai-only blocks from the supplied system fact block rather than caller visible fields', () => {
+    const canonicalRef = {
+      evidenceId: 'system-owned-ref',
+      selectionOrigin: 'system_generation' as const,
+      sourceLocator: 'system-source',
+      sourceResultRevision: 1,
+      anonymousExample: 'System owned example',
+    }
+    const forgedRef = {
+      evidenceId: 'caller-forged-ref',
+      selectionOrigin: 'system_generation' as const,
+      sourceLocator: 'caller-source',
+      sourceResultRevision: 1,
+      anonymousExample: 'Caller forged example',
+    }
+    const canonical: ClassReviewIssueBlockV1 = {
+      blockId: 'canonical-ai-block',
+      topicKey: 'tk1.aaaaaaaaaaaaaaaa',
+      origin: 'ai',
+      title: 'System owned title',
+      diagnosis: 'System owned diagnosis',
+      teachingAction: 'System owned action',
+      severity: 'high',
+      teacherStudentCount: 0,
+      systemStudentCount: 2,
+      combinedStudentCount: 2,
+      occurrenceCount: 3,
+      supportDenominator: 3,
+      anonymousExamples: ['System owned example'],
+      evidenceRefs: [canonicalRef],
+    }
+    const forged: ClassReviewIssueBlockV1 = {
+      ...canonical,
+      title: 'Caller forged title',
+      diagnosis: 'Caller forged diagnosis',
+      teachingAction: 'Caller forged action',
+      severity: 'low',
+      supportDenominator: 999,
+      anonymousExamples: ['Caller forged example'],
+      evidenceRefs: [forgedRef],
+    }
+
+    const workspace = createInternalIssueWorkspace([forged], {
+      issueOrder: [forged.blockId],
+      systemEvidenceFacts: [{
+        topicKey: canonical.topicKey,
+        essayIdentities: ['essay-a', 'essay-b'],
+        occurrenceCount: 3,
+        systemBlock: canonical,
+      } as never],
+    })
+
+    expect(workspace.visible).toEqual([canonical])
   })
 })

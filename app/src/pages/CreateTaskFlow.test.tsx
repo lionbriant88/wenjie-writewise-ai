@@ -434,7 +434,7 @@ describe('optional-material task creation vertical flow', () => {
     expect(await screen.findByRole('status')).toHaveTextContent(
       '材料暂时无法读取，本任务将仅按已填写的写作要求评分。',
     )
-    expect(screen.getByRole('button', { name: '为学生1添加作文' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '为学生1添加作文' })).toBeInTheDocument()
     expect(getCreatedTask()).toMatchObject({
       materialProcessingStatus: 'failed',
       rubricDraft: { status: 'confirmed', writingGoal: 'Use only this teacher requirement.' },

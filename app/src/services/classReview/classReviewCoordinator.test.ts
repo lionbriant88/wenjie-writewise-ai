@@ -16,6 +16,53 @@ function none(): ClassReviewReportNoneV1 {
 
 const validRubricDigest = 'a'.repeat(43)
 
+const groupOneAtomicTopic = {
+  kind: 'atomic' as const,
+  keyVersion: 'topic-key-v1' as const,
+  taskScope: `scope_v1_${'1'.repeat(32)}`,
+  key: 'tk1.aaaaaaaaaaaaaaaa',
+  fingerprintDigest: `fp1.${'b'.repeat(64)}`,
+}
+
+const groupTwoAtomicTopic = {
+  kind: 'atomic' as const,
+  keyVersion: 'topic-key-v1' as const,
+  taskScope: `scope_v1_${'1'.repeat(32)}`,
+  key: 'tk1.bbbbbbbbbbbbbbbb',
+  fingerprintDigest: `fp1.${'c'.repeat(64)}`,
+}
+
+function keptRedaction(text: string, scrubbedEvidenceKey: string) {
+  return {
+    status: 'kept' as const,
+    text,
+    redactionVersion: 'class-review-redaction-v1' as const,
+    scrubbedEvidenceKey,
+  }
+}
+
+function projectionAggregate(
+  issueGroups: ClassReviewAggregate['issueGroups'] = [],
+): ClassReviewAggregate {
+  return {
+    totalEssayCount: 3,
+    includedEssayCount: 3,
+    issueEligibleEssayCount: 3,
+    excludedEssayCount: 0,
+    partialIssueChannelCount: 0,
+    exclusions: [],
+    fullScore: 100,
+    scoreMedian: 80,
+    scoreSummary: { averageScore: 80, highestScore: 90, lowestScore: 70 },
+    scoreBands: [],
+    dimensions: [],
+    fixedIssueCounters: [],
+    issueGroups,
+    commonIssueGroups: issueGroups,
+    clearSpellingItems: [],
+  }
+}
+
 function aiAvailable(): ClassReviewReportAiAvailableV1 {
   return {
     ...draft(),
@@ -49,16 +96,22 @@ function teacherAddCommand(block: ClassReviewIssueBlockV1, essayIdentity: string
 }
 
 function projection(): Extract<ClassReviewProjectionResult, { status: 'ready' }> {
+  const built = buildClassReviewProjection({
+    aggregate: projectionAggregate(),
+    redactionContext: { prepare: () => null },
+    limits: DEFAULT_CLASS_REVIEW_PROJECTION_LIMITS,
+  })
+  if (built.status !== 'ready') throw new Error('test projection fixture failed')
   const ready = {
     status: 'ready',
-    projection: {
-      statistics: { includedEssayCount: 3, issueEligibleEssayCount: 3, totalEssayCount: 3, excludedEssayCount: 0, score: { fullScore: 100, averageScore: 80, highestScore: 90, lowestScore: 70, medianScore: 80 }, scoreBands: [], dimensions: [], issueCounters: [] },
-      groups: [],
-      semanticCoverage: { projectedGroupCount: 0, eligibleGroupCount: 0, groupCoverage: 1, projectedDistinctEssaySupportSum: 0, eligibleDistinctEssaySupportSum: 0, supportWeightedCoverage: 1, projectedOccurrenceSum: 0, eligibleOccurrenceSum: 0, occurrenceWeightedCoverage: 1 },
-    },
+    projection: structuredClone(built.projection),
   } as unknown as Extract<ClassReviewProjectionResult, { status: 'ready' }>
   Object.defineProperty(ready, 'hidden', {
-    value: { dimensionAliases: new Map(), selectedGroups: new Map(), unprojectedMustCover: [] },
+    value: {
+      dimensionAliases: built.hidden.dimensionAliases,
+      selectedGroups: built.hidden.selectedGroups,
+      unprojectedMustCover: structuredClone([...built.hidden.unprojectedMustCover]),
+    },
     enumerable: false,
     writable: false,
     configurable: false,
@@ -67,60 +120,135 @@ function projection(): Extract<ClassReviewProjectionResult, { status: 'ready' }>
 }
 
 function projectionWithGroup(): Extract<ClassReviewProjectionResult, { status: 'ready' }> {
-  const ready = projection()
-  const atomicTopic = { kind: 'atomic' as const, keyVersion: 'topic-key-v1' as const, taskScope: `scope_v1_${'1'.repeat(32)}`, key: 'tk1.aaaaaaaaaaaaaaaa', fingerprintDigest: `fp1.${'b'.repeat(64)}` }
-  ready.projection.groups = [{ groupId: 'g1', type: 'grammar', subtype: null, severity: 'medium', title: 'Agreement', mustCover: true, distinctEssaySupport: 2, occurrenceCount: 2, excerpt: { originalText: 'She go home.', suggestionOrDiagnosis: 'Use goes.' } }]
-  ready.projection.semanticCoverage = { projectedGroupCount: 1, eligibleGroupCount: 1, groupCoverage: 1, projectedDistinctEssaySupportSum: 2, eligibleDistinctEssaySupportSum: 2, supportWeightedCoverage: 1, projectedOccurrenceSum: 2, eligibleOccurrenceSum: 2, occurrenceWeightedCoverage: 1 }
-  ready.hidden.selectedGroups = new Map([['g1', { atomicTopic, title: { status: 'kept', text: 'Agreement', redactionVersion: 'class-review-redaction-v1', scrubbedEvidenceKey: `scrub_v1_${'1'.repeat(32)}` }, excerpt: { originalText: { status: 'kept', text: 'She go home.', redactionVersion: 'class-review-redaction-v1', scrubbedEvidenceKey: `scrub_v1_${'2'.repeat(32)}` }, suggestionOrDiagnosis: { status: 'kept', text: 'Use goes.', redactionVersion: 'class-review-redaction-v1', scrubbedEvidenceKey: `scrub_v1_${'3'.repeat(32)}` } }, essayIds: ['essay-a', 'essay-b'], occurrenceCount: 2 }]])
+  const group: ClassReviewAggregate['issueGroups'][number] = {
+    fingerprint: 'group-one',
+    type: 'grammar',
+    subtype: null,
+    severity: 'medium',
+    title: 'Agreement',
+    originalText: 'She go home.',
+    suggestionOrDiagnosis: 'Use goes.',
+    changeTypes: ['grammar'],
+    distinctEssaySupport: 2,
+    occurrenceCount: 2,
+    essayIds: ['essay-a', 'essay-b'],
+    mustCover: true,
+  }
+  const built = buildClassReviewProjection({
+    aggregate: projectionAggregate([group]),
+    redactionContext: {
+      prepare: () => ({
+        atomicTopic: groupOneAtomicTopic,
+        title: keptRedaction('Agreement', `scrub_v1_${'1'.repeat(32)}`),
+        excerpt: {
+          originalText: keptRedaction('She go home.', `scrub_v1_${'2'.repeat(32)}`),
+          suggestionOrDiagnosis: keptRedaction('Use goes.', `scrub_v1_${'3'.repeat(32)}`),
+        },
+      }),
+    },
+    limits: DEFAULT_CLASS_REVIEW_PROJECTION_LIMITS,
+  })
+  if (built.status !== 'ready') throw new Error('test projection fixture failed')
+  const ready = {
+    status: 'ready',
+    projection: structuredClone(built.projection),
+  } as Extract<ClassReviewProjectionResult, { status: 'ready' }>
+  Object.defineProperty(ready, 'hidden', {
+    value: {
+      dimensionAliases: built.hidden.dimensionAliases,
+      selectedGroups: built.hidden.selectedGroups,
+      unprojectedMustCover: structuredClone([...built.hidden.unprojectedMustCover]),
+    },
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  })
   return ready
 }
 
 function projectionWithTwoGroups(): Extract<ClassReviewProjectionResult, { status: 'ready' }> {
-  const ready = projectionWithGroup()
-  const atomicTopic = {
-    kind: 'atomic' as const,
-    keyVersion: 'topic-key-v1' as const,
-    taskScope: `scope_v1_${'1'.repeat(32)}`,
-    key: 'tk1.bbbbbbbbbbbbbbbb',
-    fingerprintDigest: `fp1.${'c'.repeat(64)}`,
+  const grammar: ClassReviewAggregate['issueGroups'][number] = {
+    fingerprint: 'group-one',
+    type: 'grammar',
+    subtype: null,
+    severity: 'medium',
+    title: 'Agreement',
+    originalText: 'She go home.',
+    suggestionOrDiagnosis: 'Use goes.',
+    changeTypes: ['grammar'],
+    distinctEssaySupport: 2,
+    occurrenceCount: 2,
+    essayIds: ['essay-a', 'essay-b'],
+    mustCover: true,
   }
-  ready.projection.groups.push({
-    groupId: 'g2',
+  const spelling: ClassReviewAggregate['issueGroups'][number] = {
+    fingerprint: 'group-two',
     type: 'spelling',
     subtype: null,
     severity: 'low',
     title: 'Spelling',
-    mustCover: true,
+    originalText: 'Spelling original',
+    suggestionOrDiagnosis: 'Spelling suggestion',
+    changeTypes: ['spelling'],
     distinctEssaySupport: 2,
     occurrenceCount: 3,
-    excerpt: null,
-  })
-  ready.projection.semanticCoverage = {
-    projectedGroupCount: 2,
-    eligibleGroupCount: 2,
-    groupCoverage: 1,
-    projectedDistinctEssaySupportSum: 4,
-    eligibleDistinctEssaySupportSum: 4,
-    supportWeightedCoverage: 1,
-    projectedOccurrenceSum: 5,
-    eligibleOccurrenceSum: 5,
-    occurrenceWeightedCoverage: 1,
+    essayIds: ['essay-a', 'essay-c'],
+    mustCover: true,
   }
-  ready.hidden.selectedGroups = new Map([
-    ...ready.hidden.selectedGroups,
-    ['g2', {
-      atomicTopic,
-      title: {
-        status: 'kept',
-        text: 'Spelling',
-        redactionVersion: 'class-review-redaction-v1',
-        scrubbedEvidenceKey: `scrub_v1_${'4'.repeat(32)}`,
-      },
-      excerpt: null,
-      essayIds: ['essay-a', 'essay-c'],
-      occurrenceCount: 3,
-    }],
-  ])
+  const built = buildClassReviewProjection({
+    aggregate: projectionAggregate([grammar, spelling]),
+    redactionContext: {
+      prepare: (source) => source.fingerprint === 'group-two'
+        ? {
+            atomicTopic: groupTwoAtomicTopic,
+            title: keptRedaction('Spelling', `scrub_v1_${'4'.repeat(32)}`),
+            excerpt: null,
+          }
+        : {
+            atomicTopic: groupOneAtomicTopic,
+            title: keptRedaction('Agreement', `scrub_v1_${'1'.repeat(32)}`),
+            excerpt: {
+              originalText: keptRedaction('She go home.', `scrub_v1_${'2'.repeat(32)}`),
+              suggestionOrDiagnosis: keptRedaction('Use goes.', `scrub_v1_${'3'.repeat(32)}`),
+            },
+          },
+    },
+    limits: DEFAULT_CLASS_REVIEW_PROJECTION_LIMITS,
+  })
+  if (built.status !== 'ready') throw new Error('test projection fixture failed')
+  const ready = {
+    status: 'ready',
+    projection: structuredClone(built.projection),
+  } as Extract<ClassReviewProjectionResult, { status: 'ready' }>
+  Object.defineProperty(ready, 'hidden', {
+    value: {
+      dimensionAliases: built.hidden.dimensionAliases,
+      selectedGroups: built.hidden.selectedGroups,
+      unprojectedMustCover: structuredClone([...built.hidden.unprojectedMustCover]),
+    },
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  })
+  return ready
+}
+
+function forgedProjectionWithNativeHiddenMaps(): Extract<ClassReviewProjectionResult, { status: 'ready' }> {
+  const source = projection()
+  const ready = {
+    status: 'ready',
+    projection: structuredClone(source.projection),
+  } as Extract<ClassReviewProjectionResult, { status: 'ready' }>
+  Object.defineProperty(ready, 'hidden', {
+    value: {
+      dimensionAliases: new Map(source.hidden.dimensionAliases),
+      selectedGroups: new Map(source.hidden.selectedGroups),
+      unprojectedMustCover: structuredClone([...source.hidden.unprojectedMustCover]),
+    },
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  })
   return ready
 }
 
@@ -286,7 +414,7 @@ describe('local class review coordinator', () => {
     value.registerWorkspace({ taskKey: 'task-1', taskRevision: 1, rubricRevisionDigest: validRubricDigest, report: draft(), projection: ready })
     const first = value.generate({ taskKey: 'task-1', generationId: 'browser-g1', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })
     await vi.waitFor(() => expect(deferred.calls()).toBe(1))
-    ;(ready.hidden.dimensionAliases as Map<string, string>).set('dimension-1', 'alias-1')
+    ready.hidden.dimensionAliases = new Map([['dimension-1', 'alias-1']])
     const replay = value.generate({ taskKey: 'task-1', generationId: 'browser-g2', intent: 'initial', expectedTaskRevision: 1, expectedReportRevision: 1 })
     expect(deferred.calls()).toBe(1)
     await vi.waitFor(() => expect(id).toBeGreaterThanOrEqual(4))
@@ -2116,6 +2244,7 @@ describe('Task 8 round 4 reservation, source-capture, and imported-fact contract
         topicKey: string
         essayIdentities: readonly string[]
         occurrenceCount: number
+        systemBlock: ClassReviewIssueBlockV1
       }[]
     }) => void
     registerWithSystemFacts({
@@ -2128,6 +2257,7 @@ describe('Task 8 round 4 reservation, source-capture, and imported-fact contract
         topicKey: systemBlock.topicKey,
         essayIdentities: ['essay-system-a', 'essay-system-b'],
         occurrenceCount: 2,
+        systemBlock,
       }],
     })
     const teacher = teacherBlock('authorized-teacher', systemBlock.topicKey)
@@ -2177,6 +2307,7 @@ describe('Task 8 round 4 reservation, source-capture, and imported-fact contract
         topicKey: mixedBlock.topicKey,
         essayIdentities: ['essay-system-a', 'essay-system-b'],
         occurrenceCount: 2,
+        systemBlock,
       }],
     }
     expect(() => mixedValue.registerWorkspace(mixedRegistration)).toThrow('class_review_candidate_conflict')
@@ -2586,6 +2717,21 @@ describe('Task 8 round 5 registry, identity, deletion, and canonical workspace c
     }
   })
 
+  it('rejects ordinary native Maps in hidden projection state before workspace registration', () => {
+    const value = createLocalClassReviewCoordinator({
+      synthesisClient: createFakeClassReviewSynthesisClient({ scenario: 'success' }),
+      topicKeySecret: new Uint8Array(32).fill(7),
+      now: () => '2026-08-30T00:00:00.000Z',
+      createOpaqueId: () => 'opaque',
+    })
+
+    expect(() => value.registerWorkspace({
+      taskKey: 'round5-native-hidden-map', taskRevision: 1,
+      rubricRevisionDigest: validRubricDigest, report: draft(), projection: forgedProjectionWithNativeHiddenMaps(),
+    })).toThrow('class_review_candidate_conflict')
+    expect(() => value.getSnapshot('round5-native-hidden-map')).toThrow('class_review_not_eligible')
+  })
+
   it.each(['enumerable-hidden', 'writable-hidden', 'configurable-hidden', 'forged-readonly-map'] as const)(
     'rejects %s projection privacy forgery atomically',
     (kind) => {
@@ -2689,6 +2835,39 @@ describe('Task 8 round 5 registry, identity, deletion, and canonical workspace c
     },
   )
 
+  it('rejects an ai report whose snapshot metadata is detached from the registered projection', () => {
+    const report = aiAvailable()
+    report.snapshotMetadata = {
+      ...report.snapshotMetadata,
+      semanticCoverage: {
+        projectedGroupCount: 1,
+        eligibleGroupCount: 1,
+        groupCoverage: 1,
+        projectedDistinctEssaySupportSum: 2,
+        eligibleDistinctEssaySupportSum: 2,
+        supportWeightedCoverage: 1,
+        projectedOccurrenceSum: 2,
+        eligibleOccurrenceSum: 2,
+        occurrenceWeightedCoverage: 1,
+      },
+    }
+    const value = createLocalClassReviewCoordinator({
+      synthesisClient: createFakeClassReviewSynthesisClient({ scenario: 'success' }),
+      topicKeySecret: new Uint8Array(32).fill(7),
+      now: () => '2026-08-30T00:00:00.000Z',
+      createOpaqueId: () => 'opaque',
+    })
+
+    expect(() => value.registerWorkspace({
+      taskKey: 'round5-detached-snapshot-metadata',
+      taskRevision: 1,
+      rubricRevisionDigest: validRubricDigest,
+      report,
+      projection: projection(),
+    })).toThrow('class_review_candidate_conflict')
+    expect(() => value.getSnapshot('round5-detached-snapshot-metadata')).toThrow('class_review_not_eligible')
+  })
+
   it('binds an imported system denominator to the applied report issue-eligible snapshot', () => {
     const systemBlock: ClassReviewIssueBlockV1 = {
       blockId: 'round5-system-denominator',
@@ -2723,6 +2902,7 @@ describe('Task 8 round 5 registry, identity, deletion, and canonical workspace c
         topicKey: systemBlock.topicKey,
         essayIdentities: ['essay-a', 'essay-b'],
         occurrenceCount: 2,
+        systemBlock,
       }],
     })).toThrow('class_review_candidate_conflict')
   })
@@ -2762,6 +2942,7 @@ describe('Task 8 round 5 registry, identity, deletion, and canonical workspace c
       topicKey: mixed.topicKey,
       essayIdentities: ['essay-system-a', 'essay-system-b'],
       occurrenceCount: 2,
+      systemBlock,
     }
     const value = createLocalClassReviewCoordinator({
       synthesisClient: createFakeClassReviewSynthesisClient({ scenario: 'success' }),

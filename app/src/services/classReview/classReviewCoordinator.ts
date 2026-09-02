@@ -14,8 +14,11 @@ import {
   type TeacherEvidenceFact,
 } from './classReviewMerge'
 import {
+  cloneClassReviewProjectionHiddenState,
   snapshotClassReviewProjectionReadonlyMap,
   type ClassReviewProjectionResult,
+  type HiddenMustCoverFallbackV1,
+  type HiddenSelectedGroupV1,
 } from './classReviewProjection'
 import {
   createLocalClassReviewRegistry,
@@ -415,6 +418,19 @@ function captureExactReadonlyMap(
   }
 }
 
+function captureProjectionReadonlyMap(
+  input: unknown,
+  maximum: number,
+): readonly (readonly [unknown, unknown])[] {
+  try {
+    const trustedSnapshot = snapshotClassReviewProjectionReadonlyMap(input, maximum)
+    if (trustedSnapshot === null) throw new Error('invalid')
+    return trustedSnapshot
+  } catch {
+    return fail('class_review_candidate_conflict')
+  }
+}
+
 function captureClassReviewStatistics(input: unknown): ClassReviewStatisticsV1 {
   const value = captureExactDataRecord(input, [
     'totalEssayCount',
@@ -467,6 +483,21 @@ function captureSemanticCoverage(input: unknown): ClassReviewSynthesisRequestV1[
     'eligibleOccurrenceSum',
     'occurrenceWeightedCoverage',
   ]) as unknown as ClassReviewSynthesisRequestV1['semanticCoverage']
+}
+
+function semanticCoverageMatches(
+  left: ClassReviewSynthesisRequestV1['semanticCoverage'],
+  right: ClassReviewSynthesisRequestV1['semanticCoverage'],
+): boolean {
+  return left.projectedGroupCount === right.projectedGroupCount
+    && left.eligibleGroupCount === right.eligibleGroupCount
+    && left.groupCoverage === right.groupCoverage
+    && left.projectedDistinctEssaySupportSum === right.projectedDistinctEssaySupportSum
+    && left.eligibleDistinctEssaySupportSum === right.eligibleDistinctEssaySupportSum
+    && left.supportWeightedCoverage === right.supportWeightedCoverage
+    && left.projectedOccurrenceSum === right.projectedOccurrenceSum
+    && left.eligibleOccurrenceSum === right.eligibleOccurrenceSum
+    && left.occurrenceWeightedCoverage === right.occurrenceWeightedCoverage
 }
 
 function captureSynthesisStatistics(input: unknown): ClassReviewSynthesisRequestV1['statistics'] {
@@ -564,7 +595,7 @@ function captureHiddenExcerpt(input: unknown): Record<string, unknown> | null {
   }
 }
 
-function captureHiddenSelectedGroup(input: unknown): Record<string, unknown> {
+function captureHiddenSelectedGroup(input: unknown): HiddenSelectedGroupV1 {
   const value = captureExactDataRecord(input, [
     'atomicTopic',
     'title',
@@ -578,7 +609,7 @@ function captureHiddenSelectedGroup(input: unknown): Record<string, unknown> {
     excerpt: captureHiddenExcerpt(value.excerpt),
     essayIds: captureExactStringArray(value.essayIds),
     occurrenceCount: value.occurrenceCount,
-  }
+  } as unknown as HiddenSelectedGroupV1
 }
 
 function captureFallbackContent(input: unknown): Record<string, unknown> {
@@ -603,7 +634,7 @@ function captureFallbackContent(input: unknown): Record<string, unknown> {
   return value
 }
 
-function captureHiddenFallback(input: unknown): Record<string, unknown> {
+function captureHiddenFallback(input: unknown): HiddenMustCoverFallbackV1 {
   const value = captureExactDataRecord(input, [
     'atomicTopic',
     'type',
@@ -623,7 +654,7 @@ function captureHiddenFallback(input: unknown): Record<string, unknown> {
     occurrenceCount: value.occurrenceCount,
     content: captureFallbackContent(value.content),
     anonymousExample: value.anonymousExample,
-  }
+  } as unknown as HiddenMustCoverFallbackV1
 }
 
 function captureReadyProjection(input: unknown): ReadyProjection {
@@ -643,24 +674,26 @@ function captureReadyProjection(input: unknown): ReadyProjection {
     'selectedGroups',
     'unprojectedMustCover',
   ])
-  const dimensionAliases = new Map<string, string>()
-  for (const [key, alias] of captureExactReadonlyMap(
+  const dimensionAliases: Array<readonly [string, string]> = []
+  for (const [key, alias] of captureProjectionReadonlyMap(
     hidden.dimensionAliases,
     CAPTURE_LIMITS.dimensions,
   )) {
     if (typeof key !== 'string' || typeof alias !== 'string') {
       return fail('class_review_candidate_conflict')
     }
-    dimensionAliases.set(key, alias)
+    dimensionAliases.push([key, alias])
   }
-  const selectedGroups = new Map<string, ReturnType<typeof captureHiddenSelectedGroup>>()
-  for (const [key, group] of captureExactReadonlyMap(
+  const selectedGroups: Array<readonly [string, ReturnType<typeof captureHiddenSelectedGroup>]> = []
+  for (const [key, group] of captureProjectionReadonlyMap(
     hidden.selectedGroups,
     CAPTURE_LIMITS.groups,
   )) {
     if (typeof key !== 'string') return fail('class_review_candidate_conflict')
-    selectedGroups.set(key, captureHiddenSelectedGroup(group))
+    selectedGroups.push([key, captureHiddenSelectedGroup(group)])
   }
+  const unprojectedMustCover = captureExactArray(hidden.unprojectedMustCover, CAPTURE_LIMITS.records)
+    .map(captureHiddenFallback)
   const capturedProjection = {
     status: value.status,
     projection: {
@@ -670,11 +703,11 @@ function captureReadyProjection(input: unknown): ReadyProjection {
     },
   }
   Object.defineProperty(capturedProjection, 'hidden', {
-    value: {
+    value: cloneClassReviewProjectionHiddenState({
       dimensionAliases,
       selectedGroups,
-      unprojectedMustCover: captureExactArray(hidden.unprojectedMustCover, CAPTURE_LIMITS.records).map(captureHiddenFallback),
-    },
+      unprojectedMustCover,
+    }),
     enumerable: false,
     writable: false,
     configurable: false,
@@ -862,12 +895,15 @@ function captureSystemEvidenceFact(input: unknown): SystemEvidenceFact {
   const value = captureOneOfDataRecords(input, [
     ['topicKey', 'essayIdentities', 'occurrenceCount'],
     ['topicKey', 'essayIdentities', 'occurrenceCount', 'identityMode'],
+    ['topicKey', 'essayIdentities', 'occurrenceCount', 'systemBlock'],
+    ['topicKey', 'essayIdentities', 'occurrenceCount', 'identityMode', 'systemBlock'],
   ])
   return {
     topicKey: value.topicKey,
     essayIdentities: captureExactStringArray(value.essayIdentities, CAPTURE_LIMITS.records),
     occurrenceCount: value.occurrenceCount,
     ...(Object.hasOwn(value, 'identityMode') ? { identityMode: value.identityMode } : {}),
+    ...(Object.hasOwn(value, 'systemBlock') ? { systemBlock: captureIssueBlock(value.systemBlock) } : {}),
   } as unknown as SystemEvidenceFact
 }
 
@@ -1194,11 +1230,7 @@ export function createLocalClassReviewCoordinator(options: {
       projection: structuredClone(input.projection),
     }
     Object.defineProperty(clone, 'hidden', {
-      value: {
-        dimensionAliases: new Map(input.hidden.dimensionAliases),
-        selectedGroups: new Map([...input.hidden.selectedGroups].map(([key, value]) => [key, structuredClone(value)])),
-        unprojectedMustCover: structuredClone([...input.hidden.unprojectedMustCover]),
-      },
+      value: cloneClassReviewProjectionHiddenState(input.hidden),
       enumerable: false,
       writable: false,
       configurable: false,
@@ -2338,6 +2370,15 @@ export function createLocalClassReviewCoordinator(options: {
         }
       }
       const projection = cloneReadyProjection(input.projection)
+      if (report.workspaceState === 'ai_available') {
+        const metadata = report.snapshotMetadata
+        if (metadata.totalEssayCount !== projection.projection.statistics.totalEssayCount
+          || metadata.includedEssayCount !== projection.projection.statistics.includedEssayCount
+          || metadata.issueEligibleEssayCount !== projection.projection.statistics.issueEligibleEssayCount
+          || !semanticCoverageMatches(metadata.semanticCoverage, projection.projection.semanticCoverage)) {
+          fail('class_review_candidate_conflict')
+        }
+      }
       const registrationRequest = buildRequest(
         input.rubricRevisionDigest,
         projection,
