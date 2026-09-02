@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ErrorAnnotation, LegibilityIssue, LogicIssue, SentenceRevision } from '../types'
-import { buildReviewIssueItems } from './reviewIssueItems'
+import { buildClassReviewIssueInputFromReviewIssue, buildReviewIssueItems } from './reviewIssueItems'
 
 describe('buildReviewIssueItems', () => {
   const annotations: ErrorAnnotation[] = [
@@ -61,6 +61,7 @@ describe('buildReviewIssueItems', () => {
         id: 'err-1',
         source: 'language',
         typeLabel: 'grammar',
+        sourceLocator: 'language.err-1',
         original: 'I suggest you joins the club.',
         suggestion: 'I suggest you join the club.',
         explanation: '修正 suggest 句型。',
@@ -77,6 +78,7 @@ describe('buildReviewIssueItems', () => {
         id: 'logic-1',
         source: 'logic',
         typeLabel: '上下文关联度差',
+        sourceLocator: 'logic.logic-1',
         diagnosis: '上下文关联度差：与前后文缺少明确关系。',
         suggestedActionLabel: '建议学生补充说明',
         conservativeSuggestion: '建议学生补充原因，或由教师判断是否删除。',
@@ -109,6 +111,7 @@ describe('buildReviewIssueItems', () => {
       source: 'legibility',
       categoryLabel: '卷面与可读性',
       title: '字迹不清导致语义无法确认',
+      sourceLocator: 'legibility.legibility-1',
       original: 'cant',
       diagnosis: 'The handwriting does not establish the intended word.',
       suggestion: "系统默认按错误处理；可能读法：cant / can't",
@@ -121,5 +124,26 @@ describe('buildReviewIssueItems', () => {
     })
     expect(items[0]).not.toHaveProperty('pageReference')
     expect(items[1]).not.toHaveProperty('pageReference')
+  })
+
+  it('builds class-review issue inputs with the current result revision', () => {
+    const [issue] = buildReviewIssueItems({ annotations, revisions, logicIssues: [] })
+
+    expect(buildClassReviewIssueInputFromReviewIssue({
+      taskId: 'task-1',
+      essayId: 'essay-1',
+      resultRevision: 3,
+      issue,
+    })).toEqual({
+      taskId: 'task-1',
+      essayId: 'essay-1',
+      sourceLocator: 'language.err-1',
+      sourceResultRevision: 3,
+      title: 'grammar',
+      diagnosis: '修正 suggest 句型。',
+      teachingAction: '建议改为：I suggest you join the club.',
+      severity: 'high',
+      anonymousExample: 'I suggest you joins the club.',
+    })
   })
 })

@@ -113,7 +113,7 @@ describe('detail flow back navigation', () => {
 
     await user.click(screen.getAllByRole('button', { name: '加入班级总览' })[0])
 
-    expect(screen.getByRole('button', { name: '已加入班级总览' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '移出班级总览' })).toBeInTheDocument()
   })
 
   it('integrates expression upgrades into full text revision with optional class overview feedback', async () => {

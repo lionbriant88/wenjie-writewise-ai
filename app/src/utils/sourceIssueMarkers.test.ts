@@ -9,6 +9,7 @@ const issues: ReviewIssueCardItem[] = [
     source: 'language',
     typeLabel: 'grammar',
     severity: 'high',
+    sourceLocator: 'language.language-1',
     original: 'I suggest you joins the club.',
     suggestion: 'I suggest you join the club.',
     explanation: 'suggest 后使用动词原形。',
@@ -18,6 +19,7 @@ const issues: ReviewIssueCardItem[] = [
     source: 'logic',
     typeLabel: '上下文关联度差',
     severity: 'medium',
+    sourceLocator: 'logic.logic-1',
     original: 'My mother was angry.',
     diagnosis: '上下文关联度差。',
     suggestedActionLabel: '建议学生补充说明',
@@ -27,6 +29,7 @@ const issues: ReviewIssueCardItem[] = [
     source: 'language',
     typeLabel: 'spelling',
     severity: 'low',
+    sourceLocator: 'language.missing-1',
     original: 'not in source',
     suggestion: 'not in source',
     explanation: 'missing',
@@ -94,10 +97,12 @@ describe('sourceIssueMarkers', () => {
     const nestedIssues: ReviewIssueCardItem[] = [
       {
         id: 'outer-high', source: 'language', typeLabel: 'structure', severity: 'high',
+        sourceLocator: 'language.outer-high',
         original: 'outer inner tail', suggestion: 'outer revised tail', explanation: 'Outer issue.',
       },
       {
         id: 'inner-medium', source: 'logic', typeLabel: 'unclear_logic', severity: 'medium',
+        sourceLocator: 'logic.inner-medium',
         original: 'inner', diagnosis: 'Inner issue.', suggestedActionLabel: 'Clarify it.',
       },
     ]

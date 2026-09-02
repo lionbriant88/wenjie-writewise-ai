@@ -97,10 +97,12 @@ describe('EssaySourcePanel', () => {
     const nestedIssues: ReviewIssueCardItem[] = [
       {
         id: 'outer-high', source: 'language', typeLabel: 'structure', severity: 'high',
+        sourceLocator: 'language.outer-high',
         original: 'outer inner tail', suggestion: 'outer revised tail', explanation: 'Outer issue.',
       },
       {
         id: 'inner-medium', source: 'logic', typeLabel: 'unclear_logic', severity: 'medium',
+        sourceLocator: 'logic.inner-medium',
         original: 'inner', diagnosis: 'Inner issue.', suggestedActionLabel: 'Clarify it.',
       },
     ]

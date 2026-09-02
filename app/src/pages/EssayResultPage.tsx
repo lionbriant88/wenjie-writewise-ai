@@ -10,9 +10,8 @@ import { IssueCorrectionList } from '../components/IssueCorrectionList'
 import { OriginalPaperWorkspace } from '../components/OriginalPaperWorkspace'
 import { useAppState } from '../context/useAppState'
 import { AppLayout } from '../layout/AppLayout'
-import { buildClassReviewMaterialFromIssue } from '../utils/classReviewMaterials'
 import { calculateTotalScore, clampDimensionScore, formatTotalScore } from '../utils/gradingDiagnostics'
-import { buildReviewIssueItems } from '../utils/reviewIssueItems'
+import { buildClassReviewIssueInputFromReviewIssue, buildReviewIssueItems } from '../utils/reviewIssueItems'
 import { buildSourceIssueMarkers } from '../utils/sourceIssueMarkers'
 import { findTextMatch } from '../utils/textHighlight'
 import { findEssay, findEssaysByTask, findResultByEssayId, findTask } from '../utils/taskLookup'
@@ -160,8 +159,7 @@ export function EssayResultPage() {
     updateEssayOcrText,
     updateGradingResult,
     confirmGradingResult,
-    addClassReviewMaterial,
-    isClassReviewMaterialAdded,
+    classReview,
   } = useAppState()
   const [saveNotice, setSaveNotice] = useState('')
   const [activeDetailTab, setActiveDetailTab] = useState<EssayDetailTab>('scoring')
@@ -245,13 +243,47 @@ export function EssayResultPage() {
     : findTextMatch(essay.ocrText, activeIssue.original)
       ? 'located'
       : 'missing'
-  const getMaterialInput = (issue: (typeof reviewIssueItems)[number]) =>
-    buildClassReviewMaterialFromIssue({
+  const resultRevision = result.resultRevision ?? 0
+  const classReviewSnapshot = classReview.peekSnapshot(task.id)
+  const getIssueInput = (issue: (typeof reviewIssueItems)[number]) =>
+    buildClassReviewIssueInputFromReviewIssue({
       taskId: task.id,
       essayId: essay.id,
-      essayLabel: essay.essayNumber,
+      resultRevision,
       issue,
     })
+  const issueMatchesRef = (
+    issue: (typeof reviewIssueItems)[number],
+    ref: { sourceLocator: string; sourceResultRevision: number; anonymousExample: string | null },
+  ) =>
+    ref.sourceLocator === issue.sourceLocator
+    && ref.sourceResultRevision === resultRevision
+    && (ref.anonymousExample === null || ref.anonymousExample === issue.original)
+  const findTeacherEvidenceId = (issue: (typeof reviewIssueItems)[number]) => {
+    if (!classReviewSnapshot) return null
+    const sourceLocator = issue.sourceLocator
+    for (const block of classReviewSnapshot.report.issueBlocks) {
+      for (const ref of block.evidenceRefs) {
+        if (
+          ref.selectionOrigin === 'teacher_selected'
+          && ref.sourceLocator === sourceLocator
+          && issueMatchesRef(issue, ref)
+        ) return ref.evidenceId
+      }
+    }
+    return null
+  }
+  const getIssueClassReviewState = (issue: (typeof reviewIssueItems)[number]) => {
+    if (findTeacherEvidenceId(issue)) return 'teacher_selected'
+    if (!classReviewSnapshot) return 'available'
+    for (const block of classReviewSnapshot.report.issueBlocks) {
+      const hasSystemRef = block.evidenceRefs.some((ref) =>
+        ref.selectionOrigin === 'system_generation'
+        && (issueMatchesRef(issue, ref) || block.anonymousExamples.includes(issue.original)))
+      if (hasSystemRef) return 'system_included'
+    }
+    return 'available'
+  }
 
   return (
     <AppLayout
@@ -420,8 +452,13 @@ export function EssayResultPage() {
                 activeIssueId={activeIssueId}
                 activeIssueLocateStatus={activeIssueLocateStatus}
                 onIssueSelect={setActiveIssueId}
-                isIssueAdded={(issue) => isClassReviewMaterialAdded(getMaterialInput(issue))}
-                onAddIssue={(issue) => addClassReviewMaterial(getMaterialInput(issue))}
+                getIssueClassReviewState={getIssueClassReviewState}
+                onAddIssue={(issue) => classReview.addIssue(getIssueInput(issue))}
+                onRemoveIssue={(issue) => {
+                  const evidenceId = findTeacherEvidenceId(issue)
+                  if (evidenceId) classReview.removeIssue(task.id, evidenceId)
+                }}
+                onUndoRemove={() => classReview.undoIssueRemoval(task.id)}
               />
             ) : null}
 

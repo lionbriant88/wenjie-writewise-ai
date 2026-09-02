@@ -608,6 +608,18 @@ export function AppStateProvider({
     }
   }, [ensureClassReviewWorkspace])
 
+  const peekClassReviewSnapshot = useCallback((taskId: string): ClassReviewAppSnapshot | null => {
+    if (!classReviewSourceStateRef.current.has(taskId)) return null
+    const snapshot = classReviewCoordinatorRef.current!.getSnapshot(taskId)
+    const taskEssays = essaysRef.current.filter((essay) => essay.taskId === taskId)
+    const isSettled = taskIsSettledForClassReview(taskEssays)
+    return {
+      ...snapshot,
+      canGenerate: reportCanGenerate(snapshot.report, snapshot.sourceReady, isSettled),
+      isSettled,
+    }
+  }, [])
+
   const findCurrentClassReviewResult = useCallback((essayId: string): GradingResult | undefined =>
     gradingResultsRef.current.find((result) => result.essayId === essayId), [])
 
@@ -1093,6 +1105,7 @@ export function AppStateProvider({
 
   const classReview = useMemo(() => ({
     getSnapshot: getClassReviewSnapshot,
+    peekSnapshot: peekClassReviewSnapshot,
     generate(taskId: string, intent: 'initial' | 'regenerate' = 'initial') {
       const snapshot = getClassReviewSnapshot(taskId)
       const generationId = `gen.${Date.now().toString(36)}.${hashHex(`${taskId}:${intent}:${snapshot.report.taskRevision}:${snapshot.report.reportRevision}:${classReviewOpaqueCounterRef.current}`).slice(0, 24)}`
@@ -1189,39 +1202,43 @@ export function AppStateProvider({
     classReviewIssueCommandFromInput,
     ensureClassReviewWorkspace,
     getClassReviewSnapshot,
+    peekClassReviewSnapshot,
     syncClassReviewSource,
   ])
 
   const isGradingInFlight = Object.values(taskGradingQueues)
     .some((snapshot) => snapshot.activeCount > 0)
 
-  const value = useMemo(() => ({
-    tasks,
-    essays,
-    taskGradingQueues,
-    isGradingInFlight,
-    gradingResults,
-    classInsights,
-    classReviewMaterials,
-    classReview,
-    createTask,
-    assignTaskClass,
-    confirmMockOcrEssay,
-    enqueueImageEssays,
-    updateEssayOcrText,
-    markEssayManual,
-    startTaskGrading,
-    retryTaskEssay,
-    checkUnknownTaskEssay,
-    resumeTaskGrading,
-    gradeEssay,
-    retryGradeEssay,
-    confirmGradingResult,
-    updateGradingResult,
-    addClassReviewMaterial,
-    removeClassReviewMaterial,
-    isClassReviewMaterialAdded,
-  }), [
+  const value = useMemo(() => {
+    void classReviewVersion
+    return {
+      tasks,
+      essays,
+      taskGradingQueues,
+      isGradingInFlight,
+      gradingResults,
+      classInsights,
+      classReviewMaterials,
+      classReview,
+      createTask,
+      assignTaskClass,
+      confirmMockOcrEssay,
+      enqueueImageEssays,
+      updateEssayOcrText,
+      markEssayManual,
+      startTaskGrading,
+      retryTaskEssay,
+      checkUnknownTaskEssay,
+      resumeTaskGrading,
+      gradeEssay,
+      retryGradeEssay,
+      confirmGradingResult,
+      updateGradingResult,
+      addClassReviewMaterial,
+      removeClassReviewMaterial,
+      isClassReviewMaterialAdded,
+    }
+  }, [
     tasks,
     essays,
     taskGradingQueues,

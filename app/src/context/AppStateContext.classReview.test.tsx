@@ -46,7 +46,9 @@ describe('AppStateContext class review prototype workspace', () => {
     renderClassReviewState({ synthesize })
 
     expect(latestState.classInsights).toEqual([])
+    expect(latestState.classReview.peekSnapshot('task-3')).toBeNull()
     let snapshot = latestState.classReview.getSnapshot('task-3')
+    expect(latestState.classReview.peekSnapshot('task-3')?.report.workspaceState).toBe('draft')
     expect(snapshot.report.workspaceState).toBe('draft')
     expect(snapshot.canGenerate).toBe(true)
     expect(snapshot.report.statistics.includedEssayCount).toBe(12)
@@ -88,8 +90,10 @@ describe('AppStateContext class review prototype workspace', () => {
       latestState.classReview.moveIssue('task-3', snapshot.report.issueBlocks[0].blockId, 0),
     ).not.toThrow()
 
-    release.resolve()
-    await act(async () => { await generation })
+    await act(async () => {
+      release.resolve()
+      await generation
+    })
 
     snapshot = latestState.classReview.getSnapshot('task-3')
     expect(snapshot.report.workspaceState).toBe('ai_available')
@@ -115,19 +119,21 @@ describe('AppStateContext class review prototype workspace', () => {
     if (!result) throw new Error('Missing synthetic result')
 
     expect(result.resultRevision).toBe(0)
-    expect(() =>
-      latestState.classReview.addIssue({
-        taskId: 'task-3',
-        essayId: 'task-3-essay-1',
-        sourceLocator: 'loc.task-3-essay-1.err-before-edit',
-        sourceResultRevision: 1,
-        title: '旧来源版本不应可加入',
-        diagnosis: '这条证据版本还不存在。',
-        teachingAction: '忽略。',
-        severity: 'low',
-        anonymousExample: null,
-      }),
-    ).toThrow('class_review_source_invalidated')
+    expect(() => {
+      act(() =>
+        latestState.classReview.addIssue({
+          taskId: 'task-3',
+          essayId: 'task-3-essay-1',
+          sourceLocator: 'loc.task-3-essay-1.err-before-edit',
+          sourceResultRevision: 1,
+          title: '旧来源版本不应可加入',
+          diagnosis: '这条证据版本还不存在。',
+          teachingAction: '忽略。',
+          severity: 'low',
+          anonymousExample: null,
+        }),
+      )
+    }).toThrow('class_review_source_invalidated')
 
     act(() => latestState.updateGradingResult('task-3-essay-1', { overallComment: 'Teacher revision 1.' }))
     expect(latestState.gradingResults.find((item) => item.essayId === 'task-3-essay-1')).toMatchObject({

@@ -61,6 +61,7 @@ export interface AddClassReviewIssueInput {
 
 export interface ClassReviewAppCommands {
   getSnapshot: (taskId: string) => ClassReviewAppSnapshot
+  peekSnapshot: (taskId: string) => ClassReviewAppSnapshot | null
   generate: (taskId: string, intent?: 'initial' | 'regenerate') => Promise<LocalGenerationRecord>
   checkGeneration: (taskId: string) => ClassReviewAppSnapshot
   applyCandidate: (taskId: string, generationId?: string) => void

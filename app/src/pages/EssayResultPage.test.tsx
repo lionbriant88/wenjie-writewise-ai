@@ -36,16 +36,22 @@ function renderPendingReviewFlow(gradingClient: GradingClient) {
   )
 }
 
-function getIssueCardButton(name: RegExp) {
-  const issueCard = screen
-    .getAllByRole('button', { name })
-    .find((button) => button.getAttribute('aria-pressed') !== null)
+function getIssueCard(name: RegExp) {
+  const issueCard = screen.getByRole('article', { name })
 
   if (!issueCard) {
     throw new Error(`Issue card not found: ${name}`)
   }
 
   return issueCard
+}
+
+function getIssueLocateButton(name: RegExp) {
+  return within(getIssueCard(name)).getByRole('button', { name: '定位原文' })
+}
+
+function getIssueClassReviewButton(name: RegExp, label: '加入班级总览' | '移出班级总览') {
+  return within(getIssueCard(name)).getByRole('button', { name: label })
 }
 
 function getSourceModeButton(mode: 'read' | 'edit') {
@@ -330,27 +336,24 @@ describe('EssayResultPage teacher decision workflow', () => {
 
     await user.click(screen.getAllByRole('button', { name: '加入班级总览' })[0])
 
-    expect(screen.getByRole('button', { name: '已加入班级总览' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '移出班级总览' })).toBeInTheDocument()
   })
 
-  it('adds a language issue to class review materials across the task flow', async () => {
+  it('adds and removes a language issue through the class review workspace without turning it into material', async () => {
     const user = userEvent.setup()
     renderEssayDetail()
 
     await user.click(screen.getByRole('tab', { name: '问题批改' }))
-    await user.click(screen.getAllByRole('button', { name: '加入班级总览' })[0])
-    await user.click(screen.getByRole('button', { name: '已加入班级总览' }))
-    await user.click(screen.getAllByRole('link', { name: '班级总览' })[0])
-    await user.click(screen.getByRole('tab', { name: '教师精选素材' }))
+    await user.click(getIssueClassReviewButton(/I suggest you joins the club\./, '加入班级总览'))
 
-    expect(screen.getByRole('heading', { name: '教师精选讲评素材' })).toBeInTheDocument()
-    expect(screen.getByText('共 1 条素材')).toBeInTheDocument()
-    expect(screen.getByText('典型错误')).toBeInTheDocument()
-    expect(screen.getAllByText('I suggest you joins the club.').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('I suggest you join the club.').length).toBeGreaterThan(0)
-    expect(screen.getAllByText(/suggest/).length).toBeGreaterThan(0)
-    expect(screen.getByText('来源：作文 1')).toBeInTheDocument()
+    expect(getIssueClassReviewButton(/I suggest you joins the club\./, '移出班级总览')).toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: /表达提升/ })).not.toBeInTheDocument()
+
+    await user.click(getIssueClassReviewButton(/I suggest you joins the club\./, '移出班级总览'))
+    expect(screen.getByRole('button', { name: '撤销移出班级总览' })).toHaveFocus()
+
+    await user.click(screen.getByRole('button', { name: '撤销移出班级总览' }))
+    expect(getIssueClassReviewButton(/I suggest you joins the club\./, '移出班级总览')).toHaveFocus()
   })
 
   it('shows logic coherence issues in the issue correction module', async () => {
@@ -363,14 +366,13 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.getByText('建议学生补充说明')).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: '加入班级总览' }).length).toBeGreaterThan(0)
 
-    await user.click(getIssueCardButton(/My mother was angry\./))
+    await user.click(getIssueLocateButton(/My mother was angry\./))
 
     expect(screen.getByText('已定位')).toBeInTheDocument()
 
-    const addButtons = screen.getAllByRole('button', { name: '加入班级总览' })
-    await user.click(addButtons[addButtons.length - 1])
+    await user.click(getIssueClassReviewButton(/My mother was angry\./, '加入班级总览'))
 
-    expect(screen.getByRole('button', { name: '已加入班级总览' })).toBeInTheDocument()
+    expect(getIssueClassReviewButton(/My mother was angry\./, '移出班级总览')).toBeInTheDocument()
   })
 
   it('shows full text revision with safe correction and sentence comparison views', async () => {
@@ -401,7 +403,7 @@ describe('EssayResultPage teacher decision workflow', () => {
     renderEssayDetail()
 
     await user.click(screen.getByRole('tab', { name: '问题批改' }))
-    await user.click(getIssueCardButton(/I suggest you joins the club\./))
+    await user.click(getIssueLocateButton(/I suggest you joins the club\./))
 
     expect(screen.getByText('已定位')).toBeInTheDocument()
   })
@@ -422,7 +424,7 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(screen.queryByLabelText('学生作文识别文本')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('tab', { name: '问题批改' }))
-    await user.click(getIssueCardButton(/I suggest you joins the club\./))
+    await user.click(getIssueLocateButton(/I suggest you joins the club\./))
 
     expect(screen.queryByText('定位预览')).not.toBeInTheDocument()
     expect(screen.getAllByText('I suggest you joins the club.').length).toBeGreaterThanOrEqual(2)
@@ -443,11 +445,8 @@ describe('EssayResultPage teacher decision workflow', () => {
     await user.click(languageMarker as HTMLElement)
 
     expect(view.container.querySelector('[data-issue-source="language"]')).toHaveAttribute('data-active', 'true')
-    expect(
-      screen
-        .getAllByRole('button', { name: /I suggest you joins the club\./ })
-        .some((button) => button.getAttribute('aria-pressed') === 'true'),
-    ).toBe(true)
+    expect(getIssueCard(/I suggest you joins the club\./)).toBeInTheDocument()
+    expect(screen.getByText('已定位')).toBeInTheDocument()
   })
 
   it('hides source issue markers while reviewing recognition text and restores them before save', async () => {
@@ -478,7 +477,7 @@ describe('EssayResultPage teacher decision workflow', () => {
     await user.type(screen.getByLabelText('学生作文识别文本'), 'This edited recognition text no longer contains the issue sentence.')
     await user.click(screen.getByRole('button', { name: '阅读定位' }))
     await user.click(screen.getByRole('tab', { name: '问题批改' }))
-    await user.click(getIssueCardButton(/I suggest you joins the club\./))
+    await user.click(getIssueLocateButton(/I suggest you joins the club\./))
 
     expect(screen.getAllByText('I suggest you joins the club.').length).toBeGreaterThan(0)
   })
@@ -541,7 +540,7 @@ describe('EssayResultPage teacher decision workflow', () => {
     expect(view.container.querySelector('[data-issue-source="logic"]')).not.toBeNull()
 
     await user.click(screen.getByRole('tab', { name: '问题批改' }))
-    expect(getIssueCardButton(/I suggest you joins the club\./)).toHaveAttribute('aria-pressed', 'true')
+    expect(getIssueCard(/I suggest you joins the club\./)).toBeInTheDocument()
     expect(screen.getByText('已定位')).toBeInTheDocument()
 
     await user.click(getSourceModeButton('edit'))
@@ -549,7 +548,7 @@ describe('EssayResultPage teacher decision workflow', () => {
 
     await user.click(getSourceModeButton('read'))
     await user.click(screen.getAllByRole('button', { name: '加入班级总览' })[0])
-    expect(screen.getByRole('button', { name: '已加入班级总览' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '移出班级总览' })).toBeInTheDocument()
 
     await user.click(screen.getByRole('tab', { name: '全文优化' }))
     expect(screen.getByRole('heading', { name: '全文优化稿' })).toBeInTheDocument()

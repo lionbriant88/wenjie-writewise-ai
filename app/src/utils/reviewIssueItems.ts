@@ -1,3 +1,4 @@
+import type { AddClassReviewIssueInput } from '../context/appStateContextValue'
 import type {
   ErrorAnnotation,
   LegibilityIssue,
@@ -21,6 +22,7 @@ export interface ReviewIssueCardItem {
   suggestedActionLabel?: string
   conservativeSuggestion?: string
   needsTeacherReview?: boolean
+  sourceLocator: string
   pageReference?: {
     kind: 'page-description'
     pageNumber: number
@@ -56,6 +58,22 @@ const logicActionLabel: Record<LogicSuggestionAction, string> = {
   ask_student_to_explain: '建议学生补充说明',
 }
 
+function opaqueSegment(value: string): string {
+  const normalized = value.normalize('NFKC').trim().replace(/\s+/gu, '-')
+  const safe = normalized.replace(/[^A-Za-z0-9._~-]/gu, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+  return safe.slice(0, 80) || 'unknown'
+}
+
+function sourceLocator(kind: 'language' | 'logic' | 'legibility', id: string): string {
+  return `${kind}.${opaqueSegment(id)}`
+}
+
+function trimForClassReview(value: string | undefined, fallback: string, maxLength: number): string {
+  const normalized = (value ?? fallback).normalize('NFC').trim().replace(/\s+/gu, ' ')
+  const source = normalized.length > 0 ? normalized : fallback
+  return [...source].slice(0, maxLength).join('')
+}
+
 export function buildReviewIssueItems({
   annotations,
   revisions,
@@ -77,6 +95,7 @@ export function buildReviewIssueItems({
       suggestion: revision?.revised ?? annotation.suggestion,
       explanation: revision?.note ?? annotation.explanation,
       needsTeacherReview: annotation.needsTeacherReview,
+      sourceLocator: sourceLocator('language', annotation.id),
     }
   })
 
@@ -91,6 +110,7 @@ export function buildReviewIssueItems({
     suggestedActionLabel: logicActionLabel[issue.suggestedAction],
     conservativeSuggestion: issue.conservativeSuggestion ?? issue.polishedSuggestion,
     needsTeacherReview: issue.needsTeacherReview,
+    sourceLocator: sourceLocator('logic', issue.id),
   }))
 
   const legibilityItems = legibilityIssues.map((issue): ReviewIssueCardItem => ({
@@ -105,6 +125,7 @@ export function buildReviewIssueItems({
     suggestedActionLabel: '字迹不清导致语义无法确认',
     suggestion: `系统默认按错误处理；可能读法：${issue.possibleReadings.join(' / ')}`,
     conservativeSuggestion: `系统默认按错误处理；可能读法：${issue.possibleReadings.join(' / ')}`,
+    sourceLocator: sourceLocator('legibility', issue.id),
     pageReference: {
       kind: 'page-description',
       pageNumber: issue.pageNumber,
@@ -126,8 +147,48 @@ export function buildReviewIssueItems({
         suggestion: revision?.revised ?? annotation.suggestion,
         explanation: revision?.note ?? annotation.explanation,
         needsTeacherReview: annotation.needsTeacherReview,
+        sourceLocator: sourceLocator('language', annotation.id),
       }
     })
 
   return [...languageItems, ...logicItems, ...legibilityItems, ...highCertaintySpellingItems]
+}
+
+export function buildClassReviewIssueInputFromReviewIssue({
+  taskId,
+  essayId,
+  resultRevision,
+  issue,
+}: {
+  taskId: string
+  essayId: string
+  resultRevision: number
+  issue: ReviewIssueCardItem
+}): AddClassReviewIssueInput {
+  const isLanguage = issue.source === 'language'
+  const diagnosis = isLanguage
+    ? trimForClassReview(issue.explanation, '教师确认该语言问题值得进入班级总览。', 500)
+    : trimForClassReview(issue.diagnosis, '教师确认该问题值得进入班级总览。', 500)
+  const teachingAction = isLanguage
+    ? trimForClassReview(
+        issue.suggestion ? `建议改为：${issue.suggestion}` : issue.explanation,
+        '讲评时引导学生比较原句和修改句。',
+        500,
+      )
+    : trimForClassReview(
+        [issue.suggestedActionLabel, issue.conservativeSuggestion].filter(Boolean).join('：'),
+        '讲评时引导学生说明修改理由。',
+        500,
+      )
+  return {
+    taskId,
+    essayId,
+    sourceLocator: issue.sourceLocator,
+    sourceResultRevision: resultRevision,
+    title: trimForClassReview(issue.title ?? issue.categoryLabel ?? issue.typeLabel, '班级共性问题', 100),
+    diagnosis,
+    teachingAction,
+    severity: issue.severity,
+    anonymousExample: trimForClassReview(issue.original, '', 200) || null,
+  }
 }
