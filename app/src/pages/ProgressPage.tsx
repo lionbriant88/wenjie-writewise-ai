@@ -12,6 +12,7 @@ import {
   filterEssaysByProgressTab,
   getProgressEssayPhase,
   getProgressQueueStats,
+  isClassReviewQueueSettled,
   type ProgressEssayPhase,
   type ProgressQueueTab,
 } from '../utils/progressQueue'
@@ -184,10 +185,8 @@ export function ProgressPage() {
     rubricGeneration,
   )
   const hasExceptions = taskEssays.some((essay) => essay.status === 'needs_review')
-  const terminalForOverview = taskEssays.length > 0 && taskEssays.every((essay) => {
-    const phase = getProgressEssayPhase(essay, queueSnapshot, rubricGeneration)
-    return phase === 'completed' || phase === 'manual'
-  })
+  const terminalForOverview = taskEssays.length > 0
+    && isClassReviewQueueSettled(taskEssays, queueSnapshot, rubricGeneration)
   const pause = queueSnapshot?.pauseReason ? pauseCopy[queueSnapshot.pauseReason] : undefined
   const activeCount = queueSnapshot?.activeCount ?? 0
   const targetConcurrency = queueSnapshot?.targetConcurrency ?? 1

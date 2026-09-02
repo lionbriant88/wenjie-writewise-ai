@@ -3,12 +3,14 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it } from 'vitest'
 import { AppStateProvider } from '../context/AppStateContext'
+import { useAppState } from '../context/useAppState'
 import { EssayResultPage } from './EssayResultPage'
 import { ExceptionsPage } from './ExceptionsPage'
 
-function renderWithRoute(route: string, element: React.ReactElement) {
+function renderWithRoute(route: string, element: React.ReactElement, controls?: React.ReactElement) {
   render(
     <AppStateProvider>
+      {controls}
       <MemoryRouter initialEntries={[route]}>
         <Routes>
           <Route path="/tasks/:taskId/essays/:essayId" element={element} />
@@ -16,6 +18,21 @@ function renderWithRoute(route: string, element: React.ReactElement) {
         </Routes>
       </MemoryRouter>
     </AppStateProvider>,
+  )
+}
+
+function RevisionBumpControl() {
+  const { gradingResults, updateGradingResult } = useAppState()
+  const result = gradingResults.find((item) => item.essayId === 'task-1-essay-1')
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (result) updateGradingResult(result.essayId, { overallComment: `${result.overallComment} Edited.` })
+      }}
+    >
+      模拟修改当前结果版本
+    </button>
   )
 }
 
@@ -114,6 +131,32 @@ describe('detail flow back navigation', () => {
     await user.click(screen.getAllByRole('button', { name: '加入班级总览' })[0])
 
     expect(screen.getByRole('button', { name: '移出班级总览' })).toBeInTheDocument()
+  })
+
+  it('opens a class-review source locator only when the bound result revision is still current', () => {
+    renderWithRoute(
+      '/tasks/task-1/essays/task-1-essay-1?sourceLocator=language.task-1-essay-1-err-1&sourceResultRevision=0',
+      <EssayResultPage />,
+    )
+
+    expect(screen.getByRole('tab', { name: '问题批改' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('已定位')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '教师反馈面板' })).toHaveFocus()
+  })
+
+  it('marks a class-review source as unavailable after the result revision changes', async () => {
+    const user = userEvent.setup()
+    renderWithRoute(
+      '/tasks/task-1/essays/task-1-essay-1?sourceLocator=language.task-1-essay-1-err-1&sourceResultRevision=0',
+      <EssayResultPage />,
+      <RevisionBumpControl />,
+    )
+    expect(screen.getByText('已定位')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '模拟修改当前结果版本' }))
+
+    expect(screen.getByText('该来源版本已更新或不可用')).toBeInTheDocument()
+    expect(screen.queryByText('已定位')).not.toBeInTheDocument()
   })
 
   it('integrates expression upgrades into full text revision with optional class overview feedback', async () => {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useLocation, useParams } from 'react-router-dom'
 import { ArrowLeft, ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { DiagnosticScoreSummary } from '../components/DiagnosticScoreSummary'
 import { EmptyState } from '../components/EmptyState'
@@ -152,6 +152,7 @@ function ReviewActionBar({
 
 export function EssayResultPage() {
   const { taskId = '', essayId = '' } = useParams()
+  const location = useLocation()
   const {
     tasks,
     essays,
@@ -167,6 +168,7 @@ export function EssayResultPage() {
   const [activeIssueId, setActiveIssueId] = useState<string | null>(null)
   const [showOriginalImage, setShowOriginalImage] = useState(false)
   const saveTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
+  const feedbackPanelRef = useRef<HTMLDivElement | null>(null)
   const task = findTask(tasks, taskId)
   const essay = findEssay(essays, essayId)
   const result = findResultByEssayId(gradingResults, essayId)
@@ -175,6 +177,29 @@ export function EssayResultPage() {
   const previousEssayId = essayIndex > 0 ? taskEssays[essayIndex - 1].id : undefined
   const nextEssayId =
     essayIndex >= 0 && essayIndex < taskEssays.length - 1 ? taskEssays[essayIndex + 1].id : undefined
+  const reviewIssueItems = result
+    ? buildReviewIssueItems({
+        annotations: result.errorAnnotations,
+        revisions: result.sentenceRevisions,
+        logicIssues: result.fullTextRevision?.logicIssues,
+        legibilityIssues: result.legibilityIssues ?? [],
+      })
+    : []
+  const resultRevision = result?.resultRevision ?? 0
+  const sourceParams = new URLSearchParams(location.search)
+  const sourceLocatorParam = sourceParams.get('sourceLocator')
+  const sourceRevisionParam = sourceParams.get('sourceResultRevision')
+  const sourceRevision = sourceRevisionParam !== null && /^\d+$/u.test(sourceRevisionParam)
+    ? Number(sourceRevisionParam)
+    : null
+  const hasSourceRequest = sourceLocatorParam !== null || sourceRevisionParam !== null
+  const hasResult = result !== undefined
+  const sourceIssueId = result !== undefined
+    && sourceLocatorParam !== null
+    && sourceRevision !== null
+    && sourceRevision === resultRevision
+    ? reviewIssueItems.find((issue) => issue.sourceLocator === sourceLocatorParam)?.id ?? null
+    : null
 
   useEffect(() => {
     return () => {
@@ -183,6 +208,19 @@ export function EssayResultPage() {
       }
     }
   }, [])
+
+  useEffect(() => {
+    if (!hasSourceRequest || !hasResult) return
+    setWorkspaceMode('grading')
+    setActiveDetailTab('issues')
+    if (sourceIssueId) {
+      setActiveIssueId(sourceIssueId)
+      feedbackPanelRef.current?.focus()
+      return
+    }
+    setActiveIssueId(null)
+    feedbackPanelRef.current?.focus()
+  }, [hasResult, hasSourceRequest, sourceIssueId])
 
   const showSaveNotice = (message = '已保存教师调整') => {
     if (saveTimerRef.current) {
@@ -230,12 +268,6 @@ export function EssayResultPage() {
   const fullScore = task.fullScore ?? 15
   const hasLegibilityIssue = (result.legibilityIssues?.length ?? 0) > 0
   const totalScore = calculateTotalScore(result.dimensionScores, fullScore, hasLegibilityIssue)
-  const reviewIssueItems = buildReviewIssueItems({
-    annotations: result.errorAnnotations,
-    revisions: result.sentenceRevisions,
-    logicIssues: result.fullTextRevision?.logicIssues,
-    legibilityIssues: result.legibilityIssues ?? [],
-  })
   const sourceIssueMarkers = buildSourceIssueMarkers(essay.ocrText, reviewIssueItems)
   const activeIssue = reviewIssueItems.find((issue) => issue.id === activeIssueId) ?? null
   const activeIssueLocateStatus = !activeIssue
@@ -243,7 +275,7 @@ export function EssayResultPage() {
     : findTextMatch(essay.ocrText, activeIssue.original)
       ? 'located'
       : 'missing'
-  const resultRevision = result.resultRevision ?? 0
+  const sourceUnavailable = hasSourceRequest && sourceIssueId === null
   const classReviewSnapshot = classReview.peekSnapshot(task.id)
   const getIssueInput = (issue: (typeof reviewIssueItems)[number]) =>
     buildClassReviewIssueInputFromReviewIssue({
@@ -383,7 +415,21 @@ export function EssayResultPage() {
             />
           </div>
 
-          <div role="region" aria-label="教师反馈面板" className="space-y-5">
+          <div
+            ref={feedbackPanelRef}
+            role="region"
+            aria-label="教师反馈面板"
+            tabIndex={-1}
+            className="space-y-5"
+          >
+            {sourceUnavailable ? (
+              <div
+                role="status"
+                className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900"
+              >
+                该来源版本已更新或不可用
+              </div>
+            ) : null}
             {(saveNotice || result.teacherAdjusted) ? (
               <div className="flex flex-wrap items-center gap-2">
                 {saveNotice ? (

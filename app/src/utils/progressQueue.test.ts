@@ -10,6 +10,7 @@ import {
   getProgressEssayPhase,
   getProgressQueueStats,
   isProcessableEssayStatus,
+  isClassReviewQueueSettled,
   type ProgressEssayPhase,
 } from './progressQueue'
 
@@ -278,5 +279,41 @@ describe('progressQueue', () => {
       '作文 10',
     ])
     expect(filterEssaysByProgressTab(essays, 'completed', taskSnapshot, 3).map((item) => item.id)).toEqual(['作文 1'])
+  })
+
+  it('treats final failures and valid success states as class-review settled while active phases are not settled', () => {
+    const finalFailure = essay('作文 2', 'pending_grading')
+    finalFailure.gradingRun = {
+      status: 'failed',
+      requestId: 'request-final',
+      errorCode: 'provider_content_filtered',
+      errorMessage: '该作文无法自动处理。',
+      retryable: false,
+      completedAt: '2026-07-01T00:00:00.000Z',
+      sourceGeneration: 2,
+      rubricGeneration: 3,
+    }
+    expect(isClassReviewQueueSettled([
+      essay('作文 1', 'completed'),
+      essay('作文 3', 'manual'),
+      essay('作文 4', 'grading_ready'),
+      finalFailure,
+    ], undefined, 3)).toBe(true)
+
+    expect(isClassReviewQueueSettled(
+      [essay('作文 1', 'completed'), essay('作文 5', 'pending_grading')],
+      snapshot([queueItem('作文 5', 'result_unknown')]),
+      3,
+    )).toBe(false)
+    expect(isClassReviewQueueSettled(
+      [essay('作文 1', 'completed'), essay('作文 6', 'pending_grading')],
+      snapshot([queueItem('作文 6', 'rate_limit_wait')]),
+      3,
+    )).toBe(false)
+    expect(isClassReviewQueueSettled(
+      [essay('作文 1', 'completed'), essay('作文 7', 'pending_grading')],
+      undefined,
+      3,
+    )).toBe(false)
   })
 })

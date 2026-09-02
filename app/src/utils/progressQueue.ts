@@ -44,6 +44,14 @@ const pendingPhases = new Set<ProgressEssayPhase>([
   'queued',
   'rate_limit_wait',
 ])
+const classReviewUnsettledPhases = new Set<ProgressEssayPhase>([
+  'waiting',
+  'queued',
+  'running',
+  'rate_limit_wait',
+  'result_unknown',
+  'retryable_failure',
+])
 
 export function isProcessableEssayStatus(status: EssayStatus): boolean {
   return processableStatuses.has(status)
@@ -138,4 +146,16 @@ export function filterEssaysByProgressTab(
   }
 
   return essays
+}
+
+export function isClassReviewQueueSettled(
+  essays: Essay[],
+  snapshot?: TaskQueueSnapshot,
+  rubricGeneration = 0,
+): boolean {
+  return essays.every((essay) => !classReviewUnsettledPhases.has(getProgressEssayPhase(
+    essay,
+    snapshot,
+    rubricGeneration,
+  )))
 }

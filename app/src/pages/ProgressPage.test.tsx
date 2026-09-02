@@ -199,6 +199,7 @@ describe('ProgressPage bounded whole-task grading', () => {
     await user.click(screen.getByRole('button', { name: '开始批改全部待处理作文' }))
     expect(await screen.findByText('结果确认中')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '重试批改' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /进入班级总览/ })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '检查结果' }))
 
     await waitFor(() => expect(requests.filter((request) => request.essayId === unknownEssayId)).toHaveLength(2))
@@ -233,6 +234,36 @@ describe('ProgressPage bounded whole-task grading', () => {
     expect(screen.getByRole('button', { name: '转人工处理' })).toBeEnabled()
   })
 
+  it('offers class-review navigation after the queue settles even when one essay has a final failure', async () => {
+    const user = userEvent.setup()
+    let firstEssayId = ''
+    const gradeImages = vi.fn(async (request: MultimodalGradingRequestV2) => {
+      firstEssayId ||= request.essayId
+      return request.essayId === firstEssayId
+        ? {
+            requestId: request.requestId,
+            status: 'failed' as const,
+            error: { code: 'provider_content_filtered' as const, message: '该作文无法自动处理。', retryable: false },
+          }
+        : successfulResult(request)
+    })
+    renderProgressFlow(
+      'task-2',
+      { gradeImages },
+      { mode: 'single-legacy', hardLimit: 2, stableSuccessWindow: 2 },
+    )
+
+    await user.click(screen.getByRole('button', { name: '开始批改全部待处理作文' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('link', { name: /进入班级总览/ })).toHaveAttribute(
+        'href',
+        '/tasks/task-2/class-review',
+      )
+    })
+    expect(screen.queryByRole('button', { name: '生成班级总结' })).not.toBeInTheDocument()
+  })
+
   it('shows rate-limit waiting without exposing a teacher retry action', async () => {
     const user = userEvent.setup()
     const gradeImages = vi.fn(async (request: MultimodalGradingRequestV2) => ({
@@ -251,6 +282,7 @@ describe('ProgressPage bounded whole-task grading', () => {
 
     expect(await screen.findByText('因限流等待')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '重试批改' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /进入班级总览/ })).not.toBeInTheDocument()
   })
 
   it.each([
