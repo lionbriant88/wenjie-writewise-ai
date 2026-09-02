@@ -1,213 +1,245 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
+import { ClassReviewGenerationStatus } from '../components/ClassReviewGenerationStatus'
+import { ClassReviewIssueList } from '../components/ClassReviewIssueList'
 import { ClassReviewMaterialsPanel } from '../components/ClassReviewMaterialsPanel'
+import { ClassReviewReportPanel } from '../components/ClassReviewReportPanel'
+import { ClassReviewSpellingList } from '../components/ClassReviewSpellingList'
 import { EmptyState } from '../components/EmptyState'
 import { useAppState } from '../context/useAppState'
 import { AppLayout } from '../layout/AppLayout'
-import type { ClassInsightItem } from '../types'
-import { getClassOverviewStats } from '../utils/classOverview'
-import { findClassInsight, findEssaysByTask, findTask } from '../utils/taskLookup'
-
-type ClassReviewTab = 'overview' | 'materials' | 'issues' | 'exercises'
-
-const classReviewTabs: Array<{ id: ClassReviewTab; label: string }> = [
-  { id: 'overview', label: '概览' },
-  { id: 'materials', label: '教师精选素材' },
-  { id: 'issues', label: '高频问题' },
-  { id: 'exercises', label: '改写练习' },
-]
+import type { AiSummaryV1, ClassReviewStatisticsV1 } from '../services/classReview/types'
+import { findTask } from '../utils/taskLookup'
 
 function formatScore(score: number | null) {
   return score === null ? '-' : score.toFixed(1)
 }
 
-function ClassReviewTabList({
-  activeTab,
-  onTabChange,
-}: {
-  activeTab: ClassReviewTab
-  onTabChange: (tab: ClassReviewTab) => void
-}) {
-  return (
-    <div
-      role="tablist"
-      aria-label="班级总览内容"
-      className="flex flex-wrap gap-1 rounded-lg border border-slate-200 bg-white p-1 shadow-sm"
-    >
-      {classReviewTabs.map((tab) => (
-        <button
-          key={tab.id}
-          type="button"
-          role="tab"
-          aria-selected={activeTab === tab.id}
-          onClick={() => onTabChange(tab.id)}
-          className={`tech-focus rounded-md px-4 py-2 text-sm font-semibold transition ${
-            activeTab === tab.id
-              ? 'bg-blue-600 text-white shadow-sm'
-              : 'text-slate-600 hover:bg-slate-50 hover:text-slate-950'
-          }`}
-        >
-          {tab.label}
-        </button>
-      ))}
-    </div>
-  )
-}
-
-function CompactInsightGroup({ title, items }: { title: string; items: ClassInsightItem[] }) {
-  if (items.length === 0) {
-    return null
-  }
+function CurrentStatisticsPanel({ statistics }: { statistics: ClassReviewStatisticsV1 }) {
+  const summary = statistics.scoreSummary
+  const cards = [
+    { label: '作文总数', value: statistics.totalEssayCount.toString() },
+    { label: '纳入统计', value: statistics.includedEssayCount.toString() },
+    { label: '平均分', value: formatScore(summary?.averageScore ?? null) },
+    { label: '最高分', value: formatScore(summary?.highestScore ?? null) },
+    { label: '最低分', value: formatScore(summary?.lowestScore ?? null) },
+  ]
 
   return (
-    <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <h3 className="text-base font-semibold text-slate-950">{title}</h3>
+    <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h3 className="text-base font-semibold text-slate-950">当前统计</h3>
+          <p className="mt-1 text-sm text-slate-500">
+            成绩通道纳入 {statistics.includedEssayCount} 篇；问题通道 {statistics.issueEligibleEssayCount} /{' '}
+            {statistics.includedEssayCount}。
+          </p>
+        </div>
         <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">
-          {items.length} 项
+          覆盖率 {Math.round(statistics.issueCoverageRate * 100)}%
         </span>
       </div>
-      <div className="divide-y divide-slate-100">
-        {items.map((item) => (
-          <article key={item.id} className="py-3 first:pt-0 last:pb-0">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <h4 className="text-sm font-semibold text-slate-950">{item.title}</h4>
-              {typeof item.count === 'number' ? (
-                <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700">
-                  {item.count} 次
-                </span>
-              ) : null}
-            </div>
-            <p className="mt-1 text-sm leading-6 text-slate-600">{item.detail}</p>
-            {item.examples.length ? (
-              <div className="mt-2 space-y-1">
-                {item.examples.map((example) => (
-                  <p key={example} className="text-xs leading-5 text-slate-500">
-                    例句：{example}
-                  </p>
-                ))}
-              </div>
-            ) : null}
-          </article>
+      <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-5">
+        {cards.map((item) => (
+          <div key={item.label} className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+            <p className="text-xs font-medium text-slate-500">{item.label}</p>
+            <p className="mt-1 text-lg font-semibold text-slate-950">{item.value}</p>
+          </div>
         ))}
       </div>
-    </section>
-  )
-}
-
-function EmptyTabState({ title }: { title: string }) {
-  return (
-    <section className="rounded-lg border border-dashed border-slate-200 bg-white p-6 text-center shadow-sm">
-      <p className="text-sm font-semibold text-slate-700">{title}</p>
+      {statistics.dimensions.length > 0 ? (
+        <div className="mt-4 grid gap-2 md:grid-cols-3">
+          {statistics.dimensions.map((dimension) => (
+            <div key={dimension.dimensionId} className="rounded-lg border border-slate-100 bg-white px-3 py-2">
+              <p className="text-xs font-semibold text-slate-500">{dimension.name}</p>
+              <p className="mt-1 text-sm font-semibold text-slate-800">
+                {formatScore(dimension.averageScore)} / {formatScore(dimension.maxScore)}
+              </p>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </section>
   )
 }
 
 export function ClassReviewPage() {
   const { taskId = '' } = useParams()
-  const { tasks, essays, gradingResults, classInsights, classReviewMaterials, removeClassReviewMaterial } = useAppState()
-  const [activeTab, setActiveTab] = useState<ClassReviewTab>('overview')
+  const { tasks, classReviewMaterials, removeClassReviewMaterial, classReview } = useAppState()
+  const [aiDraft, setAiDraft] = useState<AiSummaryV1 | null>(null)
+  const [generationNotice, setGenerationNotice] = useState('')
+  const [optimisticGenerating, setOptimisticGenerating] = useState(false)
+  const [regenerateDialogOpen, setRegenerateDialogOpen] = useState(false)
+  const regenerateTriggerRef = useRef<HTMLElement | null>(null)
+  const confirmRegenerateRef = useRef<HTMLButtonElement | null>(null)
   const task = findTask(tasks, taskId)
-  const insight = findClassInsight(classInsights, taskId)
   const taskMaterials = classReviewMaterials.filter((material) => material.taskId === taskId)
+
+  useEffect(() => {
+    if (!regenerateDialogOpen) return undefined
+    const timer = window.setTimeout(() => confirmRegenerateRef.current?.focus(), 0)
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setRegenerateDialogOpen(false)
+      regenerateTriggerRef.current?.focus()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.clearTimeout(timer)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [regenerateDialogOpen])
 
   if (!task) {
     return <EmptyState title="找不到任务" description="请返回任务列表重新选择一个批改任务。" />
   }
 
-  const stats = getClassOverviewStats(findEssaysByTask(essays, taskId), gradingResults, task)
-  const summaryStats = [
-    { label: '作文总数', value: stats.totalEssayCount.toString() },
-    { label: '平均分', value: formatScore(stats.averageScore) },
-    { label: '最高分', value: formatScore(stats.highestScore) },
-    { label: '最低分', value: formatScore(stats.lowestScore) },
-  ]
+  const baseSnapshot = classReview.getSnapshot(task.id)
+  const snapshot = optimisticGenerating && baseSnapshot.report.currentGeneration === null
+    ? {
+        ...baseSnapshot,
+        canGenerate: false,
+        report: {
+          ...baseSnapshot.report,
+          currentGeneration: {
+            generationId: 'local.optimistic-generation',
+            generationRevision: 0,
+            state: 'running' as const,
+            createdAt: new Date(0).toISOString(),
+          },
+        },
+      }
+    : baseSnapshot
+  const report = snapshot.report
+  const generationState = report.currentGeneration?.state
+  const editLocked = generationState === 'queued' || generationState === 'running' || generationState === 'result_unknown'
+  const promotedSpellingIds = new Set(
+    report.issueBlocks.flatMap((block) =>
+      block.evidenceRefs.flatMap((ref) =>
+        ref.selectionOrigin === 'teacher_selected' && ref.sourceLocator.startsWith('spelling.')
+          ? [ref.sourceLocator.slice('spelling.'.length)]
+          : [],
+      ),
+    ),
+  )
 
-  const grammarErrors = insight?.grammarErrors ?? []
-  const spellingErrors = insight?.spellingErrors ?? []
-  const typicalSentences = insight?.typicalSentences ?? []
-  const rewriteExercises = insight?.rewriteExercises ?? []
-  const hasIssueInsights = grammarErrors.length > 0 || spellingErrors.length > 0 || typicalSentences.length > 0
+  const generate = (intent: 'initial' | 'regenerate') => {
+    setGenerationNotice('')
+    setOptimisticGenerating(true)
+    void classReview.generate(task.id, intent).catch(() => {
+      setGenerationNotice('班级总结生成失败，请稍后重试。')
+    }).finally(() => {
+      setOptimisticGenerating(false)
+    })
+  }
+
+  const closeRegenerateDialog = () => {
+    setRegenerateDialogOpen(false)
+    regenerateTriggerRef.current?.focus()
+  }
 
   return (
     <AppLayout
       task={task}
       title="班级总览"
       currentStep="class-review"
-      description="先看全班表现，再整理课堂讲评素材。"
+      description="先看当前统计，再把 AI 总评、共性问题、明确拼写和精选素材整理成课堂讲评方案。"
     >
       <div className="space-y-5">
-        <ClassReviewTabList activeTab={activeTab} onTabChange={setActiveTab} />
+        <CurrentStatisticsPanel statistics={report.statistics} />
+        <ClassReviewGenerationStatus
+          snapshot={snapshot}
+          hasUnsavedAiEdit={aiDraft !== null}
+          onGenerate={() => generate('initial')}
+          onRegenerate={(trigger) => {
+            regenerateTriggerRef.current = trigger ?? null
+            setRegenerateDialogOpen(true)
+          }}
+          onCheck={() => {
+            classReview.checkGeneration(task.id)
+            setGenerationNotice('已检查当前班级总结生成状态。')
+          }}
+          onApply={() => classReview.applyCandidate(task.id)}
+          onDiscard={() => classReview.discardCandidate(task.id)}
+        />
+        {generationNotice ? (
+          <p className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600" aria-live="polite">
+            {generationNotice}
+          </p>
+        ) : null}
+        <ClassReviewReportPanel
+          report={report}
+          editDraft={aiDraft}
+          editLocked={editLocked}
+          onBeginEdit={() => {
+            if (report.workspaceState !== 'ai_available') return
+            classReview.beginAiTextEdit(task.id)
+            setAiDraft(report.aiSummary)
+          }}
+          onDraftChange={setAiDraft}
+          onSave={(summary) => {
+            classReview.saveAiTextEdit(task.id, summary)
+            setAiDraft(null)
+          }}
+          onCancel={() => {
+            classReview.cancelAiTextEdit(task.id)
+            setAiDraft(null)
+          }}
+        />
+        <ClassReviewIssueList
+          issueBlocks={report.issueBlocks}
+          issueOrder={report.issueOrder}
+          onMoveIssue={(blockId, toIndex) => classReview.moveIssue(task.id, blockId, toIndex)}
+          onRemoveTeacherEvidence={(evidenceId) => classReview.removeIssue(task.id, evidenceId)}
+          onUndoRemove={() => classReview.undoIssueRemoval(task.id)}
+        />
+        <ClassReviewSpellingList
+          items={report.clearSpellingItems}
+          promotedItemIds={promotedSpellingIds}
+          onPromote={(itemId) => classReview.promoteSpelling(task.id, itemId)}
+        />
+        <ClassReviewMaterialsPanel
+          taskId={task.id}
+          materials={taskMaterials}
+          onRemoveMaterial={removeClassReviewMaterial}
+        />
 
-        <p className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-xs leading-5 text-slate-500">
-          分数统计仅包含教师已确认结果；高频问题与改写练习仍为现有 mock 洞察，不代表真实 AI 班级洞察。
-        </p>
-
-        {activeTab === 'overview' ? (
-          <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <h3 className="text-base font-semibold text-slate-950">分数分布</h3>
-                <p className="mt-1 text-sm text-slate-500">
-                  按高考作文档次分段统计，已计入 {stats.scoredEssayCount} 篇有分数作文。
-                </p>
+        {regenerateDialogOpen ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="class-review-regenerate-title"
+              className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl"
+            >
+              <h3 id="class-review-regenerate-title" className="text-base font-semibold text-slate-950">
+                确认重新生成班级总结
+              </h3>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                这会消耗 1 次新的 AI 调用，并用新 AI 总评替换当前 AI 文本。
+              </p>
+              <div className="mt-4 flex flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={closeRegenerateDialog}
+                  className="tech-focus min-h-11 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-cyan-200 hover:bg-cyan-50"
+                >
+                  取消
+                </button>
+                <button
+                  ref={confirmRegenerateRef}
+                  type="button"
+                  onClick={() => {
+                    setRegenerateDialogOpen(false)
+                    generate('regenerate')
+                  }}
+                  className="tech-focus min-h-11 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
+                >
+                  确认重新生成
+                </button>
               </div>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                {summaryStats.map((item) => (
-                  <div key={item.label} className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
-                    <p className="text-xs font-medium text-slate-500">{item.label}</p>
-                    <p className="mt-1 text-lg font-semibold text-slate-950">{item.value}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="mt-4 space-y-2">
-              {stats.bands.map((band) => (
-                <div key={band.label} className="grid grid-cols-[56px_minmax(0,1fr)_64px] items-center gap-3">
-                  <span className="text-sm font-semibold text-slate-700">{band.label}</span>
-                  <div
-                    aria-label={`${band.label} 分数分布：${band.count} 篇`}
-                    className="overflow-hidden rounded-full bg-slate-100"
-                    style={{ height: '10px' }}
-                  >
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-blue-600 to-cyan-400 transition-[width] duration-500 ease-out"
-                      style={{ width: `${band.percent}%`, height: '100%' }}
-                    />
-                  </div>
-                  <span className="text-right text-sm font-medium text-slate-500">{band.count} 篇</span>
-                </div>
-              ))}
-            </div>
-          </section>
-        ) : null}
-
-        {activeTab === 'materials' ? (
-          <ClassReviewMaterialsPanel
-            taskId={task.id}
-            materials={taskMaterials}
-            onRemoveMaterial={removeClassReviewMaterial}
-          />
-        ) : null}
-
-        {activeTab === 'issues' ? (
-          hasIssueInsights ? (
-            <div className="grid gap-4 xl:grid-cols-3">
-              <CompactInsightGroup title="高频语法错误" items={grammarErrors} />
-              <CompactInsightGroup title="高频拼写错误" items={spellingErrors} />
-              <CompactInsightGroup title="典型问题句" items={typicalSentences} />
-            </div>
-          ) : (
-            <EmptyTabState title="当前暂无高频问题。" />
-          )
-        ) : null}
-
-        {activeTab === 'exercises' ? (
-          rewriteExercises.length > 0 ? (
-            <CompactInsightGroup title="可上课改写练习" items={rewriteExercises} />
-          ) : (
-            <EmptyTabState title="当前暂无可上课改写练习。" />
-          )
+            </section>
+          </div>
         ) : null}
       </div>
     </AppLayout>

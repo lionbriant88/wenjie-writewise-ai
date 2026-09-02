@@ -1,16 +1,22 @@
-import { render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { useEffect, useRef } from 'react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import { AppStateProvider } from '../context/AppStateContext'
-import { useAppState } from '../context/useAppState'
+import { createFakeClassReviewSynthesisClient, type ClassReviewSynthesisClient } from '../services/classReview/fakeClassReviewSynthesisClient'
+import type { ClassReviewSynthesisRequestV1, ClassReviewSynthesisResultV1 } from '../services/classReview/types'
 import { EssayResultPage } from './EssayResultPage'
 import { ClassReviewPage } from './ClassReviewPage'
 
-function renderClassReviewPage(initialPath = '/tasks/task-1/class-review') {
+function renderClassReviewPage({
+  initialPath = '/tasks/task-3/class-review',
+  client = createFakeClassReviewSynthesisClient({ scenario: 'success' }),
+}: {
+  initialPath?: string
+  client?: ClassReviewSynthesisClient
+} = {}) {
   render(
-    <AppStateProvider>
+    <AppStateProvider classReviewSynthesisClient={client}>
       <MemoryRouter initialEntries={[initialPath]}>
         <Routes>
           <Route path="/tasks/:taskId/class-review" element={<ClassReviewPage />} />
@@ -21,166 +27,120 @@ function renderClassReviewPage(initialPath = '/tasks/task-1/class-review') {
   )
 }
 
-function NoInsightTaskSetup() {
-  const { createTask, addClassReviewMaterial } = useAppState()
-  const initialized = useRef(false)
-  useEffect(() => {
-    if (initialized.current) return
-    initialized.current = true
-    const taskId = createTask({ taskName: '真实验收任务', fullScore: 15, className: '真实验收班', generateClassReview: true })
-    addClassReviewMaterial({ taskId, essayId: 'essay-real', essayLabel: '作文 3', type: 'logic_issue', categoryLabel: '因果关系缺失', original: 'First, you can organize your studies.', diagnosis: '理由交代不足。' })
-  }, [addClassReviewMaterial, createTask])
-  return null
-}
-
-function MaterialsTaskSetup() {
-  const { addClassReviewMaterial } = useAppState()
-  const initialized = useRef(false)
-  useEffect(() => {
-    if (initialized.current) return
-    initialized.current = true
-    addClassReviewMaterial({
-      taskId: 'task-1',
-      essayId: 'task-1-essay-1',
-      essayLabel: '作文 1',
-      type: 'typical_error',
-      categoryLabel: 'grammar',
-      original: 'I suggest you joins the club.',
-      revised: 'I suggest you join the club.',
-      explanation: 'suggest 后使用动词原形。',
-      severity: 'high',
-      sourceIssueId: 'issue-language-1',
-    })
-    addClassReviewMaterial({
-      taskId: 'task-1',
-      essayId: 'task-1-essay-1',
-      essayLabel: '作文 1',
-      type: 'logic_issue',
-      categoryLabel: '上下文关联度差',
-      original: 'My mother was angry.',
-      diagnosis: '该句与上下文关联度差。',
-      teachingSuggestion: '建议学生补充说明：建议学生补充这句话与阅读节的关系。',
-      severity: 'high',
-      needsTeacherReview: true,
-      sourceIssueId: 'issue-logic-1',
-    })
-  }, [addClassReviewMaterial])
-  return null
-}
-
-function renderClassReviewPageWithoutInsight() {
-  render(
-    <AppStateProvider>
-      <NoInsightTaskSetup />
-      <MemoryRouter initialEntries={['/tasks/task-1234567890/class-review']}>
-        <Routes>
-          <Route path="/tasks/:taskId/class-review" element={<ClassReviewPage />} />
-        </Routes>
-      </MemoryRouter>
-    </AppStateProvider>,
-  )
-}
-
-function renderClassReviewPageWithMaterials(initialPath = '/tasks/task-1/class-review') {
-  render(
-    <AppStateProvider>
-      <MaterialsTaskSetup />
-      <MemoryRouter initialEntries={[initialPath]}>
-        <Routes>
-          <Route path="/tasks/:taskId/class-review" element={<ClassReviewPage />} />
-          <Route path="/tasks/:taskId/essays/:essayId" element={<EssayResultPage />} />
-        </Routes>
-      </MemoryRouter>
-    </AppStateProvider>,
-  )
-}
-
-describe('ClassReviewPage', () => {
-  it('shows real task statistics and selected materials without requiring mock class insights', async () => {
-    const dateNow = vi.spyOn(Date, 'now').mockReturnValue(1234567890)
-    const user = userEvent.setup()
-    renderClassReviewPageWithoutInsight()
-
-    expect(await screen.findByRole('tab', { name: '概览' })).toBeInTheDocument()
-    expect(screen.queryByText('暂无班级总览材料')).not.toBeInTheDocument()
-    await user.click(screen.getByRole('tab', { name: '教师精选素材' }))
-    expect(screen.getByText('First, you can organize your studies.')).toBeInTheDocument()
-    expect(screen.getByText('理由交代不足。')).toBeInTheDocument()
-    dateNow.mockRestore()
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done
+    reject = fail
   })
+  return { promise, resolve, reject }
+}
 
-  it('shows overview by default and switches between class review tabs', async () => {
-    const user = userEvent.setup()
+async function generateAndShowReport(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: '生成班级总结' }))
+  await screen.findByText('Class summary')
+}
+
+describe('ClassReviewPage workspace', () => {
+  it('renders one vertical class-review workspace without legacy tabs or mock insight copy', () => {
     renderClassReviewPage()
 
     expect(screen.getByRole('heading', { name: '班级总览' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: '概览' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('tab', { name: '教师精选素材' })).toHaveAttribute('aria-selected', 'false')
-    expect(screen.getByRole('heading', { name: '分数分布' })).toBeInTheDocument()
-    expect(screen.getByText('作文总数')).toBeInTheDocument()
-    expect(screen.getByText('10')).toBeInTheDocument()
-    expect(screen.getByText('平均分')).toBeInTheDocument()
-    expect(screen.getByText('最高分')).toBeInTheDocument()
-    expect(screen.getByText('最低分')).toBeInTheDocument()
-    expect(screen.getByText('0-3')).toBeInTheDocument()
-    expect(screen.getByText('4-6')).toBeInTheDocument()
-    expect(screen.getByText('7-9')).toBeInTheDocument()
-    expect(screen.getByText('10-12')).toBeInTheDocument()
-    expect(screen.getByText('13-15')).toBeInTheDocument()
-    expect(screen.getByLabelText('13-15 分数分布：7 篇')).toHaveStyle({ height: '10px' })
-    expect(screen.getByText(/分数统计仅包含教师已确认结果/)).toBeInTheDocument()
-    expect(screen.getByText(/仍为现有 mock 洞察/)).toBeInTheDocument()
-    expect(screen.queryByText('课堂讲评模式')).not.toBeInTheDocument()
-    expect(screen.queryByText('先看全班分数结构，再看高频问题和课堂讲评素材。')).not.toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: '教师精选讲评素材' })).not.toBeInTheDocument()
-
-    await user.click(screen.getByRole('tab', { name: '教师精选素材' }))
-    expect(screen.getByRole('tab', { name: '教师精选素材' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByRole('tablist', { name: '班级总览内容' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/仍为现有 mock 洞察/)).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '当前统计' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'AI 班级总体评价' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '共性问题与讲评建议' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '明确拼写错误' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '教师精选讲评素材' })).toBeInTheDocument()
-    expect(screen.getByText('还没有教师精选讲评素材。')).toBeInTheDocument()
-    expect(screen.queryByRole('tab', { name: /表达提升/ })).not.toBeInTheDocument()
-
-    await user.click(screen.getByRole('tab', { name: '高频问题' }))
-    expect(screen.getByText('当前暂无高频问题。')).toBeInTheDocument()
-
-    await user.click(screen.getByRole('tab', { name: '改写练习' }))
-    expect(screen.getByText('当前暂无可上课改写练习。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '生成班级总结' })).toBeInTheDocument()
   })
 
-  it('filters, removes, and links teacher selected materials back to their source essay', async () => {
+  it('generates exactly one applied report, then requires an explicit-cost regenerate action', async () => {
     const user = userEvent.setup()
-    renderClassReviewPageWithMaterials()
+    const fake = createFakeClassReviewSynthesisClient({ scenario: 'success' })
+    renderClassReviewPage({ client: fake })
 
-    await user.click(screen.getByRole('tab', { name: '教师精选素材' }))
-    const materialsPanel = screen.getByRole('heading', { name: '教师精选讲评素材' }).closest('section')
-    expect(materialsPanel).not.toBeNull()
-    const materials = within(materialsPanel as HTMLElement)
+    await user.click(screen.getByRole('button', { name: '生成班级总结' }))
+    await waitFor(() => expect(fake.getCallCountForTest()).toBe(1))
 
-    expect(await materials.findByText('共 2 条素材')).toBeInTheDocument()
-    expect(materials.getByRole('tab', { name: /全部 2/ })).toBeInTheDocument()
-    expect(materials.getByRole('tab', { name: /典型错误 1/ })).toBeInTheDocument()
-    expect(materials.getByRole('tab', { name: /逻辑问题 1/ })).toBeInTheDocument()
-    expect(materials.queryByRole('tab', { name: /表达提升/ })).not.toBeInTheDocument()
+    expect(await screen.findByText('Class summary')).toBeInTheDocument()
+    expect(screen.getByText('Common issue')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '应用新班级总结' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '丢弃新版本' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '生成班级总结' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重新生成' })).toBeInTheDocument()
+    expect(screen.getByText('重新生成会消耗 1 次新的 AI 调用。')).toBeInTheDocument()
+  })
 
-    await user.click(materials.getByRole('tab', { name: /逻辑问题/ }))
-    expect(materials.getByText('My mother was angry.')).toBeInTheDocument()
-    expect(materials.getAllByText(/上下文关联度差/).length).toBeGreaterThan(0)
-    expect(materials.getAllByText(/建议学生补充说明/).length).toBeGreaterThan(0)
-    expect(materials.getByText('建议教师复核')).toBeInTheDocument()
-    expect(materials.getByText('来源：作文 1')).toBeInTheDocument()
-    expect(materials.queryByText('I suggest you joins the club.')).not.toBeInTheDocument()
+  it('shows active-run and result-unknown precedence without duplicate generation buttons', async () => {
+    const user = userEvent.setup()
+    const release = deferred<void>()
+    const fake = createFakeClassReviewSynthesisClient({ scenario: 'success' })
+    const synthesize = vi.fn(async (request: ClassReviewSynthesisRequestV1): Promise<ClassReviewSynthesisResultV1> => {
+      await release.promise
+      return fake.synthesize(request)
+    })
+    renderClassReviewPage({ client: { synthesize } })
 
-    await user.click(materials.getByRole('tab', { name: /全部/ }))
-    const removeButtons = materials.getAllByRole('button', { name: '移除' })
-    await user.click(removeButtons[1])
+    await user.click(screen.getByRole('button', { name: '生成班级总结' }))
+    expect(await screen.findByText('正在生成班级总结')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '生成班级总结' })).not.toBeInTheDocument()
 
-    expect(materials.getByText('共 1 条素材')).toBeInTheDocument()
-    expect(materials.queryByText('I suggest you joins the club.')).not.toBeInTheDocument()
+    release.resolve()
+    expect(await screen.findByText('Class summary')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '应用新班级总结' })).not.toBeInTheDocument()
 
-    await user.click(materials.getByRole('link', { name: '查看来源' }))
-    expect(screen.getByRole('heading', { name: /批改结果/ })).toBeInTheDocument()
-    await user.click(screen.getByRole('tab', { name: '问题批改' }))
-    expect(screen.getAllByRole('button', { name: '加入班级总览' }).length).toBeGreaterThan(0)
-    expect(screen.queryByRole('button', { name: '已加入班级总览' })).not.toBeInTheDocument()
+    cleanup()
+    const unknown = createFakeClassReviewSynthesisClient({ scenario: 'result_unknown' })
+    renderClassReviewPage({ client: unknown })
+    await user.click(screen.getByRole('button', { name: '生成班级总结' }))
+    expect(await screen.findByRole('button', { name: '检查结果' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '生成班级总结' })).not.toBeInTheDocument()
+  })
+
+  it('locks AI-summary editing during generation and uses a focused regenerate confirmation dialog', async () => {
+    const user = userEvent.setup()
+    const fake = createFakeClassReviewSynthesisClient({ scenario: 'success' })
+    renderClassReviewPage({ client: fake })
+    await generateAndShowReport(user)
+
+    await user.click(screen.getByRole('button', { name: '编辑' }))
+    fireEvent.change(screen.getByLabelText('班级总体评价'), { target: { value: 'Teacher edited summary.' } })
+
+    expect(screen.getByRole('button', { name: '重新生成' })).toBeDisabled()
+    expect(screen.getByText('请先保存或取消正在编辑的 AI 总评。')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '保存' }))
+    const regenerate = screen.getByRole('button', { name: '重新生成' })
+    regenerate.focus()
+    await user.click(regenerate)
+
+    expect(screen.getByRole('dialog', { name: '确认重新生成班级总结' })).toBeInTheDocument()
+    expect(screen.getByText('这会消耗 1 次新的 AI 调用，并用新 AI 总评替换当前 AI 文本。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '确认重新生成' })).toHaveFocus()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: '确认重新生成班级总结' })).not.toBeInTheDocument()
+    expect(regenerate).toHaveFocus()
+  })
+
+  it('promotes definite spelling into the issue list without an AI call and supports remove/undo', async () => {
+    const user = userEvent.setup()
+    const fake = createFakeClassReviewSynthesisClient({ scenario: 'success' })
+    renderClassReviewPage({ client: fake })
+
+    const spellingSection = screen.getByRole('region', { name: '明确拼写错误' })
+    await user.click(within(spellingSection).getAllByRole('button', { name: '加入共性问题' })[0])
+
+    expect(fake.getCallCountForTest()).toBe(0)
+    const issueSection = screen.getByRole('region', { name: '共性问题与讲评建议' })
+    expect(within(issueSection).getByRole('heading', { name: /^拼写错误：enviroment → environment$/ })).toBeInTheDocument()
+    await user.click(within(issueSection).getByRole('button', { name: '移出手动添加' }))
+    expect(screen.getByRole('button', { name: '撤销移出' })).toHaveFocus()
+
+    await user.click(screen.getByRole('button', { name: '撤销移出' }))
+    expect(within(issueSection).getByRole('button', { name: '移出手动添加' })).toBeInTheDocument()
   })
 })

@@ -88,6 +88,18 @@ const essay = (
             : ['messy_handwriting']
         : [],
     aiResultId: status === 'completed' ? `${id}-result` : undefined,
+    gradingRun: status === 'completed' && taskId === 'task-3'
+      ? {
+          status: 'success',
+          requestId: `${id}-request`,
+          source: 'mock',
+          reviewReasons: [],
+          sourceGeneration: 0,
+          rubricGeneration: 0,
+          startedAt: baseDate,
+          completedAt: baseDate,
+        }
+      : undefined,
     teacherReviewed: status === 'completed',
     createdAt: baseDate,
     updatedAt: baseDate,
@@ -141,13 +153,52 @@ const dimensions = (seed: number) => [
     evidence: 'The recommendation is direct and understandable.',
   },
   {
-    id: 'handwriting',
+    id: 'legibility',
     name: '卷面/字迹',
     score: 1.2,
     maxScore: 1.5,
     weight: 10,
     reason: '卷面较整洁，个别单词连写影响识别。',
     evidence: 'Several words need manual OCR confirmation.',
+  },
+]
+
+const classReviewLegacyDimensions = (seed: number) => [
+  {
+    id: 'content',
+    name: 'Content',
+    score: 5.1 + (seed % 2) * 0.1,
+    maxScore: 5.7,
+    weight: 38,
+    reason: 'The response covers the main practical-writing task with mostly relevant advice.',
+    evidence: 'The student explains the activity and gives one clear reason.',
+  },
+  {
+    id: 'language',
+    name: 'Language',
+    score: 4.1,
+    maxScore: 4.99,
+    weight: 33.25,
+    reason: 'There are several local grammar, spelling and word-choice errors.',
+    evidence: 'I suggest you joins the club. We should protect the enviroment.',
+  },
+  {
+    id: 'structure',
+    name: 'Structure',
+    score: 3.1,
+    maxScore: 3.56,
+    weight: 23.75,
+    reason: 'The letter has a clear beginning and ending, but one sentence weakens coherence.',
+    evidence: 'My mother was angry.',
+  },
+  {
+    id: 'legibility',
+    name: 'Legibility',
+    score: 0.7,
+    maxScore: 0.75,
+    weight: 5,
+    reason: 'The handwriting is readable enough for grading.',
+    evidence: 'No decisive handwriting ambiguity is present in this synthetic fixture.',
   },
 ]
 
@@ -167,15 +218,7 @@ export const createMockFullTextRevision = (essayId: string): FullTextRevision =>
       relatedErrorIds: [`${essayId}-err-1`],
       changeTypes: ['grammar', 'sentence_upgrade'],
       explanation: 'suggest 后的宾语从句使用动词原形；提升版让句式更自然。',
-    },
-    {
-      id: `${essayId}-pair-2`,
-      original: 'We should protect the enviroment when we read in public places.',
-      corrected: 'We should protect the environment when we read in public places.',
-      polished: 'We should protect the environment when reading in public places.',
-      relatedErrorIds: [`${essayId}-err-2`],
-      changeTypes: ['spelling', 'sentence_upgrade'],
-      explanation: '修正 environment 拼写，并让时间状语表达更简洁。',
+      needsTeacherReview: false,
     },
     {
       id: `${essayId}-pair-3`,
@@ -185,6 +228,17 @@ export const createMockFullTextRevision = (essayId: string): FullTextRevision =>
       relatedErrorIds: [`${essayId}-err-3`],
       changeTypes: ['word_choice'],
       explanation: 'knowledge 是不可数名词，搭配 gain a lot of knowledge 更自然。',
+      needsTeacherReview: false,
+    },
+    {
+      id: `${essayId}-pair-5`,
+      original: 'I think',
+      corrected: 'I think',
+      polished: 'From my point of view',
+      relatedErrorIds: [],
+      changeTypes: ['sentence_upgrade'],
+      explanation: '表达提升示例，不作为明确拼写错误的机械来源。',
+      needsTeacherReview: false,
     },
     {
       id: `${essayId}-pair-4`,
@@ -221,11 +275,18 @@ export const createMockFullTextRevision = (essayId: string): FullTextRevision =>
 })
 
 const resultFor = (essayId: string, seed: number): GradingResult => {
-  const dimensionScores = dimensions(seed)
+  const dimensionScores = essayId.startsWith('task-3-')
+    ? classReviewLegacyDimensions(seed)
+    : dimensions(seed)
   return {
   id: `${essayId}-result`,
   essayId,
   resultRevision: 0,
+  resultVersion: 'grading-result-v2',
+  source: 'mock',
+  reviewReasons: [],
+  transcript: mockEssayText,
+  printedTextExcluded: true,
   totalScore: calculateTotalScore(dimensionScores.map(({ score }) => score), 15),
   dimensionScores,
   errorAnnotations: [
@@ -237,6 +298,7 @@ const resultFor = (essayId: string, seed: number): GradingResult => {
       explanation: 'suggest 后的宾语从句用动词原形。',
       severity: 'high',
       evidenceCertainty: 'certain',
+      needsTeacherReview: false,
     },
     {
       id: `${essayId}-err-2`,
@@ -246,6 +308,7 @@ const resultFor = (essayId: string, seed: number): GradingResult => {
       explanation: 'environment 拼写遗漏了 n。',
       severity: 'medium',
       evidenceCertainty: 'certain',
+      needsTeacherReview: false,
     },
     {
       id: `${essayId}-err-3`,
@@ -255,6 +318,7 @@ const resultFor = (essayId: string, seed: number): GradingResult => {
       explanation: 'knowledge 是不可数名词，搭配 gain 更自然。',
       severity: 'medium',
       evidenceCertainty: 'certain',
+      needsTeacherReview: false,
     },
   ],
   sentenceRevisions: [
@@ -265,6 +329,7 @@ const resultFor = (essayId: string, seed: number): GradingResult => {
       revised: 'I suggest you join the club.',
       note: '与问题修改建议中的 suggest 句型一致，修正为动词原形。',
       changeTypes: ['grammar'],
+      needsTeacherReview: false,
     },
     {
       id: `${essayId}-rev-2`,
@@ -273,6 +338,7 @@ const resultFor = (essayId: string, seed: number): GradingResult => {
       revised: 'environment',
       note: '与拼写问题修改建议一致，补全缺失的 n。',
       changeTypes: ['spelling'],
+      needsTeacherReview: false,
     },
     {
       id: `${essayId}-rev-3`,
@@ -281,6 +347,7 @@ const resultFor = (essayId: string, seed: number): GradingResult => {
       revised: 'It can help you gain a lot of knowledge.',
       note: '与词汇搭配标注一致，将不可数名词搭配改得更自然。',
       changeTypes: ['word_choice'],
+      needsTeacherReview: false,
     },
   ],
   upgradedExpressions: [
@@ -324,6 +391,28 @@ const mockRubricDraft: NonNullable<Task['rubricDraft']> = {
     { id: 'content', name: 'Content', weight: 40, description: 'Relevant and complete content', deductionFocus: [] },
     { id: 'language', name: 'Language', weight: 35, description: 'Accurate language', deductionFocus: [] },
     { id: 'structure', name: 'Structure', weight: 25, description: 'Clear organization', deductionFocus: [] },
+  ],
+  excellentFeatures: ['Specific and useful details'],
+  reviewTriggers: ['Possible topic drift or invented information'],
+  status: 'confirmed',
+}
+
+const mockClassReviewRubricDraft: NonNullable<Task['rubricDraft']> = {
+  source: 'teacher',
+  writingGoal: 'Complete the practical-writing task clearly and accurately.',
+  offTopicCriteria: ['Does not address the practical-writing task'],
+  dimensions: [
+    { id: 'content', name: 'Content', weight: 38, description: 'Relevant and complete content', deductionFocus: [], sourceEvidence: [] },
+    { id: 'language', name: 'Language', weight: 33.25, description: 'Accurate language', deductionFocus: [], sourceEvidence: [] },
+    { id: 'structure', name: 'Structure', weight: 23.75, description: 'Clear organization', deductionFocus: [], sourceEvidence: [] },
+    {
+      id: 'legibility',
+      name: 'Legibility',
+      weight: 5,
+      description: 'Important handwriting ambiguity and readability.',
+      deductionFocus: ['Important handwriting ambiguity that changes meaning or scoring.'],
+      sourceEvidence: [],
+    },
   ],
   excellentFeatures: ['Specific and useful details'],
   reviewTriggers: ['Possible topic drift or invented information'],
@@ -379,7 +468,7 @@ export const mockTasks: Task[] = [
     scoringTemplateId: 'default-15',
     writingGenre: 'practical_writing',
     promptInfo: mockPromptInfo,
-    rubricDraft: mockRubricDraft,
+    rubricDraft: mockClassReviewRubricDraft,
     status: 'ready',
     totalEssayCount: 12,
     completedEssayCount: 12,

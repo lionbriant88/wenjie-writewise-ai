@@ -6,6 +6,7 @@ import {
   createLocalClassReviewCoordinator,
   type ClassReviewSynthesisClient,
 } from '../services/classReview/classReviewCoordinator'
+import type { LocalGenerationRecord } from '../services/classReview/classReviewRegistry'
 import {
   buildClassReviewProjection,
   DEFAULT_CLASS_REVIEW_PROJECTION_LIMITS,
@@ -16,6 +17,7 @@ import {
 import { redactClassReviewExcerpt, type PersonEntityDetector } from '../services/classReview/classReviewRedaction'
 import { createFakeClassReviewSynthesisClient } from '../services/classReview/fakeClassReviewSynthesisClient'
 import type {
+  ActionableGenerationSummaryV1,
   AiSummaryV1,
   ClassReviewReportV1,
   ClassReviewStatisticsV1,
@@ -126,7 +128,7 @@ function hashHex(value: string): string {
   for (let index = 0; index < 8; index += 1) {
     a = Math.imul(a ^ (b >>> 13), 0x01000193) >>> 0
     b = Math.imul(b ^ (a >>> 16), 0xc2b2ae35) >>> 0
-    parts.push((a ^ b).toString(16).padStart(8, '0'))
+    parts.push(((a ^ b) >>> 0).toString(16).padStart(8, '0'))
   }
   return parts.join('')
 }
@@ -319,6 +321,43 @@ function taskIsSettledForClassReview(taskEssays: readonly Essay[]): boolean {
   return taskEssays.length > 0
     && taskEssays.every((essay) =>
       essay.status === 'completed' || essay.status === 'manual' || essay.status === 'needs_review')
+}
+
+const LOCAL_CLASS_REVIEW_GENERATION_TIMESTAMP = '1970-01-01T00:00:00.000Z'
+
+function actionableGenerationFromRecord(
+  generation: LocalGenerationRecord | null,
+): ActionableGenerationSummaryV1 | null {
+  if (generation === null) return null
+  const base = {
+    generationId: generation.generationId,
+    generationRevision: generation.generationRevision,
+    createdAt: LOCAL_CLASS_REVIEW_GENERATION_TIMESTAMP,
+  }
+  if (generation.state === 'queued' || generation.state === 'running') {
+    return { ...base, state: generation.state }
+  }
+  if (generation.state === 'result_unknown') {
+    return { ...base, state: 'result_unknown', safeFailureCode: 'provider_result_unknown' }
+  }
+  if (generation.state === 'succeeded_unapplied') {
+    return {
+      ...base,
+      state: 'succeeded_unapplied',
+      safeUnappliedReason: 'ai_text_changed',
+      completedAt: LOCAL_CLASS_REVIEW_GENERATION_TIMESTAMP,
+    }
+  }
+  return null
+}
+
+function reportWithCurrentGeneration(
+  report: ClassReviewReportV1,
+  generation: LocalGenerationRecord | null,
+): ClassReviewReportV1 {
+  const currentGeneration = actionableGenerationFromRecord(generation)
+  if (report.currentGeneration === currentGeneration) return report
+  return { ...report, currentGeneration }
 }
 
 function reportCanGenerate(report: ClassReviewReportV1, sourceReady: boolean, isSettled: boolean): boolean {
@@ -599,11 +638,13 @@ export function AppStateProvider({
   const getClassReviewSnapshot = useCallback((taskId: string): ClassReviewAppSnapshot => {
     ensureClassReviewWorkspace(taskId)
     const snapshot = classReviewCoordinatorRef.current!.getSnapshot(taskId)
+    const report = reportWithCurrentGeneration(snapshot.report, snapshot.generation)
     const taskEssays = essaysRef.current.filter((essay) => essay.taskId === taskId)
     const isSettled = taskIsSettledForClassReview(taskEssays)
     return {
       ...snapshot,
-      canGenerate: reportCanGenerate(snapshot.report, snapshot.sourceReady, isSettled),
+      report,
+      canGenerate: reportCanGenerate(report, snapshot.sourceReady, isSettled),
       isSettled,
     }
   }, [ensureClassReviewWorkspace])
@@ -611,11 +652,13 @@ export function AppStateProvider({
   const peekClassReviewSnapshot = useCallback((taskId: string): ClassReviewAppSnapshot | null => {
     if (!classReviewSourceStateRef.current.has(taskId)) return null
     const snapshot = classReviewCoordinatorRef.current!.getSnapshot(taskId)
+    const report = reportWithCurrentGeneration(snapshot.report, snapshot.generation)
     const taskEssays = essaysRef.current.filter((essay) => essay.taskId === taskId)
     const isSettled = taskIsSettledForClassReview(taskEssays)
     return {
       ...snapshot,
-      canGenerate: reportCanGenerate(snapshot.report, snapshot.sourceReady, isSettled),
+      report,
+      canGenerate: reportCanGenerate(report, snapshot.sourceReady, isSettled),
       isSettled,
     }
   }, [])
@@ -1177,6 +1220,53 @@ export function AppStateProvider({
         input.taskId,
         classReviewIssueCommandFromInput(input),
       )
+      bumpClassReviewVersion()
+    },
+    promoteSpelling(taskId: string, itemId: string) {
+      ensureClassReviewWorkspace(taskId)
+      const snapshot = classReviewCoordinatorRef.current!.getSnapshot(taskId)
+      const item = snapshot.report.clearSpellingItems.find((candidate) => candidate.itemId === itemId)
+      if (!item) throw new Error('class_review_candidate_conflict')
+      const sourceLocator = `spelling.${item.itemId}`
+      const alreadyPromoted = snapshot.report.issueBlocks.some((block) =>
+        block.evidenceRefs.some((ref) =>
+          ref.selectionOrigin === 'teacher_selected' && ref.sourceLocator === sourceLocator,
+        ),
+      )
+      if (alreadyPromoted) return
+      const topicSeed = JSON.stringify([
+        taskId,
+        item.topicKey,
+        item.sourceSubtype,
+        item.originalWord,
+        item.correctedWord,
+      ])
+      const evidenceSeed = JSON.stringify([
+        taskId,
+        item.itemId,
+        snapshot.report.taskRevision,
+        topicSeed,
+      ])
+      classReviewCoordinatorRef.current!.applyIssueCommand(taskId, {
+        kind: 'add',
+        blockId: opaqueFrom('block', topicSeed, 32),
+        topicKey: item.topicKey,
+        title: `拼写错误：${item.originalWord} → ${item.correctedWord}`,
+        diagnosis: `明确拼写错误：应写作 ${item.correctedWord}，误写为 ${item.originalWord}。`,
+        teachingAction: `课堂中直接订正 ${item.originalWord} → ${item.correctedWord}，并让学生在同类语境中复写。`,
+        severity: 'medium',
+        evidence: [{
+          ref: {
+            evidenceId: opaqueFrom('evidence', evidenceSeed, 40),
+            selectionOrigin: 'teacher_selected',
+            sourceLocator,
+            sourceResultRevision: snapshot.report.taskRevision,
+            anonymousExample: item.anonymousExample,
+          },
+          essayIdentity: opaqueFrom('spelling', `${taskId}:${item.itemId}`, 40),
+          occurrenceCount: item.occurrenceCount,
+        }],
+      })
       bumpClassReviewVersion()
     },
     removeIssue(taskId: string, evidenceId: string) {

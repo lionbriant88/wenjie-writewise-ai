@@ -66,8 +66,10 @@ export function ClassReviewMaterialsPanel({
 
       {materials.length === 0 ? (
         <div className="mt-4 rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center">
-          <p className="text-sm font-medium text-slate-600">你可以在单篇作文详情页中点击“加入班级总览”。</p>
-          <p className="mt-1 text-sm text-slate-500">将典型问题、逻辑问题或表达提升加入这里。</p>
+          <p className="text-sm font-medium text-slate-600">
+            普通问题会进入上方共性问题列表；这里仅保留教师精选素材。
+          </p>
+          <p className="mt-1 text-sm text-slate-500">表达提升、佳句和教师备注可继续作为精选素材沉淀。</p>
         </div>
       ) : (
         <div className="mt-4 grid gap-3">

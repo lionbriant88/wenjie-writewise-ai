@@ -70,6 +70,7 @@ export interface ClassReviewAppCommands {
   saveAiTextEdit: (taskId: string, summary: AiSummaryV1) => void
   cancelAiTextEdit: (taskId: string) => void
   addIssue: (input: AddClassReviewIssueInput) => void
+  promoteSpelling: (taskId: string, itemId: string) => void
   removeIssue: (taskId: string, evidenceId: string) => void
   undoIssueRemoval: (taskId: string) => void
   moveIssue: (taskId: string, blockId: string, toIndex: number) => void
