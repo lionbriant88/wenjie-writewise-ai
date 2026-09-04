@@ -38,7 +38,14 @@
 - 同一作文版本与同一评分标准版本必须使用稳定逻辑幂等身份。重复提交、传输重发或结果未知时先复用原 in-flight/成功结果，不得立即产生第二次 Provider 调用；鉴权或配置错误暂停队列，`429` 退避降并发，不可重试错误不得自动重试。
 - 图片尺寸或编码优化必须先在合成或已授权匿名样本上做 A/B；正文识别、评分和重要字迹风险达到设计质量门槛后才可启用。不得用未经验证的有损压缩换取 token，也不得把图片优化变成 OCR 阶段。
 - 生产或真实 Kimi 运行必须显式选择 Provider；缺失配置时不得静默回退 mock。真实 Key 只允许进入被 Git 忽略的本地环境文件或进程环境，真实基线调用前还必须单独确认样本范围、调用数和费用。
-- 完整设计与质量门槛见 `docs/superpowers/specs/2026-08-28-ai-pipeline-cost-latency-optimization-design.md`。该设计已经批准但尚未实施；在实施完成并验证前，不得把当前两阶段 rubric、全局串行或无 usage 观测描述成已经优化。
+- 完整设计与质量门槛见 `docs/superpowers/specs/2026-08-28-ai-pipeline-cost-latency-optimization-design.md`。本地实现与 fake 验收已完成：单次 rubric completion、canonical Prompt、无损输出去重、usage/耗时观测、单进程 memory registry 和稳健有界并发均已实施。但真实 40+40 A/B、100 次 soak、30 篇吞吐与图片变体实验仍未完成；不得把 fake/本地证据误述为真实 Kimi 已达到成本、质量或吞吐目标。
+
+## 当前批改排队可靠性决策
+
+- Gateway 只有在能严格证明请求未连出时才能释放该次幂等槽位。当 Node fetch 失败的直接 `cause` 同时满足 `code === EACCES` 与 `syscall === connect` 时，视为本地连接建立前失败，使用 `termination: confirmed` 且不保留 Provider attempt observation，避免 registry lease 被永久占用。
+- Abort/超时的优先级高于上述本地连接判断；其他网络异常、结果未知或无法证明未连出的情形仍必须保持 `termination: unknown` 和幂等 lease。不得通过泛化释放 `orphaned_unknown` 或盲目重试来解卡，以免重复计费或覆盖迟到结果。
+- 前端自动重挂时必须继续展示稳定的“等待批改资源”，不得发布会造成 `queued → running → wait` 闪烁的瞬时序列；实际请求持续超过 250ms 后可显示“批改中”，但该展示延迟不得延后真实调度或重挂。未经确认的准入等待统一使用资源等待文案，不得误报成 Kimi `429` 限流。
+- 上述队列修复不改变教师修订已识别原文后使用确认文本重新批改的现有行为，也不改变 `result_unknown` 的安全处理。
 
 ## 当前作文输入决策
 
