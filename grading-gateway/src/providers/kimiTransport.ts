@@ -66,6 +66,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function isLocalConnectPermissionError(value: unknown) {
+  if (!isRecord(value) || !isRecord(value.cause)) return false
+  return value.cause.code === 'EACCES' && value.cause.syscall === 'connect'
+}
+
 function usageSnapshot(value: unknown): ProviderUsageSnapshot {
   if (!isRecord(value)) {
     return {
@@ -303,12 +308,20 @@ export function createKimiTransport(options: KimiTransportOptions): KimiTranspor
             }),
           },
         )
-      } catch {
+      } catch (error) {
         const providerElapsedMs = elapsedSince(startedAt, now)
+        if (input.signal.aborted) {
+          const details = errorDetails('unknown', providerElapsedMs, {
+            attemptObservations: [unknownAttemptObservation(attemptDiagnosticId, providerElapsedMs)],
+          })
+          throw new GradingProviderError('provider_timeout', '真实 AI 批改超时。', true, undefined, details)
+        }
+        if (isLocalConnectPermissionError(error)) {
+          throw unavailableError(errorDetails('confirmed', providerElapsedMs, { attemptObservations: [] }))
+        }
         const details = errorDetails('unknown', providerElapsedMs, {
           attemptObservations: [unknownAttemptObservation(attemptDiagnosticId, providerElapsedMs)],
         })
-        if (input.signal.aborted) throw new GradingProviderError('provider_timeout', '真实 AI 批改超时。', true, undefined, details)
         throw unavailableError(details)
       }
       if (!response.ok) {

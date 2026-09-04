@@ -67,6 +67,8 @@ export interface TaskGradingScheduler {
 
 interface QueueItemState extends QueueItemSnapshot {
   job: GradingJob
+  automaticReattachReady: boolean
+  runningAnnouncementTimer?: unknown
 }
 
 interface TaskQueueState {
@@ -80,6 +82,7 @@ interface TaskQueueState {
 }
 
 const LONG_RETRY_AFTER_MS = 15 * 60 * 1_000
+const AUTO_REATTACH_RUNNING_ANNOUNCEMENT_DELAY_MS = 250
 const MAX_TIMER_DELAY_MS = 2_147_483_647
 const INVALID_CONFIG_MESSAGE = 'Invalid task grading scheduler configuration.'
 
@@ -136,11 +139,13 @@ function queuedItem(job: GradingJob): QueueItemState {
     rubricGeneration: job.rubricGeneration,
     retryable: false,
     reattachOnly: false,
+    automaticReattachReady: false,
   }
 }
 
 function resetToQueued(item: QueueItemState): void {
   item.phase = 'queued'
+  item.automaticReattachReady = false
   item.retryable = false
   item.reattachOnly = false
   delete item.retryAt
@@ -213,12 +218,19 @@ export function createTaskGradingScheduler(
     const entries = task.order.flatMap((essayId) => {
       const item = task.items.get(essayId)
       if (!item) return []
-      const { job: _job, ...itemSnapshot } = item
+      const {
+        job: _job,
+        automaticReattachReady: _automaticReattachReady,
+        runningAnnouncementTimer: _runningAnnouncementTimer,
+        ...itemSnapshot
+      } = item
       return [[essayId, { ...itemSnapshot }] as const]
     })
     let queuedCount = 0
     for (const item of task.items.values()) {
-      if (item.phase === 'queued' || item.phase === 'rate_limit_wait') queuedCount += 1
+      if (item.phase === 'queued'
+        || (item.phase === 'rate_limit_wait'
+          && !activeEssayKeys.has(essayKey(task.taskId, item.essayId)))) queuedCount += 1
     }
     return {
       taskId,
@@ -261,7 +273,8 @@ export function createTaskGradingScheduler(
       if (task.pauseReason) continue
       for (const item of task.items.values()) {
         if (item.phase === 'rate_limit_wait' && item.retryAt !== undefined && item.retryAt <= referenceTime) {
-          resetToQueued(item)
+          item.automaticReattachReady = true
+          delete item.retryAt
         }
       }
     }
@@ -293,7 +306,8 @@ export function createTaskGradingScheduler(
       if (task.pauseReason) continue
       for (const essayId of task.order) {
         const item = task.items.get(essayId)
-        if (item?.phase === 'queued' && !activeEssayKeys.has(essayKey(task.taskId, essayId))) {
+        if ((item?.phase === 'queued' || item?.automaticReattachReady === true)
+          && !activeEssayKeys.has(essayKey(task.taskId, essayId))) {
           return { task, item }
         }
       }
@@ -307,6 +321,7 @@ export function createTaskGradingScheduler(
     response: Extract<GradingClientResponse, { status: 'failed' }>,
   ): void {
     item.phase = phase
+    item.automaticReattachReady = false
     item.retryable = phase === 'retryable_failure' || phase === 'rate_limit_wait'
     item.reattachOnly = phase === 'result_unknown'
     item.errorCode = response.error.code
@@ -315,6 +330,10 @@ export function createTaskGradingScheduler(
   }
 
   function settle(task: TaskQueueState, item: QueueItemState, response: GradingClientResponse): void {
+    if (item.runningAnnouncementTimer !== undefined) {
+      timers.clearTimeout(item.runningAnnouncementTimer)
+      item.runningAnnouncementTimer = undefined
+    }
     globalActiveCount = Math.max(0, globalActiveCount - 1)
     task.activeCount = Math.max(0, task.activeCount - 1)
     activeEssayKeys.delete(essayKey(task.taskId, item.essayId))
@@ -382,16 +401,33 @@ export function createTaskGradingScheduler(
   }
 
   function dispatch(task: TaskQueueState, item: QueueItemState): void {
-    item.phase = 'running'
+    const automaticReattach = item.automaticReattachReady
+    item.automaticReattachReady = false
     item.retryable = false
     item.reattachOnly = false
     delete item.retryAt
-    delete item.errorCode
-    delete item.errorMessage
+    if (!automaticReattach) {
+      item.phase = 'running'
+      delete item.errorCode
+      delete item.errorMessage
+    }
     task.activeCount += 1
     globalActiveCount += 1
     activeEssayKeys.add(essayKey(task.taskId, item.essayId))
     emitAll()
+
+    if (automaticReattach && !disposed) {
+      item.runningAnnouncementTimer = timers.setTimeout(() => {
+        item.runningAnnouncementTimer = undefined
+        if (disposed
+          || task.items.get(item.essayId) !== item
+          || !activeEssayKeys.has(essayKey(task.taskId, item.essayId))) return
+        item.phase = 'running'
+        delete item.errorCode
+        delete item.errorMessage
+        emitAll()
+      }, AUTO_REATTACH_RUNNING_ANNOUNCEMENT_DELAY_MS)
+    }
 
     let execution: Promise<GradingClientResponse>
     try {
@@ -446,6 +482,9 @@ export function createTaskGradingScheduler(
       for (const entry of jobs) {
         const existing = task.items.get(entry.essayId)
         if (existing && sameJobVersion(existing, entry)) continue
+        if (existing?.runningAnnouncementTimer !== undefined) {
+          timers.clearTimeout(existing.runningAnnouncementTimer)
+        }
         if (!existing) task.order.push(entry.essayId)
         task.items.set(entry.essayId, queuedItem(entry))
       }
@@ -504,6 +543,12 @@ export function createTaskGradingScheduler(
       disposed = true
       if (gateTimer !== undefined) timers.clearTimeout(gateTimer)
       gateTimer = undefined
+      for (const task of tasks.values()) {
+        for (const item of task.items.values()) {
+          if (item.runningAnnouncementTimer !== undefined) timers.clearTimeout(item.runningAnnouncementTimer)
+          item.runningAnnouncementTimer = undefined
+        }
+      }
       listeners.clear()
     },
   }

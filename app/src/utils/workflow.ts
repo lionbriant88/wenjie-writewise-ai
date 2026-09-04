@@ -113,7 +113,7 @@ export function getProgressEssayPhaseMeta(phase: ProgressEssayPhase): EssayStatu
       animated: true,
     },
     rate_limit_wait: {
-      label: '因限流等待',
+      label: '等待批改资源',
       className: 'border-amber-200 bg-amber-50 text-amber-700',
     },
     result_unknown: {

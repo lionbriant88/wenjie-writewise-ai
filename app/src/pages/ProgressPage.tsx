@@ -151,7 +151,7 @@ function EssayAction({
     )
   }
 
-  if (phase === 'rate_limit_wait') return <span className="text-amber-700">系统将在等待结束后自动继续</span>
+  if (phase === 'rate_limit_wait') return <span className="text-amber-700">系统将在资源可用后自动继续批改</span>
   if (phase === 'queued') return <span className="text-sky-700">等待系统调度</span>
   if (phase === 'running') return <span className="text-blue-700">正在生成批改结果</span>
   return <span className="text-slate-500">等待任务启动</span>

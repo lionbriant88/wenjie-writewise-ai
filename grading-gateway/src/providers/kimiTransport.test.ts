@@ -262,4 +262,19 @@ describe('createKimiTransport', () => {
     })
     expect(JSON.stringify(error)).not.toMatch(/SECRET|test-only-not-a-real-key|SGVsbG8/)
   })
+
+  it('confirms a local connect permission rejection without retaining an attempt observation', async () => {
+    const rejection = new TypeError('fetch failed', {
+      cause: { code: 'EACCES', syscall: 'connect', secret: 'SECRET local error' },
+    })
+    const transport = createKimiTransport(controlledOptions(vi.fn().mockRejectedValue(rejection)))
+    const error = await caughtError(transport.complete(observedInput))
+
+    expect(error).toMatchObject({
+      code: 'provider_unavailable', retryable: true, details: {
+        termination: 'confirmed', providerElapsedMs: 17, attemptObservations: [],
+      },
+    })
+    expect(JSON.stringify(error)).not.toMatch(/SECRET|test-only-not-a-real-key|SGVsbG8/)
+  })
 })

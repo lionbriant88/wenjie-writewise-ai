@@ -1,6 +1,20 @@
 # 当前开发状态
 
-最后更新：2026-09-02
+最后更新：2026-09-04
+
+## 2026-09-04：真实环境批改排队卡住与等待闪烁已修复
+
+- 本轮只修复用户确认的两个问题：本地连接被禁止后调度槽位被长期占用，以及自动续跑时等待状态闪烁并被误表达为 Kimi 限流。没有修改 `result_unknown` 交互、教师修订原文后的重批逻辑或任何班级总览功能。
+- 实际故障根因是 Gateway 进程的本地出站连接在连接建立前被操作系统以 `EACCES/connect` 拒绝，不是 Kimi 返回 `429`。旧映射将该本地、可确定未连出的错误当成了 `termination: unknown`，registry 因而保留 lease；后续重挂收到本地 `target_busy`，前端遂长时间循环等待。
+- Kimi transport 现在只对“直接 `cause`、严格 `code === EACCES`、严格 `syscall === connect`”的错误标记 `termination: confirmed`，且不生成 Provider attempt observation，使 registry 可释放该本地失败的槽位。超时/Abort 优先级不变，其他网络拒绝仍保持 `unknown`，不会为了解卡而破坏结果未知时的单次调用安全约束。
+- 前端调度器在自动重挂时继续公布稳定的 `rate_limit_wait` 展示态；如果实际请求持续超过 250ms，才显示“批改中”。快速再次等待时不再发布 `queued → running → wait` 的瞬时状态序列，实际请求与调度槽位不会因展示延迟而延后。用户文案改为“等待批改资源”和“系统将在资源可用后自动继续批改”，不再把所有准入等待误报为 Provider 限流。
+- 修复与自动验证未发起新的真实 Kimi 请求，也没有启动、恢复或建议 OCR 主流程。真实 Provider 仍使用 `kimi-k3` 直接多模态识别与批改，密钥只保留在 Git 忽略的本地环境中。
+
+### 本轮验证
+
+- 前端新增回归覆盖快速重挂不发布闪烁状态、持续请求 250ms 后正常显示运行中、活动/等待计数不重复、替换与 dispose 清理计时器、以及订阅回调内重入 dispose 不再留下计时器。聚焦组 3 个文件 / 60 项通过，前端全量 84 个文件 / 1329 项通过；typecheck、lint 和生产构建通过，构建仅保留既有大 chunk 提示。
+- Gateway 新增的精确 `EACCES/connect` 回归与相邻 transport 组 34 项通过；Gateway 全量 50 个文件 / 1291 项通过，typecheck 和共享计分运行时验证通过。为使 benchmark CLI 的“缺少凭据”隔离用例得到真实的无 Key 环境，全量验证期间只在 Gateway 目录内暂时移动 ignored `.env`，并在 `finally` 中恢复；验证输出已确认文件恢复，未读取或输出密钥内容。
+- 前端等待修复与 Gateway 槽位修复均经独立复审，最终 Critical / Important / Minor 均为 0。已用新代码重启 `127.0.0.1:8790` Gateway，健康检查确认 `kimi-k3` / `low` / `single-pass-v1` / `optimized-v1` / `memory-v1`、准入未暂停且活动请求为 0；`127.0.0.1:5173/tasks/new` 返回 HTTP 200。本次健康检查没有发起批改 completion。
 
 ## 2026-09-02：AI 班级总览本地功能原型已完成并通过 fake 验收
 

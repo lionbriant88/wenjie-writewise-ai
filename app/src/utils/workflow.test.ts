@@ -135,7 +135,7 @@ describe('workflow helpers', () => {
     ['waiting', '等待批改', false, false],
     ['queued', '排队中', false, false],
     ['running', '批改中', true, false],
-    ['rate_limit_wait', '因限流等待', false, false],
+    ['rate_limit_wait', '等待批改资源', false, false],
     ['result_unknown', '结果确认中', true, false],
     ['retryable_failure', '可重试失败', false, false],
     ['final_failure', '不可重试失败', false, false],

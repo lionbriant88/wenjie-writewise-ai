@@ -153,6 +153,10 @@ class FakeRuntime {
     },
   }
 
+  get pendingTimerCount() {
+    return this.#entries.size
+  }
+
   advanceBy(delayMs: number) {
     const target = this.current + delayMs
     while (true) {
@@ -442,6 +446,135 @@ describe('createTaskGradingScheduler', () => {
     runtime.advanceBy(1)
     await flushMicrotasks()
     expect(run).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the visible wait phase through rapid automatic rate-limit reattachments', async () => {
+    const runtime = new FakeRuntime()
+    const run = vi.fn(async () => failure(
+      'stable-request',
+      'provider_rate_limited',
+      true,
+      { retryAfterMs: 100 },
+    ))
+    const scheduler = createTaskGradingScheduler({
+      mode: 'adaptive-v1', hardLimit: 1, stableSuccessWindow: 2,
+      now: runtime.now, timers: runtime.timers,
+    })
+    const phases: string[] = []
+    scheduler.subscribe((snapshot) => {
+      phases.push(snapshot.items['essay-1']?.phase ?? 'missing')
+    })
+
+    scheduler.startTask('task-rate-limit-loop', [
+      job('task-rate-limit-loop', 'essay-1', 'stable-request', run),
+    ])
+    await flushUntil(() => scheduler.getSnapshot('task-rate-limit-loop').items['essay-1']?.phase === 'rate_limit_wait')
+
+    phases.length = 0
+    runtime.advanceBy(100)
+    await flushUntil(() => run.mock.calls.length === 2
+      && scheduler.getSnapshot('task-rate-limit-loop').items['essay-1']?.phase === 'rate_limit_wait')
+
+    expect(phases).not.toContain('queued')
+    expect(phases).not.toContain('running')
+    expect(scheduler.getSnapshot('task-rate-limit-loop').items['essay-1']?.requestId).toBe('stable-request')
+
+    runtime.advanceBy(250)
+    expect(scheduler.getSnapshot('task-rate-limit-loop').items['essay-1']?.phase).toBe('rate_limit_wait')
+  })
+
+  it('shows running after an automatic rate-limit reattachment remains active', async () => {
+    const runtime = new FakeRuntime()
+    const initial = deferred<GradingClientResponse>()
+    const reattached = deferred<GradingClientResponse>()
+    const run = vi.fn()
+      .mockImplementationOnce(() => initial.promise)
+      .mockImplementationOnce(() => reattached.promise)
+    const scheduler = createTaskGradingScheduler({
+      mode: 'adaptive-v1', hardLimit: 1, stableSuccessWindow: 2,
+      now: runtime.now, timers: runtime.timers,
+    })
+
+    scheduler.startTask('task-running-delay', [
+      job('task-running-delay', 'essay-1', 'stable-request', run),
+    ])
+    await flushMicrotasks()
+    initial.resolve(failure('stable-request', 'provider_rate_limited', true, { retryAfterMs: 100 }))
+    await flushUntil(() => scheduler.getSnapshot('task-running-delay').items['essay-1']?.phase === 'rate_limit_wait')
+
+    runtime.advanceBy(100)
+    await flushUntil(() => run.mock.calls.length === 2)
+    expect(scheduler.getSnapshot('task-running-delay')).toMatchObject({
+      activeCount: 1,
+      queuedCount: 0,
+      items: { 'essay-1': { phase: 'rate_limit_wait', requestId: 'stable-request' } },
+    })
+
+    runtime.advanceBy(250)
+    expect(scheduler.getSnapshot('task-running-delay').items['essay-1']?.phase).toBe('running')
+
+    reattached.resolve(success('stable-request', 'essay-1'))
+    await flushMicrotasks()
+  })
+
+  it('does not install a delayed running notice after a subscriber disposes during automatic reattachment', async () => {
+    const runtime = new FakeRuntime()
+    const initial = deferred<GradingClientResponse>()
+    const reattached = deferred<GradingClientResponse>()
+    const run = vi.fn()
+      .mockImplementationOnce(() => initial.promise)
+      .mockImplementationOnce(() => reattached.promise)
+    const scheduler = createTaskGradingScheduler({
+      mode: 'adaptive-v1', hardLimit: 1, stableSuccessWindow: 2,
+      now: runtime.now, timers: runtime.timers,
+    })
+    scheduler.subscribe((snapshot) => {
+      if (snapshot.activeCount === 1 && snapshot.items['essay-1']?.phase === 'rate_limit_wait') {
+        scheduler.dispose()
+      }
+    })
+
+    scheduler.startTask('task-dispose-during-emit', [
+      job('task-dispose-during-emit', 'essay-1', 'stable-request', run),
+    ])
+    await flushMicrotasks()
+    initial.resolve(failure('stable-request', 'provider_rate_limited', true, { retryAfterMs: 100 }))
+    await flushUntil(() => scheduler.getSnapshot('task-dispose-during-emit').items['essay-1']?.phase === 'rate_limit_wait')
+    runtime.advanceBy(100)
+
+    expect(runtime.pendingTimerCount).toBe(0)
+    expect(run).toHaveBeenCalledTimes(2)
+
+    reattached.resolve(success('stable-request', 'essay-1'))
+    await flushMicrotasks()
+  })
+
+  it('clears a delayed automatic running notice when disposed', async () => {
+    const runtime = new FakeRuntime()
+    const initial = deferred<GradingClientResponse>()
+    const reattached = deferred<GradingClientResponse>()
+    const run = vi.fn()
+      .mockImplementationOnce(() => initial.promise)
+      .mockImplementationOnce(() => reattached.promise)
+    const scheduler = createTaskGradingScheduler({
+      mode: 'adaptive-v1', hardLimit: 1, stableSuccessWindow: 2,
+      now: runtime.now, timers: runtime.timers,
+    })
+
+    scheduler.startTask('task-dispose-delay', [
+      job('task-dispose-delay', 'essay-1', 'stable-request', run),
+    ])
+    initial.resolve(failure('stable-request', 'provider_rate_limited', true, { retryAfterMs: 100 }))
+    await flushUntil(() => scheduler.getSnapshot('task-dispose-delay').items['essay-1']?.phase === 'rate_limit_wait')
+    runtime.advanceBy(100)
+    await flushUntil(() => run.mock.calls.length === 2)
+
+    expect(runtime.pendingTimerCount).toBe(1)
+    scheduler.dispose()
+    expect(runtime.pendingTimerCount).toBe(0)
+
+    reattached.resolve(success('stable-request', 'essay-1'))
+    await flushMicrotasks()
   })
 
   it('honors a final exhausted rate-limit gate without retrying that final essay', async () => {

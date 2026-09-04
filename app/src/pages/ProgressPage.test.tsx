@@ -264,7 +264,7 @@ describe('ProgressPage bounded whole-task grading', () => {
     expect(screen.queryByRole('button', { name: '生成班级总结' })).not.toBeInTheDocument()
   })
 
-  it('shows rate-limit waiting without exposing a teacher retry action', async () => {
+  it('shows automatic resource waiting without exposing a teacher retry action', async () => {
     const user = userEvent.setup()
     const gradeImages = vi.fn(async (request: MultimodalGradingRequestV2) => ({
       requestId: request.requestId,
@@ -280,7 +280,9 @@ describe('ProgressPage bounded whole-task grading', () => {
 
     await user.click(screen.getByRole('button', { name: '开始批改全部待处理作文' }))
 
-    expect(await screen.findByText('因限流等待')).toBeInTheDocument()
+    expect(await screen.findByText('等待批改资源')).toBeInTheDocument()
+    expect(screen.getByText('系统将在资源可用后自动继续批改')).toBeInTheDocument()
+    expect(screen.queryByText('因限流等待')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '重试批改' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /进入班级总览/ })).not.toBeInTheDocument()
   })
