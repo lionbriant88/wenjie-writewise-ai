@@ -2,6 +2,8 @@
 
 本版本提供账号登录和管理，可先部署验证账号。作文云端持久化和 OpenRouter 批改尚未接通；登录后会显示“作文批改暂未开放”。项目尚未创建时，本地验证不代表 Supabase 账号已创建。
 
+本次账号站点已部署为 [文阶教师试用](https://wenjie-writewise-pilot.vercel.app)，实际范围和公网验证见 [Vercel 账号验证记录](2026-09-13-vercel-account-validation.md)。以下初始化步骤用于维护与复现，现有账号无需重新生成。
+
 ## 使用约定
 
 - 30 名教师，另有 1 名账号管理员。账号名随机生成，不采用可连续猜测的编号。
@@ -121,6 +123,6 @@ npm.cmd run accounts:apply -- --manifest local-private-accounts/pilot-batch/mani
 
 账号部署不自动启动真实模型。下一步需接入 Supabase 私有图片与按教师归属的任务/结果，持久后台执行和共享并发，再固定并验证支持图片与严格结构输出的免费 OpenRouter 模型。
 
-截至核对时，Vercel Hobby 最长函数执行 300 秒、请求体 4.5MB，不能直接承载目前 360 秒超时和多页大图 multipart。原图应直传私有 Storage，由小元数据任务驱动后台处理。不能通过恢复 OCR、未验证压缩、忽略未知结果或自动转付费模型绕过限制。[函数限制](https://vercel.com/docs/functions/limitations)
+截至核对时，Vercel Hobby 在默认启用 Fluid Compute 时最长函数执行 300 秒，关闭时最长 60 秒；函数请求体和响应体上限均为 4.5MB，不能直接承载目前 360 秒超时和多页大图 multipart。原图应直传私有 Storage，由小元数据任务驱动后台处理。不能通过恢复 OCR、未验证压缩、忽略未知结果或自动转付费模型绕过限制。[函数限制](https://vercel.com/docs/functions/limitations)
 
-OpenRouter 免费额度按 API 账号共享，官方常见默认是每天 50 次，不是每位老师 50 次。选定模型后还需验证手写识别、评分和 Schema 质量，核实上游数据处理政策；具体学生样本与真实请求范围另行确认。[免费额度](https://openrouter.ai/docs/faq)
+OpenRouter 免费模型额度按 API 账号共享；截至核对时，累计购买积分不足 10 美元时为每天 50 次，达到 10 美元后为每天 1000 次。这些是账号合计额度，不是每位老师独立获得；本项目未因此购买积分。选定模型后还需验证手写识别、评分和 Schema 质量，核实上游数据处理政策；具体学生样本与真实请求范围另行确认。[免费额度](https://openrouter.ai/docs/faq)
