@@ -72,6 +72,7 @@ CREATE ROLE wj_auth_server LOGIN INHERIT NOSUPERUSER NOCREATEDB
   NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '<独立随机数据库密码>';
 GRANT wj_auth_runtime TO wj_auth_server;
 GRANT CONNECT ON DATABASE postgres TO wj_auth_server;
+ALTER ROLE wj_auth_server SET statement_timeout = '10s';
 ```
 
 运行服务会检查数据库用户权限；误用管理连接或额外授予账号创建/改密权限时，会拒绝启动。
@@ -94,6 +95,8 @@ npm.cmd run accounts:apply -- --manifest local-private-accounts/pilot-batch/mani
 ## 部署到 Vercel
 
 从包含本次分支的仓库导入项目，Root Directory 选择仓库根目录。根目录 `vercel.json` 已指定安装两个 package、构建 `app/dist`，并将 `/api/*` 路由到账号函数，其余网页路径交给 SPA。
+
+账号函数固定在单一 `sin1` 区域，与新加坡 Supabase 项目对齐；Hobby 只使用这一处函数区域。账号 API 的 `maxDuration` 为 30 秒，为数据库连接、登录校验和事务结束保留余量。配置和本地构建通过不等于 Vercel 云端构建或函数依赖打包已经验证；首次部署仍需确认构建成功、函数包包含 PostgreSQL 运行依赖，并执行下方接口验收。
 
 配置服务端环境：
 

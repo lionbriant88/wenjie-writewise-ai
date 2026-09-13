@@ -2,11 +2,12 @@
 
 ## 2026-09-13 最新账号与验证架构决定（优先于下方历史基线）
 
-- 用户明确改为 Vercel + Supabase + OpenRouter 免费多模态模型，替代同日腾讯云集中部署及本轮 Kimi 验证选型。Vercel/Supabase 项目尚未创建；用户已要求先完成可部署的账号代码与初始化工具，之后再配置云项目、分发和真实验证。
+- 用户明确改为 Vercel + Supabase + OpenRouter 免费多模态模型，替代同日腾讯云集中部署及本轮 Kimi 验证选型。账号代码与初始化工具已完成本地验收；用户已创建 Supabase Free 项目 `wenjie-writewise-pilot`（ref `wudbhdyqgnbnuorebhnu`，新加坡 `ap-southeast-1`，Dashboard 状态 Healthy），Vercel 项目尚未创建。
+- Supabase 云端迁移、30 教师 + 1 独立管理员导入及同 manifest 重放已通过；31 个账号身份与原私密 manifest 一致且均 active。用户已亲自重设数据库密码，重设后的短暂认证失败现已恢复；使用 Dashboard 官方 CA 严格验证 TLS，连接 PostgreSQL 17.6。session pooler 为 `aws-0-ap-southeast-1.pooler.supabase.com:5432`；受限 `wj_auth_server` 权限和 10 秒 statement timeout 已验证。Supabase Auth 公开注册已关闭并重载确认；`pilot_auth` 六张表不暴露给 Data API，anon/authenticated 无 schema USAGE；当前使用私有 schema 与受限服务端角色，六表 RLS 为 false。
 - 先准备 30 个教师账号，所有账号初始密码均为用户指定的 `888888`，且不允许修改密码；取消随机初始密码、首登强制改密和密码重置流程。不得以隐藏按钮代替服务端禁改密。账号名使用不可预测随机编号，明文分发清单仅在 ignored 私密目录保存，不进入生产代码或日志。
 - 账号数据和会话使用 Supabase PostgreSQL；Vercel 服务端承担用户名/密码验证和 opaque HttpOnly 会话，浏览器不取得可直接调用 Supabase Auth 改密的身份令牌。公开注册关闭，账号管理员可查看账号和启用/停用，但不能修改密码；独立管理员不占 30 名教师名额。
 - OpenRouter 的具体免费图像输入模型尚未固定、尚未接入或验收；不得直接套用 Kimi 特有模型参数、缓存字段或质量结论，也不得自动转付费模型。保留一次直接多模态完成正文识别/评分/反馈、无独立 OCR、外部 v2 合同、单次 rubric 生成、持久幂等和全局有界并发等通用约束。
-- 本轮账号模块可独立部署与本地验证，但教师真实作文试用仍需任务/图片/结果归属与持久化、适配平台时限的后台执行、共享准入及真实模型验收。没有云项目时不得宣称已经生成 Supabase 可登录账号或公网已上线。真实模型调用前仍需确认样本和调用范围；不因免费模型而自动发送学生材料。
+- 云数据库支撑的 loopback API 已分两段完成全部 31 个账号登录、session、退出和撤销验证；首次 6 分钟硬截止前完成 28 个循环，确认会话数 0 后续跑余下 3 个，不能记作单次 6 分钟全量通过。云端回滚验证已确认停用/重新启用、旧会话撤销、运行角色禁改密和数据库不可变密码触发器；所有探针写入均已回滚，账号保持不变。Vercel 项目尚未创建或部署，不得称公网网站已上线或多连接饱和验收已通过；真实教师作文仍需任务/图片/结果持久化、后台执行、共享准入和 OpenRouter 验收，真实模型样本与调用范围仍需确认。
 - 账号模块代码与初始化工具已在 `codex/teacher-pilot-accounts` 完成本地验收；31 个账号私密清单保存在该工作树的 Git ignored 目录 `local-private-accounts/pilot-batch/`。生产默认只开放登录和账号管理，作文批改暂未开放；部署步骤见 `docs/teacher-pilot-accounts-setup.md`。不得把本地账号验证或 PGlite 测试记为 Supabase/Vercel 实际部署已通过。
 
 ## 每次任务的强制预检

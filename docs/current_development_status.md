@@ -2,17 +2,24 @@
 
 最后更新：2026-09-13
 
+- 云端界面核对：Data API 保持启用，公开 schema 为 `public`/`graphql_public`，新表自动公开关闭；Supabase Auth 公开注册已关闭并重载验证，匿名登录保持关闭。迁移后界面显示 3 个 schema 中仅 2 个公开，6 张表中 0 张公开、2 个函数中 0 个公开；`pilot_auth` 六表 RLS 为 false，以私有 schema、不授予 anon/authenticated USAGE 及受限服务端数据库角色隔离访问。
+
 ## 2026-09-13：固定密码账号与 Vercel + Supabase + OpenRouter
 
+- 用户已创建 Supabase Free 项目 `wenjie-writewise-pilot`，ref 为 `wudbhdyqgnbnuorebhnu`，地域为新加坡 `ap-southeast-1`，Dashboard 状态 Healthy。云端 migration、apply（30 教师 + 1 独立管理员）及同 manifest replay 已通过；最终 31 个账号身份与原私密 manifest 一致，状态均为 active。Vercel 项目尚未创建或部署。
+- Dashboard 确认的 session pooler 为 `aws-0-ap-southeast-1.pooler.supabase.com:5432`。用户已亲自重设数据库密码，重设后短暂出现认证失败，后续连接已恢复；现已使用 Dashboard 官方 CA 严格验证 TLS 并连接 PostgreSQL 17.6。受限运行用户 `wj_auth_server` 权限检查通过，无 SUPERUSER/BYPASSRLS/CREATEROLE/CREATEDB，statement timeout 为 10 秒。
+- 云数据库支撑的本地 loopback API 验收分两段完成：首次达到 6 分钟硬截止时，已完成 28 个账号的登录/session/退出/撤销循环，并进入下一次登录；随后确认数据库会话数为 0，再从 skip 28 续跑余下 3 个并通过。累计全部 31 个账号均通过，教师越权请求 30 次返回 403，改密/重置/注册写请求累计 93 次被拒绝；管理员名单为 31，最后管理员停用返回 409。不能表述为单次 6 分钟全量成功，也不是 Vercel 网站或真实多连接饱和验收。
+- 云端独立回滚验证已通过（exit 0）：教师停用与重新启用、旧会话撤销、运行角色密码写入权限拒绝、数据库不可变密码触发器均验证成功；账号不变，所有探针写入均已回滚；最终只读会话检查为 0/0。完整证据与限制见账号工作树 `docs/2026-09-13-supabase-account-validation.md`。
+- Vercel 运行专用环境 JSON 已保存于工作树 ignored `local-private-accounts/supabase-setup/`，仅包含 `DATABASE_URL`、`AUTH_RATE_LIMIT_SECRET`、`DATABASE_CA_CERT`，不含管理连接或教师密码。`vercel.json` 已设置 `regions: ["sin1"]`、`maxDuration: 30`，根目录部署类型检查通过；尚未创建或部署 Vercel 项目，未产生公网登录地址。
 - 用户明确要求 30 个教师账号，所有账号初始密码使用统一固定值，且不允许修改；不实施首次改密或密码重置。用户名采用随机编号，单独保留管理员，管理员可查看和停用账号。
-- 用户已改选 Vercel + Supabase + OpenRouter 免费多模态模型，取代腾讯云集中部署和本轮 Kimi 验证方向。Vercel/Supabase 项目尚未创建，用户要求先完成可部署代码与账号初始化工具。
+- 用户已改选 Vercel + Supabase + OpenRouter 免费多模态模型，取代腾讯云集中部署和本轮 Kimi 验证方向。用户要求先完成的可部署代码与账号初始化工具已通过本地验收，并已完成 Supabase 云端账号初始化与联机验证；Vercel 项目尚未创建。
 - 账号模块已在 `codex/teacher-pilot-accounts`（基于最新批改实现 `5c8352f`）完成代码与本地验收：Supabase PostgreSQL 适配器保存账号/会话，Vercel 同源 API 执行认证，浏览器不取得 Supabase Auth 身份令牌；接口和数据库均禁止改密。管理员可搜索、修改显示名、启用/停用账号，停用立即撤销已有会话；退出支持跨标签同步及失败重试。
 - 已生成 `local-private-accounts/pilot-batch/` 私密批次，包含 30 教师和 1 独立管理员的随机账号。统一密码仅由初始化环境输入；分发 TSV 与 manifest 均受 Git 忽略。已在本地持久 PGlite 应用并重放该清单，31 个账号逐一通过 HTTP 登录/退出；角色隔离、CSRF、停用及旧会话撤销、改密拒绝和最后管理员保护通过。
 - 最终验证：网站 85 文件 / 1345 项、账号 API 9 文件 / 36 项测试通过；类型检查、网站 lint、根目录部署入口类型检查与生产构建通过。生产即使配置 `VITE_AUTH_MODE=local-demo` 也不包含旧演示业务；独立前端与整体复审均为 Ready。浏览器验证教师/管理员操作、刷新、跨标签退出、旧路径登录保护，以及 390/834/1280 像素布局；这是桌面浏览器视口验收，不是真机教师网络验收。
 - 部署说明为 `docs/teacher-pilot-accounts-setup.md`，已提供 Supabase 受限运行用户、管理端迁移/导入、Vercel 根目录配置和环境步骤。本地账号预览为 `http://127.0.0.1:5177/`，API 为 `127.0.0.1:8793`，未启动或接入 OCR/Gateway。
 - 具体 OpenRouter 免费图像模型尚未选择或验证。直接多模态、v2 合同、单次 rubric completion、有界并发和未知结果不盲目重试保持不变；Kimi 特有参数/缓存能力不可无验证移植。
-- 本轮未创建云账号、部署公网或发起真实模型调用。账号模块完成不代表教师真实材料流程已具备持久化、队列与共享准入，后续需分别验证。
-- 生产登录后显示账号已就绪、作文批改暂未开放；任务/图片/结果按教师归属持久化、后台执行与共享准入、Supabase TLS/多连接并发和 Vercel 实际部署仍待云项目建立后验收。原业务代码只可在显式本地开发演示模式使用，不得将本轮记为 OpenRouter 真实批改已接通。
+- 云端账号已初始化并完成上述验证，但未部署公网或发起真实模型调用；OpenRouter 尚未接入。账号模块完成不代表教师真实材料流程已具备持久化、队列与共享准入，后续需分别验证。
+- 生产登录后显示账号已就绪、作文批改暂未开放；任务/图片/结果按教师归属持久化、后台执行与共享准入、真实多连接饱和及 Vercel 实际部署仍待后续完成与验收。原业务代码只可在显式本地开发演示模式使用，不得将本轮记为 OpenRouter 真实批改已接通。
 
 ## 2026-09-06：验收质量修复与三篇真实复测完成
 
