@@ -1,10 +1,11 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useEffect, useState } from 'react'
 import { MemoryRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AppStateProvider } from '../context/AppStateContext'
 import { useAppState } from '../context/useAppState'
+import { convertPdfToImages } from '../utils/pdfToImages'
 import { UploadPage } from './UploadPage'
 
 vi.mock('../utils/pdfToImages', () => ({
@@ -22,12 +23,13 @@ function Probe() {
       <p data-testid="essay-names">{queued.map((essay) => essay.essayNumber).join(',')}</p>
       <p data-testid="page-counts">{queued.map((essay) => essay.pageCount).join(',')}</p>
       <p data-testid="file-name">{queued.at(-1)?.pages[0]?.sourceFile?.name}</p>
+      <p data-testid="last-page-numbers">{queued.at(-1)?.pages.map((page) => page.pageNumber).join(',')}</p>
     </div>
   )
 }
 
 function renderPage() {
-  render(
+  return render(
     <AppStateProvider>
       <MemoryRouter initialEntries={['/tasks/task-1/upload']}>
         <Routes>
@@ -37,6 +39,13 @@ function renderPage() {
       </MemoryRouter>
     </AppStateProvider>,
   )
+}
+
+function deferPdfConversion() {
+  let resolve!: (files: File[]) => void
+  const result = new Promise<File[]>((complete) => { resolve = complete })
+  vi.mocked(convertPdfToImages).mockReturnValueOnce(result)
+  return resolve
 }
 
 function FailedTaskRedirect() {
@@ -88,6 +97,7 @@ function renderFailedTaskPage() {
 describe('UploadPage student cards', () => {
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
     localStorage.clear()
   })
 
@@ -156,6 +166,67 @@ describe('UploadPage student cards', () => {
 
     expect(await screen.findByRole('img', { name: 'essay-page-1.png 预览' })).toBeInTheDocument()
     expect(screen.getByRole('img', { name: 'essay-page-2.png 预览' })).toBeInTheDocument()
+  })
+
+  it('rejects a late PDF page when a camera upload has filled the tenth page', async () => {
+    const user = userEvent.setup()
+    const createObjectURL = vi.fn((file: File) => `blob:${file.name}`)
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL: vi.fn() })
+    const resolvePdf = deferPdfConversion()
+    renderPage()
+    await user.click(screen.getByRole('button', { name: '为学生1添加作文' }))
+    await user.upload(screen.getByLabelText('上传相册图片'), Array.from({ length: 9 }, (_, index) => (
+      new File(['page'], `page-${index + 1}.png`, { type: 'image/png' })
+    )))
+    await user.upload(screen.getByLabelText('上传PDF文件'), new File(['pdf'], 'late.pdf', { type: 'application/pdf' }))
+    await user.upload(screen.getByLabelText('拍照上传'), new File(['photo'], 'camera.jpg', { type: 'image/jpeg' }))
+
+    await act(async () => { resolvePdf([new File(['pdf page'], 'late.png', { type: 'image/png' })]) })
+
+    expect(screen.getAllByRole('img', { name: /预览$/ })).toHaveLength(10)
+    expect(screen.getByRole('alert')).toHaveTextContent('每位学生最多上传 10 页作文。')
+    expect(createObjectURL).toHaveBeenCalledTimes(10)
+    await user.click(screen.getByRole('button', { name: '提交作文并进入批改' }))
+    expect(screen.getByTestId('last-page-numbers')).toHaveTextContent('1,2,3,4,5,6,7,8,9,10')
+  })
+
+  it('does not allocate previews for a PDF whose student card was deleted', async () => {
+    const user = userEvent.setup()
+    const createObjectURL = vi.fn((file: File) => `blob:${file.name}`)
+    const revokeObjectURL = vi.fn()
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL })
+    const resolvePdf = deferPdfConversion()
+    renderPage()
+    await user.click(screen.getByRole('button', { name: '为学生1添加作文' }))
+    await user.upload(screen.getByLabelText('拍照上传'), new File(['photo'], 'camera.jpg', { type: 'image/jpeg' }))
+    await user.upload(screen.getByLabelText('上传PDF文件'), new File(['pdf'], 'late.pdf', { type: 'application/pdf' }))
+    await user.click(screen.getByRole('button', { name: '添加下一位学生' }))
+    await user.click(screen.getByRole('button', { name: '删除学生1' }))
+
+    await act(async () => { resolvePdf([new File(['pdf page'], 'late.png', { type: 'image/png' })]) })
+
+    expect(screen.queryByRole('img', { name: /预览$/ })).not.toBeInTheDocument()
+    expect(createObjectURL).toHaveBeenCalledTimes(1)
+    expect(revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:camera.jpg')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('does not allocate previews when PDF conversion finishes after unmount', async () => {
+    const user = userEvent.setup()
+    const createObjectURL = vi.fn((file: File) => `blob:${file.name}`)
+    const revokeObjectURL = vi.fn()
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL })
+    const resolvePdf = deferPdfConversion()
+    const { unmount } = renderPage()
+    await user.click(screen.getByRole('button', { name: '为学生1添加作文' }))
+    await user.upload(screen.getByLabelText('拍照上传'), new File(['photo'], 'camera.jpg', { type: 'image/jpeg' }))
+    await user.upload(screen.getByLabelText('上传PDF文件'), new File(['pdf'], 'late.pdf', { type: 'application/pdf' }))
+    unmount()
+
+    await act(async () => { resolvePdf([new File(['pdf page'], 'late.png', { type: 'image/png' })]) })
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1)
+    expect(revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:camera.jpg')
   })
 
   it.each([

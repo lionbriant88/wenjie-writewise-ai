@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 import type { GatewayTaskMaterial } from '../multipartTaskMaterials.js'
-import { ESSAY_PROVIDER_SCHEMA_VERSION } from '../multimodal/modelTaskContext.js'
+import { ESSAY_PROVIDER_SCHEMA_VERSION, LEGACY_ESSAY_PROVIDER_SCHEMA_VERSION } from '../multimodal/modelTaskContext.js'
 import type { GeneratedRubricV1, TaskMaterialContextV1 } from '../multimodal/types.js'
 import { KimiMultimodalProvider } from './kimiMultimodalProvider.js'
 import type { KimiTransport } from './kimiTransport.js'
@@ -320,7 +320,7 @@ describe('KimiMultimodalProvider', () => {
     await provider.gradeEssay({ requestId: 'legacy-request', task, essayId: 'legacy-essay', pages, signal: new AbortController().signal })
 
     expect(transport.complete.mock.calls[0]?.[0]).toMatchObject({
-      schemaName: 'essay-grading-provider-v2-legacy',
+      schemaName: LEGACY_ESSAY_PROVIDER_SCHEMA_VERSION,
       stage: 'essay_grading_images',
     })
     expect(transport.complete.mock.calls[0]?.[0].schema).toHaveProperty(

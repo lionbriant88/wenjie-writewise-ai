@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 
 import { describe, expect, it, vi } from 'vitest'
+import { ESSAY_PROVIDER_SCHEMA_VERSION, LEGACY_ESSAY_PROVIDER_SCHEMA_VERSION } from '../../src/multimodal/modelTaskContext.js'
 
 import type { ConfirmedTaskPackageV2 } from '../../src/multimodal/types.js'
 import type {
@@ -80,7 +81,7 @@ const provenance: BenchmarkProvenance = {
   model: 'kimi-k3',
   reasoningEffort: 'low',
   policyVersion: 'grading-policy-v1',
-  providerSchemaVersion: 'essay-grading-provider-v2',
+  providerSchemaVersion: ESSAY_PROVIDER_SCHEMA_VERSION,
   phaseBudgets: {
     material_context: 4_096,
     rubric_generation: 8_192,
@@ -143,7 +144,7 @@ function bindProvenance(
   const variantFields = source === provenance
     ? variant === 'baseline'
       ? {
-          providerSchemaVersion: 'essay-grading-provider-v2-legacy' as const,
+          providerSchemaVersion: LEGACY_ESSAY_PROVIDER_SCHEMA_VERSION,
           featureProfiles: {
             image: 'original-v1' as const,
             output: 'legacy-v1' as const,
@@ -151,7 +152,7 @@ function bindProvenance(
           },
         }
       : {
-          providerSchemaVersion: 'essay-grading-provider-v2' as const,
+          providerSchemaVersion: ESSAY_PROVIDER_SCHEMA_VERSION,
           featureProfiles: {
             image: 'original-v1' as const,
             output: 'deduplicated-v1' as const,

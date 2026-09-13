@@ -1,5 +1,6 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 import type { GatewayRuntimeConfig } from '../gatewayRuntimeConfig.js'
+import { ESSAY_PROVIDER_SCHEMA_VERSION, LEGACY_ESSAY_PROVIDER_SCHEMA_VERSION } from '../multimodal/modelTaskContext.js'
 import { KimiMultimodalProvider } from './kimiMultimodalProvider.js'
 import type { MultimodalProvider } from './multimodalProviderTypes.js'
 import type { KimiCompletionInput, KimiTransport } from './kimiTransport.js'
@@ -196,8 +197,8 @@ describe('provider selection', () => {
   })
 
   it.each([
-    ['optimized-v1', 'essay-grading-provider-v2', true],
-    ['legacy', 'essay-grading-provider-v2-legacy', false],
+    ['optimized-v1', ESSAY_PROVIDER_SCHEMA_VERSION, true],
+    ['legacy', LEGACY_ESSAY_PROVIDER_SCHEMA_VERSION, false],
   ] as const)('wires the explicit %s essay prompt profile and cache secret', async (essayPromptProfile, schemaName, expectsCacheKey) => {
     const complete = vi.fn(async (_input: KimiCompletionInput) => completion({ transcript: 'Synthetic result.' }, 1))
     const provider = getMultimodalProvider(runtimeConfig('kimi', 'single-pass-v1', essayPromptProfile), {

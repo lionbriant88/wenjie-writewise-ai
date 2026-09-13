@@ -43,16 +43,35 @@ export function UploadPage() {
   const navigate = useNavigate()
   const { tasks, enqueueImageEssays } = useAppState()
   const task = findTask(tasks, taskId)
-  const [students, setStudents] = useState<StudentUpload[]>(() => [createStudent(0)])
+  const [students, setStudentsState] = useState<StudentUpload[]>(() => [createStudent(0)])
+  const studentsRef = useRef(students)
+  const mountedRef = useRef(false)
   const [uploadError, setUploadError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const submittingRef = useRef(false)
   const submissionIdRef = useRef(`upload-${crypto.randomUUID?.() ?? Date.now()}`)
   const localPreviewUrlsRef = useRef<string[]>([])
 
-  useEffect(() => () => {
-    localPreviewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      localPreviewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
+      localPreviewUrlsRef.current = []
+    }
   }, [])
+
+  // Publish each upload edit synchronously so delayed PDF callbacks see the latest card.
+  // Keep URL allocation/release outside React's replayable state updater callbacks.
+  const setStudents = (update: (current: StudentUpload[]) => StudentUpload[]) => {
+    if (!mountedRef.current) return
+    const next = update(studentsRef.current)
+    studentsRef.current = next
+    setStudentsState(next)
+  }
+
+  const isStudentActive = (studentId: string) => mountedRef.current
+    && studentsRef.current.some((student) => student.id === studentId)
 
   if (!task) {
     return <EmptyState title="找不到任务" description="请返回任务列表重新选择一个批改任务。" />
@@ -61,15 +80,16 @@ export function UploadPage() {
   const displayName = (student: StudentUpload, index: number) => student.name.trim() || defaultStudentName(index)
 
   const addImageFiles = (studentId: string, files: File[]) => {
-    if (!files.length) return
+    if (!mountedRef.current || !files.length) return
+    const target = studentsRef.current.find((student) => student.id === studentId)
+    if (!target) return
     const invalid = files.find((file) => !allowedImageTypes.has(file.type) || file.size > maxImageBytes)
     if (invalid) {
       setUploadError('仅支持 PNG、JPEG、WebP 图片，且单张不超过 8 MiB。')
       return
     }
 
-    const target = students.find((student) => student.id === studentId)
-    if (!target || target.pages.length + files.length > maxPagesPerStudent) {
+    if (target.pages.length + files.length > maxPagesPerStudent) {
       setUploadError(`每位学生最多上传 ${maxPagesPerStudent} 页作文。`)
       return
     }
@@ -94,9 +114,9 @@ export function UploadPage() {
   }
 
   const addPdfFile = async (studentId: string, file?: File) => {
-    if (!file) return
-    const target = students.find((student) => student.id === studentId)
-    if (!target) return
+    if (!mountedRef.current || !file) return
+    const target = studentsRef.current.find((student) => student.id === studentId)
+    if (!target || target.processingPdf) return
     const remainingPages = maxPagesPerStudent - target.pages.length
     if (remainingPages < 1) {
       setUploadError(`每位学生最多上传 ${maxPagesPerStudent} 页作文。`)
@@ -111,7 +131,9 @@ export function UploadPage() {
       const pageFiles = await convertPdfToImages(file, { maxPages: remainingPages })
       addImageFiles(studentId, pageFiles)
     } catch (error) {
-      setUploadError(error instanceof Error ? error.message : 'PDF 解析失败，请检查文件后重试。')
+      if (isStudentActive(studentId)) {
+        setUploadError(error instanceof Error ? error.message : 'PDF 解析失败，请检查文件后重试。')
+      }
     } finally {
       setStudents((current) => current.map((student) => student.id === studentId
         ? { ...student, processingPdf: false }

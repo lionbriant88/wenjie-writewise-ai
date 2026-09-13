@@ -29,7 +29,8 @@ export const PROVIDER_RESULT_KEYS = {
   sentencePair: ['originalText', 'correctedText', 'improvedText', 'relatedIssueKeys', 'changeTypes', 'explanation', 'requiresTeacherReview'],
   logicNote: ['quote', 'note'],
   logicIssue: ['issueKey', 'originalText', 'contextBefore', 'contextAfter', 'subType', 'severity', 'diagnosis', 'suggestedAction', 'conservativeSuggestion', 'polishedSuggestion', 'requiresTeacherReview'],
-  legibilityIssue: ['issueKey', 'transcriptText', 'possibleReadings', 'pageNumber', 'regionDescription', 'explanation', 'defaultOutcome'],
+  legibilityIssue: ['issueKey', 'transcriptText', 'possibleReadings', 'pageNumber', 'regionDescription', 'explanation', 'defaultOutcome', 'resolution', 'deductionPoints'],
+  legacyLegibilityIssue: ['issueKey', 'transcriptText', 'possibleReadings', 'pageNumber', 'regionDescription', 'explanation', 'defaultOutcome'],
 } as const
 
 export function hasExactProviderKeys(value: Record<string, unknown>, keys: readonly string[]) {

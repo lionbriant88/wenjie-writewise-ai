@@ -137,7 +137,7 @@ export function applyResultPolicy(
     return null
   }
   if (raw.recognitionWarnings.some(({ scope, message }) => (
-    (scope !== 'global_unreadable' && scope !== 'printed_boundary')
+    (scope !== 'global_unreadable' && scope !== 'printed_boundary' && scope !== 'image_clipped')
     || !message.trim()
     || message.length > 1_000
   ))) return reject('warning')

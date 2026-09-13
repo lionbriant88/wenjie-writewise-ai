@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
+import { ESSAY_PROVIDER_SCHEMA_VERSION, LEGACY_ESSAY_PROVIDER_SCHEMA_VERSION } from '../../src/multimodal/modelTaskContext.js'
 import {
   benchmarkExecutionProfile,
   evaluatePairedQualityGates,
@@ -526,8 +527,8 @@ function syntheticProvenance(variant: 'baseline' | 'candidate' = 'baseline') {
     reasoningEffort: 'low' as const,
     policyVersion: 'grading-policy-v1' as const,
     providerSchemaVersion: variant === 'baseline'
-      ? 'essay-grading-provider-v2-legacy' as const
-      : 'essay-grading-provider-v2' as const,
+      ? LEGACY_ESSAY_PROVIDER_SCHEMA_VERSION
+      : ESSAY_PROVIDER_SCHEMA_VERSION,
     phaseBudgets: {
       material_context: 16384,
       rubric_generation: 16384,
@@ -1037,7 +1038,7 @@ describe('default benchmark command and safe report boundary', () => {
         model: 'kimi-k3' as const,
         reasoningEffort: 'low' as const,
         policyVersion: 'grading-policy-v1' as const,
-        providerSchemaVersion: 'essay-grading-provider-v2-legacy' as const,
+        providerSchemaVersion: LEGACY_ESSAY_PROVIDER_SCHEMA_VERSION,
         phaseBudgets: {
           material_context: 16384,
           rubric_generation: 16384,
@@ -1401,7 +1402,7 @@ describe('default benchmark command and safe report boundary', () => {
       model: 'kimi-k3' as const,
       reasoningEffort: 'low' as const,
       policyVersion: 'grading-policy-v1' as const,
-      providerSchemaVersion: 'essay-grading-provider-v2-legacy' as const,
+      providerSchemaVersion: LEGACY_ESSAY_PROVIDER_SCHEMA_VERSION,
       phaseBudgets: {
         material_context: 16384,
         rubric_generation: 16384,
@@ -1418,7 +1419,7 @@ describe('default benchmark command and safe report boundary', () => {
     }
     const candidateProvenance = {
       ...baselineProvenance,
-      providerSchemaVersion: 'essay-grading-provider-v2' as const,
+      providerSchemaVersion: ESSAY_PROVIDER_SCHEMA_VERSION,
       featureProfiles: {
         image: 'original-v1' as const,
         output: 'deduplicated-v1' as const,
@@ -1923,7 +1924,7 @@ describe('soak command', () => {
         model: 'kimi-k3' as const,
         reasoningEffort: 'low' as const,
         policyVersion: 'grading-policy-v1' as const,
-        providerSchemaVersion: 'essay-grading-provider-v2' as const,
+        providerSchemaVersion: ESSAY_PROVIDER_SCHEMA_VERSION,
         phaseBudgets: {
           material_context: 16384,
           rubric_generation: 16384,

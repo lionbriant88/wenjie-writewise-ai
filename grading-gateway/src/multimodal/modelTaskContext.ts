@@ -2,8 +2,8 @@ import { createHmac } from 'node:crypto'
 import type { ConfirmedTaskPackageV2 } from './types.js'
 
 export const MODEL_TASK_CONTEXT_VERSION = 'model-task-context-v1' as const
-export const ESSAY_PROVIDER_SCHEMA_VERSION = 'essay-grading-provider-v2' as const
-export const LEGACY_ESSAY_PROVIDER_SCHEMA_VERSION = 'essay-grading-provider-v2-legacy' as const
+export const ESSAY_PROVIDER_SCHEMA_VERSION = 'essay-grading-provider-v3' as const
+export const LEGACY_ESSAY_PROVIDER_SCHEMA_VERSION = 'essay-grading-provider-v3-legacy' as const
 
 const MAX_REVIEW_WARNINGS = 50
 const MAX_REVIEW_WARNING_CODE_POINTS = 5_000

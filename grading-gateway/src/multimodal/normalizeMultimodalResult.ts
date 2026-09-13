@@ -10,6 +10,7 @@ import type { RawDimensionScoreV1, RawExpressionUpgradeV1, RawLegibilityIssueV1,
 import type { LegibilityIssueV1 } from '../types.js'
 import { PROVIDER_RESULT_KEYS as KEYS, PROVIDER_RESULT_LIMITS as LIMITS, hasExactProviderKeys } from './providerResultContract.js'
 import { GRADING_REVIEW_REASONS, hasDistinctNormalizedText } from '../../../app/src/services/grading/gradingResultSemantics.js'
+import { normalizePageAssessments } from './normalizePageAssessments.js'
 
 export interface MultimodalGradingResult extends AiGradingResultV1 { transcript: string; recognitionWarnings: string[]; printedTextExcluded: boolean }
 export type MultimodalNormalizationDiagnosticCode =
@@ -105,7 +106,7 @@ function parseRecognitionWarnings(value: unknown): ParsedAuxiliary<RawRecognitio
       continue
     }
     const message = text(item.message, LIMITS.recognitionMessage)
-    if ((item.scope !== 'global_unreadable' && item.scope !== 'printed_boundary') || !message) {
+    if ((item.scope !== 'global_unreadable' && item.scope !== 'printed_boundary' && item.scope !== 'image_clipped') || !message) {
       omittedMalformed = true
       continue
     }
@@ -340,7 +341,7 @@ function parseRawLegibilityIssues(value: unknown): ParsedReferencedKeyedAuxiliar
   const suppressedReferences: SuppressedReference[] = []
   let omittedMalformed = source.omittedMalformed
   for (const item of source.items) {
-    if (!isRecord(item) || !hasExactProviderKeys(item, KEYS.legibilityIssue)) {
+    if (!isRecord(item) || (!hasExactProviderKeys(item, KEYS.legibilityIssue) && !hasExactProviderKeys(item, KEYS.legacyLegibilityIssue))) {
       if (isRecord(item)) {
         const reference = suppressedLegibilityReference(item)
         if (reference) suppressedReferences.push(reference)
@@ -349,13 +350,17 @@ function parseRawLegibilityIssues(value: unknown): ParsedReferencedKeyedAuxiliar
       continue
     }
     const issueKey = text(item.issueKey, LIMITS.issueKey), transcriptText = quote(item.transcriptText), possibleReadings = textArray(item.possibleReadings, 4, LIMITS.possibleReading), regionDescription = text(item.regionDescription), explanation = text(item.explanation), defaultOutcome = text(item.defaultOutcome, 64)
-    if (!issueKey || !transcriptText || !possibleReadings || possibleReadings.length < 2 || !hasDistinctNormalizedText(possibleReadings) || typeof item.pageNumber !== 'number' || !Number.isInteger(item.pageNumber) || item.pageNumber < 1 || !regionDescription || !explanation || defaultOutcome !== 'count_as_legibility_error') {
+    const hasResolution = 'resolution' in item || 'deductionPoints' in item
+    const validResolution = typeof item.deductionPoints === 'number' && Number.isFinite(item.deductionPoints)
+      && ((item.resolution === 'resolved_correct' && item.deductionPoints === 0)
+        || (item.resolution === 'unresolved' && item.deductionPoints > 0 && roundScore2(item.deductionPoints) === item.deductionPoints))
+    if (!issueKey || !transcriptText || !possibleReadings || possibleReadings.length < 2 || !hasDistinctNormalizedText(possibleReadings) || typeof item.pageNumber !== 'number' || !Number.isInteger(item.pageNumber) || item.pageNumber < 1 || !regionDescription || !explanation || defaultOutcome !== 'count_as_legibility_error' || (hasResolution && !validResolution)) {
       const reference = suppressedLegibilityReference(item)
       if (reference) suppressedReferences.push(reference)
       omittedMalformed = true
       continue
     }
-    parsed.push({ issueKey, transcriptText, possibleReadings, pageNumber: item.pageNumber, regionDescription, explanation, defaultOutcome })
+    parsed.push({ issueKey, transcriptText, possibleReadings, pageNumber: item.pageNumber, regionDescription, explanation, defaultOutcome, ...(hasResolution ? { resolution: item.resolution as 'resolved_correct' | 'unresolved', deductionPoints: item.deductionPoints as number } : {}) })
   }
   return { items: parsed, claimedKeys: parsed.map(({ issueKey }) => issueKey), suppressedReferences, omittedMalformed }
 }
@@ -452,7 +457,18 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
   let auxiliaryInputDegraded = parsedRawScores.omittedAuxiliaryRows
   const parsedRecognitionWarnings = parseRecognitionWarnings(payload.recognitionWarnings)
   if (parsedRecognitionWarnings.omittedMalformed) auxiliaryInputDegraded = true
-  const sourceRecognitionWarnings = context.confirmedTranscript === undefined ? parsedRecognitionWarnings.items : []
+  const pageReview = normalizePageAssessments(payload.pageAssessments, { ...context, transcript })
+  if (pageReview.degraded) auxiliaryInputDegraded = true
+  const warningCandidates = [...pageReview.warnings, ...parsedRecognitionWarnings.items]
+  const warningKeys = new Set<string>()
+  const uniqueWarnings = warningCandidates.filter(({ scope, message }) => {
+    const key = JSON.stringify([scope, message])
+    if (warningKeys.has(key)) return false
+    warningKeys.add(key)
+    return true
+  })
+  if (uniqueWarnings.length > LIMITS.recognitionWarnings) auxiliaryInputDegraded = true
+  const sourceRecognitionWarnings = context.confirmedTranscript === undefined ? uniqueWarnings.slice(0, LIMITS.recognitionWarnings) : []
   if (context.confirmedTranscript !== undefined && (parsedRecognitionWarnings.items.length > 0 || payload.printedTextExcluded !== true)) auxiliaryInputDegraded = true
   const printedTextExcluded = context.confirmedTranscript !== undefined
     ? true
@@ -529,14 +545,36 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
   const legibilityMaxScore = legibilityDimension
     ? calculateDimensionMaxScore(request.task.fullScore, legibilityDimension.weight)
     : 0
-  const legibilityIssues = uniqueLegibilityIssues.filter(({ pageNumber }) => (
+  const groundedLegibilityAssessments = uniqueLegibilityIssues.filter(({ pageNumber, resolution, deductionPoints }) => (
     legibilityMaxScore > 0
       && context.confirmedTranscript === undefined
       && pageNumber <= context.pageCount
+      && (resolution !== 'unresolved' || deductionPoints! <= legibilityMaxScore)
   )).filter(({ transcriptText }) => (
     exactUniqueTranscriptRange(transcript, transcriptText) !== null
   ))
-  if (legibilityIssues.length !== uniqueLegibilityIssues.length) auxiliaryInputDegraded = true
+  const conflictingLegibilityKeys = new Set<string>()
+  for (let left = 0; left < groundedLegibilityAssessments.length; left += 1) {
+    for (let right = left + 1; right < groundedLegibilityAssessments.length; right += 1) {
+      const leftIssue = groundedLegibilityAssessments[left], rightIssue = groundedLegibilityAssessments[right]
+      // Legacy output keeps its original normalization path. New declarations cannot
+      // assign resolved and unresolved decisions (or two deductions) to one region.
+      if ((leftIssue.resolution !== undefined || rightIssue.resolution !== undefined)
+        && transcriptRangesOverlap(exactUniqueTranscriptRange(transcript, leftIssue.transcriptText)!, exactUniqueTranscriptRange(transcript, rightIssue.transcriptText)!)) {
+        conflictingLegibilityKeys.add(leftIssue.issueKey)
+        conflictingLegibilityKeys.add(rightIssue.issueKey)
+      }
+    }
+  }
+  const usableLegibilityAssessments = groundedLegibilityAssessments.filter(({ issueKey }) => !conflictingLegibilityKeys.has(issueKey))
+  const resolvedLegibilityIssues = usableLegibilityAssessments.filter(({ resolution }) => resolution === 'resolved_correct')
+  const resolvedLegibilityKeys = new Set(resolvedLegibilityIssues.map(({ issueKey }) => issueKey))
+  const legibilityIssues = usableLegibilityAssessments.filter(({ resolution }) => resolution !== 'resolved_correct')
+  const hasCompleteStructuredLegibility = parsedLegibilityIssues.items.length > 0
+    && !parsedLegibilityIssues.omittedMalformed
+    && usableLegibilityAssessments.length === parsedLegibilityIssues.items.length
+    && usableLegibilityAssessments.every(({ resolution }) => resolution !== undefined)
+  if (usableLegibilityAssessments.length !== uniqueLegibilityIssues.length) auxiliaryInputDegraded = true
   const rejectedLogicReferences: SuppressedReference[] = [
     ...parsedLogicIssues.suppressedReferences.filter((reference) => !parsedLogicIssues.items.some((validIssue) => (
       sameSuppressedReference(reference, suppressedReferenceFromLogicIssue(validIssue))
@@ -549,7 +587,7 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
       sameSuppressedReference(reference, suppressedReferenceFromLegibilityIssue(validIssue))
     ))),
     ...duplicateOmittedLegibilityIssues.map(suppressedReferenceFromLegibilityIssue),
-    ...uniqueLegibilityIssues.filter((issue) => !legibilityIssues.includes(issue)).map(suppressedReferenceFromLegibilityIssue),
+    ...uniqueLegibilityIssues.filter((issue) => !usableLegibilityAssessments.includes(issue)).map(suppressedReferenceFromLegibilityIssue),
   ]
   let suppressedReferences: SuppressedReference[] = [
     ...rejectedIssueReferences,
@@ -573,8 +611,37 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
     ...groundedLogicIssues.map((issue) => [issue.issueKey, exactUniqueTranscriptRange(transcript, issue.originalText)] as const),
     ...legibilityIssues.map((issue) => [issue.issueKey, exactUniqueTranscriptRange(transcript, issue.transcriptText)] as const),
   ])
+  const resolvedReadingsWithoutIndependentLanguage = resolvedLegibilityIssues.filter((reading) => {
+    const readingRange = exactUniqueTranscriptRange(transcript, reading.transcriptText)!
+    const overlappingLanguage = issues.filter((issue) => (
+      (issue.type === 'grammar' || issue.type === 'word_choice')
+      && transcriptRangesOverlap(issueRangesByKey.get(issue.issueKey)!, readingRange)
+    ))
+    // Resolving letters does not certify grammar or word choice. A grounded,
+    // independently classified correction may change the resolved word, unless
+    // it merely substitutes a rejected visual reading. Conflicting declarations
+    // keep the conservative path; genuine uncertain spelling is handled below.
+    return overlappingLanguage.length === 0 || !overlappingLanguage.every((issue) => {
+      const issueRange = issueRangesByKey.get(issue.issueKey)!
+      return issue.evidenceCertainty === 'certain' && !issue.requiresTeacherReview
+        && issueRange.start <= readingRange.start && issueRange.end >= readingRange.end
+        && issue.suggestion !== issue.originalText
+        && !reading.possibleReadings.some((alternative) => (
+          alternative !== reading.transcriptText
+          && !containsBoundedTerm(issue.originalText, alternative)
+          && containsBoundedTerm(issue.suggestion, alternative)
+        ))
+    })
+  })
   const uncertainSpellingIssues: RawMultimodalIssueV1[] = [
     ...uniquelyKeyedIssues.filter(issueIsUncertainSpelling),
+    // Resolved-only observations still use the existing silent cleanup. Do not
+    // turn independently grounded language errors into uncertain spelling.
+    ...resolvedReadingsWithoutIndependentLanguage.map((issue): RawMultimodalIssueV1 => ({
+      issueKey: issue.issueKey, type: 'spelling', severity: 'low',
+      originalText: issue.transcriptText, suggestion: issue.transcriptText,
+      explanation: 'Resolved correct reading.', evidenceCertainty: 'uncertain', requiresTeacherReview: true,
+    })),
     ...safelySuppressedSpellingReferences
       .filter((reference): reference is SuppressedIssueReference & { originalText: string } => reference.originalText !== null)
       .map((reference, index) => ({
@@ -589,6 +656,7 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
       })),
   ]
   const uncertainSpellingKeys = new Set([
+    ...resolvedLegibilityKeys,
     ...uniquelyKeyedIssues.filter(issueIsUncertainSpelling).map(({ issueKey }) => issueKey),
     ...safelySuppressedSpellingReferences
       .map(({ claimedIssueKey }) => claimedIssueKey)
@@ -838,12 +906,20 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
     }
     return !quoteIsSuppressed && !noteIsUnsafe
   })
-  const recognitionWarnings = sourceRecognitionWarnings.filter(({ message }) => (
-    !explicitlyReferencesFilteredSpellingWithCue(message, uncertainSpellingIssues)
-    && !referencesSuppressedIssue(message)
-    && !referencesLocalLegibility(message)
+  const referencesResolvedReading = (value: string) => resolvedLegibilityIssues.some(({ transcriptText, possibleReadings }) => (
+    [transcriptText, ...possibleReadings].some((reading) => containsBoundedTerm(value, reading))
   ))
-  if (referencesFilteredSpelling(overallComment) || referencesSuppressedIssue(overallComment) || referencesLocalLegibility(overallComment)) {
+  const recognitionWarnings = sourceRecognitionWarnings.filter((warning) => {
+    // Page completeness is independent of whether a visible word can be read.
+    // In particular, candidate readings such as "1" must not erase "page 1".
+    if (pageReview.warnings.includes(warning) || warning.scope === 'image_clipped' || warning.scope === 'printed_boundary') return true
+    const { message } = warning
+    return !explicitlyReferencesFilteredSpellingWithCue(message, uncertainSpellingIssues)
+      && !referencesResolvedReading(message)
+      && !referencesSuppressedIssue(message)
+      && !referencesLocalLegibility(message)
+  })
+  if (referencesFilteredSpelling(overallComment) || referencesResolvedReading(overallComment) || referencesSuppressedIssue(overallComment) || referencesLocalLegibility(overallComment)) {
     overallComment = '已依据评分标准完成批改。'
   }
   const overlapsContaminatedRange = (key: string) => {
@@ -870,7 +946,7 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
   let dimensionRelationAdjusted = false
   let dimensionEvidenceRegrounded = false
   let dimensionDeductionNeedsReview = false
-  let spellingPolicyScoreAdjusted = false
+  let conservativePolicyScoreAdjusted = false
   const dimensionScoreCandidates = request.task.rubric.dimensions.map((dimension) => {
     const score = rawScores.get(dimension.id)!
     const parsedReason = text(score.reason)
@@ -896,6 +972,34 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
       if (!parsedEvidence) dimensionEvidenceRegrounded = true
     }
     let spellingPolicyAdjusted = false
+    const canRebuildLegibilityScore = dimension.id === 'legibility'
+      && hasCompleteStructuredLegibility
+      && safeLegibilityIssues.length === legibilityIssues.length
+      && relationshipFieldsAreValid
+      && relatedIssueKeys.every((key) => usableLegibilityAssessments.some(({ issueKey }) => key === issueKey))
+      && (roundedScore === maxScore || (relatedIssueKeys.length > 0 && usableLegibilityAssessments.some(({ issueKey, transcriptText }) => {
+        if (!relatedIssueKeys.includes(issueKey) || !parsedEvidence) return false
+        const evidenceRange = exactUniqueTranscriptRange(transcript, parsedEvidence)
+        const issueRange = exactUniqueTranscriptRange(transcript, transcriptText)
+        // Reversing an existing deduction requires local, linked evidence. A
+        // whole-essay quote must not conceal a separate, unexplained deduction.
+        return Boolean(evidenceRange && issueRange && evidenceRange.start >= issueRange.start && evidenceRange.end <= issueRange.end)
+      })))
+    if (canRebuildLegibilityScore) {
+      const unresolvedDeduction = safeLegibilityIssues.reduce((sum, issue) => sum + issue.deductionPoints!, 0)
+      const rebuiltScore = roundScore2(maxScore - Math.min(maxScore, unresolvedDeduction))
+      if (rebuiltScore !== roundedScore) conservativePolicyScoreAdjusted = true
+      roundedScore = rebuiltScore
+      relatedIssueKeys = safeLegibilityIssues.map(({ issueKey }) => issueKey)
+      reason = safeLegibilityIssues[0]?.explanation ?? '该维度未发现需扣分的问题。'
+      evidence = safeLegibilityIssues[0]?.transcriptText ?? transcript
+      spellingPolicyAdjusted = safeLegibilityIssues.length === 0
+    } else if (dimension.id === 'legibility' && parsedLegibilityIssues.items.some(({ resolution }) => resolution !== undefined)) {
+      // A valid sibling must not conceal a new assessment whose complete
+      // deduction allocation cannot be established.
+      dimensionDeductionNeedsReview = true
+      requiresTeacherReview = true
+    }
     const originalRelatedIssueKeys = [...relatedIssueKeys]
     const parsedEvidenceRange = parsedEvidence ? exactUniqueTranscriptRange(transcript, parsedEvidence) : null
     const evidenceIsOnlyUncertainSpelling = Boolean(parsedEvidenceRange && rangeIsOnlyUncertainSpelling(parsedEvidenceRange))
@@ -946,7 +1050,7 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
       reason = '该维度未发现需扣分的问题。'
       evidence = transcript
       spellingPolicyAdjusted = true
-      spellingPolicyScoreAdjusted = true
+      conservativePolicyScoreAdjusted = true
     } else if (dimension.id !== 'legibility' && roundedScore === maxScore && hasOnlyUncertainSpellingLinks && spellingSupportIsLocallyAttributable) {
       relatedIssueKeys = []
       reason = '该维度未发现需扣分的问题。'
@@ -1135,7 +1239,7 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
   }
   const rawRoundedScores = request.task.rubric.dimensions.map((dimension) => roundScore2(Number(rawScores.get(dimension.id)?.score)))
   const rawRecomputedTotal = calculateTotalScore(rawRoundedScores, request.task.fullScore)
-  const reportedTotalScore = spellingPolicyScoreAdjusted && rawReportedTotalScore === rawRecomputedTotal
+  const reportedTotalScore = conservativePolicyScoreAdjusted && rawReportedTotalScore === rawRecomputedTotal
     ? totalScore
     : rawReportedTotalScore
   const normalized = normalizeGradingResultFromPolicyOutcome({ request, context: { provider: context.provider, createdAt: context.createdAt }, policy, dimensionScores, totalScore, reportedTotalScore, reviewReasons: [] })
@@ -1156,6 +1260,8 @@ export function normalizeMultimodalResult(payload: unknown, context: MultimodalN
   if (auxiliaryFeedbackOmitted) reviewReasons.add(GRADING_REVIEW_REASONS.auxiliaryFeedbackOmitted)
   if (recognitionWarnings.length) reviewReasons.add(GRADING_REVIEW_REASONS.recognitionUncertain)
   if (!printedTextExcluded) reviewReasons.add(GRADING_REVIEW_REASONS.printedTextExclusionUncertain)
-  const normalizedLegibilityIssues: LegibilityIssueV1[] = safeLegibilityIssues.map(({ issueKey: _issueKey, ...issue }, index) => ({ id: `${context.essayId}-legibility-${index + 1}`, ...issue }))
+  const normalizedLegibilityIssues: LegibilityIssueV1[] = safeLegibilityIssues.map(({ transcriptText, possibleReadings, pageNumber, regionDescription, explanation, defaultOutcome }, index) => ({
+    id: `${context.essayId}-legibility-${index + 1}`, transcriptText, possibleReadings, pageNumber, regionDescription, explanation, defaultOutcome,
+  }))
   return { ok: true, result: { ...normalized, ...(modelSelfConfidence === undefined ? {} : { modelSelfConfidence }), status: reviewReasons.size ? 'partial' : 'success', legibilityIssues: normalizedLegibilityIssues, reviewReasons: [...reviewReasons], transcript, recognitionWarnings: recognitionWarnings.map(({ message }) => message), printedTextExcluded } }
 }

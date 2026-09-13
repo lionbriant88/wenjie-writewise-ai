@@ -108,6 +108,9 @@ export interface RawLegibilityIssueV1 {
   regionDescription: string
   explanation: string
   defaultOutcome: 'count_as_legibility_error'
+  /** Provider-only classification; both fields are absent in legacy fixtures. */
+  resolution?: 'resolved_correct' | 'unresolved'
+  deductionPoints?: number
 }
 
 export interface RawDimensionScoreV1 {
@@ -122,7 +125,7 @@ export interface RawDimensionScoreV1 {
   spellingPolicyAdjusted?: boolean
 }
 
-export type RawRecognitionWarningScopeV1 = 'global_unreadable' | 'printed_boundary'
+export type RawRecognitionWarningScopeV1 = 'global_unreadable' | 'printed_boundary' | 'image_clipped'
 
 export interface RawRecognitionWarningV1 {
   scope: RawRecognitionWarningScopeV1
