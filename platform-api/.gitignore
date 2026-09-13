@@ -1,0 +1,6 @@
+node_modules/
+.env
+.env.*
+!.env.example
+local-private-accounts/
+local-auth-data/

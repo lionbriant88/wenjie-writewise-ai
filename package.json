@@ -1,0 +1,16 @@
+{
+  "name": "writewise-pilot",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "node": "24.x" },
+  "scripts": {
+    "build": "npm run typecheck:deployment && npm --prefix app run build",
+    "typecheck:deployment": "node platform-api/node_modules/typescript/bin/tsc --project tsconfig.api.json",
+    "test:accounts": "npm --prefix platform-api test",
+    "typecheck:accounts": "npm --prefix platform-api run typecheck",
+    "accounts:prepare": "npm --prefix platform-api run accounts:prepare --",
+    "accounts:apply": "npm --prefix platform-api run accounts:apply --",
+    "db:migrate": "npm --prefix platform-api run db:migrate --"
+  }
+}

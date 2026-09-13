@@ -21,6 +21,8 @@ local-samples/
 smoke-samples/
 local-private-samples/
 local-private-results/
+local-private-accounts/
+.vercel/
 .paddle-home/
 .paddle-cache/
 .paddleocr/
