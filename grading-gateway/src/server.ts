@@ -304,20 +304,21 @@ function safeRuntimeSnapshot(
 ) {
   if (!config) return { status: 'unconfigured' as const }
   const admissionSnapshot = admission?.snapshot()
+  const selectedProvider = config.provider === 'openrouter' && config.openrouter ? config.openrouter : config.kimi
   return {
     provider: config.provider,
-    model: config.kimi.model,
-    reasoningEffort: config.kimi.reasoningEffort,
+    model: selectedProvider.model,
+    ...(config.provider === 'openrouter' ? {} : { reasoningEffort: config.kimi.reasoningEffort }),
     deadlines: {
       httpMs: config.deadlines.httpMs,
       providerFinalMs: config.deadlines.providerFinalMs,
       settlementGraceMs: config.deadlines.settlementGraceMs,
     },
     stageBudgets: {
-      material_context: config.kimi.stageBudgets.material_context,
-      rubric_generation: config.kimi.stageBudgets.rubric_generation,
-      essay_grading_images: config.kimi.stageBudgets.essay_grading_images,
-      essay_regrading_text: config.kimi.stageBudgets.essay_regrading_text,
+      material_context: selectedProvider.stageBudgets.material_context,
+      rubric_generation: selectedProvider.stageBudgets.rubric_generation,
+      essay_grading_images: selectedProvider.stageBudgets.essay_grading_images,
+      essay_regrading_text: selectedProvider.stageBudgets.essay_regrading_text,
     },
     hardLimit: config.admission.hardLimit,
     modes: {
@@ -364,7 +365,9 @@ function telemetryContext(
 ) {
   return {
     stage,
-    model: options.runtimeConfig?.kimi.model ?? 'unconfigured',
+    model: options.runtimeConfig?.provider === 'openrouter'
+      ? options.runtimeConfig.openrouter?.model ?? 'unconfigured'
+      : options.runtimeConfig?.kimi.model ?? 'unconfigured',
     reasoningEffort: 'low' as const,
     outcome,
   }

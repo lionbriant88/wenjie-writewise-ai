@@ -1,6 +1,6 @@
 # 教师试用账号：部署与初始化
 
-本版本提供账号登录和管理，可先部署验证账号。作文云端持久化和 OpenRouter 批改尚未接通；登录后会显示“作文批改暂未开放”。项目尚未创建时，本地验证不代表 Supabase 账号已创建。
+本版本提供账号登录和管理，并已加入受保护的 OpenRouter Dots3 免费模型 MVP 批改入口。当前只支持一份已确认评分标准和单张合成或已授权图片的受控测试；任务、图片、结果持久化和后台队列尚未完成。项目尚未创建时，本地验证不代表 Supabase 账号已创建。
 
 本次账号站点已部署为 [文阶教师试用](https://wenjie-writewise-pilot.vercel.app)，实际范围和公网验证见 [Vercel 账号验证记录](2026-09-13-vercel-account-validation.md)。以下初始化步骤用于维护与复现，现有账号无需重新生成。
 
@@ -17,6 +17,7 @@
 
 ```powershell
 npm.cmd ci --prefix platform-api
+npm.cmd ci --prefix grading-gateway
 npm.cmd ci --prefix app
 npm.cmd run build
 ```
@@ -98,7 +99,7 @@ npm.cmd run accounts:apply -- --manifest local-private-accounts/pilot-batch/mani
 
 从包含本次分支的仓库导入项目，Root Directory 选择仓库根目录。根目录 `vercel.json` 已指定安装两个 package、构建 `app/dist`，并将 `/api/*` 路由到账号函数，其余网页路径交给 SPA。
 
-账号函数固定在单一 `sin1` 区域，与新加坡 Supabase 项目对齐；Hobby 只使用这一处函数区域。账号 API 的 `maxDuration` 为 30 秒，为数据库连接、登录校验和事务结束保留余量。配置和本地构建通过不等于 Vercel 云端构建或函数依赖打包已经验证；首次部署仍需确认构建成功、函数包包含 PostgreSQL 运行依赖，并执行下方接口验收。
+账号函数固定在单一 `sin1` 区域，与新加坡 Supabase 项目对齐；Hobby 只使用这一处函数区域。当前函数 `maxDuration` 为 300 秒，用于容纳免费多模态模型的单次受控请求；Gateway 自身仍设置更短的 HTTP 和 Provider 截止时间。配置和本地构建通过不等于 Vercel 云端构建或函数依赖打包已经验证；部署后仍需确认构建成功、函数包包含 PostgreSQL 和 Gateway 运行依赖，并执行下方接口验收。
 
 配置服务端环境：
 
@@ -108,6 +109,9 @@ npm.cmd run accounts:apply -- --manifest local-private-accounts/pilot-batch/mani
 | `APP_ORIGIN` | 该部署实际的 HTTPS 域名，精确匹配，不带路径 |
 | `AUTH_RATE_LIMIT_SECRET` | 稳定、独立的随机秘密值，多实例一致 |
 | `DATABASE_CA_CERT` | Supabase Dashboard 提供的数据库 CA PEM，保留真实换行 |
+| `OPENROUTER_API_KEY` | OpenRouter 专用密钥，只设置在 Vercel Production 服务端环境，不写入前端或仓库 |
+| `OPENROUTER_MODEL` | 固定为 `dots-studio/dots-3-note-preview:free`；后续只替换为已验证的 `:free` 模型 |
+| `OPENROUTER_MAX_COMPLETION_TOKENS` | MVP 建议 `16384`，按免费模型实际限制调整 |
 
 不要给 Vercel 设置 `DATABASE_ADMIN_URL`、`PILOT_INITIAL_PASSWORD`、`AUTH_STORAGE=local` 或 `AUTH_LOCAL_PATH`。初始化只在受控管理端运行。前端不应设置任何 Supabase 密钥、连接串或 OpenRouter key。
 
@@ -119,9 +123,11 @@ npm.cmd run accounts:apply -- --manifest local-private-accounts/pilot-batch/mani
 
 官方：[Vite 与 API 路由](https://vercel.com/docs/frameworks/frontend/vite)、[Vercel rewrite](https://vercel.com/docs/routing/rewrites)。
 
-## OpenRouter 后续接入
+## OpenRouter MVP 接入与限制
 
-账号部署不自动启动真实模型。下一步需接入 Supabase 私有图片与按教师归属的任务/结果，持久后台执行和共享并发，再固定并验证支持图片与严格结构输出的免费 OpenRouter 模型。
+Vercel API 已将 `/api/grading` 和 `/api/tasks` 挂载到现有 Gateway，并要求同源、已登录教师会话。模型调用只在服务端执行，固定使用 `dots-studio/dots-3-note-preview:free`，不自动切换付费模型；Provider 并发固定为 1。MVP 只验证手工确认的 rubric 和单张图片，页面任务上传与结果持久化仍待后续实现。
+
+公开测试建议只使用仓库合成图片或已取得授权的去身份化样本。一次请求可能接近几分钟，失败时不得盲目重试；先保存状态码、阶段和固定错误码，再决定是否更换模型。Vercel 函数请求体和响应体上限仍为 4.5MB，因此多页原图、长期任务和班级批量处理必须在后续改为私有 Storage + 后台队列，不能直接把当前 MVP 当作 30 个账号的批量服务。
 
 截至核对时，Vercel Hobby 在默认启用 Fluid Compute 时最长函数执行 300 秒，关闭时最长 60 秒；函数请求体和响应体上限均为 4.5MB，不能直接承载目前 360 秒超时和多页大图 multipart。原图应直传私有 Storage，由小元数据任务驱动后台处理。不能通过恢复 OCR、未验证压缩、忽略未知结果或自动转付费模型绕过限制。[函数限制](https://vercel.com/docs/functions/limitations)
 

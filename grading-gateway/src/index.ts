@@ -11,7 +11,9 @@ import { createGatewayExecutionServices, createServer } from './server.js'
 const runtimeConfig = parseGatewayRuntimeConfig(process.env, {
   classReviewFramingCalibration: PRODUCTION_CLASS_REVIEW_FRAMING_CALIBRATION,
 })
-const kimiApiKey = runtimeConfig.classReviewSynthesis.mode === 'kimi'
+const providerApiKey = runtimeConfig.provider === 'openrouter'
+  ? process.env.OPENROUTER_API_KEY
+  : runtimeConfig.classReviewSynthesis.mode === 'kimi'
   ? runtimeConfig.classReviewSynthesis.apiKey
   : process.env.KIMI_API_KEY
 const host = process.env.HOST ?? '127.0.0.1'
@@ -26,7 +28,7 @@ const providerTelemetry = createProviderTelemetryRecorder({
     (line) => console.error(line),
   ),
 })
-const multimodalProvider = getMultimodalProvider(runtimeConfig, { apiKey: kimiApiKey })
+const multimodalProvider = getMultimodalProvider(runtimeConfig, { apiKey: providerApiKey })
 const classReviewProvider = createClassReviewSynthesisProviderForRuntime(runtimeConfig)
 const classReviewRuntimeInvariant = new ClassReviewRuntimeInvariant()
 const monotonicNow = performance.now.bind(performance)

@@ -1,5 +1,25 @@
 # 文阶 WriteWise AI 项目记忆
 
+## 2026-09-23：OpenRouter Dots3 免费模型接入测试
+
+- 用户已确认 OpenRouter 登录、创建并本地保存专用密钥；本会话只读鉴权成功，免费请求日上限返回 50。密钥仅位于本工作树 Git ignored 配置，禁止写入日志或文档。
+- 用户明确要求先接入 `dots-studio/dots-3-note-preview:free` 测试，后续可更换模型；保持免费接口，不自动付费回退。模型由服务端配置选择，不在前端硬编码。
+- 本轮在受控 MVP 范围内把 Grading Gateway 挂载到 Vercel `/api/grading` 与 `/api/tasks`，Provider 并发固定为 1；生产环境只允许已登录教师、服务端读取 OpenRouter 密钥，不把密钥发给浏览器。
+- 本轮 MVP 只验证“已确认评分标准 + 单张合成或已授权图片 → 一次多模态批改”；任务、图片和结果尚未做 Supabase 持久化，跨实例幂等和后台队列仍待后续实施，不得把该公开测试记作完整生产闭环。
+- 已完成 OpenRouter 通用结构化传输层、Dots3 免费模型配置校验、无付费回退、OpenRouter provider 路由、健康检查模型名和本地启动模板；模型可通过 `OPENROUTER_MODEL` 更换为其他符合约束的 `:free` 模型。
+- 本地验证：Grading Gateway 全量 53 个测试文件 / 1359 项通过，类型检查和共享评分运行时检查通过。一次受控真实合成请求已发出并由网关安全归类为 `provider_invalid_response`（约 154 秒），未自动重试；模型列表元数据显示 Dots 支持图像输入、`response_format` 和 `structured_outputs`，但本次完整 rubric 返回未通过产品 rubric 校验，因此不能记作真实批改成功。
+- 真实测试账本位于 Git ignored 的 `grading-gateway/local-private-results/`，已记录本地合成调用；脚本在账本存在时拒绝重复调用，剩余额度不会被盲目消耗。Vercel 公开测试仍只允许一次受控合成或已授权样本调用，未上传真实学生材料。
+
+## 2026-09-13 收工交接（2026-09-14 继续）
+
+- 用户要求保存进度，明天继续；当前停止开发和云端操作。下一轮沿用 Vercel + Supabase + OpenRouter 免费多模态方向，保留 30 教师 + 1 独立管理员、统一固定密码且禁止修改、直接多模态 v2 和有界并发等既定要求。
+- 实际代码工作树为 `D:\wenjie-writewise-ai\.worktrees\codex-teacher-pilot-accounts`，分支 `codex/teacher-pilot-accounts`；最新已推送提交 `f4ada12` 仅更新部署文档，其自动 Production 部署 `dpl_D2bk16FMbnnMe8MszxKjUQgdaXn2` 已在本会话确认 Ready（32 秒）。公网账号站点为 `https://wenjie-writewise-pilot.vercel.app`；账号完整 HTTPS 验证发生于先前 `868f3a6`，应用代码未变。主目录旧 `main` 不是当前部署源。
+- OpenRouter 当前只确认首页已打开，用户尚未确认登录，尚未确认创建、保存或配置 API 密钥；免费多模态模型未选定、未接入，未进行本轮真实模型调用。不得由浏览器停留首页推断账号或密钥已就绪。
+- 明天先衔接 OpenRouter 登录/专用密钥配置，并准备任务、评分标准、学生作文私有图片、批改结果及教师修订的云端保存、教师归属校验、后台队列、持久幂等和共享有界并发。代码准备可使用合成材料与 fake Provider，不依赖先取得真实密钥。
+- 第一阶段验收目标为“创建任务 → 上传作文 → AI 批改 → 保存结果 → 刷新或重新登录后仍能查看”，完成后再逐步邀请少量教师；现网仍仅开放账号，作文批改暂未开放。
+- 用户希望尽量由代理处理配置与开发，只在确需人工登录/验证、特定秘密保存授权或材料使用决定时介入。既有文阶仓库授权与四项 Vercel Production Secret 保存授权不重复询问，但不扩大到 OpenRouter 新密钥或真实学生材料。数据保留期限、删除规则、真实样本和调用范围仍待明确；私密账号清单、密钥和数据库连接串不得写入记忆。
+
+
 ## 2026-09-13 最新账号与验证架构决定（优先于下方历史基线）
 
 - 用户明确改为 Vercel + Supabase + OpenRouter 免费多模态模型，替代同日腾讯云集中部署及本轮 Kimi 验证选型。账号代码与初始化工具已完成本地验收；用户已创建 Supabase Free 项目 `wenjie-writewise-pilot`（ref `wudbhdyqgnbnuorebhnu`，新加坡 `ap-southeast-1`，Dashboard 状态 Healthy），Vercel Production 环境已配置且首个账号站点部署为 Ready。

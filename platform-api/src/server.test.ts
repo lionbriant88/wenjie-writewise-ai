@@ -1,4 +1,5 @@
 import request from "supertest";
+import express from "express";
 import { randomBytes } from "node:crypto";
 import { beforeAll, afterAll, beforeEach, expect, it } from "vitest";
 import { createLocalDatabase } from "./localDatabase.js";
@@ -27,6 +28,11 @@ const config: AuthConfig = {
 let manifest: Manifest, teacher: string, admin: string, teacherId: string;
 let now = new Date("2026-09-13T00:00:00Z");
 const app = () => createApp(repo, config, () => now);
+const gradingApp = () => {
+  const gateway = express();
+  gateway.post("/grading/grade-images", (_req, res) => res.json({ ok: true }));
+  return gateway;
+};
 const login = (username = teacher, pw = password) =>
   request(app())
     .post("/api/auth/login")
@@ -34,6 +40,23 @@ const login = (username = teacher, pw = password) =>
     .send({ username, password: pw });
 const cookie = (response: request.Response) =>
   response.headers["set-cookie"][0].split(";")[0];
+
+it("protects the Vercel grading mount with the same teacher session and Origin checks", async () => {
+  const protectedApp = () => createApp(repo, config, () => now, { gradingApp: gradingApp() });
+  expect((await request(protectedApp()).post("/api/grading/grade-images").set("Origin", origin)).status).toBe(401);
+  const loggedIn = await login();
+  const sessionCookie = cookie(loggedIn);
+  expect((await request(protectedApp())
+    .post("/api/grading/grade-images")
+    .set("Cookie", sessionCookie)
+    .set("Origin", "https://evil.example")).status).toBe(403);
+  const allowed = await request(protectedApp())
+    .post("/api/grading/grade-images")
+    .set("Cookie", sessionCookie)
+    .set("Origin", origin);
+  expect(allowed.status).toBe(200);
+  expect(allowed.body).toEqual({ ok: true });
+});
 beforeAll(async () => {
   await migrate(db);
   manifest = await buildManifest(password);

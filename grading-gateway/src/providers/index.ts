@@ -2,6 +2,8 @@ import type { GatewayRuntimeConfig } from '../gatewayRuntimeConfig.js'
 import { calculateDimensionMaxScore, calculateTotalScore, roundScore2 } from '../../../app/src/services/grading/scoringRules.js'
 import { FailureGradingProvider } from './failureGradingProvider.js'
 import { KimiMultimodalProvider } from './kimiMultimodalProvider.js'
+import { StructuredMultimodalProvider } from './structuredMultimodalProvider.js'
+import { createOpenRouterTransport } from './openRouterTransport.js'
 import { createKimiTransport, type KimiTransport, type KimiTransportOptions } from './kimiTransport.js'
 import { MockGradingProvider } from './mockGradingProvider.js'
 import type { ClassReviewSynthesisProvider } from './classReviewSynthesisProviderTypes.js'
@@ -14,6 +16,7 @@ import {
 
 export interface MultimodalProviderDependencies {
   apiKey?: string
+  fetchImpl?: typeof fetch
   mockFactory?: () => MultimodalProvider
   kimiTransportFactory?: (options: KimiTransportOptions) => KimiTransport
 }
@@ -147,6 +150,21 @@ export function getMultimodalProvider(
   if (config.provider === 'mock') {
     return dependencies.mockFactory?.() ?? new ExplicitMultimodalMockProvider()
   }
+  if (config.provider === 'openrouter') {
+    if (!config.openrouter || config.rubricStrategy !== 'single-pass-v1'
+      || config.essayPromptProfile !== 'optimized-v1' || config.executionRegistry !== 'memory-v1'
+      || config.classReviewSynthesis.mode !== 'disabled') throw providerConfigurationError()
+    const transport = createOpenRouterTransport({
+      apiKey: dependencies.apiKey,
+      model: config.openrouter.model,
+      maxCompletionTokens: Math.max(...Object.values(config.openrouter.stageBudgets)),
+      fetchImpl: dependencies.fetchImpl,
+    })
+    return new StructuredMultimodalProvider(
+      createStageBudgetedTransport(transport, config.openrouter.stageBudgets),
+      config.rubricStrategy, config.essayPromptProfile, '',
+    )
+  }
   if (config.provider !== 'kimi') throw providerConfigurationError()
   const apiKey = dependencies.apiKey
   if (!apiKey?.trim()) throw providerConfigurationError()
@@ -157,6 +175,7 @@ export function getMultimodalProvider(
     model: config.kimi.model,
     reasoningEffort: config.kimi.reasoningEffort,
     maxCompletionTokens: Math.max(...Object.values(config.kimi.stageBudgets)),
+    ...(dependencies.fetchImpl ? { fetchImpl: dependencies.fetchImpl } : {}),
   })
   return new KimiMultimodalProvider(
     createStageBudgetedTransport(transport, config.kimi.stageBudgets),

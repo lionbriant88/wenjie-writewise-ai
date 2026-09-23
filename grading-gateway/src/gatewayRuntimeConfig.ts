@@ -1,4 +1,5 @@
 import type { MultimodalProviderCallStage } from './providers/providerTypes.js'
+import { isFreeOpenRouterModel, OPENROUTER_API_BASE } from './providers/openRouterTransport.js'
 import {
   PRODUCTION_CLASS_REVIEW_FRAMING_CALIBRATION,
   parseClassReviewFramingCalibration,
@@ -17,7 +18,12 @@ export type ClassReviewSynthesisRuntimeConfig =
   }
 
 export interface GatewayRuntimeConfig {
-  provider: 'kimi' | 'mock'
+  provider: 'kimi' | 'mock' | 'openrouter'
+  openrouter?: {
+    apiBase: string
+    model: string
+    stageBudgets: Record<MultimodalProviderCallStage, number>
+  }
   rubricStrategy: 'single-pass-v1' | 'two-pass-legacy'
   essayPromptProfile: 'optimized-v1' | 'legacy'
   executionRegistry: 'memory-v1' | 'direct-legacy'
@@ -109,7 +115,7 @@ export function parseGatewayRuntimeConfig(
   env: GatewayEnvironment,
   dependencies: GatewayRuntimeConfigDependencies = {},
 ): GatewayRuntimeConfig {
-  const provider = exactValue(env.GRADING_PROVIDER, ['kimi', 'mock'] as const)
+  const provider = exactValue(env.GRADING_PROVIDER, ['kimi', 'mock', 'openrouter'] as const)
   const rubricStrategy = exactValue(env.GRADING_RUBRIC_STRATEGY, ['single-pass-v1', 'two-pass-legacy'] as const)
   const essayPromptProfile = exactValue(env.GRADING_ESSAY_PROMPT_PROFILE, ['optimized-v1', 'legacy'] as const)
   const executionRegistry = exactValue(env.GRADING_EXECUTION_REGISTRY, ['memory-v1', 'direct-legacy'] as const)
@@ -120,9 +126,25 @@ export function parseGatewayRuntimeConfig(
   if (httpMs > Number.MAX_SAFE_INTEGER - 30_000 || providerFinalMs < httpMs + 30_000) return invalidConfig()
   if (providerFinalMs > Number.MAX_SAFE_INTEGER - settlementGraceMs || terminalTtlMs < providerFinalMs + settlementGraceMs) return invalidConfig()
 
-  const apiBase = env.KIMI_API_BASE?.trim()
-  const model = env.KIMI_MODEL?.trim()
-  const reasoningEffort = env.KIMI_REASONING_EFFORT?.trim()
+  let openrouter: GatewayRuntimeConfig['openrouter']
+  if (provider === 'openrouter') {
+    const model = env.OPENROUTER_MODEL?.trim() ?? ''
+    if (!isFreeOpenRouterModel(model)
+      || (env.OPENROUTER_API_BASE !== undefined && env.OPENROUTER_API_BASE.trim() !== OPENROUTER_API_BASE)
+      || rubricStrategy !== 'single-pass-v1' || essayPromptProfile !== 'optimized-v1'
+      || executionRegistry !== 'memory-v1' || env.CLASS_REVIEW_SYNTHESIS_MODE?.trim() !== 'disabled') return invalidConfig()
+    const budget = positiveInteger(env.OPENROUTER_MAX_COMPLETION_TOKENS, 16_384)
+    openrouter = {
+      apiBase: OPENROUTER_API_BASE, model,
+      stageBudgets: { material_context: budget, rubric_generation: budget, essay_grading_images: budget, essay_regrading_text: budget },
+    }
+  }
+
+  // The legacy Kimi config remains available to legacy consumers only. An
+  // OpenRouter runtime neither requires Kimi credentials nor enables Kimi calls.
+  const apiBase = provider === 'openrouter' ? 'https://api.moonshot.cn/v1' : env.KIMI_API_BASE?.trim()
+  const model = provider === 'openrouter' ? 'kimi-k3' : env.KIMI_MODEL?.trim()
+  const reasoningEffort = provider === 'openrouter' ? 'low' : env.KIMI_REASONING_EFFORT?.trim()
   if (apiBase !== 'https://api.moonshot.cn/v1' || model !== 'kimi-k3' || reasoningEffort !== 'low') return invalidConfig()
 
   const promptCacheSecret = env.GRADING_PROMPT_CACHE_HMAC_SECRET ?? ''
@@ -172,10 +194,10 @@ export function parseGatewayRuntimeConfig(
     model,
     reasoningEffort,
     stageBudgets: {
-      material_context: positiveInteger(env.KIMI_MAX_COMPLETION_TOKENS_MATERIAL_CONTEXT, 16_384),
-      rubric_generation: positiveInteger(env.KIMI_MAX_COMPLETION_TOKENS_RUBRIC_GENERATION, 16_384),
-      essay_grading_images: positiveInteger(env.KIMI_MAX_COMPLETION_TOKENS_ESSAY_GRADING_IMAGES, 16_384),
-      essay_regrading_text: positiveInteger(env.KIMI_MAX_COMPLETION_TOKENS_ESSAY_REGRADING_TEXT, 16_384),
+      material_context: openrouter?.stageBudgets.material_context ?? positiveInteger(env.KIMI_MAX_COMPLETION_TOKENS_MATERIAL_CONTEXT, 16_384),
+      rubric_generation: openrouter?.stageBudgets.rubric_generation ?? positiveInteger(env.KIMI_MAX_COMPLETION_TOKENS_RUBRIC_GENERATION, 16_384),
+      essay_grading_images: openrouter?.stageBudgets.essay_grading_images ?? positiveInteger(env.KIMI_MAX_COMPLETION_TOKENS_ESSAY_GRADING_IMAGES, 16_384),
+      essay_regrading_text: openrouter?.stageBudgets.essay_regrading_text ?? positiveInteger(env.KIMI_MAX_COMPLETION_TOKENS_ESSAY_REGRADING_TEXT, 16_384),
     },
   }
   const kimi = defineRuntimeSecret(kimiRuntime, 'promptCacheSecret', classReviewSynthesis.mode === 'kimi'
@@ -184,6 +206,7 @@ export function parseGatewayRuntimeConfig(
 
   return {
     provider,
+    ...(openrouter ? { openrouter } : {}),
     rubricStrategy,
     essayPromptProfile,
     executionRegistry,

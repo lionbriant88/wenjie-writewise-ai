@@ -16,7 +16,10 @@
     "eval:grading-soak": "tsx scripts/gradingBenchmark/cli.ts --mode soak --calls 100",
     "eval:grading-throughput": "tsx scripts/gradingBenchmark/cli.ts --mode throughput --essays 30",
     "eval:image-variants": "tsx scripts/gradingBenchmark/cli.ts --mode image-variants",
-    "dev:fake-acceptance-gateway": "tsx scripts/runFakeAcceptanceGateway.ts"
+    "dev:fake-acceptance-gateway": "tsx scripts/runFakeAcceptanceGateway.ts",
+    "dev:openrouter": "tsx scripts/runOpenRouterGateway.ts",
+    "smoke:openrouter": "tsx scripts/runOpenRouterSmoke.ts --run-authorized",
+    "smoke:openrouter:manual": "tsx scripts/runOpenRouterSmoke.ts --run-authorized --manual-rubric"
   },
   "dependencies": {
     "cors": "^2.8.5",

@@ -2,6 +2,7 @@ import express, {
   type Request,
   type Response,
   type NextFunction,
+  type RequestHandler,
 } from "express";
 import { randomBytes } from "node:crypto";
 import { isIP } from "node:net";
@@ -16,6 +17,10 @@ const dummyHash = `scrypt$32768$8$3$${"0".repeat(32)}$${"0".repeat(128)}`;
 const invalid = () => new HttpError(400, "invalid_request", "请求内容无效。");
 const forbidden = () =>
   new HttpError(403, "csrf_invalid", "请刷新页面后重试。");
+
+export interface CreateAppOptions {
+  gradingApp?: RequestHandler;
+}
 function objectBody(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
@@ -23,6 +28,7 @@ export function createApp(
   repo: AuthRepository,
   config: AuthConfig,
   now: () => Date = () => new Date(),
+  options: CreateAppOptions = {},
 ) {
   const app = express();
   app.disable("x-powered-by");
@@ -32,11 +38,41 @@ export function createApp(
     res.set("X-Content-Type-Options", "nosniff");
     next();
   });
-  app.use(["/api/grading", "/api/tasks"], (_req, _res, next) =>
-    next(
-      new HttpError(503, "pilot_grading_not_configured", "作文批改暂未开放。"),
-    ),
-  );
+  async function authenticateGrading(
+    req: Request,
+    _res: Response,
+    next: NextFunction,
+  ) {
+    try {
+      requireOrigin(req);
+      const value = token(req);
+      if (!(await repo.session(digest(value), now()))) throw unauthorized();
+      next();
+    } catch (error) {
+      next(error);
+    }
+  }
+  if (options.gradingApp) {
+    app.use("/api", (req, res, next) => {
+      if (!req.path.startsWith("/grading") && !req.path.startsWith("/tasks")) {
+        next();
+        return;
+      }
+      authenticateGrading(req, res, (error) => {
+        if (error) {
+          next(error);
+          return;
+        }
+        options.gradingApp!(req, res, next);
+      });
+    });
+  } else {
+    app.use(["/api/grading", "/api/tasks"], (_req, _res, next) =>
+      next(
+        new HttpError(503, "pilot_grading_not_configured", "作文批改暂未开放。"),
+      ),
+    );
+  }
   app.use(
     [
       "/api/auth/change-password",

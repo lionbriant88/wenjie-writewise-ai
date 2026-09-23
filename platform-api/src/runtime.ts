@@ -3,6 +3,7 @@ import { readConfig } from "./config.js";
 import { createPostgresDatabase } from "./database.js";
 import { AuthRepository } from "./repository.js";
 import { createApp } from "./server.js";
+import { createVercelGradingApp } from "./grading.js";
 import { assertRuntimePrivileges } from "./privileges.js";
 let appPromise: Promise<Express> | undefined;
 export async function getRuntimeApp(): Promise<Express> {
@@ -13,7 +14,9 @@ export async function getRuntimeApp(): Promise<Express> {
       const db = createPostgresDatabase(config.databaseUrl!, config.ca);
       try {
         await assertRuntimePrivileges(db);
-        return createApp(new AuthRepository(db), config);
+        return createApp(new AuthRepository(db), config, undefined, {
+          gradingApp: createVercelGradingApp(process.env, config.origin),
+        });
       } catch (error) {
         await db.close();
         throw error;
