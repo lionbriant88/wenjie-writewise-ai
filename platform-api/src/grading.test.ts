@@ -1,4 +1,5 @@
 import request from "supertest";
+import express from "express";
 import { expect, it } from "vitest";
 import { createVercelGradingApp } from "./grading.js";
 
@@ -12,7 +13,7 @@ it("builds the protected-ready Gateway with the configured free model without ex
     OPENROUTER_MODEL: "dots-studio/dots-3-note-preview:free",
   }, "https://school.example");
   expect(app).toBeDefined();
-  const health = await request(app!).get("/health");
+  const health = await request(express().use(app!)).get("/health");
   expect(health.status).toBe(200);
   expect(health.body.runtime.provider).toBe("openrouter");
   expect(health.body.runtime.model).toBe("dots-studio/dots-3-note-preview:free");

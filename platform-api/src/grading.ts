@@ -2,6 +2,7 @@ import type { RequestHandler } from "express";
 import { parseGatewayRuntimeConfig } from "../../grading-gateway/src/gatewayRuntimeConfig.js";
 import { getMultimodalProvider } from "../../grading-gateway/src/providers/index.js";
 import { createServer } from "../../grading-gateway/src/server.js";
+import { createSafeDiagnosticStderrSink } from "../../grading-gateway/src/safeDiagnostics.js";
 
 const DEFAULT_MODEL = "dots-studio/dots-3-note-preview:free";
 
@@ -37,7 +38,10 @@ export function createVercelGradingApp(
   try {
     const runtimeConfig = parseGatewayRuntimeConfig(gatewayEnvironment(env));
     const multimodalProvider = getMultimodalProvider(runtimeConfig, { apiKey });
-    return createServer({ runtimeConfig, multimodalProvider, allowedOrigin });
+    return createServer({
+      runtimeConfig, multimodalProvider, allowedOrigin,
+      onDiagnostic: createSafeDiagnosticStderrSink("1", (line) => console.error(line)),
+    });
   } catch {
     return undefined;
   }

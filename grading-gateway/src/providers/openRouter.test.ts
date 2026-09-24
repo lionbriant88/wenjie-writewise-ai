@@ -65,6 +65,7 @@ describe('OpenRouter configuration and real provider boundary', () => {
     const body = JSON.parse(String(init.body))
     expect(body).toMatchObject({
       model: 'dots-studio/dots-3-note-preview:free', max_tokens: 16384, stream: false,
+      reasoning: { enabled: false },
       provider: {
         allow_fallbacks: false, require_parameters: true, data_collection: 'deny',
         max_price: { prompt: 0, completion: 0, request: 0, image: 0 },
@@ -83,6 +84,7 @@ describe('OpenRouter configuration and real provider boundary', () => {
     const replacementFetch = vi.fn<typeof fetch>(async () => reply(rubric))
     await getMultimodalProvider(replacement, { apiKey: 'synthetic-secret', fetchImpl: replacementFetch }).generateRubric(rubricInput)
     expect(JSON.parse(String((replacementFetch.mock.calls[0]?.[1] as RequestInit).body)).model).toBe('qwen/qwen3.8-27b:free')
+    expect(JSON.parse(String((replacementFetch.mock.calls[0]?.[1] as RequestInit).body))).not.toHaveProperty('reasoning')
   })
 
   it.each([

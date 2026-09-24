@@ -22,6 +22,11 @@ export function createOpenRouterTransport(options: OpenRouterTransportOptions) {
     requestParameters: (input) => ({
       max_tokens: input.maxCompletionTokens,
       stream: false,
+      // Dots' default reasoning exhausted the 16K budget and truncated grading JSON.
+      // Keep this model-specific so replacements retain their own supported defaults.
+      ...(options.model === 'dots-studio/dots-3-note-preview:free'
+        ? { reasoning: { enabled: false } }
+        : {}),
       provider: {
         allow_fallbacks: false,
         require_parameters: true,
