@@ -1,5 +1,17 @@
 # 当前开发状态
 
+
+## 2026-09-26：DeepSeek 已部署 Vercel，公网单图返回完整批改
+
+- DeepSeek 官方直连实现 `6d07004` 已随 `65a3f22` 推送；Production `dpl_6VaUGNecEGXSQF7LLfixS69TvAk4` 已 Ready（54 秒），详情确认 Current，正式域名仍为 `https://wenjie-writewise-pilot.vercel.app`。
+- `GRADING_PROVIDER` 与四项 `DEEPSEEK_*` 变量已保存为 Production Secret，固定官方 `deepseek-flash`，无 OpenRouter 回退。密钥导入未回显，不进前端或仓库。
+- 独立一次公网合成图片请求 HTTP 200 / grading-result-v2 / success，6.385 秒；正文三句匹配、页眉排除，两个维度分数合法，总分 9/15，1 条问题、0 个系统复核原因。这只是合成接口验收，不是实际教学质量、手写识别或批量吞吐验收。
+- 账号保护复验：未登录批改 401、登录/session 200、外来 Origin 403、无效请求 400、退出 204、旧会话 401，清理完成。第一次沙箱 EACCES 在模型调用之前，联网后只发出上述 1 次 completion。
+- 一次性脚本错误把公开 `provider` 预期为 deepseek，实际合同固定 remote，导致脚本 exit 1；已根据服务端投影定位并修正测试脚本，未改变生产代码或重发请求。原始记录保留；其他正文/分数/版本/success 断言通过，平台 4 项与 DeepSeek 14 项定向复验通过。
+- 本次 ledger 为 ignored `grading-gateway/local-private-results/vercel-deepseek-20260926-reservation.json` 与对应 result / verification 记录；公开响应无 token/账单，不声称精确费用。旧 3 次本地账本仍保留，不再用旧预算规则描述本轮授权。
+- 当前仍只有账号前端，教师批改 UI、任务/图片/结果持久化、后台队列、跨实例幂等及共享并发未完成；不能宣称教师已经能在页面批改、刷新恢复，或支持 30 账号整班使用。下一步是接通教师 MVP 页面与保存流程。详见实际账号工作树 `docs/2026-09-26-deepseek-direct-validation.md`。
+
+
 ## 2026-09-26：用户取消本轮验证费用上限，继续 Vercel 切换
 
 - 在代理明确提出将已保存 DeepSeek key 写入 Vercel Production、部署和线上合成复验后，用户回复“无费用限制”。据此继续该具体部署和验证任务，不再沿用此前 0.10 / 0.04 美元的费用上限；不因金额重复要求确认。
