@@ -8,7 +8,7 @@ const DEFAULT_MODEL = "dots-studio/dots-3-note-preview:free";
 
 function gatewayEnvironment(env: NodeJS.ProcessEnv): Record<string, string | undefined> {
   return {
-    GRADING_PROVIDER: "openrouter",
+    GRADING_PROVIDER: env.GRADING_PROVIDER?.trim(),
     GRADING_RUBRIC_STRATEGY: "single-pass-v1",
     GRADING_ESSAY_PROMPT_PROFILE: "optimized-v1",
     GRADING_EXECUTION_REGISTRY: "memory-v1",
@@ -24,6 +24,9 @@ function gatewayEnvironment(env: NodeJS.ProcessEnv): Record<string, string | und
     GRADING_RETRY_CAP_MS: "60000",
     GRADING_RETRY_AFTER_PAUSE_MS: "900000",
     CLASS_REVIEW_SYNTHESIS_MODE: "disabled",
+    DEEPSEEK_API_BASE: env.DEEPSEEK_API_BASE,
+    DEEPSEEK_MODEL: env.DEEPSEEK_MODEL ?? "deepseek-flash",
+    DEEPSEEK_MAX_COMPLETION_TOKENS: env.DEEPSEEK_MAX_COMPLETION_TOKENS ?? "16384",
     OPENROUTER_MODEL: env.OPENROUTER_MODEL?.trim() || DEFAULT_MODEL,
     OPENROUTER_MAX_COMPLETION_TOKENS: env.OPENROUTER_MAX_COMPLETION_TOKENS?.trim() || "16384",
   };
@@ -33,7 +36,9 @@ export function createVercelGradingApp(
   env: NodeJS.ProcessEnv,
   allowedOrigin: string,
 ): RequestHandler | undefined {
-  const apiKey = env.OPENROUTER_API_KEY?.trim();
+  const provider = env.GRADING_PROVIDER?.trim();
+  if (provider !== "deepseek" && provider !== "openrouter") return undefined;
+  const apiKey = (provider === "deepseek" ? env.DEEPSEEK_API_KEY : env.OPENROUTER_API_KEY)?.trim();
   if (!apiKey) return undefined;
   try {
     const runtimeConfig = parseGatewayRuntimeConfig(gatewayEnvironment(env));

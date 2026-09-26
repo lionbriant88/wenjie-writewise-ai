@@ -36,7 +36,7 @@ export interface SafeImageDimensionMetric {
 export interface ProviderAttemptMetricContext {
   stage: ProviderCallStage
   model: string
-  reasoningEffort: 'low'
+  reasoningEffort: 'low' | 'none'
   outcome: MetricOutcome
 }
 
@@ -202,13 +202,13 @@ function sanitizedMetric(value: unknown): SafeProviderMetric | null {
   if (typeof value !== 'object' || value === null) return null
   const metric = value as Record<string, unknown>
   if (!safeId(metric.processDiagnosticId) || !STAGES.has(metric.stage as ProviderCallStage)
-    || !safeModel(metric.model) || metric.reasoningEffort !== 'low' || !OUTCOMES.has(metric.outcome as MetricOutcome)) return null
+    || !safeModel(metric.model) || (metric.reasoningEffort !== 'low' && metric.reasoningEffort !== 'none') || !OUTCOMES.has(metric.outcome as MetricOutcome)) return null
   if (metric.event === 'provider_attempt') {
     if (!safeId(metric.attemptDiagnosticId) || !safeDuration(metric.providerMs)
       || !FINISH_REASONS.has(metric.finishReason as SafeFinishReason) || !safeInteger(metric.attempt) || metric.attempt < 1) return null
     const result: SafeProviderAttemptMetric = {
       event: 'provider_attempt', processDiagnosticId: metric.processDiagnosticId, attemptDiagnosticId: metric.attemptDiagnosticId,
-      stage: metric.stage as ProviderCallStage, model: metric.model, reasoningEffort: 'low',
+      stage: metric.stage as ProviderCallStage, model: metric.model, reasoningEffort: metric.reasoningEffort as 'low' | 'none',
       providerMs: metric.providerMs, finishReason: metric.finishReason as SafeFinishReason, attempt: metric.attempt,
       outcome: metric.outcome as MetricOutcome,
     }
@@ -262,7 +262,7 @@ function sanitizedMetric(value: unknown): SafeProviderMetric | null {
       operationDiagnosticId: metric.operationDiagnosticId,
       stage: 'class_review_generation',
       model: metric.model,
-      reasoningEffort: 'low',
+      reasoningEffort: metric.reasoningEffort as 'low' | 'none',
       state: metric.state as ClassReviewGenerationState,
       outcome: metric.outcome as MetricOutcome,
       ...(metric.safeFailureCode === undefined
@@ -290,7 +290,7 @@ function sanitizedMetric(value: unknown): SafeProviderMetric | null {
   }
   const result: SafeProviderOperationMetric = {
     event: 'provider_operation', processDiagnosticId: metric.processDiagnosticId, operationDiagnosticId: metric.operationDiagnosticId,
-    stage: metric.stage as ProviderCallStage, model: metric.model, reasoningEffort: 'low',
+    stage: metric.stage as ProviderCallStage, model: metric.model, reasoningEffort: metric.reasoningEffort as 'low' | 'none',
     outcome: metric.outcome as MetricOutcome,
   }
   for (const key of ['queueMs', 'parseMs', 'normalizeMs', 'totalMs'] as const) {

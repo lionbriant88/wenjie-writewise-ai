@@ -20,6 +20,14 @@ function observation(id: string, usage: ProviderUsageSnapshot = knownUsage): Pro
 }
 
 describe('provider telemetry', () => {
+  it('rejects non-string reasoning modes without coercing or serializing them', () => {
+    const metric = { event: 'provider_operation', processDiagnosticId: '11111111-1111-4111-8111-111111111111',
+      operationDiagnosticId: '22222222-2222-4222-8222-222222222222', stage: 'essay_grading_images', model: 'deepseek-flash', outcome: 'success' }
+    for (const reasoningEffort of [{ toString: () => 'none', privateData: 'PRIVATE' }, { toString() { throw Error('PRIVATE') } }, null]) {
+      expect(serializeSafeProviderMetric({ ...metric, reasoningEffort })).toBeNull()
+    }
+    expect(JSON.parse(serializeSafeProviderMetric({ ...metric, reasoningEffort: 'none' })!).reasoningEffort).toBe('none')
+  })
   it('records and accounts for each random Provider attempt exactly once', () => {
     const metrics: unknown[] = []
     const recorder = createProviderTelemetryRecorder({

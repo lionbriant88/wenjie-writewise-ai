@@ -304,11 +304,12 @@ function safeRuntimeSnapshot(
 ) {
   if (!config) return { status: 'unconfigured' as const }
   const admissionSnapshot = admission?.snapshot()
-  const selectedProvider = config.provider === 'openrouter' && config.openrouter ? config.openrouter : config.kimi
+  const selectedProvider = config.provider === 'deepseek' && config.deepseek ? config.deepseek
+    : config.provider === 'openrouter' && config.openrouter ? config.openrouter : config.kimi
   return {
     provider: config.provider,
     model: selectedProvider.model,
-    ...(config.provider === 'openrouter' ? {} : { reasoningEffort: config.kimi.reasoningEffort }),
+    ...(config.provider === 'openrouter' || config.provider === 'deepseek' ? {} : { reasoningEffort: config.kimi.reasoningEffort }),
     deadlines: {
       httpMs: config.deadlines.httpMs,
       providerFinalMs: config.deadlines.providerFinalMs,
@@ -365,10 +366,12 @@ function telemetryContext(
 ) {
   return {
     stage,
-    model: options.runtimeConfig?.provider === 'openrouter'
+    model: options.runtimeConfig?.provider === 'deepseek'
+      ? options.runtimeConfig.deepseek?.model ?? 'unconfigured'
+      : options.runtimeConfig?.provider === 'openrouter'
       ? options.runtimeConfig.openrouter?.model ?? 'unconfigured'
       : options.runtimeConfig?.kimi.model ?? 'unconfigured',
-    reasoningEffort: 'low' as const,
+    reasoningEffort: options.runtimeConfig?.provider === 'deepseek' ? 'none' as const : 'low' as const,
     outcome,
   }
 }

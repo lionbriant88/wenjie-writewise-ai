@@ -1,20 +1,21 @@
 import { createHmac } from 'node:crypto'
 import type { ConfirmedTaskPackageV2 } from './types.js'
+import { calculateDimensionMaxScore } from '../../../app/src/services/grading/scoringRules.js'
 
-export const MODEL_TASK_CONTEXT_VERSION = 'model-task-context-v1' as const
+export const MODEL_TASK_CONTEXT_VERSION = 'model-task-context-v2' as const
 export const ESSAY_PROVIDER_SCHEMA_VERSION = 'essay-grading-provider-v3' as const
 export const LEGACY_ESSAY_PROVIDER_SCHEMA_VERSION = 'essay-grading-provider-v3-legacy' as const
 
 const MAX_REVIEW_WARNINGS = 50
 const MAX_REVIEW_WARNING_CODE_POINTS = 5_000
 
-export interface ModelTaskContextV1 {
+export interface ModelTaskContextV2 {
   fullScore: number
   materialSummary: string
   writingRequirements: string[]
   constraints: string[]
   reviewWarnings: string[]
-  dimensions: Array<{ id: string; name: string; description: string; weight: number }>
+  dimensions: Array<{ id: string; name: string; description: string; weight: number; maxScore: number }>
 }
 
 function normalizeReviewWarnings(warnings: readonly string[]): string[] {
@@ -30,7 +31,7 @@ function normalizeReviewWarnings(warnings: readonly string[]): string[] {
   return normalized
 }
 
-export function projectModelTaskContext(task: ConfirmedTaskPackageV2): ModelTaskContextV1 {
+export function projectModelTaskContext(task: ConfirmedTaskPackageV2): ModelTaskContextV2 {
   return {
     fullScore: task.fullScore,
     materialSummary: task.materialSummary,
@@ -42,22 +43,24 @@ export function projectModelTaskContext(task: ConfirmedTaskPackageV2): ModelTask
       name,
       description,
       weight,
+      maxScore: calculateDimensionMaxScore(task.fullScore, weight),
     })),
   }
 }
 
-export function canonicalTaskContextJson(context: ModelTaskContextV1): string {
+export function canonicalTaskContextJson(context: ModelTaskContextV2): string {
   return JSON.stringify({
     fullScore: context.fullScore,
     materialSummary: context.materialSummary,
     writingRequirements: [...context.writingRequirements],
     constraints: [...context.constraints],
     reviewWarnings: [...context.reviewWarnings],
-    dimensions: context.dimensions.map(({ id, name, description, weight }) => ({
+    dimensions: context.dimensions.map(({ id, name, description, weight, maxScore }) => ({
       id,
       name,
       description,
       weight,
+      maxScore,
     })),
   })
 }

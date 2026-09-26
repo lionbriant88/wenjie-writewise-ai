@@ -13,6 +13,8 @@ const runtimeConfig = parseGatewayRuntimeConfig(process.env, {
 })
 const providerApiKey = runtimeConfig.provider === 'openrouter'
   ? process.env.OPENROUTER_API_KEY
+  : runtimeConfig.provider === 'deepseek'
+  ? process.env.DEEPSEEK_API_KEY
   : runtimeConfig.classReviewSynthesis.mode === 'kimi'
   ? runtimeConfig.classReviewSynthesis.apiKey
   : process.env.KIMI_API_KEY

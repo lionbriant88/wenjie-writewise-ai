@@ -4,6 +4,7 @@ import { FailureGradingProvider } from './failureGradingProvider.js'
 import { KimiMultimodalProvider } from './kimiMultimodalProvider.js'
 import { StructuredMultimodalProvider } from './structuredMultimodalProvider.js'
 import { createOpenRouterTransport } from './openRouterTransport.js'
+import { createDeepSeekTransport } from './deepSeekMultimodalTransport.js'
 import { createKimiTransport, type KimiTransport, type KimiTransportOptions } from './kimiTransport.js'
 import { MockGradingProvider } from './mockGradingProvider.js'
 import type { ClassReviewSynthesisProvider } from './classReviewSynthesisProviderTypes.js'
@@ -150,18 +151,19 @@ export function getMultimodalProvider(
   if (config.provider === 'mock') {
     return dependencies.mockFactory?.() ?? new ExplicitMultimodalMockProvider()
   }
-  if (config.provider === 'openrouter') {
-    if (!config.openrouter || config.rubricStrategy !== 'single-pass-v1'
+  if (config.provider === 'openrouter' || config.provider === 'deepseek') {
+    const selected = config.provider === 'deepseek' ? config.deepseek : config.openrouter
+    if (!selected || config.rubricStrategy !== 'single-pass-v1'
       || config.essayPromptProfile !== 'optimized-v1' || config.executionRegistry !== 'memory-v1'
       || config.classReviewSynthesis.mode !== 'disabled') throw providerConfigurationError()
-    const transport = createOpenRouterTransport({
+    const transport = (config.provider === 'deepseek' ? createDeepSeekTransport : createOpenRouterTransport)({
       apiKey: dependencies.apiKey,
-      model: config.openrouter.model,
-      maxCompletionTokens: Math.max(...Object.values(config.openrouter.stageBudgets)),
+      model: selected.model,
+      maxCompletionTokens: Math.max(...Object.values(selected.stageBudgets)),
       fetchImpl: dependencies.fetchImpl,
     })
     return new StructuredMultimodalProvider(
-      createStageBudgetedTransport(transport, config.openrouter.stageBudgets),
+      createStageBudgetedTransport(transport, selected.stageBudgets),
       config.rubricStrategy, config.essayPromptProfile, '',
     )
   }

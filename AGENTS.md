@@ -1,5 +1,47 @@
 # 文阶 WriteWise AI 项目记忆
 
+## 2026-09-26：DeepSeek 本地图片批改已接通，线上切换待确认
+
+- 已确认本地专用密钥有效；官方 `/models` 返回 `deepseek-flash` 可用且支持 image，账户余额可用。密钥保持 Git ignored，不写入日志或前端。
+- 已完成 DeepSeek 官方直连适配：固定 `https://api.deepseek.com/chat/completions`、`thinking.type=disabled`、`response_format.type=json_object`，把 JSON Schema 放入系统提示并保留本地严格业务校验。单次 rubric、多页单篇一次 completion、确认文本零图片重批、无路由回退及现有 v2 合同不变。
+- 2026-09-25 的 3 次合成图片额度已全部使用。前两次 HTTP 503 / dimension_scores；第 2 次脱敏诊断确认卷面权重 5% 被模型错误当成 5 分，而任务满分 15 分时卷面上限应为 0.75。修复在 canonical 任务上下文显式提供确定性 maxScore（内部 model-task-context-v2），并明确百分比与绝对分数，不放宽评分校验。
+- 第 3 次真实合成请求 HTTP 200、grading-result-v2、partial，4.664 秒；正文匹配合成图片且排除页眉，两个维度 7.12/14.25 和 0.75/0.75，总分 8/15。partial 表示仍需教师复核，不能称为所有反馈完整或真实教学质量验收。
+- 测试前后余额显示 9.73 → 9.71 元；按已知 token 使用量和高峰无缓存价格保守估算累计上限 0.049682 元，低于授权预算。账本在 ignored `grading-gateway/local-private-results/deepseek-20260925/`，保留全部 3 次预留及脱敏结果；未知结果保持完整预留。禁止再用该授权追加调用或删除账本重跑。
+- 已通过网关 55 文件 / 1385 项、平台 API 10 文件 / 41 项、两端类型检查、共享评分运行时和根目录生产构建。独立复核提出的预算账本与日志类型问题已修复并通过回归，复核闭环无剩余问题，不将自动化测试当作教师端云端闭环验收。
+- Vercel 适配代码已支持显式 `GRADING_PROVIDER=deepseek` 与独立 `DEEPSEEK_API_KEY`；没有 DeepSeek key 时不会回退 OpenRouter。本轮尚未保存新 Production Secret、推送或切换生产，线上仍是原部署且前端只开放账号。
+- 下一步是确认将该 DeepSeek key 保存到 Vercel Production、部署直连代码，以及另行授权最多 1 次合成图片线上复验（建议上限 0.04 美元）。教师批改 UI、任务/图片/结果持久化、后台队列和共享并发未完成，不能宣称支持 30 个账号同时处理整班。详见实际工作树 `docs/2026-09-26-deepseek-direct-validation.md`。
+
+
+
+## 2026-09-25：用户确认切换 DeepSeek 官方 API 直连
+
+- 用户明确要求不经过 OpenRouter，改用 DeepSeek 官方 API；目标模型为官方 `deepseek-flash`（本次官方文档对应 DeepSeek V4.1 Flash），接口固定为 `https://api.deepseek.com`。本决定替代此前仅限 OpenRouter 免费端点的选型，但不授权其他付费模型或自动回退。
+- 用户确认先做最多 3 次合成图片测试，累计费用上限 0.10 美元；直连使用 DeepSeek 官方账户余额，不能使用 OpenRouter 余额。运行前应按官方实际计费币种和上限做保守预算预留；未确认完成的调用仍占预算，不因网络错误盲目重试。
+- 专用密钥由用户写入实际账号工作树的 `grading-gateway/.env.deepseek.local`；该文件受 `.gitignore` 的 `.env.*` 规则保护。不要让用户把密钥粘贴到聊天；不输出密钥、不写入普通文档/日志/测试，不添加前端 `VITE_` 密钥变量。
+- 本轮先准备本地密钥文件；DeepSeek 直连适配、真实调用和线上切换尚未完成，不得将文件就绪当作模型接通。直接多模态 v2、一次 completion、教师复核、有界并发及已确认的 MVP 范围保持不变。
+
+
+## 2026-09-25：Supabase 已恢复，Vercel 复验完成但 Dots3 批改仍未通过
+
+- 用户已完成 Supabase 登录；控制台确认原项目处于暂停状态，已通过 Resume 恢复且显示 Healthy。没有重置账号、密码或数据库连接。公网登录/session 200、退出 204、退出后旧会话 401；受保护批改入口的无效请求返回 400 invalid_request。
+- 首次公网单张合成图片批改约 78.6 秒后返回 503 provider_invalid_response，未得到可用批改结果。随后一次本地脱敏诊断确认 Dots 输出被截断：finish_reason=length，16384 completion tokens 中 9159 为 reasoning tokens，JSON 未闭合，费用为 0。不得将该诊断等同于评分质量验收。
+- 针对 Dots 免费模型发送 reasoning.enabled=false，保留 16384 上限、严格结构化结果校验和无付费回退；其他替换模型不继承该推理设置。新增 Vercel 安全诊断，仅记录固定阶段和静态错误码。
+- 修复提交 3c59692 已推送，Production dpl_85rkJ2Y9BoYTD3D4XMQHWz2TQZEB 已 Ready（57 秒）。OpenRouter 23 项针对性测试、平台 API 39 项、两端类型检查和根目录生产构建通过；平台测试挂载方式的类型问题已修正并复验。
+- 最后一次公网单图复验已于 2026-09-25 完成：登录/session 200，约 16.8 秒后批改 503 provider_invalid_response；Vercel 安全诊断明确为 normalization / dimension_scores。本次通过 JSON 解析且未触发截断，但核心评分维度数据仍不合法，具体属于缺失、维度身份或分数范围问题尚无证据区分，不得猜测或放宽校验。
+- 独立一次性账本为 vercel-mvp-dots-fix-grade.json；本轮 5 次调用预算已全部使用或预留（含此前 1 次结果未知），停止追加 completion。退出 204、旧会话 401，清理完成。结果未知的旧请求不得重发，不得宣称公网批改已可用。
+- 生产前端仍只有登录与账号管理，未开放教师批改页面；持久化、后台队列、跨实例幂等/共享并发、30 账号批量和真机验证未完成。保持直接多模态 v2，不恢复 OCR。
+- OpenRouter 官方模型页于 2026-09-24 显示 Dots3 免费端点将在 2026-09-30 下线：https://openrouter.ai/dots-studio/dots-3-note-preview%3Afree 。密钥轮换尚未收到用户完成确认，禁止复述任何密钥值。
+
+
+## 2026-09-23：Vercel 已部署，公开验证受数据库连接阻塞
+
+- 用户已明确授权保存 OpenRouter Production 密钥并部署 MVP。提交 `c5017c3` 已推送；随后加入脱敏启动诊断的 `e3a69a3` 已推送，Production 部署 `dpl_974k398rowS1DDHa3wto85i5zCWx` 已显示 Ready（56 秒）。正式域名仍为 `https://wenjie-writewise-pilot.vercel.app`。
+- `OPENROUTER_API_KEY`、`OPENROUTER_MODEL`、`OPENROUTER_MAX_COMPLETION_TOKENS` 已在 Vercel 界面确认保存为 Production Secret。模型为 Dots3 免费版，输出上限 16384；密钥导入期间曾被浏览器工具回显，需要告知用户并更换该密钥，禁止复制回显值到任何文件或后续输出。
+- 公开登录验证返回 503；Vercel 日志为 `platform_api_bootstrap_failed` / `XX000`。本地使用原已保存 Supabase 连接也复现 `tenant/user not found`，管理用户和受限用户在 session/transaction pooler 均失败；尚未确认项目是否暂停或连接地址变化，不得猜测为密码错误、重置账号或重建数据库。
+- 本轮公开测试停在登录阶段，未发出线上模型 completion。后端挂载已部署不代表批改已可用；生产前端仍显示“作文批改暂未开放”，尚未接通教师可操作的批改页面。
+- Supabase 登录经 GitHub 跳转后遇到强制启用 2FA 页面（不可延后），需要用户亲自绑定验证器并保存恢复码；尚未进入 Supabase 控制台核实项目状态。下一步恢复控制台访问、核实并修复数据库连接，然后完成单图 API 验证和教师端 MVP 入口。
+- 部署前验证为 Gateway 53 文件 / 1359 项、平台 API 10 文件 / 39 项、根目录生产构建通过；诊断补丁通过部署类型检查。结果仅为本地自动化证据，不是线上批改验收。
+
 ## 2026-09-23：OpenRouter Dots3 免费模型接入测试
 
 - 用户已确认 OpenRouter 登录、创建并本地保存专用密钥；本会话只读鉴权成功，免费请求日上限返回 50。密钥仅位于本工作树 Git ignored 配置，禁止写入日志或文档。

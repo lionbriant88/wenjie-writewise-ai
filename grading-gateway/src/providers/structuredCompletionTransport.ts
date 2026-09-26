@@ -41,6 +41,8 @@ export interface StructuredTransportOptions {
   apiBase: string
   model: string
   requestParameters: (input: StructuredCompletionInput) => Record<string, unknown>
+  // Official DeepSeek supports JSON objects but not response_format.json_schema.
+  jsonSchemaMode?: 'prompt'
   redirect?: RequestRedirect
   maxCompletionTokens: number
   fetchImpl?: typeof fetch
@@ -84,7 +86,7 @@ function usageSnapshot(value: unknown): ProviderUsageSnapshot {
   let totalTokens = observedInteger(value.total_tokens)
   const details = value.prompt_tokens_details
   let cachedTokens = details === undefined
-    ? unknownUsage('absent')
+    ? observedInteger(value.prompt_cache_hit_tokens)
     : isRecord(details) ? observedInteger(details.cached_tokens) : unknownUsage('invalid')
 
   if (isKnown(cachedTokens) && isKnown(promptTokens) && cachedTokens.value > promptTokens.value) {
@@ -300,11 +302,13 @@ export function createStructuredTransport(options: StructuredTransportOptions): 
             body: JSON.stringify({
               model: options.model,
               ...options.requestParameters(input),
-              response_format: {
+              response_format: options.jsonSchemaMode === 'prompt' ? { type: 'json_object' } : {
                 type: 'json_schema',
                 json_schema: { name: input.schemaName, strict: true, schema: input.schema },
               },
-              messages: input.messages,
+              messages: options.jsonSchemaMode === 'prompt'
+                ? [{ role: 'system', content: `Return only one JSON object matching this JSON Schema. Include every required property and use exact property names. Do not return the schema itself.\n${JSON.stringify(input.schema)}` }, ...input.messages]
+                : input.messages,
             }),
           },
         )

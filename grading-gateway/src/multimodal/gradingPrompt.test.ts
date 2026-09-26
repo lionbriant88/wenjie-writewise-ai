@@ -296,7 +296,7 @@ describe('essay grading prompt', () => {
     expect(messages.map(({ role }) => role)).toEqual(['system', 'system', 'user', 'user'])
     expect(String(messages[0]?.content)).toContain('grading-policy-v1')
     expect(String(messages[1]?.content)).toBe(
-      '{"fullScore":20,"materialSummary":"Write a response to the supplied school scenario.","writingRequirements":["Address the required points."],"constraints":["Write in English."],"reviewWarnings":["Verify the date."],"dimensions":[{"id":"content","name":"Content","description":"Address all required points.","weight":100}]}',
+      '{"fullScore":20,"materialSummary":"Write a response to the supplied school scenario.","writingRequirements":["Address the required points."],"constraints":["Write in English."],"reviewWarnings":["Verify the date."],"dimensions":[{"id":"content","name":"Content","description":"Address all required points.","weight":100,"maxScore":20}]}',
     )
     expect(String(messages[2]?.content)).toMatch(/student essay images/i)
     expect(messages[3]?.content).toEqual([

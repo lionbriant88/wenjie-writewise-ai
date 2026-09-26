@@ -1403,8 +1403,9 @@ describe('grading gateway server boundary', () => {
       processDiagnosticIdFactory: () => '55555555-5555-4555-8555-555555555555',
     })
     const provider = fakeMultimodalProvider()
+    const settlement = deferred<void>()
     provider.gradeEssay = async () => {
-      await new Promise((resolve) => setTimeout(resolve, 30))
+      await settlement.promise
       return {
         value: strictMultimodalPayload('Synthetic confirmed text.'),
         attempts: [{
@@ -1424,7 +1425,8 @@ describe('grading gateway server boundary', () => {
       .post('/grading/grade-images').field('metadata', JSON.stringify(metadata)).expect(503)
     expect(telemetry.snapshot().uniqueAttempts).toBe(0)
 
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    settlement.resolve()
+    await waitFor(() => telemetry.snapshot().uniqueAttempts === 1)
 
     expect(telemetry.snapshot()).toMatchObject({
       uniqueAttempts: 1,

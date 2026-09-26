@@ -40,6 +40,14 @@ function confirmedTask(): ConfirmedTaskPackageV2 {
 }
 
 describe('model task context projection', () => {
+  it('states absolute dimension maxima so a percentage is never interpreted as points', () => {
+    const task = confirmedTask()
+    task.fullScore = 15
+    task.rubric.dimensions[0].weight = 95
+    task.rubric.dimensions[1].weight = 5
+    const context = JSON.parse(canonicalTaskContextJson(projectModelTaskContext(task)))
+    expect(context.dimensions).toMatchObject([{ weight: 95, maxScore: 14.25 }, { weight: 5, maxScore: .75 }])
+  })
   it('projects exactly one approved context while preserving dimension identity and business order', () => {
     const context = projectModelTaskContext(confirmedTask())
 
@@ -56,8 +64,8 @@ describe('model task context projection', () => {
         ...Array.from({ length: 49 }, (_, index) => `Warning ${index + 1}`),
       ],
       dimensions: [
-        { id: 'structure', name: 'Structure', description: 'Organize ideas clearly.', weight: 35 },
-        { id: 'content', name: 'Content', description: 'Complete the task.', weight: 65 },
+        { id: 'structure', name: 'Structure', description: 'Organize ideas clearly.', weight: 35, maxScore: 7 },
+        { id: 'content', name: 'Content', description: 'Complete the task.', weight: 65, maxScore: 13 },
       ],
     })
     expect(JSON.stringify(context)).not.toContain('Private teacher task name')
@@ -72,9 +80,9 @@ describe('model task context projection', () => {
       rubric: { ...confirmedTask().rubric, reviewWarnings: ['Second warning.', 'First warning.'] },
     })
 
-    expect(MODEL_TASK_CONTEXT_VERSION).toBe('model-task-context-v1')
+    expect(MODEL_TASK_CONTEXT_VERSION).toBe('model-task-context-v2')
     expect(canonicalTaskContextJson(context)).toBe(
-      '{"fullScore":20,"materialSummary":"A stable material summary.","writingRequirements":["Teacher requirement first.","Material-inferred requirement second."],"constraints":["Write in English.","Stay within the confirmed topic."],"reviewWarnings":["Second warning.","First warning."],"dimensions":[{"id":"structure","name":"Structure","description":"Organize ideas clearly.","weight":35},{"id":"content","name":"Content","description":"Complete the task.","weight":65}]}',
+      '{"fullScore":20,"materialSummary":"A stable material summary.","writingRequirements":["Teacher requirement first.","Material-inferred requirement second."],"constraints":["Write in English.","Stay within the confirmed topic."],"reviewWarnings":["Second warning.","First warning."],"dimensions":[{"id":"structure","name":"Structure","description":"Organize ideas clearly.","weight":35,"maxScore":7},{"id":"content","name":"Content","description":"Complete the task.","weight":65,"maxScore":13}]}',
     )
   })
 })

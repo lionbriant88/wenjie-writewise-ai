@@ -123,7 +123,11 @@ npm.cmd run accounts:apply -- --manifest local-private-accounts/pilot-batch/mani
 
 官方：[Vite 与 API 路由](https://vercel.com/docs/frameworks/frontend/vite)、[Vercel rewrite](https://vercel.com/docs/routing/rewrites)。
 
-## OpenRouter MVP 接入与限制
+## 模型切换更新（2026-09-26）
+
+当前选型为 DeepSeek 官方直连；完整变量和实测状态见 [DeepSeek 直连验证](./2026-09-26-deepseek-direct-validation.md)。新部署必须显式设置 `GRADING_PROVIDER=deepseek` 和独立 `DEEPSEEK_API_KEY`，缺失 Provider 不再默认使用保留的 OpenRouter key。旧环境的账号功能不受影响，批改接口会保持未配置。尚未保存 DeepSeek Production Secret 或发布新部署。
+
+## 历史 OpenRouter MVP 接入与限制
 
 Vercel API 已将 `/api/grading` 和 `/api/tasks` 挂载到现有 Gateway，并要求同源、已登录教师会话。模型调用只在服务端执行，固定使用 `dots-studio/dots-3-note-preview:free`，不自动切换付费模型；Provider 并发固定为 1。MVP 只验证手工确认的 rubric 和单张图片，页面任务上传与结果持久化仍待后续实现。
 

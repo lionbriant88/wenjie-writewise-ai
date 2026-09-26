@@ -18,6 +18,9 @@
     "eval:image-variants": "tsx scripts/gradingBenchmark/cli.ts --mode image-variants",
     "dev:fake-acceptance-gateway": "tsx scripts/runFakeAcceptanceGateway.ts",
     "dev:openrouter": "tsx scripts/runOpenRouterGateway.ts",
+    "dev:deepseek": "tsx scripts/runDeepSeekGateway.ts",
+    "check:deepseek": "tsx scripts/checkDeepSeekAccount.ts --check",
+    "smoke:deepseek": "tsx scripts/runDeepSeekSmoke.ts --run-authorized",
     "smoke:openrouter": "tsx scripts/runOpenRouterSmoke.ts --run-authorized",
     "smoke:openrouter:manual": "tsx scripts/runOpenRouterSmoke.ts --run-authorized --manual-rubric"
   },
