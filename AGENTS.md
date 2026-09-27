@@ -1,6 +1,15 @@
 # 文阶 WriteWise AI 项目记忆
 
 
+## 2026-09-27：教师云端 MVP 接通方案待审阅
+
+- 用户要求“接通吧”“继续接通”；目标为现有教师页面的任务创建、作文上传、批改与云端保存，刷新或重新登录后可恢复。继续使用已部署的 DeepSeek 官方直连、30 教师账号和现有 v2 / 无 OCR 主流程。
+- 已核对实际工作树：完整业务页面仅在 LocalDemoApp，AppStateProvider 仍以 mock/内存状态初始化，生产 AccountApp 只展示账号。不能仅解开路由就宣称云端教师 MVP 接通。
+- 已准备设计 `docs/superpowers/specs/2026-09-27-teacher-cloud-mvp-design.md`：建议 Supabase 私有 Storage + PostgreSQL 业务保存 + Vercel Queues，数据库提供教师隔离、版本、持久幂等及全站并发 1；保留未知结果不盲目重试。
+- 该文件待用户审阅，尚未批准新增存储凭据、数据管理与队列细节；本轮仅做代码/官方文档核对及设计，没有修改产品代码、云数据库、Storage、Vercel 配置或发起模型调用。不得把方案当作实现完成。
+
+
+
 ## 2026-09-26：DeepSeek 已部署 Vercel，公网单图返回完整批改
 
 - DeepSeek 官方直连实现 `6d07004` 已随 `65a3f22` 推送；Production `dpl_6VaUGNecEGXSQF7LLfixS69TvAk4` 已 Ready（54 秒），详情确认 Current，正式域名仍为 `https://wenjie-writewise-pilot.vercel.app`。
