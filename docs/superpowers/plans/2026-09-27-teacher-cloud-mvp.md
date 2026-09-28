@@ -71,11 +71,11 @@
 
 **Interfaces:** `PrivateStorage` 提供 `signUpload(path):Promise<{url:string;expiresAt:string}>`、`read(path,signal):Promise<{bytes:Uint8Array;contentType:string}>`、`signRead(path,ttlSeconds):Promise<string>`、`remove(paths:string[]):Promise<void>`。`PilotUploadService(db,storage)` 提供 `reserve(ownerId,taskId,command:Command<UploadInput>):Promise<UploadTicket>`、`complete(ownerId,uploadId,command):Promise<PageDto>`、`list(ownerId,taskId,query):Promise<Page<UploadDto>>`、`readUrl(ownerId,uploadId):Promise<{url:string;expiresAt:string}>`、`loadVerified(ownerId,uploadId,signal):Promise<GatewayImageInput>`。UploadInput 只含 purpose（material/essay）、mimeType、size、label；ticket 含 uploadId 与上传签名，不含服务凭据。
 
-- [ ] **1. 写失败测试。** `rejectsForeignUploadBeforeStorageAccess`；`reusesUploadRegistrationAfterLostResponse`；`rejectsMimeSizeAndDigestMismatch`；`doesNotGradeIncompleteUpload`；`rechecksBytesAfterSignedUploadReplay`。模拟签名 URL 仍有效时替换字节，worker 加载必须拒绝且 Provider 调用数为 0。
-- [ ] **2. 验证红灯。** `npm.cmd --prefix platform-api test -- src/pilot/uploads.test.ts src/pilot/storage.test.ts`。
-- [ ] **3. 实施接口。** 使用官方 `@supabase/supabase-js` 签名；固定私有 bucket 与随机路径，禁止 upsert/浏览器路径。字节直传 Storage；服务端只从固定项目存储地址流式限量读取，校验图片签名/尺寸、现有 MIME/大小限制和 SHA-256，记录不可变摘要，worker 再验摘要。原图读取需活跃归属，签名 60 秒，不持久化或记录签名。保留上传登记供刷新恢复；过期且未完成可重新预留，不假报成功。
-- [ ] **4. 验证绿灯。** 重跑步骤 2 和平台 typecheck；用 fake storage 确认流式读取在超过允许字节数时停止，跨租户请求不调用 SDK。
-- [ ] **5. 提交。** `feat: add private verified pilot uploads`。
+- [x] **1. 写失败测试。** `rejectsForeignUploadBeforeStorageAccess`；`reusesUploadRegistrationAfterLostResponse`；`rejectsMimeSizeAndDigestMismatch`；`doesNotGradeIncompleteUpload`；`rechecksBytesAfterSignedUploadReplay`。模拟签名 URL 仍有效时替换字节，worker 加载必须拒绝且 Provider 调用数为 0。
+- [x] **2. 验证红灯。** `npm.cmd --prefix platform-api test -- src/pilot/uploads.test.ts src/pilot/storage.test.ts`。
+- [x] **3. 实施接口。** 使用官方 `@supabase/supabase-js` 签名；固定私有 bucket 与随机路径，禁止 upsert/浏览器路径。字节直传 Storage；服务端只从固定项目存储地址流式限量读取，校验图片签名/尺寸、现有 MIME/大小限制和 SHA-256，记录不可变摘要，worker 再验摘要。原图读取需活跃归属，签名 60 秒，不持久化或记录签名。保留上传登记供刷新恢复；过期且未完成可重新预留，不假报成功。
+- [x] **4. 验证绿灯。** 重跑步骤 2 和平台 typecheck；用 fake storage 确认流式读取在超过允许字节数时停止，跨租户请求不调用 SDK。
+- [x] **5. 提交。** `feat: add private verified pilot uploads`。
 
 ### Task 3: 提取 Gateway 单次执行服务
 

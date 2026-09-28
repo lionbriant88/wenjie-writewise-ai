@@ -17,6 +17,7 @@ import {
 } from "./validation.js";
 import { PilotError, invalid, notFound } from "./errors.js";
 import { payloadHash, runCommand } from "./commands.js";
+import { syncMaterialUploads } from "./materialUploads.js";
 type TaskRow = Record<string, unknown> & {
   id: string;
   revision: number;
@@ -94,6 +95,7 @@ export class PilotTaskRepository {
             "INSERT INTO pilot_grading.tasks(owner_id,id,draft) VALUES($1,$2,$3)",
             [ownerId, taskId, JSON.stringify(draft)],
           );
+          await syncMaterialUploads(tx, ownerId, taskId, draft.materialRefs);
           return projectTask(await ownedTask(tx, ownerId, taskId));
         },
       );
@@ -121,6 +123,7 @@ export class PilotTaskRepository {
           checkRevision(current.revision, c.expectedRevision);
           if (current.state !== "draft")
             throw new PilotError("task_already_confirmed", 409);
+          await syncMaterialUploads(tx, ownerId, taskId, draft.materialRefs);
           await tx.query(
             "UPDATE pilot_grading.tasks SET draft=$3,revision=revision+1,updated_at=now() WHERE owner_id=$1 AND id=$2",
             [ownerId, taskId, JSON.stringify(draft)],

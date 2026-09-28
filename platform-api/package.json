@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.3.14",
+    "@supabase/supabase-js": "^2.117.2",
     "express": "^5.1.0",
     "pg": "^8.16.3"
   },
