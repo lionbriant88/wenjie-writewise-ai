@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { TaskMaterialOrganizer } from '../components/TaskMaterialOrganizer'
 import { TaskRubricEditor } from '../components/TaskRubricEditor'
 import { useAppState } from '../context/useAppState'
@@ -141,6 +141,7 @@ function toMaterialContext(rubric: GeneratedTaskRubric): TaskMaterialContext {
 export function CreateTaskPage() {
   const { pilot, loading } = useAppState()
   const { taskId } = useParams()
+  const { state } = useLocation()
   if (pilot && taskId) {
     const task = pilot.tasks.find((t) => t.id === taskId)
     if (loading || !task)
@@ -152,13 +153,17 @@ export function CreateTaskPage() {
         </AppLayout>
       )
   }
-  return <TaskDraftEditor key={taskId ?? 'new'} />
+  const editorIdentity = taskId && state?.draftId === taskId
+    ? state.draftEditorKey
+    : taskId ?? 'new'
+  return <TaskDraftEditor key={editorIdentity} editorIdentity={editorIdentity} />
 }
 
-function TaskDraftEditor() {
+function TaskDraftEditor({ editorIdentity }: { editorIdentity: string }) {
   const navigate = useNavigate()
   const { createTask, pilot } = useAppState()
   const { taskId: existingDraftId } = useParams()
+  const [initialDraftId] = useState(existingDraftId)
   const [initialTask] = useState(() =>
     pilot?.tasks.find((t) => t.id === existingDraftId),
   )
@@ -170,9 +175,9 @@ function TaskDraftEditor() {
   const session = useMemo(
     () =>
       pilot
-        ? createMaterialDraftSession(pilot, editorKey, existingDraftId)
+        ? createMaterialDraftSession(pilot, editorKey, initialDraftId)
         : undefined,
-    [pilot, editorKey, existingDraftId],
+    [pilot, editorKey, initialDraftId],
   )
   const saveForAiRef = useRef<() => Promise<TaskDto>>(async () => {
     throw Error('草稿尚未就绪。')
@@ -263,9 +268,20 @@ function TaskDraftEditor() {
     materialRefs: [],
   })
   const draftValue = JSON.parse(draftJson) as TaskDraftInput
+  const retainDraftAddress = (task: TaskDto) => {
+    if (mountedRef.current && !existingDraftId) {
+      navigate(`/tasks/${task.id}/edit`, {
+        replace: true,
+        state: { draftId: task.id, draftEditorKey: editorIdentity },
+      })
+    }
+    return task
+  }
+  const retainDraftAddressRef = useRef(retainDraftAddress)
+  retainDraftAddressRef.current = retainDraftAddress
   saveForAiRef.current = () => {
     if (!session || restoreState !== 'ready') throw Error('草稿尚未就绪。')
-    return session.save(draftValue, latestUnitsRef.current)
+    return session.save(draftValue, latestUnitsRef.current).then(retainDraftAddressRef.current)
   }
   useEffect(() => {
     if (
@@ -282,8 +298,11 @@ function TaskDraftEditor() {
       setDraftSave('正在保存草稿…')
       void session
         .save(JSON.parse(draftJson), materials.units)
-        .then(() => {
-          if (active) setDraftSave('草稿已保存')
+        .then((task) => {
+          if (active) {
+            setDraftSave('草稿已保存')
+            retainDraftAddressRef.current(task)
+          }
         })
         .catch(() => {
           if (active) setDraftSave('草稿未保存，请检查网络后重试')

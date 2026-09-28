@@ -125,7 +125,15 @@ npm.cmd run accounts:apply -- --manifest local-private-accounts/pilot-batch/mani
 
 ## 模型切换更新（2026-09-26）
 
-当前选型为 DeepSeek 官方直连；完整变量和实测状态见 [DeepSeek 直连验证](./2026-09-26-deepseek-direct-validation.md)。新部署必须显式设置 `GRADING_PROVIDER=deepseek` 和独立 `DEEPSEEK_API_KEY`，缺失 Provider 不再默认使用保留的 OpenRouter key。旧环境的账号功能不受影响，批改接口会保持未配置。尚未保存 DeepSeek Production Secret 或发布新部署。
+当前选型为 DeepSeek 官方直连；完整变量和实测状态见 [DeepSeek 直连验证](./2026-09-26-deepseek-direct-validation.md)。必须显式设置 `GRADING_PROVIDER=deepseek` 和独立 `DEEPSEEK_API_KEY`，缺失 Provider 不再默认使用保留的 OpenRouter key。该直连版本已于 2026-09-26 部署并通过一次公网合成单图接口验证，教师业务页面当时尚未开放。
+
+## 教师云端 MVP 更新（2026-09-28）
+
+业务页面、私有图片、数据库保存与共享后台队列已完成本地实现，云端迁移和发布尚未完成。配置清单、迁移顺序、一次性合成验收、删除和未知恢复限制见 [教师云端 MVP 验收](./2026-09-27-teacher-cloud-mvp-validation.md)。以该记录为当前部署依据；下方 OpenRouter 和同步接口章节仅保留历史背景。
+
+新增服务器配置仅用于项目 `wenjie-writewise-pilot` 的 Production：`SUPABASE_URL`、`SUPABASE_STORAGE_BUCKET=pilot-originals`、`SUPABASE_STORAGE_SERVICE_KEY`、`CRON_SECRET`、`PILOT_MVP_ENABLED`。不设置前端 `VITE_` 密钥。先备份 schema/权限，运行 `npm.cmd --prefix platform-api run pilot:migrate`，再验证真实 PG 双连接竞争；不重新导入账号、不重置密码。
+
+新版本关闭旧同步批改旁路；缺依赖时账号仍可登录，教师业务入口关闭。维护凭据仅用于不调用模型的恢复/清理入口；Queue worker 由 Vercel 私有触发器驱动。每日 Cron 是兜底，不能承诺逐分钟定时恢复。
 
 ## 历史 OpenRouter MVP 接入与限制
 

@@ -917,16 +917,17 @@ describe('grading gateway server boundary', () => {
     let calls = 0
     let observedSignal: AbortSignal | undefined
     let providerSettled = false
+    let finishProvider!: () => void
     const diagnostics: unknown[] = []
     const provider = fakeMultimodalProvider({
       async generateMaterialContext(input) {
         calls += 1
         observedSignal = input.signal
         return new Promise<TaskMaterialContextV1>((resolve) => {
-          setTimeout(() => {
+          finishProvider = () => {
             providerSettled = true
             resolve(materialContextFixture())
-          }, 50)
+          }
         })
       },
     })
@@ -953,7 +954,8 @@ describe('grading gateway server boundary', () => {
     expect(providerSettled).toBe(false)
     const responseSnapshot = JSON.stringify(response.body)
 
-    await new Promise((resolve) => setTimeout(resolve, 70))
+    finishProvider()
+    await new Promise((resolve) => setImmediate(resolve))
 
     expect(providerSettled).toBe(true)
     expect(JSON.stringify(response.body)).toBe(responseSnapshot)

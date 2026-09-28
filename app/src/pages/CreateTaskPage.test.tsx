@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode } from 'react'
-import { MemoryRouter, Routes, Route } from 'react-router-dom'
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildTaskCreationInput } from '../services/taskRubric/buildTaskCreationInput'
 import { createDefaultRubricDimensions } from '../services/taskRubric/rubricForm'
@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   analyze: vi.fn(),
   convertPdfToImages: vi.fn(),
   pilot: undefined as CloudWorkspace | undefined,
+  realNavigation: false,
 }))
 
 vi.mock('../context/useAppState', () => ({
@@ -26,7 +27,10 @@ vi.mock('../context/useAppState', () => ({
 
 vi.mock('react-router-dom', async (importOriginal) => {
   const actual = await importOriginal<typeof import('react-router-dom')>()
-  return { ...actual, useNavigate: () => mocks.navigate }
+  return { ...actual, useNavigate: () => {
+    const navigate = actual.useNavigate()
+    return mocks.realNavigation ? navigate : mocks.navigate
+  } }
 })
 
 vi.mock('../services/taskRubric/rubricClient', async (importOriginal) => {
@@ -141,6 +145,7 @@ beforeEach(() => {
 afterEach(() => {
   mocks.pilot?.dispose()
   mocks.pilot = undefined
+  mocks.realNavigation = false
   mocks.createTask.mockClear()
   mocks.navigate.mockClear()
   mocks.generate.mockReset()
@@ -151,6 +156,31 @@ afterEach(() => {
 })
 
 describe('CreateTaskPage unified teacher rubric flow', () => {
+  it('keeps the live editor when autosave gives a new draft a reloadable address', async () => {
+    let saved: TaskDto | undefined
+    const client = createPilotClient({getCsrfToken:()=>'',onSessionExpired:()=>{},fetchImpl:vi.fn(async (url,options)=>{
+      const method=options?.method??'GET'
+      if(method==='GET' && String(url).endsWith('/assist'))return Response.json([])
+      if(method==='POST' || method==='PATCH'){
+        saved={id:'saved-task',state:'draft',revision:(saved?.revision??0)+1,rubricRevision:0,confirmedPackage:null,counts:{total:0,completed:0,exceptions:0},createdAt:'',updatedAt:'',draft:JSON.parse(String(options?.body)).value}
+        return Response.json(saved)
+      }
+      throw Error('Unexpected operation')
+    })})
+    mocks.pilot = new CloudWorkspace(client)
+    mocks.realNavigation = true
+    function Address(){return <output data-testid="address">{useLocation().pathname}</output>}
+    const page=(address:string)=><MemoryRouter initialEntries={[address]}><Address/><Routes><Route path="/tasks/new" element={<CreateTaskPage/>}/><Route path="/tasks/:taskId/edit" element={<CreateTaskPage/>}/></Routes></MemoryRouter>
+    const view=render(page('/tasks/new'))
+    const input=screen.getByLabelText('写作要求')
+    fireEvent.change(input,{target:{value:'Keep this saved requirement.'}})
+    await waitFor(()=>expect(screen.getByTestId('address')).toHaveTextContent('/tasks/saved-task/edit'),{timeout:2500})
+    expect(screen.getByLabelText('写作要求')).toBe(input)
+    expect(input).toHaveValue('Keep this saved requirement.')
+    view.unmount()
+    render(page('/tasks/saved-task/edit'))
+    expect(await screen.findByLabelText('写作要求')).toHaveValue('Keep this saved requirement.')
+  })
   it('restores a cloud draft and applies its completed rubric without invoking legacy clients or another job', async () => {
     const task: TaskDto = {id:'task',state:'draft',revision:4,rubricRevision:0,confirmedPackage:null,counts:{total:0,completed:0,exceptions:0},createdAt:'',updatedAt:'',draft:{
       taskName:'Saved task',fullScore:15,writingRequirement:'Teacher requirement.',dimensions:createDefaultRubricDimensions().map(d=>({...d,sourceEvidence:[]})),source:'teacher',materialContext:null,materialProcessingStatus:'none',

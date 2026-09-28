@@ -328,7 +328,7 @@ export function EssayResultPage() {
       task={task}
       title={`${essay.essayNumber} 批改结果`}
       currentStep="progress"
-      description="教师可检查 AI 评分、问题与修改建议，并进行模拟调整。"
+      description="检查 AI 评分、问题与修改建议，保存调整后确认本篇批改。"
       focusedReview
     >
       <div className="space-y-5">

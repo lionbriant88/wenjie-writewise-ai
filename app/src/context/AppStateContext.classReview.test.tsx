@@ -135,7 +135,7 @@ describe('AppStateContext class review prototype workspace', () => {
       )
     }).toThrow('class_review_source_invalidated')
 
-    act(() => latestState.updateGradingResult('task-3-essay-1', { overallComment: 'Teacher revision 1.' }))
+    await act(async () => { await latestState.updateGradingResult('task-3-essay-1', { overallComment: 'Teacher revision 1.' }) })
     expect(latestState.gradingResults.find((item) => item.essayId === 'task-3-essay-1')).toMatchObject({
       resultRevision: 1,
       teacherAdjusted: true,
@@ -165,7 +165,7 @@ describe('AppStateContext class review prototype workspace', () => {
     expect(fake.getCallCountForTest()).toBe(1)
     expect(latestState.classReview.getSnapshot('task-3').report.workspaceState).toBe('ai_available')
 
-    act(() => latestState.updateGradingResult('task-3-essay-1', { overallComment: 'Teacher revision 2.' }))
+    await act(async () => { await latestState.updateGradingResult('task-3-essay-1', { overallComment: 'Teacher revision 2.' }) })
     expect(latestState.gradingResults.find((item) => item.essayId === 'task-3-essay-1')?.resultRevision).toBe(2)
     expect(latestState.classReview.getSnapshot('task-3').report.workspaceState).toBe('ai_available')
     expect(fake.getCallCountForTest()).toBe(1)

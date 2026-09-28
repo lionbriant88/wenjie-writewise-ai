@@ -34,7 +34,9 @@ export async function recoverPilotWork(
     )
   ).rows;
   let published = 0;
-  for (const row of rows.slice(0, limit)) {
+  // Reserve one publication slot for recovery itself when processing a full page.
+  const jobLimit = Math.max(1, limit - 1);
+  for (const row of rows.slice(0, jobLimit)) {
     await queue.publish(
       row.job_id,
       row.job_id + ":" + row.generation,
@@ -65,7 +67,7 @@ export async function recoverPilotWork(
       )
     ).rows.length > 0;
   if (
-    rows.length > limit ||
+    rows.length > jobLimit ||
     cleaned === limit ||
     pendingContent ||
     expiredDeliveries
@@ -76,7 +78,7 @@ export async function recoverPilotWork(
       [
         continuation,
         deps.ownerId ?? null,
-        rows.length > limit ? rows[limit - 1].job_id : null,
+        rows.length > jobLimit ? rows[jobLimit - 1].job_id : null,
       ],
     );
   }
@@ -88,7 +90,7 @@ export async function recoverPilotWork(
   const continuations = (
     await db.query<{ id: string; generation: number }>(
       "SELECT id,generation FROM pilot_grading.maintenance_jobs WHERE state='queued' AND ($1::uuid IS NULL OR owner_id=$1) AND sent_at IS NULL AND ($2::uuid IS NULL OR id<>$2) ORDER BY id LIMIT $3",
-      [deps.ownerId ?? null, deps.continuationId ?? null, limit],
+      [deps.ownerId ?? null, deps.continuationId ?? null, limit - published],
     )
   ).rows;
   for (const c of continuations) {

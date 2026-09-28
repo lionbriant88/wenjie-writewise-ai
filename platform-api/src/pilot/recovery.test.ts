@@ -12,6 +12,23 @@ beforeEach(async () => {
 afterEach(async () => {
   await db?.close();
 });
+it("shares the publication limit between essay jobs and maintenance continuations", async () => {
+  const s = await workerFixture(db);
+  for (let i = 0; i < 3; i++)
+    await db.query(
+      "INSERT INTO pilot_grading.maintenance_jobs(id) VALUES($1)",
+      [randomUUID()],
+    );
+  expect((await recoverPilotWork(s.deps, 2)).published).toBeLessThanOrEqual(2);
+  expect(s.queue.messages).toHaveLength(2);
+  expect(
+    (
+      await db.query(
+        "SELECT id FROM pilot_grading.maintenance_jobs WHERE sent_at IS NULL",
+      )
+    ).rows.length,
+  ).toBeGreaterThan(0);
+});
 it("publishFailureAndLostOutboxAckReuseDeliveryGeneration", async () => {
   const s = await workerFixture(db);
   s.queue.fail = true;

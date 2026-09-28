@@ -13,7 +13,10 @@
     "accounts:prepare": "tsx scripts/accounts.ts prepare",
     "accounts:apply": "tsx scripts/accounts.ts apply",
     "db:migrate": "tsx scripts/accounts.ts migrate",
-    "db:migrate:pilot": "tsx scripts/pilotMigrate.ts"
+    "db:migrate:pilot": "tsx scripts/pilotMigrate.ts",
+    "verify:pilot:local": "tsx scripts/verifyPilotLocal.ts",
+    "verify:pilot:postgres": "tsx scripts/verifyPilotPostgres.ts",
+    "verify:pilot:public": "tsx scripts/verifyPilotPublic.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.3.14",
