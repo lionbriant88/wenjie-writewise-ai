@@ -220,3 +220,10 @@ it("disabledMvpLeavesAccountSessionUsableAndNeverReopensRawGateway", async () =>
     expect(res.body.error.code).toBe("persistent_job_required");
   }
 });
+it('returns a JSON deletion receipt and allows the same deletion command to replay',async()=>{
+ const created=await call('post','/tasks',0,command(validDraft())),input=command({},created.body.revision)
+ const removed=await call('delete','/tasks/'+created.body.id,0,input)
+ expect(removed.status).toBe(200);expect(removed.body).toEqual({deleted:true})
+ expect((await call('delete','/tasks/'+created.body.id,0,input)).body).toEqual({deleted:true})
+ expect((await call('get','/tasks/'+created.body.id)).status).toBe(404)
+})

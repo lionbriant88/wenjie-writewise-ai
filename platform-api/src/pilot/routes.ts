@@ -89,13 +89,13 @@ export function createPilotRouter(runtime?: PilotRuntime): Router {
     res.json(await tasks.saveDraft(owner(res), resource(req), req.body)),
   );
   router.delete("/tasks/:id", async (req, res) => {
-    const result = await cleanup.deleteTask(
+    await cleanup.deleteTask(
       owner(res),
       resource(req),
       req.body,
     );
     await recover(res);
-    res.json(result);
+    res.json({ deleted: true });
   });
   router.post("/tasks/:id/confirm", async (req, res) =>
     res.json(await tasks.confirm(owner(res), resource(req), req.body)),

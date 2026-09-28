@@ -17,12 +17,13 @@ const reasonLabels: Record<string, string> = {
 
 export function ExceptionsPage() {
   const { taskId = '' } = useParams()
-  const { tasks, essays, updateEssayOcrText, markEssayManual } = useAppState()
+  const { tasks, essays, pilot, updateEssayOcrText, markEssayManual } = useAppState()
+  const [actionError,setActionError]=useState('')
   const [savedEssayId, setSavedEssayId] = useState<string | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const task = findTask(tasks, taskId)
   const exceptionEssays = findEssaysByTask(essays, taskId).filter(
-    (essay) => essay.status === 'needs_review',
+    (essay) => pilot ? !essay.teacherReviewed && (pilot.essays.find(e=>e.id===essay.id)?.currentResult?.ai.status==='partial'||['failed','result_unknown'].includes(pilot.essays.find(e=>e.id===essay.id)?.currentJob?.state??'')) : essay.status === 'needs_review',
   )
 
   useEffect(() => {
@@ -54,9 +55,10 @@ export function ExceptionsPage() {
       task={task}
       title="异常复核"
       currentStep="progress"
-      description="教师只处理 OCR 或图像质量不可靠的作文。"
+      description="查看需要教师复核或未能完成批改的作文。"
     >
       <div className="space-y-5">
+        {actionError?<p role="alert">{actionError}</p>:null}
         <Link
           to={`/tasks/${task.id}/progress`}
           className="tech-focus inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-cyan-200 hover:bg-cyan-50"
@@ -84,27 +86,26 @@ export function ExceptionsPage() {
                 </div>
               </div>
               <div className="space-y-4">
-                <OcrTextEditor
+                {pilot ? <div><p>{essay.gradingRun?.status==='failed'?essay.gradingRun.errorMessage:'请核对模型识别、评分和反馈。'}</p><Link className="text-blue-700" to={essay.aiResultId?`/tasks/${task.id}/essays/${essay.id}`:`/tasks/${task.id}/progress`}>{essay.aiResultId?'查看并复核批改结果':'返回进度检查批改状态'}</Link></div> : <OcrTextEditor
                   value={essay.ocrText}
                   confidence={essay.ocrConfidence}
                   onChange={(value) => {
-                    updateEssayOcrText(essay.id, value)
-                    showSaved(essay.id)
+                    void updateEssayOcrText(essay.id, value).then(()=>showSaved(essay.id)).catch(()=>setActionError('保存失败，请重试。'))
                   }}
-                />
+                />}
                 <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p className="text-sm font-semibold text-slate-900">复核动作</p>
-                    <p className="mt-1 text-xs text-slate-500">修改 OCR 后可重新触发模拟批改，或转入人工批改。</p>
+                    <p className="mt-1 text-xs text-slate-500">{pilot?'可复核已保存结果，或标记为人工处理。':'修改识别文本后可重新批改，或转入人工批改。'}</p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <SaveFeedback show={savedEssayId === essay.id} label="OCR 已保存" />
-                    <button className="tech-focus inline-flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-800 active:scale-[0.99]">
+                    {!pilot?<button className="tech-focus inline-flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-800 active:scale-[0.99]">
                       <RotateCcw className="h-4 w-4" />
                       重新批改
-                    </button>
+                    </button>:null}
                     <button
-                      onClick={() => markEssayManual(essay.id)}
+                      onClick={() => void markEssayManual(essay.id).catch(()=>setActionError('未能保存人工处理标记，请重试。'))}
                       className="tech-focus inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-amber-200 hover:bg-amber-50"
                     >
                       <CheckCircle2 className="h-4 w-4" />

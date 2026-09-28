@@ -1,3 +1,4 @@
+import { useCloudReview } from '../pilot/useCloudReview'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import { ArrowLeft, ChevronLeft, ChevronRight, X } from 'lucide-react'
@@ -154,6 +155,7 @@ export function EssayResultPage() {
   const { taskId = '', essayId = '' } = useParams()
   const location = useLocation()
   const {
+    pilot,
     tasks,
     essays,
     gradingResults,
@@ -171,7 +173,11 @@ export function EssayResultPage() {
   const feedbackPanelRef = useRef<HTMLDivElement | null>(null)
   const task = findTask(tasks, taskId)
   const essay = findEssay(essays, essayId)
-  const result = findResultByEssayId(gradingResults, essayId)
+  const savedResult = findResultByEssayId(gradingResults, essayId)
+  const cloudReview=useCloudReview(pilot,essayId,savedResult)
+  const result=cloudReview.result
+  const editResult=(id:string,patch:Partial<import('../types').GradingResult>)=>{if(pilot)cloudReview.edit(patch);else void updateGradingResult(id,patch)}
+  const confirmResult=(id:string)=>{if(pilot)void cloudReview.save(true);else void confirmGradingResult(id)}
   const taskEssays = findEssaysByTask(essays, taskId)
   const essayIndex = taskEssays.findIndex((item) => item.id === essayId)
   const previousEssayId = essayIndex > 0 ? taskEssays[essayIndex - 1].id : undefined
@@ -247,7 +253,7 @@ export function EssayResultPage() {
             essayStatus={essay.status}
             hasResult={false}
             reviewReasons={[]}
-            onConfirm={() => confirmGradingResult(essay.id)}
+            onConfirm={() => confirmResult(essay.id)}
           />
           <EmptyState
             title={essay.status === 'pending_grading' ? '结果已失效' : '暂无批改结果'}
@@ -362,7 +368,7 @@ export function EssayResultPage() {
               essayStatus={essay.status}
               hasResult
               reviewReasons={result.reviewReasons ?? []}
-              onConfirm={() => confirmGradingResult(essay.id)}
+              onConfirm={() => confirmResult(essay.id)}
             />
             <div
           role="region"
@@ -410,7 +416,11 @@ export function EssayResultPage() {
                 setActiveIssueId(issueId)
                 setActiveDetailTab('issues')
               }}
-              onOcrTextChange={updateEssayOcrText}
+              onOcrTextChange={async(id,text,revision)=>{
+                if(!pilot){await updateEssayOcrText(id,text);return}
+                const saved=await pilot.command('transcript:'+id,{text},revision,c=>pilot.client.saveTranscript(id,c,pilot.controller.signal))
+                pilot.acceptEssay(saved)
+              }}
               onViewOriginalImage={() => setShowOriginalImage(true)}
             />
           </div>
@@ -430,6 +440,12 @@ export function EssayResultPage() {
                 该来源版本已更新或不可用
               </div>
             ) : null}
+            {pilot ? <div className="rounded-lg border border-slate-200 p-3">
+              <p role="status">{cloudReview.saving?'正在保存…':cloudReview.dirty?'有未保存的修改':cloudReview.saved?'已保存教师调整':'已读取云端结果'}</p>
+              {cloudReview.error?<p role="alert" className="text-rose-700">{cloudReview.error}</p>:null}
+              <button disabled={cloudReview.saving} onClick={()=>void cloudReview.save(false)} className="mt-2 rounded bg-blue-700 px-3 py-2 text-white">保存分数与反馈</button>
+              {cloudReview.error?<button onClick={()=>void cloudReview.reload()} className="ml-3 text-blue-700">加载最新版本（放弃未保存修改）</button>:null}
+            </div>:null}
             {(saveNotice || result.teacherAdjusted) ? (
               <div className="flex flex-wrap items-center gap-2">
                 {saveNotice ? (
@@ -483,11 +499,11 @@ export function EssayResultPage() {
                       : dimension,
                   )
 
-                  updateGradingResult(essay.id, {
+                  editResult(essay.id, {
                     dimensionScores: nextDimensions,
                     totalScore: calculateTotalScore(nextDimensions, fullScore, hasLegibilityIssue),
                   })
-                  showSaveNotice('分数已更新')
+                  if(!pilot)showSaveNotice('分数已更新')
                 }}
               />
             ) : null}
@@ -499,7 +515,7 @@ export function EssayResultPage() {
                 activeIssueLocateStatus={activeIssueLocateStatus}
                 onIssueSelect={setActiveIssueId}
                 getIssueClassReviewState={getIssueClassReviewState}
-                onAddIssue={(issue) => classReview.addIssue(getIssueInput(issue))}
+                onAddIssue={pilot ? undefined : (issue) => classReview.addIssue(getIssueInput(issue))}
                 onRemoveIssue={(issue) => {
                   const evidenceId = findTeacherEvidenceId(issue)
                   if (evidenceId) classReview.removeIssue(task.id, evidenceId)
@@ -530,7 +546,7 @@ export function EssayResultPage() {
                   <textarea
                     aria-label="AI 总评"
                     value={result.overallComment}
-                    onChange={(event) => updateGradingResult(essay.id, { overallComment: event.target.value })}
+                    onChange={(event) => editResult(essay.id, { overallComment: event.target.value })}
                     className="mt-2 min-h-28 w-full rounded-lg border border-slate-200 p-3 text-sm leading-6 text-slate-700"
                   />
                 </label>
@@ -539,7 +555,7 @@ export function EssayResultPage() {
                   <textarea
                     aria-label="教师补充建议"
                     value={result.teacherSuggestion ?? ''}
-                    onChange={(event) => updateGradingResult(essay.id, { teacherSuggestion: event.target.value })}
+                    onChange={(event) => editResult(essay.id, { teacherSuggestion: event.target.value })}
                     className="mt-2 min-h-24 w-full rounded-lg border border-slate-200 p-3 text-sm leading-6 text-slate-700"
                     placeholder="例如：建议先复习 suggest 后接动词原形，再重写第二段。"
                   />
@@ -547,8 +563,8 @@ export function EssayResultPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    updateGradingResult(essay.id, { teacherAdjusted: true })
-                    showSaveNotice('已保存教师调整')
+                    if(pilot)void cloudReview.save(false)
+                    else {editResult(essay.id, { teacherAdjusted: true });showSaveNotice('已保存教师调整')}
                   }}
                   className="tech-focus mt-3 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
                 >

@@ -136,7 +136,7 @@ export function IssueCorrectionList({
                     <span className="inline-flex min-h-11 items-center rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
                       已自动归纳
                     </span>
-                  ) : (
+                  ) : onAddIssue ? (
                     <button
                       ref={(node) => {
                         if (node) actionButtonRefs.current.set(item.id, node)
@@ -163,7 +163,7 @@ export function IssueCorrectionList({
                     >
                       {isAdded ? '移出班级总览' : '加入班级总览'}
                     </button>
-                  )}
+                  ) : null}
                 </div>
               </div>
               <dl className="mt-2 grid gap-1.5 text-sm">

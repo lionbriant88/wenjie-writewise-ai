@@ -21,6 +21,7 @@ export class CloudWorkspace {
   private editorTails = new Map<string, Promise<unknown>>()
   private uploads = new Map<string, { ticket?: UploadTicket; done?: string }>()
   private loadSequence = 0
+  private refreshPromise: Promise<void> | undefined
   readonly client: PilotClient
   constructor(client: PilotClient) {
     this.client = client
@@ -65,7 +66,18 @@ export class CloudWorkspace {
     } while (cursor)
     return items
   }
-  async refresh() {
+  refresh(): Promise<void> {
+    if (this.refreshPromise) return this.refreshPromise
+    const pending = this.readSnapshot()
+    this.refreshPromise = pending
+    void pending
+      .finally(() => {
+        if (this.refreshPromise === pending) this.refreshPromise = undefined
+      })
+      .catch(() => undefined)
+    return pending
+  }
+  private async readSnapshot() {
     const sequence = ++this.loadSequence,
       signal = this.controller.signal
     const tasks = await this.all((cursor) =>
@@ -176,6 +188,34 @@ export class CloudWorkspace {
     this.check()
     ++this.loadSequence
     this.essays = [...this.essays.filter((e) => e.id !== essay.id), essay]
+    this.emit()
+  }
+  forgetTask(id: string) {
+    this.check()
+    ++this.loadSequence
+    const identities = [
+      id,
+      ...this.essays
+        .filter((e) => e.taskId === id)
+        .flatMap((e) => [
+          e.id,
+          ...e.pages.map((p) => p.uploadId),
+          ...(e.currentJob ? [e.currentJob.id] : []),
+        ]),
+    ]
+    for (const [key, draft] of this.editors)
+      if (draft.id === id) {
+        identities.push(key)
+        this.editors.delete(key)
+        this.editorTails.delete(key)
+      }
+    for (const key of this.uploads.keys())
+      if (key.startsWith(id + ':')) this.uploads.delete(key)
+    for (const key of this.commands.keys())
+      if (identities.some((identity) => key.includes(identity)))
+        this.commands.delete(key)
+    this.tasks = this.tasks.filter((t) => t.id !== id)
+    this.essays = this.essays.filter((e) => e.taskId !== id)
     this.emit()
   }
   async unattachedUploads(task: string): Promise<UploadDto[]> {

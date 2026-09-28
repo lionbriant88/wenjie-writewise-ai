@@ -132,3 +132,11 @@ describe('EssaySourcePanel', () => {
     expect(onIssueMarkerSelect).toHaveBeenCalledWith('outer-high')
   })
 })
+it('keeps a cloud transcript edit and its original revision when another tab saves',async()=>{
+ const user=userEvent.setup(),save=vi.fn().mockRejectedValue(new Error('版本冲突'))
+ const view=render(<EssaySourcePanel essay={{...kimiEssay,cloudRevision:1}} onOcrTextChange={save} onViewOriginalImage={()=>{}}/>)
+ await user.click(screen.getByRole('button',{name:'复核识别结果'}));await user.clear(screen.getByLabelText('学生作文识别文本'));await user.type(screen.getByLabelText('学生作文识别文本'),'My correction.')
+ view.rerender(<EssaySourcePanel essay={{...kimiEssay,cloudRevision:2,ocrText:'Other tab correction.'}} onOcrTextChange={save} onViewOriginalImage={()=>{}}/>)
+ expect(screen.getByLabelText('学生作文识别文本')).toHaveValue('My correction.');await user.click(screen.getByRole('button',{name:'保存识别文本并使旧结果失效'}))
+ expect(save).toHaveBeenCalledWith('essay-1','My correction.',1);expect(await screen.findByRole('alert')).toHaveTextContent('版本冲突');expect(screen.getByLabelText('学生作文识别文本')).toHaveValue('My correction.')
+})

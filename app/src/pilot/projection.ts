@@ -106,6 +106,7 @@ export function projectEssay(row: EssayDto): Essay {
     result = row.currentResult,
     now = j?.updatedAt ?? new Date().toISOString()
   return {
+    cloudRevision: row.revision,
     id: row.id,
     taskId: row.taskId,
     sourceGeneration: row.sourceRevision,
@@ -130,14 +131,10 @@ export function projectEssay(row: EssayDto): Essay {
       : row.manualReviewRequired
         ? 'manual'
         : result
-          ? result.ai.status === 'partial'
-            ? 'needs_review'
-            : 'grading_ready'
+          ? 'grading_ready'
           : j?.state === 'running'
             ? 'grading'
-            : j?.state === 'failed' || j?.state === 'result_unknown'
-              ? 'needs_review'
-              : 'pending_grading',
+            : 'pending_grading',
     exceptionReasons: [],
     aiResultId: result ? row.id + '-result' : undefined,
     gradingRun: result

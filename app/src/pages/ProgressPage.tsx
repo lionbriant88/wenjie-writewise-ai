@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ArrowRight, ListFilter, TriangleAlert } from 'lucide-react'
 import { EmptyState } from '../components/EmptyState'
@@ -152,7 +152,7 @@ function EssayAction({
   }
 
   if (phase === 'rate_limit_wait') return <span className="text-amber-700">系统将在资源可用后自动继续批改</span>
-  if (phase === 'queued') return <span className="text-sky-700">等待系统调度</span>
+  if (phase === 'queued') return <span className="text-sky-700">等待批改资源</span>
   if (phase === 'running') return <span className="text-blue-700">正在生成批改结果</span>
   return <span className="text-slate-500">等待任务启动</span>
 }
@@ -170,6 +170,9 @@ export function ProgressPage() {
     resumeTaskGrading,
     markEssayManual,
   } = useAppState()
+  const [actionError,setActionError]=useState('')
+  const busy=useRef(false)
+  const action=async(run:()=>Promise<void>)=>{if(busy.current)return;busy.current=true;setActionError('');try{await run()}catch(e){setActionError(e instanceof Error?e.message:'操作失败，请重试。')}finally{busy.current=false}}
   const [activeTab, setActiveTab] = useState<ProgressQueueTab>('all')
   const task = findTask(tasks, taskId)
 
@@ -210,6 +213,7 @@ export function ProgressPage() {
       description="学生作文页将直接交给多模态模型；全部待处理作文可一次启动，系统会在明确上限内自动排队。"
     >
       <div className="space-y-5">
+        {actionError?<p role="alert" className="text-rose-700">{actionError}</p>:null}
         <ProgressSummary stats={queueStats} />
 
         {pause ? (
@@ -220,11 +224,11 @@ export function ProgressPage() {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="font-semibold">{pause.title}</p>
-                <p className="mt-1 text-sm">{pause.description}</p>
+                <p className="mt-1 text-sm">{pilot?'服务暂时暂停，请联系维护人员处理后检查状态。':pause.description}</p>
               </div>
               <button
                 type="button"
-                onClick={() => resumeTaskGrading(task.id)}
+                onClick={() => void action(()=>resumeTaskGrading(task.id))}
                 className="shrink-0 rounded-lg bg-rose-700 px-4 py-2 text-sm font-semibold text-white"
               >
                 恢复批改
@@ -252,7 +256,7 @@ export function ProgressPage() {
               {queueStats.processable > 0 ? (
                 <button
                   type="button"
-                  onClick={() => startTaskGrading(task.id)}
+                  onClick={() => void action(()=>startTaskGrading(task.id))}
                   className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white shadow-sm"
                 >
                   开始批改全部待处理作文
@@ -273,7 +277,7 @@ export function ProgressPage() {
         </section>
 
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          批改结果仅保存在当前页面状态中，刷新或重启后不保证恢复。
+          {pilot?'任务和已完成结果保存在云端，关闭页面后后台仍会继续处理。':'批改结果仅保存在当前页面状态中，刷新或重启后不保证恢复。'}
         </p>
 
         <div role="tablist" aria-label="批改状态筛选" className="flex gap-2 overflow-x-auto rounded-lg border border-slate-200 bg-white p-2">
@@ -324,9 +328,9 @@ export function ProgressPage() {
                       taskId={task.id}
                       phase={phase}
                       item={item}
-                      retryTaskEssay={retryTaskEssay}
-                      checkUnknownTaskEssay={checkUnknownTaskEssay}
-                      markEssayManual={markEssayManual}
+                      retryTaskEssay={id=>void action(()=>retryTaskEssay(id))}
+                      checkUnknownTaskEssay={id=>void action(()=>checkUnknownTaskEssay(id))}
+                      markEssayManual={id=>void action(()=>markEssayManual(id))}
                     />
                   </div>
                 </article>

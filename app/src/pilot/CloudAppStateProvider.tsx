@@ -4,6 +4,7 @@ import {
   type AppState,
   type ClassReviewAppCommands,
 } from '../context/appStateContextValue'
+import { startOwnedPolling } from './polling'
 import type { PilotClient } from './client'
 import { CloudWorkspace } from './workspace'
 import {
@@ -45,6 +46,7 @@ export function CloudAppStateProvider({
   client: PilotClient
   capabilities?: PilotCapabilities
 }) {
+  const [liveCapabilities, setLiveCapabilities] = useState(capabilities)
   const [workspace, setWorkspace] = useState<CloudWorkspace | null>(null)
   const [, setVersion] = useState(0),
     [loading, setLoading] = useState(true),
@@ -55,18 +57,25 @@ export function CloudAppStateProvider({
     setLoading(true)
     setError('')
     const unsubscribe = store.subscribe(() => setVersion((v) => v + 1))
-    void store
-      .refresh()
-      .then(() => {
-        if (!store.controller.signal.aborted) setLoading(false)
-      })
-      .catch(() => {
-        if (!store.controller.signal.aborted) {
-          setError('云端内容加载失败，请重试。')
-          setLoading(false)
-        }
-      })
+    const stop = startOwnedPolling({
+      signal: store.controller.signal,
+      load: async () => {
+        await store.refresh()
+        return client.capabilities(store.controller.signal)
+      },
+      onSnapshot: (cap) => {
+        setLiveCapabilities(cap)
+        setLoading(false)
+        setError('')
+      },
+      onExpired: () => {},
+      onError: () => {
+        setError('云端内容加载失败，请重试。')
+        setLoading(false)
+      },
+    })
     return () => {
+      stop()
       unsubscribe()
       store.dispose()
     }
@@ -151,7 +160,7 @@ export function CloudAppStateProvider({
   }
   const value: AppState = {
     pilot: store,
-    capabilities,
+    capabilities: liveCapabilities,
     loading,
     error,
     refresh,
@@ -165,7 +174,7 @@ export function CloudAppStateProvider({
         projectQueue(
           t,
           store.essays.filter((e) => e.taskId === t.id),
-          capabilities,
+          liveCapabilities,
         ),
       ]),
     ),

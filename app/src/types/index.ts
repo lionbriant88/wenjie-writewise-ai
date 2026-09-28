@@ -94,6 +94,7 @@ export interface EssayPage {
 }
 
 export interface Essay {
+  cloudRevision?: number
   id: string
   taskId: string
   /** Monotonic UI generation used to reject grading results from older source pages or text. */

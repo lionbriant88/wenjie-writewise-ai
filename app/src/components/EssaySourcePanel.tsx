@@ -21,7 +21,7 @@ interface EssaySourcePanelProps {
   transcriptionWarnings?: string[]
   printedTextExcluded?: boolean
   onIssueMarkerSelect?: (issueId: string) => void
-  onOcrTextChange: (essayId: string, nextText: string) => void
+  onOcrTextChange: (essayId: string, nextText: string, expectedRevision?:number) => void | Promise<void>
   onViewOriginalImage: () => void
 }
 
@@ -38,6 +38,11 @@ export function EssaySourcePanel({
 }: EssaySourcePanelProps) {
   const [mode, setMode] = useState<SourcePanelMode>('read')
   const [draftText, setDraftText] = useState(essay.ocrText)
+  const [saveError,setSaveError]=useState('')
+  const [saving,setSaving]=useState(false)
+  const baseRevision=useRef(essay.cloudRevision)
+  const originalText=useRef(essay.ocrText)
+  const draftRef=useRef(draftText);draftRef.current=draftText
   const currentEssayIdRef = useRef(essay.id)
   const highlightedRef = useRef<HTMLElement | null>(null)
   const match = useMemo(
@@ -57,17 +62,21 @@ export function EssaySourcePanel({
   useEffect(() => {
     const hasChangedEssay = currentEssayIdRef.current !== essay.id
     currentEssayIdRef.current = essay.id
+    if(!hasChangedEssay && essay.cloudRevision!==undefined && draftRef.current!==originalText.current)return
+    originalText.current=essay.ocrText
+    baseRevision.current=essay.cloudRevision
     setDraftText(essay.ocrText)
     if (hasChangedEssay) setMode('read')
-  }, [essay.id, essay.ocrText])
+  }, [essay.id, essay.ocrText, essay.cloudRevision])
 
   useEffect(() => {
     highlightedRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
   }, [activeIssueId, match])
 
-  const saveTranscript = () => {
-    if (!hasChangedDraft || isGrading) return
-    onOcrTextChange(essay.id, draftText)
+  const saveTranscript = async () => {
+    if (!hasChangedDraft || isGrading || saving) return
+    setSaving(true);setSaveError('')
+    try{if(baseRevision.current===undefined)await onOcrTextChange(essay.id,draftText);else await onOcrTextChange(essay.id,draftText,baseRevision.current)}catch(e){setSaveError(e instanceof Error?e.message:'保存失败，请重试。')}finally{setSaving(false)}
   }
 
   return (
@@ -81,7 +90,7 @@ export function EssaySourcePanel({
             </p>
           ) : null}
           {essay.transcriptSource === 'kimi_vision' ? (
-            <p className="mt-1 text-xs text-slate-500">Kimi 图像识别结果，建议结合原图复核。</p>
+            <p className="mt-1 text-xs text-slate-500">{essay.cloudRevision!==undefined?'模型识别结果，建议结合原图复核。':'Kimi 图像识别结果，建议结合原图复核。'}</p>
           ) : null}
           {isGrading ? <p className="mt-1 text-xs font-semibold text-amber-700">批改完成后再编辑</p> : null}
         </div>
@@ -124,6 +133,7 @@ export function EssaySourcePanel({
       </div>
       {mode === 'edit' ? (
         <div className="mt-4 space-y-3">
+          {saveError?<p role="alert" className="text-rose-700">{saveError} 当前文字仍保留。<button onClick={()=>{setDraftText(essay.ocrText);originalText.current=essay.ocrText;baseRevision.current=essay.cloudRevision;setSaveError('')}}>放弃修改并加载最新文本</button></p>:null}
           <textarea
             aria-label="学生作文识别文本"
             value={draftText}
@@ -134,8 +144,8 @@ export function EssaySourcePanel({
             <p className="text-xs leading-5 text-slate-500">保存后当前批改结果将失效，需在进度页显式重新批改。</p>
             <button
               type="button"
-              disabled={!hasChangedDraft || isGrading}
-              onClick={saveTranscript}
+              disabled={!hasChangedDraft || isGrading || saving}
+              onClick={()=>void saveTranscript()}
               className="tech-focus rounded-lg bg-amber-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-amber-800 disabled:cursor-not-allowed disabled:bg-amber-300"
             >
               保存识别文本并使旧结果失效

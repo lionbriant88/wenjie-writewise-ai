@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import {useState} from 'react'
 import { EmptyState } from '../components/EmptyState'
 import { TaskStatusBadge } from '../components/TaskStatusBadge'
 import { useAppState } from '../context/useAppState'
@@ -8,6 +9,10 @@ import { findEssaysByTask } from '../utils/taskLookup'
 
 export function TaskListPage() {
   const { tasks, essays, pilot } = useAppState()
+  const [deleting,setDeleting]=useState<{id:string;revision:number}|null>(null)
+  const [deleteError,setDeleteError]=useState('')
+  const [busy,setBusy]=useState(false)
+  const removeTask=async()=>{if(!pilot||!deleting||busy)return;setBusy(true);setDeleteError('');try{await pilot.command('delete:'+deleting.id,{},deleting.revision,c=>pilot.client.deleteTask(deleting.id,c,pilot.controller.signal));pilot.forgetTask(deleting.id);setDeleting(null)}catch(e){if(!pilot.controller.signal.aborted)setDeleteError(e instanceof Error?e.message:'删除失败，请重试。')}finally{if(!pilot.controller.signal.aborted)setBusy(false)}}
   const taskTotal = tasks.length
   const essayTotal = tasks.reduce((total, task) => total + task.totalEssayCount, 0)
   const reviewTotal = tasks.reduce((total, task) => total + task.exceptionEssayCount, 0)
@@ -18,6 +23,11 @@ export function TaskListPage() {
       title="今日工作台"
       description="集中查看批改任务状态和待复核作文。"
     >
+      {deleting?<section role="dialog" aria-label="删除任务" className="mb-4 rounded-lg border border-rose-200 bg-white p-4">
+        <p>将删除此任务、作文图片、批改结果和教师修订。已发出的批改请求可能仍在处理，删除后不会恢复这些内容。</p>
+        {deleteError?<p role="alert">{deleteError}</p>:null}
+        <button disabled={busy} onClick={()=>void removeTask()} className="mr-3 mt-3 text-rose-700">确认删除任务及内容</button><button disabled={busy} onClick={()=>setDeleting(null)}>取消</button>
+      </section>:null}
       {tasks.length === 0 ? (
         <EmptyState
           title="还没有批改任务"
@@ -74,6 +84,7 @@ export function TaskListPage() {
 
               return (
                 <article key={task.id} className="px-4 py-4 transition hover:bg-slate-50">
+                  {pilot?<button className="float-right text-sm text-rose-700" aria-label={`删除${task.taskName}`} onClick={()=>{const row=pilot.tasks.find(t=>t.id===task.id);if(row){setDeleteError('');setDeleting({id:row.id,revision:row.revision})}}}>删除</button>:null}
                   <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(260px,0.8fr)_auto] lg:items-center">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
