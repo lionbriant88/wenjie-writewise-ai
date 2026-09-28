@@ -74,6 +74,18 @@ it("materialJobsSnapshotCurrentDraftAndDeduplicate", async () => {
   );
   expect(a.id).toBe(b.id);
   expect(a.kind).toBe("rubric");
+  expect(
+    (await jobs.listAssistance(ownerA, draft.id)).map((j) => j.id),
+  ).toEqual([a.id]);
+  await expect(jobs.listAssistance(ownerB, draft.id)).rejects.toMatchObject({
+    code: "not_found",
+  });
+  await tasks.saveDraft(
+    ownerA,
+    draft.id,
+    command({ ...validDraft(), taskName: "Manual change" }, draft.revision),
+  );
+  expect(await jobs.listAssistance(ownerA, draft.id)).toEqual([]);
   await expect(
     jobs.enqueueMaterial(
       ownerB,

@@ -89,11 +89,7 @@ export function createPilotRouter(runtime?: PilotRuntime): Router {
     res.json(await tasks.saveDraft(owner(res), resource(req), req.body)),
   );
   router.delete("/tasks/:id", async (req, res) => {
-    await cleanup.deleteTask(
-      owner(res),
-      resource(req),
-      req.body,
-    );
+    await cleanup.deleteTask(owner(res), resource(req), req.body);
     await recover(res);
     res.json({ deleted: true });
   });
@@ -142,6 +138,11 @@ export function createPilotRouter(runtime?: PilotRuntime): Router {
     const result = await jobs.enqueueTask(owner(res), resource(req), req.body);
     await recover(res);
     res.status(202).json(result);
+  });
+  router.get("/tasks/:id/assist", async (req, res) => {
+    const result = await jobs.listAssistance(owner(res), resource(req));
+    await recover(res);
+    res.json(result);
   });
   router.post("/tasks/:id/assist", async (req, res) => {
     const result = await jobs.enqueueMaterial(

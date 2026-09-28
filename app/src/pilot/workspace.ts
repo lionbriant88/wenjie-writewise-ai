@@ -10,6 +10,15 @@ import type {
 } from '../../../shared/pilotContracts'
 import type { EssayPage } from '../types'
 import { PilotApiError, type PilotClient } from './client'
+function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) =>
+    v && typeof v === 'object' && !Array.isArray(v)
+      ? Object.fromEntries(
+          Object.entries(v).sort(([a], [b]) => a.localeCompare(b)),
+        )
+      : v,
+  )
+}
 export class CloudWorkspace {
   readonly controller = new AbortController()
   tasks: TaskDto[] = []
@@ -150,10 +159,7 @@ export class CloudWorkspace {
         this.check()
         let current =
           this.editors.get(key) ?? this.tasks.find((t) => t.id === existingId)
-        if (
-          current &&
-          JSON.stringify(current.draft) === JSON.stringify(snapshot)
-        ) {
+        if (current && stableJson(current.draft) === stableJson(snapshot)) {
           this.editors.set(key, current)
           return current
         }

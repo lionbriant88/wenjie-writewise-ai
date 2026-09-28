@@ -69,6 +69,17 @@ async function addJob(
 }
 export class PilotJobRepository {
   constructor(private readonly db: Database) {}
+  async listAssistance(owner: string, task: string): Promise<JobDto[]> {
+    const t = await ownedTask(this.db, owner, task);
+    await recoverExpiredExecutions(this.db);
+    const rows = (
+      await this.db.query<JobRow>(
+        "SELECT * FROM pilot_grading.jobs WHERE owner_id=$1 AND task_id=$2 AND draft_revision=$3 AND kind IN ('rubric','material_context') ORDER BY created_at DESC LIMIT 2",
+        [owner, task, t.revision],
+      )
+    ).rows;
+    return rows.map(projectJob);
+  }
   async get(owner: string, job: string): Promise<JobDto> {
     await ownedJob(this.db, owner, job);
     await recoverExpiredExecutions(this.db);

@@ -21,6 +21,7 @@ export interface MaterialSourceState {
 }
 
 export interface TaskMaterialsController {
+  restore(units: readonly RestoredMaterialUnit[]): readonly MaterialUnit[]
   units: readonly MaterialUnit[]
   sources: readonly MaterialSourceState[]
   isNormalizing: boolean
@@ -31,6 +32,8 @@ export interface TaskMaterialsController {
   moveUnit(unitId: string, direction: -1 | 1): void
   waitUntilIdle(): Promise<void>
 }
+
+export type RestoredMaterialUnit = MaterialUnitDraft & { id: string; sourceId: string; uploadId?: string }
 
 export type TaskMaterialNormalizer = (
   file: File,
@@ -233,7 +236,21 @@ export function useTaskMaterials(options: UseTaskMaterialsOptions = {}): TaskMat
 
   const waitUntilIdle = useCallback(() => queueRef.current, [])
 
+  const restore = useCallback((saved: readonly RestoredMaterialUnit[]): readonly MaterialUnit[] => {
+    if (!mountedRef.current || unitsRef.current.length || pendingCountRef.current) return unitsRef.current
+    const next = saved.map((unit): MaterialUnit => {
+      if (unit.kind === 'text') return unit
+      const previewUrl = createObjectURLRef.current(unit.file)
+      liveUrlsRef.current.add(previewUrl)
+      return { ...unit, previewUrl }
+    })
+    replaceUnits(next)
+    replaceSources(next.map(u => ({key:'saved-'+u.id,sourceId:u.sourceId,fileName:u.displayName,status:'ready',unitIds:[u.id]})))
+    return next
+  }, [replaceUnits, replaceSources])
+
   return {
+    restore,
     units,
     sources,
     isNormalizing,

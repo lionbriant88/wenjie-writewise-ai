@@ -168,6 +168,55 @@ export function createPilotClient({
       if (!res.ok && res.status !== 409)
         throw new Error('图片上传失败，请重试。')
     },
+    async readImage(
+      id: string,
+      label: string,
+      signal?: AbortSignal,
+    ): Promise<File> {
+      const signed = await request<{ url: string }>(
+        `/uploads/${routeId(id)}/read-url`,
+        'GET',
+        undefined,
+        signal,
+      )
+      const url = new URL(signed.url)
+      if (
+        url.protocol !== 'https:' ||
+        !url.hostname.endsWith('.supabase.co') ||
+        !url.pathname.startsWith('/storage/v1/object/sign/')
+      )
+        throw Error('原图地址无效。')
+      const response = await fetchImpl(url.href, {
+        credentials: 'omit',
+        redirect: 'error',
+        signal,
+      })
+      const type = response.headers.get('content-type')?.split(';')[0]
+      if (
+        !response.ok ||
+        !type ||
+        !['image/png', 'image/jpeg', 'image/webp'].includes(type) ||
+        !response.body
+      )
+        throw Error('材料图片无法读取。')
+      const reader = response.body.getReader(),
+        chunks: Uint8Array<ArrayBuffer>[] = []
+      let size = 0
+      try {
+        while (true) {
+          signal?.throwIfAborted()
+          const part = await reader.read()
+          if (part.done) break
+          size += part.value.byteLength
+          if (size > 8 * 1024 * 1024) throw Error('材料图片超过上限。')
+          chunks.push(new Uint8Array(part.value))
+        }
+      } finally {
+        await reader.cancel().catch(() => undefined)
+      }
+      signal?.throwIfAborted()
+      return new File(chunks, label, { type, lastModified: 0 })
+    },
     attachEssays: (
       id: string,
       command: Command<{
@@ -232,6 +281,13 @@ export function createPilotClient({
         `/tasks/${routeId(id)}/grade`,
         'POST',
         command,
+        signal,
+      ),
+    listAssistance: (id: string, signal?: AbortSignal) =>
+      request<JobDto[]>(
+        `/tasks/${routeId(id)}/assist`,
+        'GET',
+        undefined,
         signal,
       ),
     enqueueMaterial: (

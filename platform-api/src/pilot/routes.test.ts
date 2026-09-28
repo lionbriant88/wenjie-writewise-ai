@@ -82,6 +82,7 @@ it("allOwnedResourceRoutesHideOtherTeachersAndDenyAdministrator", async () => {
     ["put", `/essays/${e}/manual`, command({ manualReviewRequired: true }, 1)],
     ["post", `/tasks/${t}/grade`, command({})],
     ["post", `/tasks/${t}/assist`, command({ kind: "rubric" }, 2)],
+    ["get", `/tasks/${t}/assist`],
     ["get", `/jobs/${j}`],
     ["post", `/jobs/${j}/retry`, command({}, 1)],
   ];

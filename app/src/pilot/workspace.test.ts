@@ -31,6 +31,18 @@ function setup(fetchImpl: typeof fetch) {
   })
   return new CloudWorkspace(client)
 }
+it('keeps the same draft revision when PostgreSQL JSON keys return in a different order', async () => {
+  const fetchImpl = vi.fn(async () => Response.json(row()))
+  const workspace = setup(fetchImpl)
+  workspace.tasks = [
+    row(Object.fromEntries(Object.entries(draft).reverse()) as TaskDraftInput),
+  ]
+  expect((await workspace.saveDraft('editor', draft, 'task-1')).revision).toBe(
+    1,
+  )
+  expect(fetchImpl).not.toHaveBeenCalled()
+  workspace.dispose()
+})
 it('deduplicates draft double-clicks and reuses the original command after a lost response', async () => {
   let calls = 0
   const commands: string[] = []

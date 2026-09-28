@@ -5,10 +5,11 @@ import { TaskRubricEditor } from '../components/TaskRubricEditor'
 import { useAppState } from '../context/useAppState'
 import { useTaskMaterials } from '../hooks/useTaskMaterials'
 import { AppLayout } from '../layout/AppLayout'
-import {
-  createConfiguredMaterialContextClient,
-} from '../services/taskMaterial/materialClient'
-import type { MaterialUnit, TaskMaterialRequestUnit } from '../services/taskMaterial/types'
+import { createConfiguredMaterialContextClient } from '../services/taskMaterial/materialClient'
+import type {
+  MaterialUnit,
+  TaskMaterialRequestUnit,
+} from '../services/taskMaterial/types'
 import { buildTaskCreationInput } from '../services/taskRubric/buildTaskCreationInput'
 import {
   createDefaultRubricDimensions,
@@ -16,6 +17,17 @@ import {
   validateRubricForm,
 } from '../services/taskRubric/rubricForm'
 import { createConfiguredRubricClient } from '../services/taskRubric/rubricClient'
+import { createPilotMaterialClients } from '../pilot/materialClients'
+import {
+  createMaterialDraftSession,
+  restoreMaterialUnits,
+} from '../pilot/materialDraft'
+import { startOwnedPolling } from '../pilot/polling'
+import type {
+  TaskDraftInput,
+  TaskDto,
+  JobDto,
+} from '../../../shared/pilotContracts'
 import type { GeneratedTaskRubric } from '../services/taskRubric/types'
 import type {
   RubricDimension,
@@ -42,26 +54,31 @@ type MaterialContextState =
 
 type GeneratingAiState = Extract<AiAssistState, { status: 'generating' }>
 
-const MATERIAL_STALE_NOTICE = '材料已变化；当前评分标准仍可使用，如需让 AI 重新参考材料，可再次生成。'
+const MATERIAL_STALE_NOTICE =
+  '材料已变化；当前评分标准仍可使用，如需让 AI 重新参考材料，可再次生成。'
 
 function newRequestId(prefix: string) {
   return `${prefix}-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`
 }
 
 function materialSignature(units: readonly MaterialUnit[]): string {
-  return JSON.stringify(units.map((unit) => unit.kind === 'image'
-    ? [
-        unit.id,
-        unit.kind,
-        unit.sourceKind,
-        unit.displayName,
-        unit.pageNumber ?? null,
-        unit.file.name,
-        unit.file.type,
-        unit.file.size,
-        unit.file.lastModified,
-      ]
-    : [unit.id, unit.kind, unit.sourceKind, unit.displayName, unit.text]))
+  return JSON.stringify(
+    units.map((unit) =>
+      unit.kind === 'image'
+        ? [
+            unit.id,
+            unit.kind,
+            unit.sourceKind,
+            unit.displayName,
+            unit.pageNumber ?? null,
+            unit.file.name,
+            unit.file.type,
+            unit.file.size,
+            unit.file.lastModified,
+          ]
+        : [unit.id, unit.kind, unit.sourceKind, unit.displayName, unit.text],
+    ),
+  )
 }
 
 function materialFreshnessIdentity(
@@ -71,14 +88,27 @@ function materialFreshnessIdentity(
   return JSON.stringify({ mutationVersion, units: materialSignature(units) })
 }
 
-function requestSnapshot(signature: string, fullScore: number, writingRequirement: string): string {
+function requestSnapshot(
+  signature: string,
+  fullScore: number,
+  writingRequirement: string,
+): string {
   return JSON.stringify({ signature, fullScore, writingRequirement })
 }
 
-function toRequestUnits(units: readonly MaterialUnit[]): TaskMaterialRequestUnit[] {
-  return units.map((unit) => unit.kind === 'image'
-    ? { id: unit.id, kind: 'image', file: unit.file }
-    : { id: unit.id, kind: 'text', displayName: unit.displayName, text: unit.text })
+function toRequestUnits(
+  units: readonly MaterialUnit[],
+): TaskMaterialRequestUnit[] {
+  return units.map((unit) =>
+    unit.kind === 'image'
+      ? { id: unit.id, kind: 'image', file: unit.file }
+      : {
+          id: unit.id,
+          kind: 'text',
+          displayName: unit.displayName,
+          text: unit.text,
+        },
+  )
 }
 
 function toVisibleAiDimensions(rubric: GeneratedTaskRubric): RubricDimension[] {
@@ -109,22 +139,80 @@ function toMaterialContext(rubric: GeneratedTaskRubric): TaskMaterialContext {
 }
 
 export function CreateTaskPage() {
+  const { pilot, loading } = useAppState()
+  const { taskId } = useParams()
+  if (pilot && taskId) {
+    const task = pilot.tasks.find((t) => t.id === taskId)
+    if (loading || !task)
+      return (
+        <AppLayout title="创建批改任务" description="恢复云端草稿">
+          <p role="status">
+            {loading ? '正在读取草稿…' : '草稿不存在或已删除。'}
+          </p>
+        </AppLayout>
+      )
+  }
+  return <TaskDraftEditor key={taskId ?? 'new'} />
+}
+
+function TaskDraftEditor() {
   const navigate = useNavigate()
   const { createTask, pilot } = useAppState()
-  const {taskId: existingDraftId} = useParams()
-  const initialDraft = pilot?.tasks.find(t=>t.id===existingDraftId)?.draft
+  const { taskId: existingDraftId } = useParams()
+  const [initialTask] = useState(() =>
+    pilot?.tasks.find((t) => t.id === existingDraftId),
+  )
+  const initialDraft = initialTask?.draft
+  const editingAllowed = !initialTask || initialTask.state === 'draft'
   const editorKey = useRef(existingDraftId ?? crypto.randomUUID()).current
   const [draftSave, setDraftSave] = useState('')
   const materials = useTaskMaterials()
-  const rubricClient = useMemo(() => createConfiguredRubricClient(), [])
-  const materialContextClient = useMemo(() => createConfiguredMaterialContextClient(), [])
-  const [taskName, setTaskName] = useState(initialDraft?.taskName ?? DEFAULT_TASK_NAME)
+  const session = useMemo(
+    () =>
+      pilot
+        ? createMaterialDraftSession(pilot, editorKey, existingDraftId)
+        : undefined,
+    [pilot, editorKey, existingDraftId],
+  )
+  const saveForAiRef = useRef<() => Promise<TaskDto>>(async () => {
+    throw Error('草稿尚未就绪。')
+  })
+  const clients = useMemo(
+    () =>
+      pilot
+        ? createPilotMaterialClients({
+            client: pilot.client,
+            taskDraft: () => saveForAiRef.current(),
+          })
+        : {
+            rubricClient: createConfiguredRubricClient(),
+            materialClient: createConfiguredMaterialContextClient(),
+          },
+    [pilot],
+  )
+  const rubricClient = clients.rubricClient
+  const materialContextClient = clients.materialClient
+  const [restoreState, setRestoreState] = useState<
+    'loading' | 'ready' | 'failed'
+  >(initialDraft?.materialRefs.length ? 'loading' : 'ready')
+  const [restoreAttempt, setRestoreAttempt] = useState(0)
+  const [savedJob, setSavedJob] = useState<JobDto>()
+  const [taskName, setTaskName] = useState(
+    initialDraft?.taskName ?? DEFAULT_TASK_NAME,
+  )
   const [fullScore, setFullScore] = useState(initialDraft?.fullScore ?? 15)
-  const [writingRequirement, setWritingRequirement] = useState(initialDraft?.writingRequirement ?? '')
-  const [dimensions, setDimensions] = useState<RubricDimension[]>(initialDraft?.dimensions ?? createDefaultRubricDimensions)
-  const [rubricSource, setRubricSource] = useState<'teacher' | 'ai'>(initialDraft?.source ?? 'teacher')
+  const [writingRequirement, setWritingRequirement] = useState(
+    initialDraft?.writingRequirement ?? '',
+  )
+  const [dimensions, setDimensions] = useState<RubricDimension[]>(
+    initialDraft?.dimensions ?? createDefaultRubricDimensions,
+  )
+  const [rubricSource, setRubricSource] = useState<'teacher' | 'ai'>(
+    initialDraft?.source ?? 'teacher',
+  )
   const [aiState, setAiState] = useState<AiAssistState>({ status: 'idle' })
-  const [materialContextState, setMaterialContextState] = useState<MaterialContextState>({ status: 'none' })
+  const [materialContextState, setMaterialContextState] =
+    useState<MaterialContextState>({ status: 'none' })
   const [materialMutationVersion, setMaterialMutationVersion] = useState(0)
   const [showMaterialStaleNotice, setShowMaterialStaleNotice] = useState(false)
   const [submitWarning, setSubmitWarning] = useState('')
@@ -132,7 +220,8 @@ export function CreateTaskPage() {
   const submittingRef = useRef(false)
   const mountedRef = useRef(true)
   const activeAiRef = useRef<GeneratingAiState | null>(null)
-  const materialContextStateRef = useRef<MaterialContextState>(materialContextState)
+  const materialContextStateRef =
+    useRef<MaterialContextState>(materialContextState)
   const contextControllerRef = useRef<AbortController | null>(null)
   const latestUnitsRef = useRef<readonly MaterialUnit[]>(materials.units)
   const materialMutationVersionRef = useRef(0)
@@ -144,22 +233,164 @@ export function CreateTaskPage() {
     materials.units,
     materialMutationVersion,
   )
-  const currentRequestSnapshot = requestSnapshot(currentMaterialSignature, fullScore, writingRequirement)
+  const currentRequestSnapshot = requestSnapshot(
+    currentMaterialSignature,
+    fullScore,
+    writingRequirement,
+  )
   const latestRequestSnapshotRef = useRef(currentRequestSnapshot)
   latestRequestSnapshotRef.current = currentRequestSnapshot
 
-  const draftJson = JSON.stringify({taskName,fullScore:Number.isFinite(fullScore)?fullScore:null,writingRequirement,dimensions:dimensions.map(d=>({...d,sourceEvidence:d.sourceEvidence??[]})),source:rubricSource,materialContext:materialContextState.status==='ready'?materialContextState.value:initialDraft?.materialContext??null,materialProcessingStatus:materialContextState.status==='ready'?'ready':initialDraft?.materialProcessingStatus??'none',materialRefs:pilot?.getDraft(editorKey)?.draft.materialRefs??initialDraft?.materialRefs??[]})
-  useEffect(()=>{
-    if(!pilot || submitting)return
-    let active=true
+  const draftJson = JSON.stringify({
+    taskName,
+    fullScore: Number.isFinite(fullScore) ? fullScore : null,
+    writingRequirement,
+    dimensions: dimensions.map((d) => ({
+      ...d,
+      sourceEvidence: d.sourceEvidence ?? [],
+    })),
+    source: rubricSource,
+    materialContext:
+      materialContextState.status === 'ready'
+        ? materialContextState.value
+        : null,
+    materialProcessingStatus:
+      materialContextState.status === 'ready'
+        ? 'ready'
+        : materialContextState.status === 'failed'
+          ? 'failed'
+          : 'none',
+    materialRefs: [],
+  })
+  const draftValue = JSON.parse(draftJson) as TaskDraftInput
+  saveForAiRef.current = () => {
+    if (!session || restoreState !== 'ready') throw Error('草稿尚未就绪。')
+    return session.save(draftValue, latestUnitsRef.current)
+  }
+  useEffect(() => {
+    if (
+      !session ||
+      submitting ||
+      !editingAllowed ||
+      restoreState !== 'ready' ||
+      materials.isNormalizing
+    )
+      return
+    let active = true
     setDraftSave('有未保存的修改')
-    const timer=setTimeout(()=>{setDraftSave('正在保存草稿…');void pilot.saveDraft(editorKey,JSON.parse(draftJson),existingDraftId).then(()=>{if(active)setDraftSave('草稿已保存')}).catch(()=>{if(active)setDraftSave('草稿未保存，请检查网络后重试')})},600)
-    return()=>{active=false;clearTimeout(timer)}
-  },[pilot,editorKey,existingDraftId,draftJson,submitting])
+    const timer = setTimeout(() => {
+      setDraftSave('正在保存草稿…')
+      void session
+        .save(JSON.parse(draftJson), materials.units)
+        .then(() => {
+          if (active) setDraftSave('草稿已保存')
+        })
+        .catch(() => {
+          if (active) setDraftSave('草稿未保存，请检查网络后重试')
+        })
+    }, 600)
+    return () => {
+      active = false
+      clearTimeout(timer)
+    }
+  }, [
+    session,
+    draftJson,
+    submitting,
+    restoreState,
+    materials.units,
+    materials.isNormalizing,
+    editingAllowed,
+  ])
 
-  const rubricValidity = validateRubricForm({ fullScore, writingRequirement, dimensions })
-  const canCreate = rubricValidity.valid && !submitting
-  const canRequestAi = materials.units.length > 0 && !materials.isNormalizing
+  const restore = materials.restore
+  useEffect(() => {
+    if (!pilot || !initialTask || !editingAllowed) return
+    const controller = new AbortController()
+    setRestoreState('loading')
+    void restoreMaterialUnits(pilot, initialTask, controller.signal)
+      .then((saved) => {
+        if (controller.signal.aborted) return
+        const units = restore(saved)
+        latestUnitsRef.current = units
+        if (initialTask.draft.materialContext) {
+          const ready: MaterialContextState = {
+            status: 'ready',
+            signature: requestSnapshot(
+              materialFreshnessIdentity(units, 0),
+              initialTask.draft.fullScore!,
+              initialTask.draft.writingRequirement,
+            ),
+            value: initialTask.draft.materialContext,
+          }
+          materialContextStateRef.current = ready
+          setMaterialContextState(ready)
+        }
+        setRestoreState('ready')
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setRestoreState('failed')
+      })
+    return () => controller.abort()
+  }, [pilot, initialTask, restore, restoreAttempt, editingAllowed])
+
+  const editIdentity = JSON.stringify([
+    taskName,
+    fullScore,
+    writingRequirement,
+    dimensions,
+    rubricSource,
+    materialMutationVersion,
+  ])
+  const initialEditIdentity = useRef(editIdentity).current
+  useEffect(() => {
+    if (
+      !pilot ||
+      !initialTask ||
+      !editingAllowed ||
+      restoreState !== 'ready' ||
+      editIdentity !== initialEditIdentity
+    )
+      return
+    const controller = new AbortController()
+    const stop = startOwnedPolling({
+      signal: controller.signal,
+      load: async () => {
+        const jobs = await pilot.client.listAssistance(
+          initialTask.id,
+          controller.signal,
+        )
+        if (!controller.signal.aborted)
+          setSavedJob(jobs.find((j) => j.kind === 'rubric'))
+      },
+      onSnapshot: () => {},
+      onError: () => {},
+      onExpired: () => {},
+    })
+    return () => {
+      controller.abort()
+      stop()
+    }
+  }, [
+    pilot,
+    initialTask,
+    restoreState,
+    editIdentity,
+    initialEditIdentity,
+    editingAllowed,
+  ])
+
+  const rubricValidity = validateRubricForm({
+    fullScore,
+    writingRequirement,
+    dimensions,
+  })
+  const canCreate =
+    rubricValidity.valid && !submitting && restoreState === 'ready'
+  const canRequestAi =
+    materials.units.length > 0 &&
+    !materials.isNormalizing &&
+    restoreState === 'ready'
 
   const replaceMaterialContextState = (next: MaterialContextState) => {
     materialContextStateRef.current = next
@@ -194,8 +425,8 @@ export function CreateTaskPage() {
 
     const cached = materialContextStateRef.current
     if (
-      (cached.status === 'ready' || cached.status === 'failed')
-      && cached.signature !== currentRequestSnapshot
+      (cached.status === 'ready' || cached.status === 'failed') &&
+      cached.signature !== currentRequestSnapshot
     ) {
       replaceMaterialContextState({ status: 'stale' })
     }
@@ -215,7 +446,12 @@ export function CreateTaskPage() {
 
   const requestAiRubric = async () => {
     const readyUnits = latestUnitsRef.current
-    if (readyUnits.length === 0 || materials.isNormalizing || submittingRef.current) return
+    if (
+      readyUnits.length === 0 ||
+      materials.isNormalizing ||
+      submittingRef.current
+    )
+      return
 
     const snapshot = requestSnapshot(
       materialFreshnessIdentity(readyUnits, materialMutationVersionRef.current),
@@ -224,7 +460,12 @@ export function CreateTaskPage() {
     )
     const requestId = newRequestId('rubric')
     const controller = new AbortController()
-    const active: GeneratingAiState = { status: 'generating', requestId, snapshot, controller }
+    const active: GeneratingAiState = {
+      status: 'generating',
+      requestId,
+      snapshot,
+      controller,
+    }
     activeAiRef.current?.controller.abort()
     activeAiRef.current = active
     setAiState(active)
@@ -243,34 +484,49 @@ export function CreateTaskPage() {
     }
 
     if (
-      !mountedRef.current
-      || activeAiRef.current?.requestId !== requestId
-      || activeAiRef.current.snapshot !== snapshot
-      || latestRequestSnapshotRef.current !== snapshot
-    ) return
+      !mountedRef.current ||
+      activeAiRef.current?.requestId !== requestId ||
+      activeAiRef.current.snapshot !== snapshot ||
+      latestRequestSnapshotRef.current !== snapshot
+    )
+      return
 
     activeAiRef.current = null
-    if (!response || response.requestId !== requestId || response.status === 'failed') {
-      setAiState({ status: 'failed', message: '评分标准生成失败，请保留当前内容后重试。' })
+    if (
+      !response ||
+      response.requestId !== requestId ||
+      response.status === 'failed'
+    ) {
+      setAiState({
+        status: 'failed',
+        message:
+          pilot && response?.status === 'failed'
+            ? response.error.message
+            : '评分标准生成失败，请保留当前内容后重试。',
+      })
       return
     }
 
     const visibleDimensions = toVisibleAiDimensions(response.rubric)
     const effectiveWritingRequirement = writingRequirement.trim()
       ? writingRequirement
-      : response.rubric.writingRequirements[0] ?? ''
+      : (response.rubric.writingRequirements[0] ?? '')
     const projectedValidity = validateRubricForm({
       fullScore,
       writingRequirement: effectiveWritingRequirement,
       dimensions: visibleDimensions,
     })
     if (!projectedValidity.valid) {
-      setAiState({ status: 'failed', message: 'AI 返回的评分标准无法安全应用，当前内容已保留。' })
+      setAiState({
+        status: 'failed',
+        message: 'AI 返回的评分标准无法安全应用，当前内容已保留。',
+      })
       return
     }
 
     setDimensions(visibleDimensions)
-    if (!writingRequirement.trim()) setWritingRequirement(effectiveWritingRequirement)
+    if (!writingRequirement.trim())
+      setWritingRequirement(effectiveWritingRequirement)
     rubricSourceRef.current = 'ai'
     setRubricSource('ai')
     const appliedSnapshot = requestSnapshot(
@@ -294,7 +550,12 @@ export function CreateTaskPage() {
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (submittingRef.current || !rubricValidity.valid) return
+    if (
+      submittingRef.current ||
+      !rubricValidity.valid ||
+      restoreState !== 'ready'
+    )
+      return
 
     submittingRef.current = true
     setSubmitting(true)
@@ -328,7 +589,10 @@ export function CreateTaskPage() {
         const requestId = newRequestId('material-context')
         const controller = new AbortController()
         contextControllerRef.current = controller
-        replaceMaterialContextState({ status: 'analyzing', signature: snapshot })
+        replaceMaterialContextState({
+          status: 'analyzing',
+          signature: snapshot,
+        })
         let response
         try {
           response = await materialContextClient.analyze({
@@ -341,18 +605,30 @@ export function CreateTaskPage() {
         } catch {
           response = null
         }
-        if (contextControllerRef.current === controller) contextControllerRef.current = null
+        if (contextControllerRef.current === controller)
+          contextControllerRef.current = null
         if (!mountedRef.current) return
 
-        if (response?.requestId === requestId && response.status === 'success') {
+        if (
+          response?.requestId === requestId &&
+          response.status === 'success'
+        ) {
           analyzedMaterialContext = response.materialContext
           materialProcessingStatus = 'ready'
-          replaceMaterialContextState({ status: 'ready', signature: snapshot, value: response.materialContext })
+          replaceMaterialContextState({
+            status: 'ready',
+            signature: snapshot,
+            value: response.materialContext,
+          })
         } else {
           materialProcessingStatus = 'failed'
           const message = '材料暂时无法读取，本任务将仅按已填写的写作要求评分。'
           setSubmitWarning(message)
-          replaceMaterialContextState({ status: 'failed', signature: snapshot, message })
+          replaceMaterialContextState({
+            status: 'failed',
+            signature: snapshot,
+            message,
+          })
         }
       }
     }
@@ -369,23 +645,78 @@ export function CreateTaskPage() {
     }
 
     try {
-      const taskId = pilot ? await createTask(built.value, editorKey) : await createTask(built.value)
+      if (session)
+        await session.save(
+          {
+            ...draftValue,
+            materialContext: analyzedMaterialContext ?? null,
+            materialProcessingStatus,
+          },
+          readyUnits,
+        )
+      const taskId = pilot
+        ? await createTask(built.value, editorKey)
+        : await createTask(built.value)
       if (mountedRef.current) navigate(`/tasks/${taskId}/upload`)
     } catch (error) {
       if (mountedRef.current) {
-        setSubmitWarning(error instanceof Error ? error.message : '任务保存失败，请重试。')
+        setSubmitWarning(
+          error instanceof Error ? error.message : '任务保存失败，请重试。',
+        )
         submittingRef.current = false
         setSubmitting(false)
       }
     }
   }
 
+  if (!editingAllowed)
+    return (
+      <AppLayout title="批改任务" description="当前评分标准已确认">
+        <p>此任务已创建，请从任务列表进入。</p>
+      </AppLayout>
+    )
   return (
     <AppLayout
       title="创建批改任务"
       description="填写一份当前有效的评分标准后即可创建任务；原题材料与 AI 辅助均为选填。"
     >
-      {draftSave ? <p role="status" className="mb-3 text-sm text-slate-600">{draftSave}</p> : null}
+      {draftSave ? (
+        <p role="status" className="mb-3 text-sm text-slate-600">
+          {draftSave}
+        </p>
+      ) : null}
+      {restoreState !== 'ready' ? (
+        <p role="status">
+          {restoreState === 'loading'
+            ? '正在恢复原题材料…'
+            : '原题材料暂时无法读取。'}
+          {restoreState === 'failed' ? (
+            <button onClick={() => setRestoreAttempt((v) => v + 1)}>
+              重新加载材料
+            </button>
+          ) : null}
+        </p>
+      ) : null}
+      {savedJob && editIdentity === initialEditIdentity ? (
+        <p role="status" className="mb-3 text-sm text-slate-600">
+          {savedJob.state === 'queued' || savedJob.state === 'running'
+            ? '上次评分标准仍在云端生成，正在检查结果。'
+            : savedJob.state === 'result_unknown'
+              ? '上次生成结果尚未确定，正在检查原任务。'
+              : savedJob.state === 'succeeded' || savedJob.state === 'partial'
+                ? '上次评分标准已生成。'
+                : '上次生成未完成，当前评分标准仍可编辑。'}
+          {savedJob.state === 'succeeded' || savedJob.state === 'partial' ? (
+            <button
+              type="button"
+              disabled={aiState.status === 'generating' || submitting}
+              onClick={() => void requestAiRubric()}
+            >
+              查看并应用上次生成
+            </button>
+          ) : null}
+        </p>
+      ) : null}
       <form className="space-y-5" onSubmit={(event) => void submit(event)}>
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
           <h2 className="text-lg font-semibold text-slate-950">基本信息</h2>
@@ -396,8 +727,10 @@ export function CreateTaskPage() {
                 type="text"
                 value={taskName}
                 maxLength={2_000}
-                disabled={submitting}
-                onChange={(event) => setTaskName(event.currentTarget.value.slice(0, 2_000))}
+                disabled={submitting || restoreState !== 'ready'}
+                onChange={(event) =>
+                  setTaskName(event.currentTarget.value.slice(0, 2_000))
+                }
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50"
               />
             </label>
@@ -410,22 +743,26 @@ export function CreateTaskPage() {
                 max={100}
                 step={1}
                 value={Number.isFinite(fullScore) ? fullScore : ''}
-                disabled={submitting}
+                disabled={submitting || restoreState !== 'ready'}
                 aria-invalid={Boolean(rubricValidity.errors.fullScore)}
-                onChange={(event) => setFullScore(event.currentTarget.valueAsNumber)}
+                onChange={(event) =>
+                  setFullScore(event.currentTarget.valueAsNumber)
+                }
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50"
               />
             </label>
           </div>
           {rubricValidity.errors.fullScore ? (
-            <p className="mt-2 text-sm text-rose-700">{rubricValidity.errors.fullScore}</p>
+            <p className="mt-2 text-sm text-rose-700">
+              {rubricValidity.errors.fullScore}
+            </p>
           ) : null}
         </section>
 
         <TaskMaterialOrganizer
           units={materials.units}
           sources={materials.sources}
-          disabled={submitting}
+          disabled={submitting || restoreState !== 'ready'}
           onSelectFiles={(files) => {
             registerMaterialMutation()
             void materials.addFiles(files)
@@ -449,7 +786,10 @@ export function CreateTaskPage() {
         />
 
         {showMaterialStaleNotice ? (
-          <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <p
+            role="status"
+            className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+          >
             {MATERIAL_STALE_NOTICE}
           </p>
         ) : null}
@@ -458,23 +798,30 @@ export function CreateTaskPage() {
           writingRequirement={writingRequirement}
           dimensions={dimensions}
           validity={rubricValidity}
-          disabled={submitting}
+          disabled={submitting || restoreState !== 'ready'}
           canRequestAi={canRequestAi}
           aiState={aiState.status}
           aiMessage={aiState.status === 'failed' ? aiState.message : undefined}
           onWritingRequirementChange={setWritingRequirement}
           onDimensionsChange={changeDimensions}
-          onRequestAi={() => { void requestAiRubric() }}
+          onRequestAi={() => {
+            void requestAiRubric()
+          }}
         />
 
         <section className="sticky bottom-4 rounded-xl border border-slate-200 bg-white/95 p-4 shadow-lg backdrop-blur">
           {submitWarning ? (
-            <p role="status" className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <p
+              role="status"
+              className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+            >
               {submitWarning}
             </p>
           ) : null}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm leading-6 text-slate-600">提交即确认当前评分标准，并进入学生作文上传。</p>
+            <p className="text-sm leading-6 text-slate-600">
+              提交即确认当前评分标准，并进入学生作文上传。
+            </p>
             <button
               type="submit"
               disabled={!canCreate}

@@ -1,12 +1,15 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode } from 'react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildTaskCreationInput } from '../services/taskRubric/buildTaskCreationInput'
 import { createDefaultRubricDimensions } from '../services/taskRubric/rubricForm'
 import type { GeneratedTaskRubric, RubricClientResponse } from '../services/taskRubric/types'
 import { CreateTaskPage } from './CreateTaskPage'
+import { CloudWorkspace } from '../pilot/workspace'
+import { createPilotClient } from '../pilot/client'
+import type { TaskDto } from '../../../shared/pilotContracts'
 
 const mocks = vi.hoisted(() => ({
   createTask: vi.fn(async () => 'created-task'),
@@ -14,10 +17,11 @@ const mocks = vi.hoisted(() => ({
   generate: vi.fn(),
   analyze: vi.fn(),
   convertPdfToImages: vi.fn(),
+  pilot: undefined as CloudWorkspace | undefined,
 }))
 
 vi.mock('../context/useAppState', () => ({
-  useAppState: () => ({ createTask: mocks.createTask }),
+  useAppState: () => ({ createTask: mocks.createTask, pilot: mocks.pilot }),
 }))
 
 vi.mock('react-router-dom', async (importOriginal) => {
@@ -135,6 +139,8 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  mocks.pilot?.dispose()
+  mocks.pilot = undefined
   mocks.createTask.mockClear()
   mocks.navigate.mockClear()
   mocks.generate.mockReset()
@@ -145,6 +151,34 @@ afterEach(() => {
 })
 
 describe('CreateTaskPage unified teacher rubric flow', () => {
+  it('restores a cloud draft and applies its completed rubric without invoking legacy clients or another job', async () => {
+    const task: TaskDto = {id:'task',state:'draft',revision:4,rubricRevision:0,confirmedPackage:null,counts:{total:0,completed:0,exceptions:0},createdAt:'',updatedAt:'',draft:{
+      taskName:'Saved task',fullScore:15,writingRequirement:'Teacher requirement.',dimensions:createDefaultRubricDimensions().map(d=>({...d,sourceEvidence:[]})),source:'teacher',materialContext:null,materialProcessingStatus:'none',
+      materialRefs:[{kind:'text',id:'00000000-0000-4000-8000-000000000007',displayName:'saved.docx',text:'Synthetic original material.',warnings:['docx_body_only']}],
+    }}
+    const job = {id:'job',kind:'rubric',state:'succeeded',result:generatedRubric,revision:1,errorCode:null,retryable:false,createdAt:'',updatedAt:'',retryAt:null}
+    const calls: {method:string;path:string}[]=[]
+    const client = createPilotClient({getCsrfToken:()=>'',onSessionExpired:()=>{},fetchImpl:vi.fn(async (url,options)=>{
+      const path=String(url),method=options?.method??'GET'; calls.push({method,path})
+      if(method==='GET' && path.endsWith('/assist'))return Response.json([job])
+      if(method==='PATCH'){task.draft=JSON.parse(String(options?.body)).value;task.revision++;return Response.json(task)}
+      throw Error('Unexpected operation '+method+' '+path)
+    })})
+    mocks.pilot = new CloudWorkspace(client)
+    mocks.pilot.tasks=[task]
+    const user=userEvent.setup()
+    render(<MemoryRouter initialEntries={['/tasks/task/edit']}><Routes><Route path="/tasks/:taskId/edit" element={<CreateTaskPage/>}/></Routes></MemoryRouter>)
+    await screen.findByText('saved.docx')
+    await user.click(await screen.findByRole('button',{name:'查看并应用上次生成'}))
+    expect(await screen.findByRole('button',{name:'编辑AI 内容'})).toBeVisible()
+    expect(screen.getByLabelText('写作要求')).toHaveValue('Teacher requirement.')
+    await user.click(screen.getByRole('button',{name:'创建任务并上传作文'}))
+    await waitFor(()=>expect(mocks.createTask).toHaveBeenCalledOnce())
+    expect(mocks.generate).not.toHaveBeenCalled()
+    expect(mocks.analyze).not.toHaveBeenCalled()
+    expect(calls.filter(c=>c.method==='POST')).toHaveLength(0)
+    expect(mocks.createTask).toHaveBeenCalledWith(expect.objectContaining({materialContext:expect.objectContaining({reviewWarnings:['Review unclear source text.']})}),'task')
+  })
   it('renders basic information, optional materials, the default rubric, and one final action in order', () => {
     renderCreateTaskPage()
 

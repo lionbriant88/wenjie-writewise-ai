@@ -21,6 +21,7 @@ export interface TextMaterialUnitDraft {
 export type MaterialUnitDraft = ImageMaterialUnitDraft | TextMaterialUnitDraft
 
 export interface ImageMaterialUnit extends ImageMaterialUnitDraft {
+  uploadId?: string
   id: string
   sourceId: string
   previewUrl: string

@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, expect, it } from "vitest";
 import type { Database } from "../database.js";
-import { command, ownerA, pilotTestDb } from "./testSupport.js";
+import { command, ownerA, pilotTestDb, validDraft } from "./testSupport.js";
+import { PilotTaskRepository } from "./tasks.js";
+import { PersistentAdmission } from "./admission.js";
+import { randomUUID } from "node:crypto";
 import { workerFixture } from "./workerTestSupport.js";
 import { runPilotJob } from "./worker.js";
 import { GradingProviderError } from "../../../grading-gateway/src/providers/providerTypes.js";
@@ -10,6 +13,96 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await db?.close();
+});
+it("rubricAndEssayShareOneGateAndRedeliverySendsOriginalMaterialOnlyOnce", async () => {
+  const s = await workerFixture(db),
+    tasks = new PilotTaskRepository(db);
+  const draft = await tasks.createDraft(
+    ownerA,
+    command({
+      ...validDraft(),
+      materialRefs: [
+        {
+          kind: "text",
+          id: randomUUID(),
+          displayName: "Synthetic DOCX",
+          text: "Original source body.",
+          warnings: ["docx_body_only"],
+        },
+      ],
+    }),
+  );
+  const rubricJob = await s.jobs.enqueueMaterial(
+    ownerA,
+    draft.id,
+    command({ kind: "rubric" }, draft.revision),
+  );
+  const gate = new PersistentAdmission(db),
+    held = await gate.claim(s.job.id);
+  expect(held.kind).toBe("claimed");
+  expect(await runPilotJob(rubricJob.id, s.deps)).toBe("deferred");
+  if (held.kind !== "claimed") throw Error("fixture gate");
+  await gate.fail(
+    held.lease,
+    new GradingProviderError(
+      "provider_unavailable",
+      "Synthetic confirmed failure",
+      false,
+      undefined,
+      { termination: "confirmed" },
+    ),
+  );
+  let calls = 0;
+  const deps = {
+    ...s.deps,
+    provider: {
+      ...s.provider,
+      generateRubric: async (
+        input: Parameters<typeof s.provider.generateRubric>[0],
+      ) => {
+        calls++;
+        expect(input.materials).toHaveLength(1);
+        expect(input.materials[0]).toMatchObject({
+          kind: "text",
+          text: "Original source body.",
+        });
+        return {
+          value: {
+            taskName: "Synthetic",
+            materialSummary: "Original source summary.",
+            writingRequirements: ["Write a short story."],
+            constraints: [],
+            dimensions: validDraft().dimensions,
+            reviewWarnings: ["Teacher check."],
+          },
+          attempts: [],
+        };
+      },
+    },
+  };
+  await runPilotJob(rubricJob.id, deps);
+  await runPilotJob(rubricJob.id, deps);
+  const result = (await s.jobs.listAssistance(ownerA, draft.id))[0];
+  expect(result).toMatchObject({
+    state: "succeeded",
+    result: {
+      materialSummary: "Original source summary.",
+      reviewWarnings: ["Teacher check."],
+    },
+  });
+  expect(calls).toBe(1);
+  expect(s.calls()).toBe(0);
+  // A later manual revision is not replaced by an old AI result.
+  const saved = await tasks.saveDraft(
+    ownerA,
+    draft.id,
+    command(
+      { ...draft.draft, writingRequirement: "Manual requirement." },
+      draft.revision,
+    ),
+  );
+  expect(saved.draft.writingRequirement).toBe("Manual requirement.");
+  expect(await s.jobs.listAssistance(ownerA, draft.id)).toEqual([]);
 });
 it("closedBrowserTwoEssaysCompleteAndAckFailureDoesNotCallAgain", async () => {
   const a = await workerFixture(db),

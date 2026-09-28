@@ -58,6 +58,20 @@ afterEach(() => {
 })
 
 describe('useTaskMaterials', () => {
+  it('restores saved materials in order with owned previews and releases only their object URLs', () => {
+    const options = controllerOptions(async () => [])
+    const { result, unmount } = renderHook(() => useTaskMaterials(options))
+    act(() => { result.current.restore([
+      {...imageDraft(file('saved.png')), id:'upload', sourceId:'upload', uploadId:'upload'},
+      {...textDraft('body.docx'), id:'text', sourceId:'text'},
+    ]) })
+    expect(result.current.units.map(u=>u.id)).toEqual(['upload','text'])
+    expect(result.current.units[0]).toMatchObject({uploadId:'upload',previewUrl:'blob:preview-1'})
+    act(()=>result.current.removeUnit('upload'))
+    expect(options.revokeObjectURL).toHaveBeenCalledOnce()
+    unmount()
+    expect(options.revokeObjectURL).toHaveBeenCalledOnce()
+  })
   it('updates public state when mounted under React StrictMode effect replay', async () => {
     const options = controllerOptions(async (source) => [imageDraft(source)])
     const wrapper = ({ children }: { children: ReactNode }) => <StrictMode>{children}</StrictMode>
