@@ -41,21 +41,32 @@ const login = (username = teacher, pw = password) =>
 const cookie = (response: request.Response) =>
   response.headers["set-cookie"][0].split(";")[0];
 
-it("protects the Vercel grading mount with the same teacher session and Origin checks", async () => {
-  const protectedApp = () => createApp(repo, config, () => now, { gradingApp: gradingApp() });
-  expect((await request(protectedApp()).post("/api/grading/grade-images").set("Origin", origin)).status).toBe(401);
+it("rawGatewayCannotBypassPersistentExecution even when a legacy app is supplied", async () => {
+  const protectedApp = () =>
+    createApp(repo, config, () => now, { gradingApp: gradingApp() });
+  expect(
+    (
+      await request(protectedApp())
+        .post("/api/grading/grade-images")
+        .set("Origin", origin)
+    ).status,
+  ).toBe(401);
   const loggedIn = await login();
   const sessionCookie = cookie(loggedIn);
-  expect((await request(protectedApp())
-    .post("/api/grading/grade-images")
-    .set("Cookie", sessionCookie)
-    .set("Origin", "https://evil.example")).status).toBe(403);
+  expect(
+    (
+      await request(protectedApp())
+        .post("/api/grading/grade-images")
+        .set("Cookie", sessionCookie)
+        .set("Origin", "https://evil.example")
+    ).status,
+  ).toBe(403);
   const allowed = await request(protectedApp())
     .post("/api/grading/grade-images")
     .set("Cookie", sessionCookie)
     .set("Origin", origin);
-  expect(allowed.status).toBe(200);
-  expect(allowed.body).toEqual({ ok: true });
+  expect(allowed.status).toBe(409);
+  expect(allowed.body.error.code).toBe("persistent_job_required");
 });
 beforeAll(async () => {
   await migrate(db);
@@ -303,8 +314,8 @@ it("returns safe JSON for unknown API, malformed JSON, and unavailable grading",
   expect(JSON.stringify(bad.body)).not.toContain("private-malformed");
   for (const path of ["/api/grading/grade-images", "/api/tasks/new"]) {
     const r = await request(app()).post(path).set("Origin", origin);
-    expect(r.status).toBe(503);
-    expect(r.body.error.code).toBe("pilot_grading_not_configured");
+    expect(r.status).toBe(401);
+    expect(r.body.error.code).toBe("unauthenticated");
   }
 });
 it("prevents a login whose password was checked before disable from creating a session after re-enable", async () => {

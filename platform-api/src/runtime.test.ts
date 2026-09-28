@@ -2,6 +2,22 @@ import request from "supertest";
 import { afterEach, expect, it, vi } from "vitest";
 import handler from "./vercel.js";
 import { getRuntimeApp } from "./runtime.js";
+import { createPilotRuntime } from "./pilot/runtime.js";
+import { pilotTestDb } from "./pilot/testSupport.js";
+import { assertPilotRuntimePrivileges } from "./privileges.js";
+it("pilotDependenciesFailClosedWithoutAffectingAuthAndRuntimeRoleIsRestricted", async () => {
+  const db = await pilotTestDb();
+  try {
+    expect(createPilotRuntime(db, {})).toBeUndefined();
+    expect(createPilotRuntime(db, { PILOT_MVP_ENABLED: "1" })).toBeUndefined();
+    await db.exec("SET ROLE wj_auth_runtime");
+    await expect(assertPilotRuntimePrivileges(db)).resolves.toBeUndefined();
+    await db.exec("RESET ROLE");
+    await expect(assertPilotRuntimePrivileges(db)).rejects.toThrow();
+  } finally {
+    await db.close();
+  }
+});
 afterEach(() => vi.unstubAllEnvs());
 it("Vercel handler fails closed with a generic no-store JSON 503 when runtime configuration is absent", async () => {
   vi.stubEnv("DATABASE_URL", "");

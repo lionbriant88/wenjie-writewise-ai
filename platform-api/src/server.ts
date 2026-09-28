@@ -8,18 +8,21 @@ import { randomBytes } from "node:crypto";
 import { isIP } from "node:net";
 import type { AuthConfig } from "./config.js";
 import { absoluteMs, publicUser, type AuthRepository } from "./repository.js";
-import { digest, keyedDigest, safeEqual, verifyPassword } from "./crypto.js";
+import { digest, keyedDigest, verifyPassword } from "./crypto.js";
 import { HttpError, invalidLogin, limited, unauthorized } from "./errors.js";
 
+import { createSessionTools } from "./sessionMiddleware.js";
+import { createPilotRouter } from "./pilot/routes.js";
+import type { PilotRuntime } from "./pilot/runtime.js";
+import { PilotError } from "./pilot/errors.js";
 // Shared across apps within an isolate. No waiting list can grow behind costly scrypt.
 let activeVerifications = 0;
 const dummyHash = `scrypt$32768$8$3$${"0".repeat(32)}$${"0".repeat(128)}`;
 const invalid = () => new HttpError(400, "invalid_request", "请求内容无效。");
-const forbidden = () =>
-  new HttpError(403, "csrf_invalid", "请刷新页面后重试。");
 
 export interface CreateAppOptions {
   gradingApp?: RequestHandler;
+  pilotRuntime?: PilotRuntime;
 }
 function objectBody(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -38,41 +41,29 @@ export function createApp(
     res.set("X-Content-Type-Options", "nosniff");
     next();
   });
-  async function authenticateGrading(
-    req: Request,
-    _res: Response,
-    next: NextFunction,
-  ) {
-    try {
-      requireOrigin(req);
-      const value = token(req);
-      if (!(await repo.session(digest(value), now()))) throw unauthorized();
-      next();
-    } catch (error) {
-      next(error);
-    }
-  }
-  if (options.gradingApp) {
-    app.use("/api", (req, res, next) => {
-      if (!req.path.startsWith("/grading") && !req.path.startsWith("/tasks")) {
-        next();
-        return;
-      }
-      authenticateGrading(req, res, (error) => {
-        if (error) {
-          next(error);
-          return;
-        }
-        options.gradingApp!(req, res, next);
-      });
-    });
-  } else {
-    app.use(["/api/grading", "/api/tasks"], (_req, _res, next) =>
+  const { csrf, token, requireOrigin, authenticatedWrite, requireSession } =
+    createSessionTools(repo, config, now);
+  app.use(
+    ["/api/grading", "/api/tasks"],
+    requireSession({ origin: true }),
+    (_req, _res, next) =>
       next(
-        new HttpError(503, "pilot_grading_not_configured", "作文批改暂未开放。"),
+        new HttpError(
+          409,
+          "persistent_job_required",
+          "请通过任务队列发起批改。",
+        ),
       ),
-    );
-  }
+  );
+  app.use(
+    "/api/pilot",
+    (req, res, next) =>
+      requireSession({
+        teacher: true,
+        write: !["GET", "HEAD", "OPTIONS"].includes(req.method),
+      })(req, res, next),
+    createPilotRouter(options.pilotRuntime),
+  );
   app.use(
     [
       "/api/auth/change-password",
@@ -94,27 +85,6 @@ export function createApp(
     sameSite: "lax" as const,
     path: "/",
   };
-  const csrf = (token: string) => keyedDigest(config.secret, `csrf:${token}`);
-  function requireOrigin(req: Request) {
-    if (req.get("origin") !== config.origin) throw forbidden();
-  }
-  function token(req: Request): string {
-    const values = (req.headers.cookie ?? "")
-      .split(";")
-      .map((v) => v.trim())
-      .filter((v) => v.startsWith(config.cookieName + "="));
-    if (values.length !== 1) throw unauthorized();
-    const value = values[0].slice(config.cookieName.length + 1);
-    if (!/^[A-Za-z0-9_-]{43}$/.test(value)) throw unauthorized();
-    return value;
-  }
-  function authenticatedWrite(req: Request): string {
-    requireOrigin(req);
-    const value = token(req),
-      supplied = req.get("X-CSRF-Token") ?? "";
-    if (!safeEqual(csrf(value), supplied)) throw forbidden();
-    return value;
-  }
   function source(req: Request): string {
     const forwarded = config.trustedVercel
       ? req.get("x-vercel-forwarded-for")
@@ -240,13 +210,25 @@ export function createApp(
   app.use(
     (error: unknown, _req: Request, res: Response, _next: NextFunction) => {
       let safe =
-        error instanceof HttpError
-          ? error
-          : new HttpError(
-              503,
-              "service_unavailable",
-              "服务暂不可用，请稍后重试。",
-            );
+        error instanceof PilotError
+          ? new HttpError(
+              error.status,
+              error.code,
+              error.status === 404
+                ? "记录不存在。"
+                : error.status === 409
+                  ? "内容已更新或当前状态不支持此操作，请刷新后重试。"
+                  : error.status === 400
+                    ? "请求内容无效。"
+                    : "服务暂不可用，请稍后重试。",
+            )
+          : error instanceof HttpError
+            ? error
+            : new HttpError(
+                503,
+                "service_unavailable",
+                "服务暂不可用，请稍后重试。",
+              );
       if (objectBody(error) && error.type === "entity.parse.failed")
         safe = invalid();
       if (objectBody(error) && error.type === "entity.too.large")
