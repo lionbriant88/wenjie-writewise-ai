@@ -111,12 +111,12 @@
 
 **Interfaces:** `JobQueue.publish(jobId:Id,deliveryKey:string,delaySeconds?:number):Promise<void>`；`runPilotJob(jobId,deps):Promise<'done'|'deferred'>`（deps 为上述 repositories/admission/storage、executeMultimodalOperation、now）；`recoverPilotWork(deps,limit:number):Promise<{published:number;cleaned:number}>`；`deleteTask(ownerId,taskId,command):Promise<void>`。消息体严格只有 `{jobId}`，worker 根据 DB 确定 owner 和所有输入。
 
-- [ ] **1. 写失败测试。** 模拟 enqueue 提交后 publish 失败、publish 成功但 outbox 更新失败、结果提交后 ack 失败、消息过期、关闭浏览器后两篇依次执行；每篇一次 completion。`deleteDuringUnknownExecutionKeepsTombstone`；`cleanupNeverDeletesAttachedOrForeignUpload`；匿名访问 worker/maintenance 不执行。
-- [ ] **2. 验证红灯。** `npm.cmd --prefix platform-api test -- src/pilot/worker.test.ts src/pilot/queue.test.ts src/pilot/recovery.test.ts src/pilot/cleanup.test.ts`。
-- [ ] **3. 实施 worker。** 用官方 `@vercel/queue` 的 `QueueClient.handleNodeCallback` 私有触发器，topic `writewise-pilot`，region sin1、consumer 并发 1、函数最长 300 秒。claim 后按存储摘要加载、构造现有 v2 输入及 canonical identity，然后 beginCall；Provider 截止 290000ms、最后 10000ms 留给保存，截止需从函数开始计时扣除预检耗时。已成功/未知/删除的重复消息不再连出。数据库不可用先停止，原令牌迟到结果不被新消费者覆盖。共享 gate 繁忙只延迟消息，不增加 Provider attempt。
-- [ ] **4. 实施 outbox 恢复与删除。** 发布 key 用 jobId+持久投递代次；消息期限过后可换代次，数据库仍阻止重调。命令提交和 worker 结束有界补投，教师读取只补投自己的作业。每日 `0 0 * * *` maintenance 为无人访问时的恢复/24h 临时清理兜底，要求 `CRON_SECRET`；每次最多 50 条，剩余游标存入 maintenance_jobs 后投递同一私有队列。runPilotJob 识别内部 maintenance ID 时只做恢复/清理，不占 Provider gate；公网 jobs 路由从不读取该表。删除先隐藏与阻止新调用，再分批清理；未知执行仅留必要 ID/摘要/状态墓碑，执行预检中对象暂不删除。
-- [ ] **5. 验证绿灯。** 重跑步骤 2、平台/部署 typecheck，配置测试确认两个专用 api 路径不被 `/api/:path*` 重写吞掉。maintenance 每日运行只作故障兜底，不能向用户承诺精确恢复时刻。[Hobby cron 限制](https://vercel.com/docs/cron-jobs/usage-and-pricing)、[Queue SDK](https://vercel.com/docs/queues/sdk)。
-- [ ] **6. 提交。** `feat: run persistent pilot jobs with private queue triggers`。
+- [x] **1. 写失败测试。** 模拟 enqueue 提交后 publish 失败、publish 成功但 outbox 更新失败、结果提交后 ack 失败、消息过期、关闭浏览器后两篇依次执行；每篇一次 completion。`deleteDuringUnknownExecutionKeepsTombstone`；`cleanupNeverDeletesAttachedOrForeignUpload`；匿名访问 worker/maintenance 不执行。
+- [x] **2. 验证红灯。** `npm.cmd --prefix platform-api test -- src/pilot/worker.test.ts src/pilot/queue.test.ts src/pilot/recovery.test.ts src/pilot/cleanup.test.ts`。
+- [x] **3. 实施 worker。** 用官方 `@vercel/queue` 的 `QueueClient.handleNodeCallback` 私有触发器，topic `writewise-pilot`，region sin1、consumer 并发 1、函数最长 300 秒。claim 后按存储摘要加载、构造现有 v2 输入及 canonical identity，然后 beginCall；Provider 截止 290000ms、最后 10000ms 留给保存，截止需从函数开始计时扣除预检耗时。已成功/未知/删除的重复消息不再连出。数据库不可用先停止，原令牌迟到结果不被新消费者覆盖。共享 gate 繁忙只延迟消息，不增加 Provider attempt。
+- [x] **4. 实施 outbox 恢复与删除。** 发布 key 用 jobId+持久投递代次；消息期限过后可换代次，数据库仍阻止重调。命令提交和 worker 结束有界补投，教师读取只补投自己的作业。每日 `0 0 * * *` maintenance 为无人访问时的恢复/24h 临时清理兜底，要求 `CRON_SECRET`；每次最多 50 条，剩余游标存入 maintenance_jobs 后投递同一私有队列。runPilotJob 识别内部 maintenance ID 时只做恢复/清理，不占 Provider gate；公网 jobs 路由从不读取该表。删除先隐藏与阻止新调用，再分批清理；未知执行仅留必要 ID/摘要/状态墓碑，执行预检中对象暂不删除。
+- [x] **5. 验证绿灯。** 重跑步骤 2、平台/部署 typecheck，配置测试确认两个专用 api 路径不被 `/api/:path*` 重写吞掉。maintenance 每日运行只作故障兜底，不能向用户承诺精确恢复时刻。[Hobby cron 限制](https://vercel.com/docs/cron-jobs/usage-and-pricing)、[Queue SDK](https://vercel.com/docs/queues/sdk)。
+- [x] **6. 提交。** `feat: run persistent pilot jobs with private queue triggers`。
 
 ### Task 6: 已认证业务 API 与生产执行边界
 

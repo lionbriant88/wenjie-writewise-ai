@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS pilot_grading.uploads (
   purpose text NOT NULL CHECK(purpose IN ('material','essay')), mime_type text NOT NULL CHECK(mime_type IN ('image/png','image/jpeg','image/webp')),
   size integer NOT NULL CHECK(size BETWEEN 1 AND 8388608), label text NOT NULL,
   state text NOT NULL DEFAULT 'reserved' CHECK(state IN ('reserved','verified','attached')), sha256 text CHECK(sha256~'^[0-9a-f]{64}$'),
-  created_at timestamptz NOT NULL DEFAULT now(),last_signed_at timestamptz NOT NULL DEFAULT now(),verified_at timestamptz,deleted_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),last_signed_at timestamptz NOT NULL DEFAULT now(),verified_at timestamptz,deleted_at timestamptz,purged_at timestamptz,
   PRIMARY KEY(owner_id,id),UNIQUE(id),UNIQUE(owner_id,task_id,id),
   FOREIGN KEY(owner_id,task_id) REFERENCES pilot_grading.tasks(owner_id,id),
   CHECK((state='reserved' AND sha256 IS NULL) OR (state<>'reserved' AND sha256 IS NOT NULL))
@@ -100,6 +100,13 @@ CREATE TABLE IF NOT EXISTS pilot_grading.teacher_reviews (
  owner_id uuid NOT NULL,job_id uuid NOT NULL,revision integer NOT NULL DEFAULT 1,review jsonb NOT NULL,updated_at timestamptz NOT NULL DEFAULT now(),
  PRIMARY KEY(owner_id,job_id),FOREIGN KEY(owner_id,job_id) REFERENCES pilot_grading.grading_results(owner_id,job_id)
 );
+CREATE TABLE IF NOT EXISTS pilot_grading.maintenance_jobs (
+ id uuid PRIMARY KEY,owner_id uuid REFERENCES pilot_auth.accounts(id),cursor uuid,state text NOT NULL DEFAULT 'queued' CHECK(state IN ('queued','done')),
+ generation integer NOT NULL DEFAULT 1,sent_at timestamptz,created_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE pilot_grading.uploads ADD COLUMN IF NOT EXISTS purged_at timestamptz;
+ALTER TABLE pilot_grading.tasks ADD COLUMN IF NOT EXISTS content_purged_at timestamptz;
+ALTER TABLE pilot_grading.executions ADD COLUMN IF NOT EXISTS canonical_identity jsonb;
 DO $$ BEGIN
  IF NOT EXISTS(SELECT FROM pg_constraint WHERE conname='essays_current_result_fk' AND conrelid='pilot_grading.essays'::regclass) THEN
   ALTER TABLE pilot_grading.essays ADD CONSTRAINT essays_current_result_fk FOREIGN KEY(owner_id,current_result_job_id) REFERENCES pilot_grading.grading_results(owner_id,job_id);
@@ -122,6 +129,9 @@ GRANT SELECT,INSERT,DELETE ON pilot_grading.task_material_uploads TO wj_auth_run
 GRANT SELECT,INSERT,UPDATE ON pilot_grading.essays,pilot_grading.jobs,pilot_grading.executions,pilot_grading.outbox,pilot_grading.teacher_reviews TO wj_auth_runtime;
 GRANT SELECT,UPDATE ON pilot_grading.provider_gate TO wj_auth_runtime;
 GRANT SELECT,INSERT ON pilot_grading.essay_sources,pilot_grading.essay_pages,pilot_grading.job_uploads,pilot_grading.grading_results TO wj_auth_runtime;
+GRANT UPDATE ON pilot_grading.essay_sources,pilot_grading.task_revisions TO wj_auth_runtime;
+GRANT DELETE ON pilot_grading.essay_pages,pilot_grading.job_uploads,pilot_grading.grading_results,pilot_grading.teacher_reviews,pilot_grading.command_receipts TO wj_auth_runtime;
+GRANT SELECT,INSERT,UPDATE ON pilot_grading.maintenance_jobs TO wj_auth_runtime;
 ALTER DEFAULT PRIVILEGES IN SCHEMA pilot_grading REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA pilot_grading REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 COMMIT;
