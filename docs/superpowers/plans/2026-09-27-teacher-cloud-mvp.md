@@ -1,6 +1,6 @@
 # 教师云端 MVP Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 教师在现有网站完成创建任务、上传作文、后台批改、修改确认，刷新或重新登录后恢复原图及已保存结果。
 
@@ -136,11 +136,11 @@
 | GET `/jobs/:id`；POST `/jobs/:id/retry` | get/retryKnown |
 | GET `/capabilities` | teacherMvp/AI 可用性，不返回 Secret |
 
-- [ ] **1. 写失败测试。** 使用两个教师和一个管理员 cookie 完整测试上述跨账号矩阵；缺会话 401、外来 Origin/CSRF 403；`rawGatewayCannotBypassPersistentExecution`；超大 JSON/未知字段拒绝；服务器不信任 owner/status/count/result。上传预留、完成、读取和作业查询分别校验归属。
-- [ ] **2. 验证红灯。** `npm.cmd --prefix platform-api test -- src/pilot/routes.test.ts src/sessionMiddleware.test.ts src/runtime.test.ts`。
-- [ ] **3. 实施装配。** 账号 JSON 仍为 16 KiB；pilot JSON 为 2 MiB，同时执行现有材料字段限制，文件不走此入口。生产旧 `/api/grading/*`、`/api/tasks/*` 鉴权后固定返回 `409 persistent_job_required`，不连出；独立 Gateway v2 HTTP 合同保留。缺依赖时 capabilities=false、业务 503、账号可用；`PILOT_MVP_ENABLED` 关闭也不能重开旧付费旁路，不回退 fake。
-- [ ] **4. 验证绿灯与账号回归。** 重跑步骤 2 和平台全量测试/typecheck，确认 session/退出/禁改密/管理员管理测试保持通过。日志只记录请求 ID、固定错误码、阶段与必要安全用量；不得记录 DTO 正文、签名 URL 或数据库连接串。
-- [ ] **5. 提交。** `feat: expose authenticated persistent pilot APIs`。
+- [x] **1. 写失败测试。** 使用两个教师和一个管理员 cookie 完整测试上述跨账号矩阵；缺会话 401、外来 Origin/CSRF 403；`rawGatewayCannotBypassPersistentExecution`；超大 JSON/未知字段拒绝；服务器不信任 owner/status/count/result。上传预留、完成、读取和作业查询分别校验归属。
+- [x] **2. 验证红灯。** `npm.cmd --prefix platform-api test -- src/pilot/routes.test.ts src/sessionMiddleware.test.ts src/runtime.test.ts`。
+- [x] **3. 实施装配。** 账号 JSON 仍为 16 KiB；pilot JSON 为 2 MiB，同时执行现有材料字段限制，文件不走此入口。生产旧 `/api/grading/*`、`/api/tasks/*` 鉴权后固定返回 `409 persistent_job_required`，不连出；独立 Gateway v2 HTTP 合同保留。缺依赖时 capabilities=false、业务 503、账号可用；`PILOT_MVP_ENABLED` 关闭也不能重开旧付费旁路，不回退 fake。
+- [x] **4. 验证绿灯与账号回归。** 重跑步骤 2 和平台全量测试/typecheck，确认 session/退出/禁改密/管理员管理测试保持通过。日志只记录请求 ID、固定错误码、阶段与必要安全用量；不得记录 DTO 正文、签名 URL 或数据库连接串。
+- [x] **5. 提交。** `feat: expose authenticated persistent pilot APIs`。
 
 ### Task 7: 云端教师状态与创建上传页面
 
@@ -148,11 +148,11 @@
 
 **Interfaces:** `createPilotClient({getCsrfToken,onSessionExpired,fetchImpl}):PilotClient` 对应任务 6 合同，所有调用支持 signal；`CloudAppStateProvider({children,userId,client})` 向现有 AppStateContext 投影云数据。createTask 返回 `Promise<string>`；enqueueImageEssays、start/retry/resume、updateEssayOcrText、markEssayManual、confirm/updateGradingResult 改为 `Promise<void>`；开发 provider 做等价 async 包装。新增 capabilities、loading/error/save 状态；持久化命令统一由云端适配实现，禁用本地 scheduler。
 
-- [ ] **1. 写失败测试。** 空账号首次无 demo；创建保存失败不跳转；双击/响应丢失复用 commandId；上传一页失败仅该页失败、已完成登记刷新恢复；换号时上传/列表迟到回调丢弃；图片重新读取短签名成功；管理员仍只有账号管理。
-- [ ] **2. 验证红灯。** `npm.cmd --prefix app test -- src/pilot src/pages/CreateTaskPage.test.tsx src/pages/UploadPage.test.tsx src/pages/TaskListPage.test.tsx`。
-- [ ] **3. 实施云客户端和页面适配。** 生产通过 capabilities 选择 TeacherApp，保持账号加载/退出状态；以 userId+会话世代卸载全部数据与 AbortController。草稿在首次保存/添加材料前建立，表单变更用有界防抖保存并显示未保存，确认前 await 最后一次保存；不在 localStorage 存老师正文/密钥。创建、上传关联成功后才能导航。上传每页先登记→直传→complete→按学生 attach；稳定 groups 命令允许恢复。分页载入服务器数据，server counts 不由已加载页数推算。
-- [ ] **4. 保留产品边界并验证绿灯。** 保持默认学生名、三个上传入口、多页 PDF 顺序。header 加当前账号/退出；云端导航不显示 fake 班级总结，相关命令明确不可用，不能返回假成功。重跑步骤 2、既有 CreateTaskFlow/MultimodalUploadFlow 测试和 app typecheck/lint。
-- [ ] **5. 提交。** `feat: connect teacher creation and uploads to cloud storage`。
+- [x] **1. 写失败测试。** 空账号首次无 demo；创建保存失败不跳转；双击/响应丢失复用 commandId；上传一页失败仅该页失败、已完成登记刷新恢复；换号时上传/列表迟到回调丢弃；图片重新读取短签名成功；管理员仍只有账号管理。
+- [x] **2. 验证红灯。** `npm.cmd --prefix app test -- src/pilot src/pages/CreateTaskPage.test.tsx src/pages/UploadPage.test.tsx src/pages/TaskListPage.test.tsx`。
+- [x] **3. 实施云客户端和页面适配。** 生产通过 capabilities 选择 TeacherApp，保持账号加载/退出状态；以 userId+会话世代卸载全部数据与 AbortController。草稿在首次保存/添加材料前建立，表单变更用有界防抖保存并显示未保存，确认前 await 最后一次保存；不在 localStorage 存老师正文/密钥。创建、上传关联成功后才能导航。上传每页先登记→直传→complete→按学生 attach；稳定 groups 命令允许恢复。分页载入服务器数据，server counts 不由已加载页数推算。
+- [x] **4. 保留产品边界并验证绿灯。** 保持默认学生名、三个上传入口、多页 PDF 顺序。header 加当前账号/退出；云端导航不显示 fake 班级总结，相关命令明确不可用，不能返回假成功。重跑步骤 2、既有 CreateTaskFlow/MultimodalUploadFlow 测试和 app typecheck/lint。
+- [x] **5. 提交。** `feat: connect teacher creation and uploads to cloud storage`。
 
 ### Task 8: 服务器进度、教师修订确认与删除页面
 
@@ -160,11 +160,11 @@
 
 **Interfaces:** `startOwnedPolling({load,onSnapshot,onExpired,signal}):()=>void`，同一对象只有一个未完成读取、正常间隔 2 秒，错误退避最高 15 秒；页面停止只停轮询，不取消后台作业。`saveReview(essayId,command:Command<TeacherReviewInput>):Promise<EssayDto>` 由 PilotClient 提供；reviewDraft 仅管理当前未保存 UI 值，服务器结果 revision 是 CAS 基准。
 
-- [ ] **1. 写失败测试。** 点击一次启动全部待批改；刷新读取运行中/终态；检查未知结果只 GET；修改评论不在每个 keystroke 保存；保存失败保留编辑内容；两个标签页旧 revision 显示冲突，不覆盖；正文修订保存后旧评分失效、重批只使用确认文本；退出后迟到轮询结果不出现。
-- [ ] **2. 验证红灯。** `npm.cmd --prefix app test -- src/pilot/polling.test.ts src/pilot/reviewDraft.test.ts src/pages/ProgressPage.test.tsx src/pages/EssayResultPage.test.tsx src/pages/TaskListPage.test.tsx`。
-- [ ] **3. 实施进度与编辑。** 按持久 JobDto 映射原页面状态；资源等待用稳定“等待批改资源”，不把准入忙误写成 429；明确失败单篇可见。分数/评论先 local draft，点击保存/确认 await 服务端成功才显示“已保存”；冲突保留本地文字并提供加载最新版本。服务器校验修改维度并派生总分，不发送 Partial<GradingResult> 全对象。正文重批为显式操作，未知执行时禁止再开新请求。
-- [ ] **4. 实施显式删除并验证绿灯。** 任务删除前展示将删除任务、图片及结果的范围；成功后刷新列表并清理内存，失败保留可见状态。重跑步骤 2 和 app typecheck/lint，确认原图刷新地址失败时显示加载错误，不回退示例图片。
-- [ ] **5. 提交。** `feat: persist teacher review and recover grading progress`。
+- [x] **1. 写失败测试。** 点击一次启动全部待批改；刷新读取运行中/终态；检查未知结果只 GET；修改评论不在每个 keystroke 保存；保存失败保留编辑内容；两个标签页旧 revision 显示冲突，不覆盖；正文修订保存后旧评分失效、重批只使用确认文本；退出后迟到轮询结果不出现。
+- [x] **2. 验证红灯。** `npm.cmd --prefix app test -- src/pilot/polling.test.ts src/pilot/reviewDraft.test.ts src/pages/ProgressPage.test.tsx src/pages/EssayResultPage.test.tsx src/pages/TaskListPage.test.tsx`。
+- [x] **3. 实施进度与编辑。** 按持久 JobDto 映射原页面状态；资源等待用稳定“等待批改资源”，不把准入忙误写成 429；明确失败单篇可见。分数/评论先 local draft，点击保存/确认 await 服务端成功才显示“已保存”；冲突保留本地文字并提供加载最新版本。服务器校验修改维度并派生总分，不发送 Partial<GradingResult> 全对象。正文重批为显式操作，未知执行时禁止再开新请求。
+- [x] **4. 实施显式删除并验证绿灯。** 任务删除前展示将删除任务、图片及结果的范围；成功后刷新列表并清理内存，失败保留可见状态。重跑步骤 2 和 app typecheck/lint，确认原图刷新地址失败时显示加载错误，不回退示例图片。
+- [x] **5. 提交。** `feat: persist teacher review and recover grading progress`。
 
 ### Task 9: 可选 AI 评分标准的持久执行
 
@@ -172,11 +172,11 @@
 
 **Interfaces:** `createPilotMaterialClients({client,taskDraft}):{materialClient:MaterialContextClient;rubricClient:RubricClient}`，实现既有 analyze/generate 返回类型；先保存当前草稿/materialRefs，再 enqueueMaterial，轮询同一 JobDto；恢复页面时继续检查已有 job，不新建 completion。
 
-- [ ] **1. 写失败测试。** 上传材料分析和逐篇批改竞争同一 gate；点击 AI 生成只一次 rubric completion，原材料只发送一次；已生成 rubric 的 materialContext 直接复用，不暗中另做材料理解；刷新恢复进行中辅助任务；手动修改后迟到 AI 不覆盖；材料失败仍能以合法人工标准确认。
-- [ ] **2. 验证红灯。** `npm.cmd --prefix app test -- src/pilot/materialClients.test.ts src/hooks/useTaskMaterials.test.tsx src/pages/CreateTaskPage.test.tsx` 与 `npm.cmd --prefix platform-api test -- src/pilot/worker.test.ts src/pilot/jobs.test.ts`。
-- [ ] **3. 实施适配。** 图片使用任务归属下已验证 uploadId，DOCX 文本复用现有提取和 30000 字符限制。material/rubric job 身份绑定草稿 revision+材料摘要+kind；结果只作教师可接受建议，草稿新 revision 时不自动覆盖；拒绝旧请求的假 retryable 提示。合并以教师输入优先，保留 reviewWarnings，逐篇仅发送确认任务包而非原题材料。
-- [ ] **4. 验证绿灯。** 重跑步骤 2、app/平台 typecheck，现有一次 rubric 及可选材料流程回归通过。
-- [ ] **5. 提交。** `feat: connect optional rubric assistance to persistent jobs`。
+- [x] **1. 写失败测试。** 上传材料分析和逐篇批改竞争同一 gate；点击 AI 生成只一次 rubric completion，原材料只发送一次；已生成 rubric 的 materialContext 直接复用，不暗中另做材料理解；刷新恢复进行中辅助任务；手动修改后迟到 AI 不覆盖；材料失败仍能以合法人工标准确认。
+- [x] **2. 验证红灯。** `npm.cmd --prefix app test -- src/pilot/materialClients.test.ts src/hooks/useTaskMaterials.test.tsx src/pages/CreateTaskPage.test.tsx` 与 `npm.cmd --prefix platform-api test -- src/pilot/worker.test.ts src/pilot/jobs.test.ts`。
+- [x] **3. 实施适配。** 图片使用任务归属下已验证 uploadId，DOCX 文本复用现有提取和 30000 字符限制。material/rubric job 身份绑定草稿 revision+材料摘要+kind；结果只作教师可接受建议，草稿新 revision 时不自动覆盖；拒绝旧请求的假 retryable 提示。合并以教师输入优先，保留 reviewWarnings，逐篇仅发送确认任务包而非原题材料。
+- [x] **4. 验证绿灯。** 重跑步骤 2、app/平台 typecheck，现有一次 rubric 及可选材料流程回归通过。
+- [x] **5. 提交。** `feat: connect optional rubric assistance to persistent jobs`。
 
 ### Task 10: 完整验收、云端准备与发布
 

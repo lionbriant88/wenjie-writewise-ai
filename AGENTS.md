@@ -1,5 +1,18 @@
 # 文阶 WriteWise AI 项目记忆
 
+## 2026-09-29：教师云端 MVP 本地与数据库验收完成，等待新增凭据配置
+
+- 沿用 `D:\wenjie-writewise-ai\.worktrees\codex-teacher-pilot-accounts` / `codex/teacher-pilot-accounts`；教师云端 MVP 任务 1–9 已实施，任务 10 继续。最新产品提交 `3fa8dcc`，本地验收准备提交 `80a780f`；均尚未推送，生产仍是 `65a3f22` 的账号站点，不能称教师批改已上线。
+- 已实现教师任务/草稿/多页作文/结果/教师修订持久化、私有图片、Vercel Queue 消费与 PostgreSQL 持久幂等及全站并发 1；DeepSeek 官方直连、现有 v2、无 OCR、未知不解锁等决定保持。
+- 独立整分支复核发现 3 个 Important：Supabase HTTP 400 明确重复对象、刷新后 reserved 上传恢复、材料恢复期间草稿 CAS 基线。全部先红后绿修复；最终前端 94 文件 / 1377 项、类型/lint/构建通过。平台此前 26/100、网关 56/1390 通过；不得把 fake Provider 当真实模型质量证据。
+- 已严格 TLS 备份 schema/权限元数据，并应用新增 `002_pilot_grading.sql`，共 16 张业务表；原 30 teacher + 1 admin 均 active，账号未重建/改密。真实 PG 双连接合成测试通过：全局峰值 1、重投零新增调用、未知保持占位、测试内容清理完成；使用 2 次 fake Provider，0 次真实模型调用。
+- Supabase 已创建私有 `pilot-originals`，Public 关闭，单文件 8,388,608 bytes，允许 JPEG/PNG/WebP，0 个公开访问策略。新专用 API key `writewise_pilot_storage` 表单已准备但未提交；新 Vercel Secret 尚未保存。
+- 已向用户提出具体凭据确认：创建该项目级高权限 key，只保存到 Vercel `wenjie-writewise-pilot` Production 的 `SUPABASE_STORAGE_SERVICE_KEY`，另生成 `CRON_SECRET`；同时配置 `SUPABASE_URL`、`SUPABASE_STORAGE_BUCKET`、`PILOT_MVP_ENABLED`。浏览器工具要求新增高权限访问在执行前确认；此前 DeepSeek 授权保持，不重复请求。收到本次同意后应继续，不再重复确认同一范围。
+- 后续：新增凭据配置 → 推送部署并验证 Ready/Current → 私有 worker/维护/同步旁路 → 单图、多页单篇、可选 rubric 各一次性合成公网验收及清理。真实学生、30×50 吞吐和真机拍照均未验收。
+- 详情见工作树 `docs/2026-09-27-teacher-cloud-mvp-validation.md`；执行 ledger 在 ignored `.superpowers/sdd/2026-09-27-teacher-cloud-mvp/progress.md`，云备份/测试结果在 ignored `local-private-accounts/teacher-cloud-mvp/`。不得打印凭据或账号清单。
+
+
+
 
 ## 2026-09-27：教师云端 MVP 开始按推荐方案直接实施
 

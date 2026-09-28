@@ -1,6 +1,6 @@
 # 教师云端 MVP 验收记录
 
-截至 2026-09-28：任务 1–9 已实现，任务 10 本地验收通过，独立整分支复核、云端迁移及公网验收尚未完成。生产仍为此前账号站点，不能据此邀请教师使用批改页面。
+截至 2026-09-29：任务 1–9 已实现，任务 10 本地验收及独立整分支复核修复已通过；云数据库新增业务表及私有 Storage 桶已准备，真实 PostgreSQL 双连接验收通过。新增服务端凭据及公网部署尚待完成。生产仍为此前账号站点，不能据此邀请教师使用批改页面。
 
 ## 实现范围
 
@@ -19,6 +19,7 @@
 | Grading Gateway 全量 | 56 文件 / 1390 项通过 |
 | 前端全量 | 94 文件 / 1369 项通过（限制 2 个测试 worker） |
 | 新建草稿地址恢复、创建页及结果页复验 | 2 文件 / 56 项通过，新增地址恢复先红后绿 |
+| 独立复核修复后前端全量 | 94 文件 / 1377 项通过；类型、lint、生产构建复验通过 |
 | 类型、lint、共享计分运行时、生产构建 | 通过；最后补丁后的复验另记录 |
 | 本地真实浏览器 | 合成教师会话、评语保存后刷新、确认完成、草稿刷新恢复、创建后进入上传；1440×900 和 390×844 检查 |
 
@@ -27,6 +28,22 @@
 浏览器预览使用本地 PGlite、MemoryStorage 和 fake Provider；原图是仓库合成 PNG。它不能证明 Supabase 上传、真实队列、真实多连接 PostgreSQL 争用、模型质量或公网稳定性。测试文件选择不代表真机拍照验收。
 
 全量并行测试曾因资源竞争触发前端计时超时。改为限制前端 worker 后通过；网关迟到响应测试改成由测试显式释放 Promise，保留严格截止断言。另修复本地演示的已选问题移除按钮判断和两个异步测试等待。
+
+## 独立复核及云端准备证据
+
+独立 `gpt-6-astra` 只读复核范围 `3422c11..80a780f`；没有 Critical，三个 Important 均先红后绿修复，提交 `3fa8dcc`：
+
+- Supabase 重复对象可返回 HTTP 400；仅接受明确的 Duplicate/ResourceAlreadyExists + 409 正文状态，再由服务端校验字节。其他 400 仍拒绝。
+- 刷新后对 reserved 上传执行归属保护的原记录完成核验；保留原 uploadId，不重传图片。不存在或无效的对象保持未完成状态，教师可重新检查；页面归属仍须教师手动指定。
+- 每次草稿编辑固定所读 TaskDto/revision，恢复材料期间的后台轮询不更新表单 CAS 基线；409 保留本地修改并明确提示另一页面已更改。
+
+唯一延后 Minor 是发布顺序第 1 项的历史迁移文件名笔误；实际执行器使用 `platform-api/src/migrations/002_pilot_grading.sql`。复核未访问云端，真实 PG/队列/Storage/公网边界继续作为发布门槛。真实教学质量、30×50 吞吐与真机拍照保持未验收；未知全站占位符合已批准策略。
+
+已通过严格 TLS 只读备份 schema/权限元数据到 ignored `local-private-accounts/teacher-cloud-mvp/schema-before.json`，不备份或输出账号密码哈希。核对 PostgreSQL 17.6、30 active teacher + 1 active admin，原运行账号权限保护通过；迁移前无 `pilot_grading` schema。随后仅执行新增业务迁移，确认 16 张业务表，账号数量和状态不变，记录为同目录 `migration.json`。
+
+Supabase Dashboard 已创建 `pilot-originals`，Public 开关关闭、0 个访问策略、单文件限制 8,388,608 bytes，允许 `image/jpeg,image/png,image/webp`。尚未创建新的服务端 API key，也未写入 Vercel Secret。专用新 key 表单已准备为 `writewise_pilot_storage`，目标仅 Vercel 项目 `wenjie-writewise-pilot` Production；它属于项目级高权限凭据，需只放服务端。
+
+真实 PostgreSQL 两个 session pooler 连接验收成功：`independentConnections=true`、`peakProviderCalls=1`、`modelCalls=2`（全部 fake Provider）、`unknownRetained=true`、`cleanupComplete=true`。重复 enqueue 合计仅接受一个 job，重复 worker 投递未新增调用，测试业务行已清理；既有账号未修改。私密结果记录为 `local-private-accounts/teacher-cloud-mvp/postgres-verification.json`。这不是 30×50 负载验收，也未验证 Vercel 消息实际投递。
 
 ## 发布顺序及凭据
 
@@ -56,8 +73,6 @@
 
 ## 待完成证据
 
-- 独立整分支复核及阻塞问题闭环。
-- 云端 schema/权限备份、迁移、私有 Storage 和新增 Production 凭据。
-- 真实 PostgreSQL 双连接争用及合成清理。
+- 新增 Production 服务端凭据的具体授权与配置。
 - Production Ready/Current 和三个一次性公网合成 case、真实上传/原图读取、后台继续、教师修订恢复。
 - 30×50 吞吐、真实手写教学质量和真机拍照均不属于本次已通过证据。
