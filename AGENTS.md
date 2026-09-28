@@ -1,5 +1,17 @@
 # 文阶 WriteWise AI 项目记忆
 
+## 2026-09-29：教师云端 MVP 已上线并通过合成公网闭环
+
+- 用户已确认新增凭据创建和指定 Production 保存。Supabase 专用服务端 key `writewise_pilot_storage` 已创建，五项 `SUPABASE_URL`、`SUPABASE_STORAGE_BUCKET`、`SUPABASE_STORAGE_SERVICE_KEY`、`CRON_SECRET`、`PILOT_MVP_ENABLED=1` 已保存到 Vercel `wenjie-writewise-pilot` Production Secret；SDK 核对桶私有、8 MiB、JPEG/PNG/WebP 有效。不得回显或提交 key、私密配置和账号清单。
+- 实际工作树仍为 `D:\wenjie-writewise-ai\.worktrees\codex-teacher-pilot-accounts` / `codex/teacher-pilot-accounts`。产品提交 `3fa8dcc` 随 `a5467cb` 已推送，Production `dpl_5x5o6tJdgAKxejGF1R2DgCwE3qSF` Ready，正式域名 `https://wenjie-writewise-pilot.vercel.app` 已指向新版本；已开放教师业务页面，不再是仅账号站点。收尾文档推送的最终部署见验证记录。
+- 三项脚本公网验收 single/multi/rubric 全部通过；另一次正式浏览器合成作文完成创建、上传、批改、原图读取、评语保存刷新恢复及教师确认 1/1。共 4 次 DeepSeek completion，各数据库记录仅 1 次调用，耗时依次 5128/6844/4260/6400 ms，安全 token 合计 19881；无隐藏重发，不声称精确账单。
+- 三篇合成作文结果均为 partial，保留教师复核提示；可见总分/维度依据校正及辅助反馈不完整，不能宣称真实教学质量或反馈完整性已通过。rubric succeeded 且确认保存通过。继续 DeepSeek 官方直连、v2、无 OCR、全站并发 1、未知结果不自动解锁。
+- 真实 Queue 消费、私有 Storage、持久结果、退出后继续、重新登录、两教师隔离、重复 enqueue 和 revision 冲突均通过。未登录 401、私有 worker 404、无凭据维护 401、授权维护 204、旧同步批改旁路 409；Hobby 未升级。
+- 最终只读审计：4 个合成任务均已逻辑删除且内容清理，活跃测试会话为 0，共享 gate 空闲无暂停。4 张合成原图仍等待原 2 小时上传签名失效后由维护清理，不能说对象已立即删除。账号未重建或改密。
+- 独立整分支复核及 3 个 Important 修复已闭环；本地前端 94/1377、网关 56/1390、平台 26/100 加清理断言 2 项、类型/lint/build 均有此前通过证据，本轮未修改产品代码。真实 PG 双连接及本轮公网证据分别记录。
+- 现在可用现有账号进行受控的小范围合成试用。30×50 吞吐、真实手写质量、真机拍照尚未验收；真实学生处理范围和保留规则未确认。不要直接开展全量班级使用或自动解锁未知作业。
+- 验证记录：实际工作树 `docs/2026-09-27-teacher-cloud-mvp-validation.md`；一次性调用账本和截图在 ignored `grading-gateway/local-private-results/teacher-cloud-mvp/` 及相邻 PNG。保留所有预留，不删除重跑。工作树及私密恢复配置保留。
+
 ## 2026-09-29：教师云端 MVP 本地与数据库验收完成，等待新增凭据配置
 
 - 沿用 `D:\wenjie-writewise-ai\.worktrees\codex-teacher-pilot-accounts` / `codex/teacher-pilot-accounts`；教师云端 MVP 任务 1–9 已实施，任务 10 继续。最新产品提交 `3fa8dcc`，本地验收准备提交 `80a780f`；均尚未推送，生产仍是 `65a3f22` 的账号站点，不能称教师批改已上线。

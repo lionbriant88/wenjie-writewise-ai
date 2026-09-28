@@ -1,6 +1,6 @@
 # 教师云端 MVP 验收记录
 
-截至 2026-09-29：任务 1–9 已实现，任务 10 本地验收及独立整分支复核修复已通过；云数据库新增业务表及私有 Storage 桶已准备，真实 PostgreSQL 双连接验收通过。新增服务端凭据及公网部署尚待完成。生产仍为此前账号站点，不能据此邀请教师使用批改页面。
+截至 2026-09-29：教师云端 MVP 已部署到正式域名，私有上传、后台批改、结果/教师修订保存、刷新及重新登录恢复已完成合成验收。本地验收、独立整分支复核修复、真实 PostgreSQL 双连接验证均通过。当前适合受控的小范围试用；真实手写评分质量、30×50 吞吐及真机拍照没有验收。
 
 ## 实现范围
 
@@ -41,7 +41,28 @@
 
 已通过严格 TLS 只读备份 schema/权限元数据到 ignored `local-private-accounts/teacher-cloud-mvp/schema-before.json`，不备份或输出账号密码哈希。核对 PostgreSQL 17.6、30 active teacher + 1 active admin，原运行账号权限保护通过；迁移前无 `pilot_grading` schema。随后仅执行新增业务迁移，确认 16 张业务表，账号数量和状态不变，记录为同目录 `migration.json`。
 
-Supabase Dashboard 已创建 `pilot-originals`，Public 开关关闭、0 个访问策略、单文件限制 8,388,608 bytes，允许 `image/jpeg,image/png,image/webp`。尚未创建新的服务端 API key，也未写入 Vercel Secret。专用新 key 表单已准备为 `writewise_pilot_storage`，目标仅 Vercel 项目 `wenjie-writewise-pilot` Production；它属于项目级高权限凭据，需只放服务端。
+Supabase Dashboard 已创建 `pilot-originals`，Public 开关关闭、0 个访问策略、单文件限制 8,388,608 bytes，允许 `image/jpeg,image/png,image/webp`。用户随后确认创建专用 `writewise_pilot_storage` 服务端 API key，并保存到 Vercel 项目 `wenjie-writewise-pilot` Production。五项新增变量已按 Secret 类型保存，`PILOT_MVP_ENABLED=1`，独立随机 `CRON_SECRET` 已生成；密钥不进入聊天、源码或前端。SDK 只读 `getBucket` 确认新 key 有效、桶仍私有且大小/MIME 限制准确。首次本地网络隔离失败后获联网许可复验通过，未上传对象或调用模型。
+
+已推送 `a5467cb` 触发 Production `dpl_5x5o6tJdgAKxejGF1R2DgCwE3qSF`，约 1 分钟后 Ready，正式域名 `https://wenjie-writewise-pilot.vercel.app` 已指向该部署。配置截图与恢复配置只保存在 ignored `local-private-accounts/teacher-cloud-mvp/`。公网脚本实际 npm 命令为 `npm.cmd --prefix platform-api run verify:pilot:public -- --run-authorized-once single`，依次使用独立 `single`、`multi`、`rubric` 账本；未知时改用 `--inspect <case>`，不重新 dispatch。
+
+## 公网合成验收
+
+三个脚本 case 均 exit 0，逐个完成后才开始下一个。另在正式浏览器以独立一次性预留验证完整教师页面，共 4 次 completion；数据库中每项均只有 1 次已开始执行、1 条 Provider 观测，全部 finished/stop，无自动重发或未知占位。
+
+| case | 模型结果 | Provider 耗时 | prompt tokens | completion tokens | cached tokens |
+| --- | --- | --- | --- | --- | --- |
+| 单图 | partial，需教师复核 | 5128 ms | 4440 | 1256 | 2816 |
+| 两页单篇 | partial，需教师复核 | 6844 ms | 4953 | 1591 | 4352 |
+| AI 辅助评分标准 | succeeded，教师确认保存通过 | 4260 ms | 838 | 976 | 0 |
+| 浏览器手填标准单图 | partial，需教师复核 | 6400 ms | 4481 | 1346 | 2944 |
+
+token 总量为 19,881；这里只记录真实安全用量，不把 token 数当账单金额。作文合成正文匹配、印刷页眉排除；部分结果出现总分重算、维度问题关联/证据定位修正，以及辅助内容不完整的提示，不能声称全部 AI 反馈完整或教学质量已通过。
+
+脚本验证：未登录业务接口 401、私有 worker 公网直接请求 404、无维护凭据 401、旧同步 Gateway 409；两教师对象隔离、私有原图签名读取、重复 enqueue 不新增作业、退出后后台继续、重登读取结果、教师反馈保存/确认和旧 revision 409 均通过。授权维护请求额外返回 204。实际 Queue 消费已成功，沿用 Hobby，未升级套餐。
+
+正式浏览器验证：手填评分标准的草稿自动保存到固定地址，刷新恢复全部字段；创建任务、学生卡片选图、提交后启动批改、原图实际加载 1200×700、保存教师评语后刷新恢复、教师确认后完成计数 1/1。此浏览器用例只使用仓库合成 PNG，不是手写或设备摄像头验证。截图在 ignored `grading-gateway/local-private-results/teacher-cloud-mvp-production-{result,complete}.png`。
+
+一次性预留、验证、usage 和清理报告位于 ignored `grading-gateway/local-private-results/teacher-cloud-mvp/`。最终严格 TLS 只读审计确认 4 个合成任务均逻辑删除且内容已清理、活跃会话 0、共享 gate 空闲且无暂停。4 张合成原图仍等待原 2 小时上传签名失效后的维护清理，不能把任务不可见写成对象已经立即删除。
 
 真实 PostgreSQL 两个 session pooler 连接验收成功：`independentConnections=true`、`peakProviderCalls=1`、`modelCalls=2`（全部 fake Provider）、`unknownRetained=true`、`cleanupComplete=true`。重复 enqueue 合计仅接受一个 job，重复 worker 投递未新增调用，测试业务行已清理；既有账号未修改。私密结果记录为 `local-private-accounts/teacher-cloud-mvp/postgres-verification.json`。这不是 30×50 负载验收，也未验证 Vercel 消息实际投递。
 
@@ -71,8 +92,15 @@ Supabase Dashboard 已创建 `pilot-originals`，Public 开关关闭、0 个访�
 
 未知调用保留必要执行墓碑并阻止新模型调用；人工不能仅凭过期时间解除。回滚关闭新入口/消费者并保留作业、结果和未知墓碑，不能恢复旧同步付费入口来绕过共享准入。
 
-## 待完成证据
+## 执行裁定与保留限制
 
-- 新增 Production 服务端凭据的具体授权与配置。
-- Production Ready/Current 和三个一次性公网合成 case、真实上传/原图读取、后台继续、教师修订恢复。
-- 30×50 吞吐、真实手写教学质量和真机拍照均不属于本次已通过证据。
+- Windows 计划脚本使用 Git Bash `-lc` 获取 coreutils PATH；无产品行为变化。
+- SQL 表随所属任务及测试引入，最终迁移完整包含 16 张表；没有预先加入未测试的未来字段。
+- `resumeKnownPause` 增加可选环境参数，默认 `process.env`，以便恢复已知暂停前校验 DeepSeek 配置；不提供未知强制解锁。
+- 新增受教师归属保护、数量有界的 `GET /tasks/:id/assist`，用于恢复当前草稿已有辅助作业；不会额外调用模型。
+- 唯一最终整分支复核在本地验收后、云写入前完成；3 个 Important 已先红后绿修复，配置及证据更新不重复发起代码复核。
+- Storage、Queue、Deployment 和真实 PostgreSQL 双连接为独立发布门槛，现均有实际证据；PGlite 从未被用作真实多连接证明。
+- 未知执行会占住全站唯一槽位，不能仅按 TTL 解锁；极端情况下须等待原调用结果证据。
+- 本轮无真实学生材料授权或套餐升级。真实手写质量、30×50 吞吐、真机拍照仍未验收，后续正式课堂范围及保留规则需另定。
+- 唯一延后 Minor：历史发布顺序中的迁移文件名笔误；实际迁移是 `002_pilot_grading.sql`，上方新验收记录给出了实际执行路径及命令。手工操作应以实际文件和 package script 为准。
+- 收尾沿用用户已明确的现有生产分支推送部署决定，保留工作树、私密配置和一次性调用账本；不额外发起合并/PR 或删除生产分支。
