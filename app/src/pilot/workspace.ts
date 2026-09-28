@@ -143,6 +143,10 @@ export class CloudWorkspace {
   getDraft(key: string) {
     return this.editors.get(key)
   }
+  bindDraft(key: string, opened: TaskDto) {
+    this.check()
+    if (!this.editors.has(key)) this.editors.set(key, structuredClone(opened))
+  }
   saveDraft(
     key: string,
     value: TaskDraftInput,
@@ -225,11 +229,27 @@ export class CloudWorkspace {
     this.emit()
   }
   async unattachedUploads(task: string): Promise<UploadDto[]> {
-    return (
-      await this.all((cursor) =>
-        this.client.listUploads(task, { cursor }, this.controller.signal),
-      )
-    ).filter((u) => u.purpose === 'essay' && u.state === 'verified')
+    const list = () => this.all((cursor) =>
+      this.client.listUploads(task, { cursor }, this.controller.signal),
+    )
+    const uploads = await list()
+    let completed = false
+    for (const upload of uploads) {
+      this.check()
+      if (upload.purpose !== 'essay' || upload.state !== 'reserved') continue
+      try {
+        await this.command('complete:' + upload.id, {}, undefined, c =>
+          this.client.completeUpload(upload.id, c, this.controller.signal))
+        completed = true
+      } catch (error) {
+        this.check()
+        if (error instanceof PilotApiError && [401,403].includes(error.status)) throw error
+        // Missing or invalid bytes remain incomplete; never synthesize a verified page.
+      }
+    }
+    const current = completed ? await list() : uploads
+    this.check()
+    return current.filter(u => u.purpose === 'essay' && u.state !== 'attached')
   }
   async uploadPage(
     task: string,

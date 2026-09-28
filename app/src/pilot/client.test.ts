@@ -1,5 +1,16 @@
 import { expect, it, vi } from 'vitest'
 import { createPilotClient, PilotApiError } from './client'
+it.each([
+  {statusCode:'409',error:'Duplicate',message:'The resource already exists'},
+  {statusCode:'409',code:'ResourceAlreadyExists',error:'ResourceAlreadyExists'},
+])('allows a recognized Supabase HTTP 400 duplicate to reach server completion validation',async(body)=>{
+  const client=createPilotClient({getCsrfToken:()=>'',onSessionExpired:()=>{},fetchImpl:async()=>Response.json(body,{status:400})})
+  await expect(client.putUpload('https://synthetic.supabase.co/storage/v1/object/upload/sign/pilot-originals/a',new File(['a'],'a.png',{type:'image/png'}))).resolves.toBeUndefined()
+})
+it.each([{statusCode:'400',error:'InvalidJWT'},{statusCode:'409',error:'UnrelatedFailure'}])('rejects other Supabase HTTP 400 failures',async(body)=>{
+  const client=createPilotClient({getCsrfToken:()=>'',onSessionExpired:()=>{},fetchImpl:async()=>Response.json(body,{status:400})})
+  await expect(client.putUpload('https://synthetic.supabase.co/storage/v1/object/upload/sign/pilot-originals/a',new File(['a'],'a.png',{type:'image/png'}))).rejects.toThrow('图片上传失败')
+})
 it('sends CSRF only to owned API and expires an invalid session', async () => {
   const expired = vi.fn(),
     fetchImpl = vi

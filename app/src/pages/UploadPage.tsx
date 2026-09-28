@@ -48,6 +48,9 @@ export function UploadPage() {
   const mountedRef = useRef(false)
   const [uploadError, setUploadError] = useState('')
   const [recoveredPages, setRecoveredPages] = useState<EssayPage[]>([])
+  const [incompleteUploads, setIncompleteUploads] = useState<string[]>([])
+  const [recoveryAttempt, setRecoveryAttempt] = useState(0)
+  const [recovering, setRecovering] = useState(false)
   const [recoveryTarget, setRecoveryTarget] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const submittingRef = useRef(false)
@@ -66,12 +69,15 @@ export function UploadPage() {
   useEffect(()=>{
     if(!pilot)return
     let active=true
+    setRecovering(true)
     void pilot.unattachedUploads(taskId).then(uploads=>{
-      if(!active||!uploads.length)return
-      setRecoveredPages(uploads.map(u=>({id:u.id,uploadId:u.id,label:u.label,pageNumber:1,quality:'clear',accent:'#0891b2'})))
-    }).catch(()=>{if(active)setUploadError('已上传页面读取失败，请刷新后重试。')})
+      if(!active)return
+      const assigned = new Set(studentsRef.current.flatMap(s=>s.pages.map(p=>p.uploadId)))
+      setRecoveredPages(uploads.filter(u=>u.state==='verified'&&!assigned.has(u.id)).map(u=>({id:u.id,uploadId:u.id,label:u.label,pageNumber:1,quality:'clear',accent:'#0891b2'})))
+      setIncompleteUploads(uploads.filter(u=>u.state==='reserved').map(u=>u.label))
+    }).catch(()=>{if(active)setUploadError('已上传页面读取失败，请刷新后重试。')}).finally(()=>{if(active)setRecovering(false)})
     return()=>{active=false}
-  },[pilot,taskId])
+  },[pilot,taskId,recoveryAttempt])
 
   // Publish each upload edit synchronously so delayed PDF callbacks see the latest card.
   // Keep URL allocation/release outside React's replayable state updater callbacks.
@@ -233,6 +239,11 @@ export function UploadPage() {
           </p>
         ) : null}
 
+        {incompleteUploads.length ? <section className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">
+          <p>以下页面尚未完成上传确认，请重新检查；若原图仍未上传成功，请重新选择文件。</p>
+          <ul>{incompleteUploads.map((label,index)=><li key={index}>{label}</li>)}</ul>
+          <button type="button" disabled={recovering||submitting} onClick={()=>setRecoveryAttempt(value=>value+1)}>{recovering?'正在检查…':'重新检查未完成上传'}</button>
+        </section>:null}
         {recoveredPages.length ? <section className="rounded-xl border border-blue-200 bg-white p-4">
           <p>以下页面已上传，请确认它们属于哪位学生。</p>
           <select aria-label="恢复页面所属学生" value={recoveryTarget} onChange={e=>setRecoveryTarget(e.target.value)}>

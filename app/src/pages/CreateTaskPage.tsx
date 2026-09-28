@@ -18,6 +18,7 @@ import {
 } from '../services/taskRubric/rubricForm'
 import { createConfiguredRubricClient } from '../services/taskRubric/rubricClient'
 import { createPilotMaterialClients } from '../pilot/materialClients'
+import { PilotApiError } from '../pilot/client'
 import {
   createMaterialDraftSession,
   restoreMaterialUnits,
@@ -163,21 +164,20 @@ function TaskDraftEditor({ editorIdentity }: { editorIdentity: string }) {
   const navigate = useNavigate()
   const { createTask, pilot } = useAppState()
   const { taskId: existingDraftId } = useParams()
-  const [initialDraftId] = useState(existingDraftId)
   const [initialTask] = useState(() =>
     pilot?.tasks.find((t) => t.id === existingDraftId),
   )
   const initialDraft = initialTask?.draft
   const editingAllowed = !initialTask || initialTask.state === 'draft'
-  const editorKey = useRef(existingDraftId ?? crypto.randomUUID()).current
+  const editorKey = useRef(crypto.randomUUID()).current
   const [draftSave, setDraftSave] = useState('')
   const materials = useTaskMaterials()
   const session = useMemo(
     () =>
       pilot
-        ? createMaterialDraftSession(pilot, editorKey, initialDraftId)
+        ? createMaterialDraftSession(pilot, editorKey, initialTask)
         : undefined,
-    [pilot, editorKey, initialDraftId],
+    [pilot, editorKey, initialTask],
   )
   const saveForAiRef = useRef<() => Promise<TaskDto>>(async () => {
     throw Error('草稿尚未就绪。')
@@ -304,8 +304,10 @@ function TaskDraftEditor({ editorIdentity }: { editorIdentity: string }) {
             retainDraftAddressRef.current(task)
           }
         })
-        .catch(() => {
-          if (active) setDraftSave('草稿未保存，请检查网络后重试')
+        .catch((error) => {
+          if (active) setDraftSave(error instanceof PilotApiError && error.status === 409
+            ? '草稿已在其他页面修改，当前内容未覆盖云端。请先复制保留当前修改，再刷新读取最新草稿。'
+            : '草稿未保存，请检查网络后重试')
         })
     }, 600)
     return () => {

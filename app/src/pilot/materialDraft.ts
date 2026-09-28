@@ -11,12 +11,13 @@ import type { CloudWorkspace } from './workspace'
 export function createMaterialDraftSession(
   workspace: CloudWorkspace,
   key: string,
-  existingId?: string,
+  opened?: TaskDto,
 ) {
+  if (opened) workspace.bindDraft(key, opened)
   let tail: Promise<unknown> = Promise.resolve()
   const identities = new Map<string, string>()
   const uploads = new Map<string, string>()
-  let currentId = existingId
+  let currentId = opened?.id
   return {
     save(
       value: TaskDraftInput,

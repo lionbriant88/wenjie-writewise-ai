@@ -31,6 +31,35 @@ function setup(fetchImpl: typeof fetch) {
   })
   return new CloudWorkspace(client)
 }
+it('recovers the original reserved upload after reload and keeps missing objects incomplete',async()=>{
+  const entries=[
+    {id:'uploaded',taskId:'task',state:'reserved',purpose:'essay',label:'ready.png'},
+    {id:'missing',taskId:'task',state:'reserved',purpose:'essay',label:'missing.png'},
+    {id:'attached',taskId:'task',state:'attached',purpose:'essay'},
+    {id:'material',taskId:'task',state:'reserved',purpose:'material'},
+  ]
+  const calls:string[]=[]
+  const workspace=setup(async(url,options)=>{
+    const path=String(url);calls.push((options?.method??'GET')+' '+path)
+    if(path.includes('/uploads?'))return Response.json({items:entries,nextCursor:null})
+    if(path.endsWith('/uploaded/complete')){entries[0].state='verified';return Response.json({id:'uploaded',uploadId:'uploaded'})}
+    if(path.endsWith('/missing/complete'))return Response.json({error:{code:'storage_unavailable'}},{status:503})
+    throw Error('Unexpected request')
+  })
+  expect(await workspace.unattachedUploads('task')).toMatchObject([
+    {id:'uploaded',state:'verified'}, {id:'missing',state:'reserved'},
+  ])
+  expect(calls.filter(c=>c.startsWith('POST'))).toEqual(['POST /api/pilot/uploads/uploaded/complete','POST /api/pilot/uploads/missing/complete'])
+  expect(calls.some(c=>c.startsWith('PUT'))).toBe(false)
+  workspace.dispose()
+})
+it('does not return recovered upload data after session expiry',async()=>{
+  const workspace=setup(async(url)=>String(url).includes('/uploads?')
+    ? Response.json({items:[{id:'private',purpose:'essay',state:'reserved'}],nextCursor:null})
+    : Response.json({error:{code:'unauthorized'}},{status:401}))
+  await expect(workspace.unattachedUploads('task')).rejects.toMatchObject({status:401})
+  workspace.dispose()
+})
 it('keeps the same draft revision when PostgreSQL JSON keys return in a different order', async () => {
   const fetchImpl = vi.fn(async () => Response.json(row()))
   const workspace = setup(fetchImpl)

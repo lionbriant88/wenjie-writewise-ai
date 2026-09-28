@@ -12,7 +12,7 @@ import { createPilotClient } from '../pilot/client'
 import type { TaskDto } from '../../../shared/pilotContracts'
 
 const mocks = vi.hoisted(() => ({
-  createTask: vi.fn(async () => 'created-task'),
+  createTask: vi.fn(async (_input?: unknown, _key?: string) => 'created-task'),
   navigate: vi.fn(),
   generate: vi.fn(),
   analyze: vi.fn(),
@@ -156,6 +156,31 @@ afterEach(() => {
 })
 
 describe('CreateTaskPage unified teacher rubric flow', () => {
+  it('keeps the opened draft revision while material restoration overlaps another tab edit',async()=>{
+    const opened:TaskDto={id:'draft-race',state:'draft',revision:1,rubricRevision:0,confirmedPackage:null,counts:{total:0,completed:0,exceptions:0},createdAt:'',updatedAt:'',draft:{taskName:'Old task',fullScore:15,writingRequirement:'Opened requirement',dimensions:createDefaultRubricDimensions().map(d=>({...d,sourceEvidence:[]})),source:'teacher',materialContext:null,materialProcessingStatus:'none',materialRefs:[{kind:'image',uploadId:'original-image'}]}}
+    const image=deferred<File>(),updates:{expectedRevision:number;value:unknown}[]=[]
+    const client=createPilotClient({getCsrfToken:()=>'',onSessionExpired:()=>{},fetchImpl:vi.fn(async(url,options)=>{
+      const path=String(url)
+      if(path.includes('/uploads?'))return Response.json({items:[{id:'original-image',label:'original.png',mimeType:'image/png'}],nextCursor:null})
+      if(path.endsWith('/assist'))return Response.json([])
+      if(options?.method==='PATCH'){
+        const c=JSON.parse(String(options.body));updates.push(c)
+        return c.expectedRevision===1 ? Response.json({error:{code:'revision_conflict'}},{status:409}) : Response.json({...opened,revision:3,draft:c.value})
+      }
+      throw Error('Unexpected operation')
+    })})
+    vi.spyOn(client,'readImage').mockReturnValue(image.promise)
+    mocks.pilot=new CloudWorkspace(client);mocks.pilot.tasks=[opened]
+    render(<MemoryRouter initialEntries={['/tasks/draft-race/edit']}><Routes><Route path="/tasks/:taskId/edit" element={<CreateTaskPage/>}/></Routes></MemoryRouter>)
+    await waitFor(()=>expect(client.readImage).toHaveBeenCalledOnce())
+    mocks.pilot.tasks=[{...opened,revision:2,draft:{...opened.draft,writingRequirement:'Saved by another tab'}}]
+    await act(async()=>{image.resolve(new File(['x'],'original.png',{type:'image/png'}));await image.promise})
+    fireEvent.change(screen.getByLabelText('写作要求'),{target:{value:'Unsaved local requirement'}})
+    await waitFor(()=>expect(updates).toHaveLength(1),{timeout:2500})
+    expect(updates[0].expectedRevision).toBe(1)
+    expect(await screen.findByText(/草稿已在其他页面修改/)).toBeVisible()
+    expect(screen.getByLabelText('写作要求')).toHaveValue('Unsaved local requirement')
+  })
   it('keeps the live editor when autosave gives a new draft a reloadable address', async () => {
     let saved: TaskDto | undefined
     const client = createPilotClient({getCsrfToken:()=>'',onSessionExpired:()=>{},fetchImpl:vi.fn(async (url,options)=>{
@@ -207,7 +232,8 @@ describe('CreateTaskPage unified teacher rubric flow', () => {
     expect(mocks.generate).not.toHaveBeenCalled()
     expect(mocks.analyze).not.toHaveBeenCalled()
     expect(calls.filter(c=>c.method==='POST')).toHaveLength(0)
-    expect(mocks.createTask).toHaveBeenCalledWith(expect.objectContaining({materialContext:expect.objectContaining({reviewWarnings:['Review unclear source text.']})}),'task')
+    expect(mocks.createTask).toHaveBeenCalledWith(expect.objectContaining({materialContext:expect.objectContaining({reviewWarnings:['Review unclear source text.']})}),expect.any(String))
+    expect(mocks.pilot.getDraft(mocks.createTask.mock.calls[0][1]!)?.id).toBe('task')
   })
   it('renders basic information, optional materials, the default rubric, and one final action in order', () => {
     renderCreateTaskPage()

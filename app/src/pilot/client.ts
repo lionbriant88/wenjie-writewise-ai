@@ -165,7 +165,12 @@ export function createPilotClient({
       })
       signal?.throwIfAborted()
       // An existing immutable object can mean the first upload response was lost. Completion verifies actual bytes.
-      if (!res.ok && res.status !== 409)
+      const error = res.status === 400 ? await res.json().catch(() => null) : null
+      signal?.throwIfAborted()
+      const duplicate = res.status === 409 || (res.status === 400
+        && String(error?.statusCode) === '409'
+        && ['Duplicate', 'ResourceAlreadyExists'].includes(error?.code ?? error?.error))
+      if (!res.ok && !duplicate)
         throw new Error('图片上传失败，请重试。')
     },
     async readImage(
