@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AccountApp } from './AccountApp'
 
+// Auth lifecycle tests keep the teacher feature boundary isolated; TeacherApp has its own integration tests.
+vi.mock('../pilot/TeacherApp', async()=>({TeacherApp:(await import('./AccountReadyPage')).AccountReadyPage}))
 const teacher = {
   id: 'teacher-1',
   username: 'wj_teacher',

@@ -3,7 +3,7 @@ import type { AiGradingResultV1, MultimodalGradingRequestV2 } from './types'
 
 export function adaptAiGradingResult(
   result: AiGradingResultV1,
-  _request: MultimodalGradingRequestV2,
+  _request?: MultimodalGradingRequestV2,
 ): GradingResult {
   return {
     id: `${result.essayId}-result`,

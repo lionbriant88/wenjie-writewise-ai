@@ -1,4 +1,6 @@
 import { createContext } from 'react'
+import type { CloudWorkspace } from '../pilot/workspace'
+import type { PilotCapabilities } from '../../../shared/pilotContracts'
 import type { LocalGenerationRecord } from '../services/classReview/classReviewRegistry'
 import type { AiSummaryV1, ClassReviewReportV1, Severity } from '../services/classReview/types'
 import type { OcrTranscriptAudit } from '../services/ocr/audit/types'
@@ -78,6 +80,12 @@ export interface ClassReviewAppCommands {
 }
 
 export interface AppState {
+  pilot?: CloudWorkspace
+  capabilities?: PilotCapabilities
+  loading?: boolean
+  error?: string
+  saveState?: 'saving' | 'saved' | 'failed'
+  refresh?: () => Promise<void>
   tasks: Task[]
   essays: Essay[]
   taskGradingQueues: Readonly<Record<string, TaskQueueSnapshot>>
@@ -87,22 +95,22 @@ export interface AppState {
   classInsights: ClassInsight[]
   classReviewMaterials: ClassReviewMaterial[]
   classReview: ClassReviewAppCommands
-  createTask: (input: CreateTaskInput) => string
+  createTask: (input: CreateTaskInput, draftKey?: string) => Promise<string>
   assignTaskClass: (taskId: string, className: string) => void
   confirmMockOcrEssay: (input: ConfirmMockOcrEssayInput) => void
-  enqueueImageEssays: (input: EnqueueImageEssaysInput) => void
-  updateEssayOcrText: (essayId: string, text: string, confirmedAt?: string) => void
-  markEssayManual: (essayId: string) => void
-  startTaskGrading: (taskId: string) => void
-  retryTaskEssay: (essayId: string) => void
-  checkUnknownTaskEssay: (essayId: string) => void
-  resumeTaskGrading: (taskId: string) => void
+  enqueueImageEssays: (input: EnqueueImageEssaysInput) => Promise<void>
+  updateEssayOcrText: (essayId: string, text: string, confirmedAt?: string) => Promise<void>
+  markEssayManual: (essayId: string) => Promise<void>
+  startTaskGrading: (taskId: string) => Promise<void>
+  retryTaskEssay: (essayId: string) => Promise<void>
+  checkUnknownTaskEssay: (essayId: string) => Promise<void>
+  resumeTaskGrading: (taskId: string) => Promise<void>
   /** @deprecated Compatibility wrapper; use startTaskGrading. */
   gradeEssay: (essayId: string) => Promise<void>
   /** @deprecated Compatibility wrapper; use retryTaskEssay. */
   retryGradeEssay: (essayId: string) => Promise<void>
-  confirmGradingResult: (essayId: string) => void
-  updateGradingResult: (essayId: string, patch: Partial<GradingResult>) => void
+  confirmGradingResult: (essayId: string) => Promise<void>
+  updateGradingResult: (essayId: string, patch: Partial<GradingResult>) => Promise<void>
   addClassReviewMaterial: (input: ClassReviewMaterialInput) => ClassReviewMaterial
   removeClassReviewMaterial: (materialId: string) => void
   isClassReviewMaterialAdded: (input: ClassReviewMaterialInput) => boolean

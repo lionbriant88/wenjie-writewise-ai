@@ -41,12 +41,14 @@ function defaultStudentName(index: number) {
 export function UploadPage() {
   const { taskId = '' } = useParams()
   const navigate = useNavigate()
-  const { tasks, enqueueImageEssays } = useAppState()
+  const { tasks, enqueueImageEssays, pilot } = useAppState()
   const task = findTask(tasks, taskId)
   const [students, setStudentsState] = useState<StudentUpload[]>(() => [createStudent(0)])
   const studentsRef = useRef(students)
   const mountedRef = useRef(false)
   const [uploadError, setUploadError] = useState('')
+  const [recoveredPages, setRecoveredPages] = useState<EssayPage[]>([])
+  const [recoveryTarget, setRecoveryTarget] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const submittingRef = useRef(false)
   const submissionIdRef = useRef(`upload-${crypto.randomUUID?.() ?? Date.now()}`)
@@ -60,6 +62,16 @@ export function UploadPage() {
       localPreviewUrlsRef.current = []
     }
   }, [])
+
+  useEffect(()=>{
+    if(!pilot)return
+    let active=true
+    void pilot.unattachedUploads(taskId).then(uploads=>{
+      if(!active||!uploads.length)return
+      setRecoveredPages(uploads.map(u=>({id:u.id,uploadId:u.id,label:u.label,pageNumber:1,quality:'clear',accent:'#0891b2'})))
+    }).catch(()=>{if(active)setUploadError('已上传页面读取失败，请刷新后重试。')})
+    return()=>{active=false}
+  },[pilot,taskId])
 
   // Publish each upload edit synchronously so delayed PDF callbacks see the latest card.
   // Keep URL allocation/release outside React's replayable state updater callbacks.
@@ -170,7 +182,7 @@ export function UploadPage() {
     })
   }
 
-  const enqueueStudents = () => {
+  const enqueueStudents = async () => {
     if (submittingRef.current) return
     const readyStudents = students
       .map((student, index) => ({ ...student, resolvedName: displayName(student, index) }))
@@ -187,13 +199,15 @@ export function UploadPage() {
     submittingRef.current = true
     setSubmitting(true)
     const storedClassName = task.className.trim() && task.className !== '待选择班级' ? task.className.trim() : '未分班'
-    enqueueImageEssays({
+    try {
+    await enqueueImageEssays({
       submissionId: submissionIdRef.current,
       taskId: task.id,
       className: storedClassName,
       essayGroups: readyStudents.map((student) => ({ studentName: student.resolvedName, pages: student.pages })),
     })
-    navigate(`/tasks/${task.id}/progress`)
+    if(mountedRef.current) navigate(`/tasks/${task.id}/progress`)
+    } catch(error) {if(mountedRef.current){setUploadError(error instanceof Error?error.message:"作文保存失败，请重试。");submittingRef.current=false;setSubmitting(false)}}
   }
 
   const hasPages = students.some((student) => student.pages.length > 0)
@@ -219,6 +233,18 @@ export function UploadPage() {
           </p>
         ) : null}
 
+        {recoveredPages.length ? <section className="rounded-xl border border-blue-200 bg-white p-4">
+          <p>以下页面已上传，请确认它们属于哪位学生。</p>
+          <select aria-label="恢复页面所属学生" value={recoveryTarget} onChange={e=>setRecoveryTarget(e.target.value)}>
+            <option value="">请选择学生</option>
+            {students.map((s,i)=><option key={s.id} value={s.id}>{displayName(s,i)}</option>)}
+          </select>
+          <div className="grid gap-3 sm:grid-cols-3">{recoveredPages.map(page=><div key={page.id}><EssayImagePreview page={page}/><button type="button" disabled={!recoveryTarget || submitting} onClick={()=>{
+            const target=studentsRef.current.find(s=>s.id===recoveryTarget)
+            if(!target||target.pages.length>=maxPagesPerStudent){setUploadError('每位学生最多上传 10 页作文。');return}
+            setStudents(current=>current.map(s=>s.id===target.id?{...s,pages:[...s.pages,{...page,pageNumber:s.pages.length+1}]}:s));setRecoveredPages(current=>current.filter(p=>p.id!==page.id))
+          }}>加入所选学生</button></div>)}</div>
+        </section>:null}
         <div className="grid gap-4 xl:grid-cols-2">
           {students.map((student, studentIndex) => {
             const resolvedName = displayName(student, studentIndex)
@@ -374,7 +400,7 @@ export function UploadPage() {
           </button>
           <button
             type="button"
-            onClick={enqueueStudents}
+            onClick={()=>void enqueueStudents()}
             disabled={submitting || processingPdf || !hasPages}
             className="rounded-lg bg-blue-700 px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-slate-300"
           >

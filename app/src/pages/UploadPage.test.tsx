@@ -53,7 +53,7 @@ function FailedTaskRedirect() {
   const [taskId, setTaskId] = useState('')
 
   useEffect(() => {
-    setTaskId(createTask({
+    void createTask({
       taskName: 'Fallback task',
       fullScore: 15,
       materialProcessingStatus: 'failed',
@@ -75,7 +75,7 @@ function FailedTaskRedirect() {
         reviewTriggers: [],
         status: 'confirmed',
       },
-    }))
+    }).then(setTaskId)
   }, [createTask])
 
   return taskId ? <Navigate to={`/tasks/${taskId}/upload`} replace /> : null

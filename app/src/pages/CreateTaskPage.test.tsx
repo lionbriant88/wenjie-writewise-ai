@@ -9,7 +9,7 @@ import type { GeneratedTaskRubric, RubricClientResponse } from '../services/task
 import { CreateTaskPage } from './CreateTaskPage'
 
 const mocks = vi.hoisted(() => ({
-  createTask: vi.fn(() => 'created-task'),
+  createTask: vi.fn(async () => 'created-task'),
   navigate: vi.fn(),
   generate: vi.fn(),
   analyze: vi.fn(),
@@ -738,4 +738,10 @@ describe('CreateTaskPage submission-time material context', () => {
     expect(mocks.generate).not.toHaveBeenCalled()
     expect(mocks.analyze).not.toHaveBeenCalled()
   })
+})
+
+it('keeps the form and does not navigate when cloud persistence fails',async()=>{
+ const user=userEvent.setup();mocks.createTask.mockRejectedValueOnce(new Error('云端保存失败'))
+ renderCreateTaskPage();await user.type(screen.getByLabelText('写作要求'),'Write a note.');await user.click(screen.getByRole('button',{name:'创建任务并上传作文'}))
+ expect(await screen.findByText('云端保存失败')).toBeVisible();expect(mocks.navigate).not.toHaveBeenCalled();expect(screen.getByLabelText('写作要求')).toHaveValue('Write a note.')
 })

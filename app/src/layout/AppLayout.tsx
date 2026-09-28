@@ -1,9 +1,10 @@
 import { ArrowLeft, Menu, PanelLeftClose, Sparkles } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useState } from 'react'
+import { useState, useContext } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { TaskStatusBadge } from '../components/TaskStatusBadge'
 import type { Task } from '../types'
+import { AuthContext } from '../auth/authContext'
 import { WorkflowNav } from '../components/WorkflowNav'
 import { getWorkflowSteps, type WorkflowStepId } from '../utils/workflow'
 
@@ -17,6 +18,7 @@ interface AppLayoutProps {
 }
 
 export function AppLayout({ children, task, title, description, currentStep, focusedReview = false }: AppLayoutProps) {
+  const auth=useContext(AuthContext)
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(!focusedReview)
   const { pathname } = useLocation()
   const derivedCurrentStep: WorkflowStepId = pathname.includes('/upload')
@@ -24,7 +26,7 @@ export function AppLayout({ children, task, title, description, currentStep, foc
     : pathname.includes('/class-review')
       ? 'class-review'
       : 'progress'
-  const workflowSteps = task ? getWorkflowSteps(task.id, currentStep ?? derivedCurrentStep) : []
+  const workflowSteps = task ? getWorkflowSteps(task.id, currentStep ?? derivedCurrentStep).filter(step=>!auth||step.id!=='class-review') : []
   const showSidebar = !focusedReview || isSidebarExpanded
 
   return (
@@ -86,6 +88,7 @@ export function AppLayout({ children, task, title, description, currentStep, foc
         <main className="min-w-0 flex-1">
           <header className="border-b border-slate-200 bg-white px-5 py-5 lg:px-8">
             <div className="mx-auto max-w-7xl">
+              {auth?.user ? <div className="mb-3 flex justify-end gap-3 text-sm"><span>{auth.user.displayName}</span><button onClick={()=>void auth.logout()} className="text-blue-700">退出登录</button></div>:null}
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
                   <p className="text-sm font-medium text-blue-700">

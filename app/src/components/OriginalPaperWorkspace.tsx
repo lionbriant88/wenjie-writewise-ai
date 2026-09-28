@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { ArrowLeft, ChevronLeft, ChevronRight, MessageSquareText, RotateCw, X, ZoomIn, ZoomOut } from 'lucide-react'
 import type { Essay, EssayPage } from '../types'
 import type { ReviewIssueCardItem } from '../utils/reviewIssueItems'
+import { PrivateImage } from '../pilot/PrivateImage'
 
 type EssayPageWithPossibleImages = EssayPage & {
   imageUrl?: string
@@ -406,13 +407,18 @@ export function OriginalPaperWorkspace({
             className={`h-[62dvh] min-h-[420px] max-h-[680px] overflow-auto bg-slate-200/70 p-4 xl:h-auto xl:min-h-0 xl:max-h-none xl:flex-1 ${canPanImage ? 'touch-none cursor-grab select-none active:cursor-grabbing' : ''}`}
           >
             <div data-testid="paper-image-plane" className={`flex min-h-full min-w-full shrink-0 items-start ${zoomPercent <= 100 && rotation === 0 ? 'justify-center' : 'justify-start'}`}>
-              {currentImageUrl && !currentImageFailed ? (
+              {(currentPage?.uploadId || currentImageUrl) && !currentImageFailed ? (
                 <div
                   data-testid="paper-image-carrier"
                   className="relative shrink-0"
                   style={{ width: `${imageCarrierWidthPercent}%`, aspectRatio: String(imageCarrierAspectRatio) }}
                 >
-                  <img
+                  {currentPage.uploadId ? <PrivateImage key={currentPage.uploadId} uploadId={currentPage.uploadId}
+                    alt={`${essay.essayNumber} 原卷第 ${currentPageNumber} 页`} draggable={false}
+                    onLoad={(event)=>rememberImageAspectRatio(currentPage.id,event.currentTarget)}
+                    className="absolute left-0 top-0 h-auto max-w-none rounded-sm bg-white object-contain shadow-lg"
+                    style={{width:`${imageWidthPercent}%`,transform:getImageRotationTransform(rotation),transformOrigin:'top left'}}/>
+                  : <img
                     src={currentImageUrl}
                     alt={`${essay.essayNumber} 原卷第 ${currentPageNumber} 页`}
                     draggable={false}
@@ -421,7 +427,7 @@ export function OriginalPaperWorkspace({
                     onError={() => markImageFailed(currentPage.id)}
                     className="absolute left-0 top-0 h-auto max-w-none rounded-sm bg-white object-contain shadow-[0_12px_32px_rgba(15,23,42,0.16)] transition-transform"
                     style={{ width: `${imageWidthPercent}%`, transform: getImageRotationTransform(rotation), transformOrigin: 'top left' }}
-                  />
+                  />}
                 </div>
               ) : (
                 <div className="flex min-h-[420px] w-full max-w-2xl flex-col items-center justify-center rounded-lg border border-slate-300 bg-white p-8 text-center" style={{ background: currentPage?.accent ? `linear-gradient(135deg, ${currentPage.accent}18, #ffffff)` : undefined }}>

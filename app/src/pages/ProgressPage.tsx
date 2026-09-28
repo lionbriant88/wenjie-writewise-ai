@@ -160,6 +160,7 @@ function EssayAction({
 export function ProgressPage() {
   const { taskId = '' } = useParams()
   const {
+    pilot,
     tasks,
     essays,
     taskGradingQueues,
@@ -262,7 +263,7 @@ export function ProgressPage() {
                   查看异常队列
                 </Link>
               ) : null}
-              {terminalForOverview ? (
+              {terminalForOverview && !pilot ? (
                 <Link to={`/tasks/${task.id}/class-review`} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700">
                   进入班级总览 <ArrowRight className="h-4 w-4" />
                 </Link>

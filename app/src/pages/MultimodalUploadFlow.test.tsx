@@ -27,7 +27,8 @@ function MaterialTaskSetup() {
   useEffect(() => {
     if (didCreate.current) return
     didCreate.current = true
-    const taskId = createTask({
+    void (async()=>{
+    const taskId = await createTask({
       taskName: 'Material task',
       fullScore: 15,
       materialContext: {
@@ -50,6 +51,7 @@ function MaterialTaskSetup() {
       },
     })
     navigate(`/tasks/${taskId}/upload`)
+    })()
   }, [createTask, navigate])
 
   return null

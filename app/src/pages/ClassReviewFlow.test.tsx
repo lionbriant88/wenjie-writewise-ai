@@ -48,7 +48,8 @@ function FlowSetup() {
   useEffect(() => {
     if (initialized.current) return
     initialized.current = true
-    const taskId = state.createTask({
+    void (async()=>{
+    const taskId = await state.createTask({
       taskName: FLOW_TASK_NAME,
       className: '高一测试班',
       essayType: '英语应用文',
@@ -113,6 +114,7 @@ function FlowSetup() {
       })),
     })
     navigate(`/tasks/${taskId}/progress`)
+    })()
   }, [navigate, state])
 
   return <p>正在初始化班级纵向测试任务</p>

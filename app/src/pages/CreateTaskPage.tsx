@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { TaskMaterialOrganizer } from '../components/TaskMaterialOrganizer'
 import { TaskRubricEditor } from '../components/TaskRubricEditor'
 import { useAppState } from '../context/useAppState'
@@ -110,15 +110,19 @@ function toMaterialContext(rubric: GeneratedTaskRubric): TaskMaterialContext {
 
 export function CreateTaskPage() {
   const navigate = useNavigate()
-  const { createTask } = useAppState()
+  const { createTask, pilot } = useAppState()
+  const {taskId: existingDraftId} = useParams()
+  const initialDraft = pilot?.tasks.find(t=>t.id===existingDraftId)?.draft
+  const editorKey = useRef(existingDraftId ?? crypto.randomUUID()).current
+  const [draftSave, setDraftSave] = useState('')
   const materials = useTaskMaterials()
   const rubricClient = useMemo(() => createConfiguredRubricClient(), [])
   const materialContextClient = useMemo(() => createConfiguredMaterialContextClient(), [])
-  const [taskName, setTaskName] = useState(DEFAULT_TASK_NAME)
-  const [fullScore, setFullScore] = useState(15)
-  const [writingRequirement, setWritingRequirement] = useState('')
-  const [dimensions, setDimensions] = useState<RubricDimension[]>(createDefaultRubricDimensions)
-  const [rubricSource, setRubricSource] = useState<'teacher' | 'ai'>('teacher')
+  const [taskName, setTaskName] = useState(initialDraft?.taskName ?? DEFAULT_TASK_NAME)
+  const [fullScore, setFullScore] = useState(initialDraft?.fullScore ?? 15)
+  const [writingRequirement, setWritingRequirement] = useState(initialDraft?.writingRequirement ?? '')
+  const [dimensions, setDimensions] = useState<RubricDimension[]>(initialDraft?.dimensions ?? createDefaultRubricDimensions)
+  const [rubricSource, setRubricSource] = useState<'teacher' | 'ai'>(initialDraft?.source ?? 'teacher')
   const [aiState, setAiState] = useState<AiAssistState>({ status: 'idle' })
   const [materialContextState, setMaterialContextState] = useState<MaterialContextState>({ status: 'none' })
   const [materialMutationVersion, setMaterialMutationVersion] = useState(0)
@@ -143,6 +147,15 @@ export function CreateTaskPage() {
   const currentRequestSnapshot = requestSnapshot(currentMaterialSignature, fullScore, writingRequirement)
   const latestRequestSnapshotRef = useRef(currentRequestSnapshot)
   latestRequestSnapshotRef.current = currentRequestSnapshot
+
+  const draftJson = JSON.stringify({taskName,fullScore:Number.isFinite(fullScore)?fullScore:null,writingRequirement,dimensions:dimensions.map(d=>({...d,sourceEvidence:d.sourceEvidence??[]})),source:rubricSource,materialContext:materialContextState.status==='ready'?materialContextState.value:initialDraft?.materialContext??null,materialProcessingStatus:materialContextState.status==='ready'?'ready':initialDraft?.materialProcessingStatus??'none',materialRefs:pilot?.getDraft(editorKey)?.draft.materialRefs??initialDraft?.materialRefs??[]})
+  useEffect(()=>{
+    if(!pilot || submitting)return
+    let active=true
+    setDraftSave('有未保存的修改')
+    const timer=setTimeout(()=>{setDraftSave('正在保存草稿…');void pilot.saveDraft(editorKey,JSON.parse(draftJson),existingDraftId).then(()=>{if(active)setDraftSave('草稿已保存')}).catch(()=>{if(active)setDraftSave('草稿未保存，请检查网络后重试')})},600)
+    return()=>{active=false;clearTimeout(timer)}
+  },[pilot,editorKey,existingDraftId,draftJson,submitting])
 
   const rubricValidity = validateRubricForm({ fullScore, writingRequirement, dimensions })
   const canCreate = rubricValidity.valid && !submitting
@@ -355,8 +368,16 @@ export function CreateTaskPage() {
       return
     }
 
-    const taskId = createTask(built.value)
-    navigate(`/tasks/${taskId}/upload`)
+    try {
+      const taskId = pilot ? await createTask(built.value, editorKey) : await createTask(built.value)
+      if (mountedRef.current) navigate(`/tasks/${taskId}/upload`)
+    } catch (error) {
+      if (mountedRef.current) {
+        setSubmitWarning(error instanceof Error ? error.message : '任务保存失败，请重试。')
+        submittingRef.current = false
+        setSubmitting(false)
+      }
+    }
   }
 
   return (
@@ -364,6 +385,7 @@ export function CreateTaskPage() {
       title="创建批改任务"
       description="填写一份当前有效的评分标准后即可创建任务；原题材料与 AI 辅助均为选填。"
     >
+      {draftSave ? <p role="status" className="mb-3 text-sm text-slate-600">{draftSave}</p> : null}
       <form className="space-y-5" onSubmit={(event) => void submit(event)}>
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
           <h2 className="text-lg font-semibold text-slate-950">基本信息</h2>

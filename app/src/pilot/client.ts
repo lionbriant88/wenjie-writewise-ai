@@ -1,0 +1,252 @@
+import type {
+  Command,
+  TaskDraftInput,
+  TaskDto,
+  EssayDto,
+  UploadInput,
+  UploadTicket,
+  UploadDto,
+  Page,
+  ListQuery,
+  JobDto,
+  TeacherReviewInput,
+  PilotCapabilities,
+} from '../../../shared/pilotContracts'
+export class PilotApiError extends Error {
+  readonly status: number
+  readonly code: string
+  constructor(status: number, code: string, message: string) {
+    super(message)
+    this.status = status
+    this.code = code
+  }
+}
+export function createPilotClient({
+  getCsrfToken,
+  onSessionExpired,
+  fetchImpl = fetch,
+}: {
+  getCsrfToken: () => string | null
+  onSessionExpired: () => void
+  fetchImpl?: typeof fetch
+}) {
+  async function request<T>(
+    path: string,
+    method: string,
+    body: unknown,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    signal?.throwIfAborted()
+    const response = await fetchImpl('/api/pilot' + path, {
+      method,
+      credentials: 'same-origin',
+      cache: 'no-store',
+      signal,
+      headers: {
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        ...(method === 'GET' ? {} : { 'X-CSRF-Token': getCsrfToken() ?? '' }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    })
+    signal?.throwIfAborted()
+    const value = await response.json().catch(() => null)
+    signal?.throwIfAborted()
+    if (!response.ok) {
+      if (response.status === 401) onSessionExpired()
+      throw new PilotApiError(
+        response.status,
+        value?.error?.code ?? 'service_unavailable',
+        value?.error?.message ?? '暂时无法保存，请重试。',
+      )
+    }
+    if (value === null)
+      throw new PilotApiError(
+        503,
+        'invalid_response',
+        '服务响应无法读取，请重试。',
+      )
+    return value as T
+  }
+  const routeId = (id: string) => encodeURIComponent(id)
+  const query = (q: ListQuery) =>
+    '?' +
+    new URLSearchParams({
+      ...(q.cursor ? { cursor: q.cursor } : {}),
+      limit: String(q.limit ?? 50),
+    })
+  return {
+    capabilities: (signal?: AbortSignal) =>
+      request<PilotCapabilities>('/capabilities', 'GET', undefined, signal),
+    listTasks: (q: ListQuery = {}, signal?: AbortSignal) =>
+      request<Page<TaskDto>>('/tasks' + query(q), 'GET', undefined, signal),
+    getTask: (id: string, signal?: AbortSignal) =>
+      request<TaskDto>('/tasks/' + routeId(id), 'GET', undefined, signal),
+    createDraft: (command: Command<TaskDraftInput>, signal?: AbortSignal) =>
+      request<TaskDto>('/tasks', 'POST', command, signal),
+    saveDraft: (
+      id: string,
+      command: Command<TaskDraftInput>,
+      signal?: AbortSignal,
+    ) => request<TaskDto>('/tasks/' + routeId(id), 'PATCH', command, signal),
+    confirmTask: (
+      id: string,
+      command: Command<Record<string, never>>,
+      signal?: AbortSignal,
+    ) =>
+      request<TaskDto>(
+        `/tasks/${routeId(id)}/confirm`,
+        'POST',
+        command,
+        signal,
+      ),
+    deleteTask: (
+      id: string,
+      command: Command<Record<string, never>>,
+      signal?: AbortSignal,
+    ) =>
+      request<{ deleted: true }>(
+        `/tasks/${routeId(id)}`,
+        'DELETE',
+        command,
+        signal,
+      ),
+    reserveUpload: (
+      id: string,
+      command: Command<UploadInput>,
+      signal?: AbortSignal,
+    ) =>
+      request<UploadTicket>(
+        `/tasks/${routeId(id)}/uploads`,
+        'POST',
+        command,
+        signal,
+      ),
+    listUploads: (id: string, q: ListQuery = {}, signal?: AbortSignal) =>
+      request<Page<UploadDto>>(
+        `/tasks/${routeId(id)}/uploads` + query(q),
+        'GET',
+        undefined,
+        signal,
+      ),
+    completeUpload: (
+      id: string,
+      command: Command<Record<string, never>>,
+      signal?: AbortSignal,
+    ) =>
+      request<UploadDto>(
+        `/uploads/${routeId(id)}/complete`,
+        'POST',
+        command,
+        signal,
+      ),
+    readUrl: (id: string, signal?: AbortSignal) =>
+      request<{ url: string; expiresAt: string }>(
+        `/uploads/${routeId(id)}/read-url`,
+        'GET',
+        undefined,
+        signal,
+      ),
+    async putUpload(url: string, file: File, signal?: AbortSignal) {
+      const parsed = new URL(url)
+      if (
+        parsed.protocol !== 'https:' ||
+        !parsed.hostname.endsWith('.supabase.co') ||
+        !parsed.pathname.startsWith('/storage/v1/object/upload/sign/')
+      )
+        throw new Error('上传地址无效。')
+      signal?.throwIfAborted()
+      const res = await fetchImpl(url, {
+        method: 'PUT',
+        body: file,
+        headers: { 'Content-Type': file.type, 'x-upsert': 'false' },
+        credentials: 'omit',
+        redirect: 'error',
+        signal,
+      })
+      signal?.throwIfAborted()
+      // An existing immutable object can mean the first upload response was lost. Completion verifies actual bytes.
+      if (!res.ok && res.status !== 409)
+        throw new Error('图片上传失败，请重试。')
+    },
+    attachEssays: (
+      id: string,
+      command: Command<{
+        groups: { studentName: string; uploadIds: string[] }[]
+      }>,
+      signal?: AbortSignal,
+    ) =>
+      request<Page<EssayDto>>(
+        `/tasks/${routeId(id)}/essays`,
+        'POST',
+        command,
+        signal,
+      ),
+    listEssays: (id: string, q: ListQuery = {}, signal?: AbortSignal) =>
+      request<Page<EssayDto>>(
+        `/tasks/${routeId(id)}/essays` + query(q),
+        'GET',
+        undefined,
+        signal,
+      ),
+    getEssay: (id: string, signal?: AbortSignal) =>
+      request<EssayDto>(`/essays/${routeId(id)}`, 'GET', undefined, signal),
+    saveTranscript: (
+      id: string,
+      command: Command<{ text: string }>,
+      signal?: AbortSignal,
+    ) =>
+      request<EssayDto>(
+        `/essays/${routeId(id)}/transcript`,
+        'PATCH',
+        command,
+        signal,
+      ),
+    saveReview: (
+      id: string,
+      command: Command<TeacherReviewInput>,
+      signal?: AbortSignal,
+    ) =>
+      request<EssayDto>(
+        `/essays/${routeId(id)}/review`,
+        'PUT',
+        command,
+        signal,
+      ),
+    markManual: (
+      id: string,
+      command: Command<{ manualReviewRequired: true }>,
+      signal?: AbortSignal,
+    ) =>
+      request<EssayDto>(
+        `/essays/${routeId(id)}/manual`,
+        'PUT',
+        command,
+        signal,
+      ),
+    enqueueTask: (
+      id: string,
+      command: Command<Record<string, never>>,
+      signal?: AbortSignal,
+    ) =>
+      request<{ accepted: number }>(
+        `/tasks/${routeId(id)}/grade`,
+        'POST',
+        command,
+        signal,
+      ),
+    enqueueMaterial: (
+      id: string,
+      command: Command<{ kind: 'rubric' | 'material_context' }>,
+      signal?: AbortSignal,
+    ) =>
+      request<JobDto>(`/tasks/${routeId(id)}/assist`, 'POST', command, signal),
+    getJob: (id: string, signal?: AbortSignal) =>
+      request<JobDto>(`/jobs/${routeId(id)}`, 'GET', undefined, signal),
+    retryKnown: (
+      id: string,
+      command: Command<Record<string, never>>,
+      signal?: AbortSignal,
+    ) => request<JobDto>(`/jobs/${routeId(id)}/retry`, 'POST', command, signal),
+  }
+}
+export type PilotClient = ReturnType<typeof createPilotClient>

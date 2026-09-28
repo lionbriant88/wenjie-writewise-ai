@@ -4,9 +4,10 @@ import { useAuth } from './useAuth'
 import { AccountReadyPage } from './AccountReadyPage'
 import { LoginPage } from './LoginPage'
 import './account.css'
+import { TeacherApp } from '../pilot/TeacherApp'
 
 function AccountGate() {
-  const { status, retry, retryLogout } = useAuth()
+  const { status, user, retry, retryLogout } = useAuth()
   if (status === 'checking' || status === 'logout-pending') {
     return <main className="auth-shell"><div className="auth-loading" role="status"><span />{status === 'logout-pending' ? '正在安全退出…' : '正在检查登录状态…'}</div></main>
   }
@@ -34,7 +35,7 @@ function AccountGate() {
       </main>
     )
   }
-  return status === 'authenticated' ? <AccountReadyPage /> : <LoginPage />
+  return status === 'authenticated' ? (user?.role === 'teacher' ? <TeacherApp key={user.id} /> : <AccountReadyPage />) : <LoginPage />
 }
 
 export function AccountApp() {

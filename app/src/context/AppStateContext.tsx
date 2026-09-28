@@ -727,7 +727,7 @@ export function AppStateProvider({
     }
   }, [findCurrentClassReviewResult])
 
-  const createTask = useCallback((input: CreateTaskInput) => {
+  const createTask = useCallback(async (input: CreateTaskInput) => {
     const id = `task-${Date.now()}`
     const timestamp = new Date().toISOString()
     const nextTask: Task = {
@@ -807,7 +807,7 @@ export function AppStateProvider({
     })
   }, [])
 
-  const enqueueImageEssays = useCallback(({ submissionId, taskId, className, essayGroups }: EnqueueImageEssaysInput) => {
+  const enqueueImageEssays = useCallback(async ({ submissionId, taskId, className, essayGroups }: EnqueueImageEssaysInput) => {
     const timestamp = new Date().toISOString()
     if (!submissionId.trim() || imageSubmissionIdsRef.current.has(submissionId) || !className.trim() || !tasksRef.current.some((task) => task.id === taskId)) return
     imageSubmissionIdsRef.current.add(submissionId)
@@ -832,7 +832,7 @@ export function AppStateProvider({
     })
   }, [])
 
-  const updateEssayOcrText = useCallback((essayId: string, text: string, confirmedAt?: string) => {
+  const updateEssayOcrText = useCallback(async (essayId: string, text: string, confirmedAt?: string) => {
     const timestamp = confirmedAt ?? new Date().toISOString()
     const target = essaysRef.current.find((essay) => essay.id === essayId)
     if (!target || target.ocrText === text) return
@@ -872,7 +872,7 @@ export function AppStateProvider({
     })
   }, [syncClassReviewSource])
 
-  const markEssayManual = useCallback((essayId: string) => {
+  const markEssayManual = useCallback(async (essayId: string) => {
     const timestamp = new Date().toISOString()
     commitEssayTransition(markEssayManualTransition(essaysRef.current, essayId, timestamp), timestamp)
   }, [commitEssayTransition])
@@ -1050,7 +1050,7 @@ export function AppStateProvider({
     return record
   }, [commitEssayTransition, syncClassReviewSource])
 
-  const startTaskGrading = useCallback((taskId: string) => {
+  const startTaskGrading = useCallback(async (taskId: string) => {
     const task = tasksRef.current.find((item) => item.id === taskId)
     if (!task) return
     const jobs = selectActionableTaskEssays(essaysRef.current, taskId)
@@ -1059,7 +1059,7 @@ export function AppStateProvider({
     if (jobs.length > 0) gradingSchedulerRef.current!.startTask(taskId, jobs)
   }, [getOrCreateGradingJob])
 
-  const retryTaskEssay = useCallback((essayId: string) => {
+  const retryTaskEssay = useCallback(async (essayId: string) => {
     const essay = essaysRef.current.find((item) => item.id === essayId)
     const task = essay ? tasksRef.current.find((item) => item.id === essay.taskId) : undefined
     if (!essay || !task) return
@@ -1076,7 +1076,7 @@ export function AppStateProvider({
     gradingSchedulerRef.current!.retryEssay(task.id, essayId)
   }, [getOrCreateGradingJob])
 
-  const checkUnknownTaskEssay = useCallback((essayId: string) => {
+  const checkUnknownTaskEssay = useCallback(async (essayId: string) => {
     const essay = essaysRef.current.find((item) => item.id === essayId)
     const task = essay ? tasksRef.current.find((item) => item.id === essay.taskId) : undefined
     if (!essay || !task) return
@@ -1089,7 +1089,7 @@ export function AppStateProvider({
     gradingSchedulerRef.current!.checkUnknownEssay(task.id, essayId)
   }, [getOrCreateGradingJob])
 
-  const resumeTaskGrading = useCallback((taskId: string) => {
+  const resumeTaskGrading = useCallback(async (taskId: string) => {
     gradingSchedulerRef.current!.resumeTask(taskId)
   }, [])
 
@@ -1110,12 +1110,12 @@ export function AppStateProvider({
     const record = essay && task ? getOrCreateGradingJob(task, essay) : undefined
     return record?.currentRun?.then(() => undefined) ?? Promise.resolve()
   }, [getOrCreateGradingJob, retryTaskEssay])
-  const confirmGradingResult = useCallback((essayId: string) => {
+  const confirmGradingResult = useCallback(async (essayId: string) => {
     const timestamp = new Date().toISOString()
     commitEssayTransition(confirmGradingTransition(essaysRef.current, essayId, timestamp), timestamp)
   }, [commitEssayTransition])
 
-  const updateGradingResult = useCallback((essayId: string, patch: Partial<GradingResult>) => {
+  const updateGradingResult = useCallback(async (essayId: string, patch: Partial<GradingResult>) => {
     const timestamp = new Date().toISOString()
     let changedTaskId: string | null = null
     const nextResults = gradingResultsRef.current.map((result) => {

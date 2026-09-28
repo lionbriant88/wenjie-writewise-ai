@@ -1,9 +1,10 @@
 import type { EssayPage } from '../types'
+import { PrivateImage } from '../pilot/PrivateImage'
 
 export function EssayImagePreview({ page }: { page: EssayPage }) {
   return (
     <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-      {page.previewUrl ? (
+      {page.uploadId ? <PrivateImage uploadId={page.uploadId} alt={`${page.label} 预览`} className="aspect-[4/3] w-full bg-slate-100 object-cover"/> : page.previewUrl ? (
         <img
           src={page.previewUrl}
           alt={`${page.label} 预览`}

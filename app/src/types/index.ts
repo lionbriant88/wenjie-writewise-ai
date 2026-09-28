@@ -81,6 +81,8 @@ export interface TaskRubricDraft {
 }
 
 export interface EssayPage {
+  /** Private cloud object identity; never a public bucket path. */
+  uploadId?: string
   id: string
   label: string
   pageNumber: number

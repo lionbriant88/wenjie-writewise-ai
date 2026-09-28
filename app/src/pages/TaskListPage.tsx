@@ -7,7 +7,7 @@ import { calculateProgress } from '../utils/progress'
 import { findEssaysByTask } from '../utils/taskLookup'
 
 export function TaskListPage() {
-  const { tasks, essays } = useAppState()
+  const { tasks, essays, pilot } = useAppState()
   const taskTotal = tasks.length
   const essayTotal = tasks.reduce((total, task) => total + task.totalEssayCount, 0)
   const reviewTotal = tasks.reduce((total, task) => total + task.exceptionEssayCount, 0)
@@ -16,12 +16,12 @@ export function TaskListPage() {
   return (
     <AppLayout
       title="今日工作台"
-      description="集中查看批改任务状态、复核压力和班级总览入口。"
+      description="集中查看批改任务状态和待复核作文。"
     >
       {tasks.length === 0 ? (
         <EmptyState
           title="还没有批改任务"
-          description="创建一个任务后，即可模拟批量上传作文并查看后续批改流程。"
+          description="创建任务后，即可上传学生作文并开始批改。"
           action={
             <Link
               to="/tasks/new"
@@ -70,7 +70,7 @@ export function TaskListPage() {
             <div className="divide-y divide-slate-100">
             {tasks.map((task) => {
               const taskEssays = findEssaysByTask(essays, task.id)
-              const progress = calculateProgress(taskEssays)
+              const progress = pilot ? {total:task.totalEssayCount,completed:task.completedEssayCount,exceptions:task.exceptionEssayCount,completionPercent:task.totalEssayCount?100*task.completedEssayCount/task.totalEssayCount:0} : calculateProgress(taskEssays)
 
               return (
                 <article key={task.id} className="px-4 py-4 transition hover:bg-slate-50">
@@ -97,7 +97,7 @@ export function TaskListPage() {
                       </div>
                     </div>
                     <Link
-                      to={`/tasks/${task.id}/progress`}
+                      to={pilot && task.status==='draft' ? `/tasks/${task.id}/edit` : `/tasks/${task.id}/progress`}
                       aria-label={`查看${task.taskName}的批改进度`}
                       className="tech-focus inline-flex items-center justify-center rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-800"
                     >

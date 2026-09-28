@@ -96,8 +96,8 @@ describe('AppStateContext material-based task creation', () => {
     const gradeImages = vi.fn<NonNullable<GradingClient['gradeImages']>>((_request) => deferred)
     render(<AppStateProvider gradingClient={{ gradeImages }}><StateProbe /></AppStateProvider>)
     let taskId = ''
-    act(() => {
-      taskId = latestState.createTask({
+    await act(async () => {
+      taskId = await latestState.createTask({
         taskName: 'Deferred image task', fullScore: 15,
         materialContext: { materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], reviewWarnings: [] },
         rubricDraft: { source: 'ai', status: 'confirmed', writingGoal: 'Write.', offTopicCriteria: [], excellentFeatures: [], reviewTriggers: [], dimensions: generatedDimensions },
@@ -110,8 +110,8 @@ describe('AppStateContext material-based task creation', () => {
     const essay = latestState.essays.find((item) => item.taskId === taskId)
     if (!essay) throw new Error('Queued essay missing')
     let grading!: Promise<void>
-    act(() => { grading = latestState.gradeEssay(essay.id) })
-    act(() => latestState.updateEssayOcrText(essay.id, 'Teacher edit during grading.'))
+    await act(async () => { grading = latestState.gradeEssay(essay.id) })
+    await act(async () => latestState.updateEssayOcrText(essay.id, 'Teacher edit during grading.'))
     expect(latestState.essays.find((item) => item.id === essay.id)).toMatchObject({
       ocrText: 'Teacher edit during grading.', sourceGeneration: 1,
       status: 'pending_grading', gradingRun: { status: 'idle' },
@@ -148,13 +148,13 @@ describe('AppStateContext material-based task creation', () => {
     }
     render(<AppStateProvider gradingClient={gradingClient}><StateProbe /></AppStateProvider>)
     let taskId = ''
-    act(() => { taskId = latestState.createTask({ taskName: 'Image task', fullScore: 15, materialContext: { materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], reviewWarnings: [] }, rubricDraft: { source: 'ai', status: 'confirmed', writingGoal: 'Write.', offTopicCriteria: [], excellentFeatures: [], reviewTriggers: [], dimensions: generatedDimensions } }) })
+    await act(async () => { taskId = await latestState.createTask({ taskName: 'Image task', fullScore: 15, materialContext: { materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], reviewWarnings: [] }, rubricDraft: { source: 'ai', status: 'confirmed', writingGoal: 'Write.', offTopicCriteria: [], excellentFeatures: [], reviewTriggers: [], dimensions: generatedDimensions } }) })
     const file = new File(['image'], 'handwriting.png', { type: 'image/png' })
     const submission = { submissionId: 'image-submission-1', taskId, className: '九年级 3 班', essayGroups: [{ pages: [{ id: 'page-1', label: file.name, pageNumber: 1, quality: 'clear' as const, accent: '#000', sourceFile: file }] }] }
-    act(() => latestState.enqueueImageEssays(submission))
-    act(() => latestState.enqueueImageEssays(submission))
+    await act(async () => latestState.enqueueImageEssays(submission))
+    await act(async () => latestState.enqueueImageEssays(submission))
     expect(latestState.essays.filter((item) => item.taskId === taskId)).toHaveLength(1)
-    act(() => latestState.enqueueImageEssays({ ...submission, submissionId: 'image-submission-2' }))
+    await act(async () => latestState.enqueueImageEssays({ ...submission, submissionId: 'image-submission-2' }))
     expect(latestState.essays.filter((item) => item.taskId === taskId)).toHaveLength(2)
     const queued = latestState.essays.filter((item) => item.taskId === taskId)
     expect(new Set(queued.map((item) => item.id)).size).toBe(2)
@@ -189,8 +189,8 @@ describe('AppStateContext material-based task creation', () => {
     }))
     render(<AppStateProvider gradingClient={{ gradeImages }}><StateProbe /></AppStateProvider>)
     let taskId = ''
-    act(() => {
-      taskId = latestState.createTask({
+    await act(async () => {
+      taskId = await latestState.createTask({
         taskName: 'Image task', fullScore: 15,
         materialContext: { materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], reviewWarnings: [] },
         rubricDraft: { source: 'ai', status: 'confirmed', writingGoal: 'Write.', offTopicCriteria: [], excellentFeatures: [], reviewTriggers: [], dimensions: generatedDimensions },
@@ -214,10 +214,10 @@ describe('AppStateContext material-based task creation', () => {
     await act(async () => { await latestState.gradeEssay(otherEssay.id) })
     expect(gradeImages).toHaveBeenCalledTimes(2)
     expect(latestState.gradingResults.some((item) => item.essayId === otherEssay.id)).toBe(true)
-    act(() => latestState.confirmGradingResult(essay.id))
+    await act(async () => latestState.confirmGradingResult(essay.id))
     expect(latestState.tasks.find((item) => item.id === taskId)?.completedEssayCount).toBe(1)
 
-    act(() => latestState.updateEssayOcrText(essay.id, 'Teacher corrected transcript.', '2026-08-02T00:01:00.000Z'))
+    await act(async () => latestState.updateEssayOcrText(essay.id, 'Teacher corrected transcript.', '2026-08-02T00:01:00.000Z'))
 
     expect(latestState.essays.find((item) => item.id === essay.id)).toMatchObject({
       ocrText: 'Teacher corrected transcript.', status: 'pending_grading', teacherReviewed: false, gradingRun: { status: 'idle' },
@@ -228,7 +228,7 @@ describe('AppStateContext material-based task creation', () => {
     expect(latestState.tasks.find((item) => item.id === taskId)?.completedEssayCount).toBe(0)
     expect(gradeImages).toHaveBeenCalledTimes(2)
 
-    act(() => latestState.updateEssayOcrText(essay.id, 'Teacher corrected transcript.', '2026-08-02T00:02:00.000Z'))
+    await act(async () => latestState.updateEssayOcrText(essay.id, 'Teacher corrected transcript.', '2026-08-02T00:02:00.000Z'))
     expect(gradeImages).toHaveBeenCalledTimes(2)
 
     await act(async () => { await latestState.gradeEssay(essay.id) })
@@ -238,11 +238,11 @@ describe('AppStateContext material-based task creation', () => {
       ocrText: 'Teacher corrected transcript.', transcriptSource: 'teacher_confirmed',
     })
     expect(latestState.essays.find((item) => item.id === essay.id)?.ocrText).not.toBe('Kimi transcript.')
-    act(() => latestState.confirmGradingResult(essay.id))
+    await act(async () => latestState.confirmGradingResult(essay.id))
     expect(latestState.tasks.find((item) => item.id === taskId)?.completedEssayCount).toBe(1)
   })
 
-  it('creates a unified rubric task with generic defaults and assigns its class later', () => {
+  it('creates a unified rubric task with generic defaults and assigns its class later', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-08-02T00:00:00.000Z'))
     render(<AppStateProvider><StateProbe /></AppStateProvider>)
@@ -256,8 +256,8 @@ describe('AppStateContext material-based task creation', () => {
       status: 'confirmed' as const,
     }
     let taskId = ''
-    act(() => {
-      taskId = latestState.createTask({
+    await act(async () => {
+      taskId = await latestState.createTask({
         taskName: 'AI generated task',
         fullScore: 15,
         materialProcessingStatus: 'ready',
@@ -282,14 +282,14 @@ describe('AppStateContext material-based task creation', () => {
     const createdTask = latestState.tasks.find((task) => task.id === taskId)
     const unchangedTask = latestState.tasks.find((task) => task.id === 'task-1')
     vi.setSystemTime(new Date('2026-08-02T00:01:00.000Z'))
-    act(() => latestState.assignTaskClass(taskId, '九年级 3 班'))
+    await act(async () => latestState.assignTaskClass(taskId, '九年级 3 班'))
     expect(latestState.tasks.find((task) => task.id === taskId)).toMatchObject({
       className: '九年级 3 班', updatedAt: '2026-08-02T00:01:00.000Z',
     })
     expect(latestState.tasks.find((task) => task.id === 'task-1')).toEqual(unchangedTask)
 
     const stateBeforeUnknownClass = structuredClone(latestState.tasks)
-    act(() => latestState.assignTaskClass('unknown-task', '不应写入'))
+    await act(async () => latestState.assignTaskClass('unknown-task', '不应写入'))
     expect(latestState.tasks).toEqual(stateBeforeUnknownClass)
     expect(latestState.tasks.find((task) => task.id === taskId)?.updatedAt).not.toBe(createdTask?.updatedAt)
     vi.useRealTimers()
@@ -297,11 +297,11 @@ describe('AppStateContext material-based task creation', () => {
 
   it.each(['none', 'ready', 'failed'] as const)(
     'persists %s material status without labeling a teacher-only task as material writing or Kimi-generated',
-    (materialProcessingStatus) => {
+    async (materialProcessingStatus) => {
       render(<AppStateProvider><StateProbe /></AppStateProvider>)
       let taskId = ''
-      act(() => {
-        taskId = latestState.createTask({
+      await act(async () => {
+        taskId = await latestState.createTask({
           taskName: 'Teacher-only task',
           fullScore: 15,
           materialProcessingStatus,
@@ -369,10 +369,10 @@ function resultForImages(request: MultimodalGradingRequestV2, provider: 'mock' |
   }
 }
 
-function createConfirmedEssay() {
+async function createConfirmedEssay() {
   let taskId = ''
-  act(() => {
-    taskId = latestState.createTask({
+  await act(async () => {
+    taskId = await latestState.createTask({
       taskName: 'Synthetic grading task',
       className: 'Synthetic class',
       essayType: 'letter',
@@ -395,7 +395,7 @@ function createConfirmedEssay() {
       generateClassReview: true,
     })
   })
-  act(() => {
+  await act(async () => {
     latestState.confirmMockOcrEssay({
       taskId,
       essayGroups: [{
@@ -423,10 +423,10 @@ function createConfirmedEssay() {
   return { taskId, essayId: created.id }
 }
 
-function createInvalidRequestEssay() {
+async function createInvalidRequestEssay() {
   let taskId = ''
-  act(() => {
-    taskId = latestState.createTask({
+  await act(async () => {
+    taskId = await latestState.createTask({
       taskName: 'Incomplete synthetic grading task',
       className: 'Synthetic class',
       essayType: 'letter',
@@ -465,10 +465,10 @@ function renderGradingState(gradingClient: GradingClient) {
   return render(<AppStateProvider gradingClient={gradingClient}><StateProbe /></AppStateProvider>)
 }
 
-function createQueuedImageEssays(count: number) {
+async function createQueuedImageEssays(count: number) {
   let taskId = ''
-  act(() => {
-    taskId = latestState.createTask({
+  await act(async () => {
+    taskId = await latestState.createTask({
       taskName: 'Bounded queue task', fullScore: 15,
       materialContext: { materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], reviewWarnings: [] },
       rubricDraft: {
@@ -515,8 +515,8 @@ describe('AppStateContext grading lifecycle', () => {
     renderGradingState(client)
 
     let materialTaskId = ''
-    act(() => {
-      materialTaskId = latestState.createTask({
+    await act(async () => {
+      materialTaskId = await latestState.createTask({
         taskName: 'Image-only task', fullScore: 15,
         materialContext: { materialSummary: 'Material.', writingRequirements: ['Write.'], constraints: [], reviewWarnings: [] },
         rubricDraft: { source: 'teacher', status: 'confirmed', writingGoal: 'Write.', offTopicCriteria: [], excellentFeatures: [], reviewTriggers: [], dimensions: [
@@ -533,7 +533,7 @@ describe('AppStateContext grading lifecycle', () => {
     if (!imageEssay) throw new Error('Image essay missing')
     await act(async () => { await latestState.gradeEssay(imageEssay.id) })
 
-    const legacy = createConfirmedEssay()
+    const legacy = await createConfirmedEssay()
     await act(async () => { await latestState.gradeEssay(legacy.essayId) })
     nowSpy.mockRestore()
 
@@ -555,7 +555,7 @@ describe('AppStateContext grading lifecycle', () => {
       },
     }
     renderGradingState(client)
-    const { essayId } = createConfirmedEssay()
+    const { essayId } = await createConfirmedEssay()
     await act(async () => { await latestState.gradeEssay(essayId) })
     expect(latestState.essays.find((essay) => essay.id === essayId)).toMatchObject({
       ocrText: 'Teacher-confirmed synthetic transcript.',
@@ -566,7 +566,7 @@ describe('AppStateContext grading lifecycle', () => {
   it('keeps a real AI result unreviewed until explicit confirmation', async () => {
     const client: GradingClient = { async gradeImages(request) { return resultForImages(request) } }
     renderGradingState(client)
-    const { taskId, essayId } = createConfirmedEssay()
+    const { taskId, essayId } = await createConfirmedEssay()
 
     await act(async () => { await latestState.gradeEssay(essayId) })
     expect(latestState.essays.find((essay) => essay.id === essayId)).toMatchObject({
@@ -575,7 +575,7 @@ describe('AppStateContext grading lifecycle', () => {
     expect(latestState.gradingResults.find((result) => result.essayId === essayId)?.source).toBe('remote')
     expect(latestState.tasks.find((task) => task.id === taskId)?.completedEssayCount).toBe(0)
 
-    act(() => latestState.confirmGradingResult(essayId))
+    await act(async () => latestState.confirmGradingResult(essayId))
     expect(latestState.essays.find((essay) => essay.id === essayId)).toMatchObject({
       status: 'completed', teacherReviewed: true,
     })
@@ -588,7 +588,7 @@ describe('AppStateContext grading lifecycle', () => {
       error: { code: 'provider_timeout' as const, message: 'Timed out.', retryable: true },
     }))
     renderGradingState({ gradeImages: grade })
-    const { essayId } = createConfirmedEssay()
+    const { essayId } = await createConfirmedEssay()
     await act(async () => { await latestState.gradeEssay(essayId) })
     expect(latestState.essays.find((essay) => essay.id === essayId)).toMatchObject({
       status: 'pending_grading', teacherReviewed: false,
@@ -610,10 +610,10 @@ describe('AppStateContext grading lifecycle', () => {
       })
     })
     renderGradingState({ gradeImages: grade })
-    const { essayId } = createConfirmedEssay()
+    const { essayId } = await createConfirmedEssay()
     let first!: Promise<void>
     let duplicate!: Promise<void>
-    act(() => {
+    await act(async () => {
       first = latestState.gradeEssay(essayId)
       duplicate = latestState.gradeEssay(essayId)
     })
@@ -622,7 +622,7 @@ describe('AppStateContext grading lifecycle', () => {
     resolveFirst(resultForImages(request))
     await act(async () => { await Promise.all([first, duplicate]) })
 
-    act(() => latestState.markEssayManual(essayId))
+    await act(async () => latestState.markEssayManual(essayId))
     expect(grade).toHaveBeenCalledTimes(1)
 
     const failingGrade = vi.fn(async (nextRequest: MultimodalGradingRequestV2) => ({
@@ -630,7 +630,7 @@ describe('AppStateContext grading lifecycle', () => {
       error: { code: 'provider_timeout' as const, message: 'Timed out.', retryable: true },
     }))
     const secondView = renderGradingState({ gradeImages: failingGrade })
-    const second = createConfirmedEssay()
+    const second = await createConfirmedEssay()
     await act(async () => { await latestState.gradeEssay(second.essayId) })
     await act(async () => { await latestState.retryGradeEssay(second.essayId) })
     expect(failingGrade).toHaveBeenCalledTimes(2)
@@ -645,14 +645,14 @@ describe('AppStateContext grading lifecycle', () => {
     renderGradingState({ gradeImages: grade })
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-08-02T01:00:00.000Z'))
-    const first = createConfirmedEssay()
+    const first = await createConfirmedEssay()
     vi.setSystemTime(new Date('2026-08-02T01:00:01.000Z'))
-    const second = createConfirmedEssay()
+    const second = await createConfirmedEssay()
     vi.useRealTimers()
     let firstRun!: Promise<void>
     let blockedRun!: Promise<void>
 
-    act(() => {
+    await act(async () => {
       firstRun = latestState.gradeEssay(first.essayId)
       blockedRun = latestState.gradeEssay(second.essayId)
     })
@@ -667,11 +667,11 @@ describe('AppStateContext grading lifecycle', () => {
   it('does not call the client for an invalid request and never falls back to local mock', async () => {
     const grade = vi.fn(async () => { throw new Error('gateway unavailable') })
     renderGradingState({ gradeImages: grade })
-    const invalidEssayId = createInvalidRequestEssay()
+    const invalidEssayId = await createInvalidRequestEssay()
     await act(async () => { await latestState.gradeEssay(invalidEssayId) })
     expect(grade).not.toHaveBeenCalled()
 
-    const { essayId } = createConfirmedEssay()
+    const { essayId } = await createConfirmedEssay()
     await act(async () => { await latestState.gradeEssay(essayId) })
     expect(grade).toHaveBeenCalledTimes(1)
     expect(latestState.gradingResults.find((result) => result.essayId === essayId)).toBeUndefined()
@@ -689,7 +689,7 @@ describe('AppStateContext grading lifecycle', () => {
         } as unknown as Awaited<ReturnType<GradingClient['gradeImages']>>
       },
     })
-    const { essayId } = createConfirmedEssay()
+    const { essayId } = await createConfirmedEssay()
 
     await act(async () => { await latestState.gradeEssay(essayId) })
 
@@ -702,12 +702,12 @@ describe('AppStateContext grading lifecycle', () => {
 
   it('editing does not confirm and confirmation is ignored outside grading_ready', async () => {
     renderGradingState({ async gradeImages(request) { return resultForImages(request) } })
-    const { essayId } = createConfirmedEssay()
-    act(() => latestState.confirmGradingResult(essayId))
+    const { essayId } = await createConfirmedEssay()
+    await act(async () => latestState.confirmGradingResult(essayId))
     expect(latestState.essays.find((essay) => essay.id === essayId)?.status).toBe('pending_grading')
 
     await act(async () => { await latestState.gradeEssay(essayId) })
-    act(() => latestState.updateGradingResult(essayId, { overallComment: 'Teacher edit.' }))
+    await act(async () => latestState.updateGradingResult(essayId, { overallComment: 'Teacher edit.' }))
     expect(latestState.essays.find((essay) => essay.id === essayId)).toMatchObject({
       status: 'grading_ready', teacherReviewed: false,
     })
@@ -718,10 +718,10 @@ describe('AppStateContext grading lifecycle', () => {
     const deferred = new Promise<Awaited<ReturnType<GradingClient['gradeImages']>>>((done) => { resolve = done })
     const grade = vi.fn((_request: MultimodalGradingRequestV2) => deferred)
     renderGradingState({ gradeImages: grade })
-    const { taskId, essayId } = createConfirmedEssay()
+    const { taskId, essayId } = await createConfirmedEssay()
     let pending!: Promise<void>
-    act(() => { pending = latestState.gradeEssay(essayId) })
-    act(() => latestState.markEssayManual(essayId))
+    await act(async () => { pending = latestState.gradeEssay(essayId) })
+    await act(async () => latestState.markEssayManual(essayId))
     const countsAfterManual = latestState.tasks.find((task) => task.id === taskId)?.completedEssayCount
     const request = grade.mock.calls[0][0]
     resolve(kind === 'success'
@@ -738,9 +738,9 @@ describe('AppStateContext grading lifecycle', () => {
     expect(latestState.tasks.find((task) => task.id === taskId)?.completedEssayCount).toBe(countsAfterManual)
   })
 
-  it('resets added in-memory grading data on provider remount', () => {
+  it('resets added in-memory grading data on provider remount', async () => {
     const view = renderGradingState({ async gradeImages(request) { return resultForImages(request) } })
-    const { taskId } = createConfirmedEssay()
+    const { taskId } = await createConfirmedEssay()
     expect(latestState.tasks.some((task) => task.id === taskId)).toBe(true)
     view.unmount()
     renderGradingState({ async gradeImages(request) { return resultForImages(request) } })
@@ -761,9 +761,9 @@ describe('AppStateContext bounded whole-task grading queue', () => {
         </AppStateProvider>
       </StrictMode>,
     )
-    const { taskId, essayIds } = createQueuedImageEssays(1)
+    const { taskId, essayIds } = await createQueuedImageEssays(1)
 
-    act(() => latestState.startTaskGrading(taskId))
+    await act(async () => latestState.startTaskGrading(taskId))
 
     await waitFor(() => expect(gradeImages).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(latestState.essays.find((essay) => essay.id === essayIds[0])?.status).toBe('grading_ready'))
@@ -788,11 +788,11 @@ describe('AppStateContext bounded whole-task grading queue', () => {
         <StateProbe />
       </AppStateProvider>,
     )
-    const { taskId, essayIds } = createQueuedImageEssays(3)
+    const { taskId, essayIds } = await createQueuedImageEssays(3)
 
-    act(() => latestState.startTaskGrading(taskId))
+    await act(async () => latestState.startTaskGrading(taskId))
     expect(gradeImages).toHaveBeenCalledTimes(1)
-    act(() => latestState.startTaskGrading(taskId))
+    await act(async () => latestState.startTaskGrading(taskId))
     expect(gradeImages).toHaveBeenCalledTimes(1)
 
     pending[0].resolve(resultForImages(gradeImages.mock.calls[0][0]))
@@ -827,8 +827,8 @@ describe('AppStateContext bounded whole-task grading queue', () => {
     const view = render(<AppStateProvider gradingClient={{ gradeImages }}><StateProbe /></AppStateProvider>)
 
     try {
-      const { taskId, essayIds } = createQueuedImageEssays(10)
-      act(() => latestState.startTaskGrading(taskId))
+      const { taskId, essayIds } = await createQueuedImageEssays(10)
+      await act(async () => latestState.startTaskGrading(taskId))
 
       await waitFor(() => expect(gradeImages).toHaveBeenCalledTimes(5))
       expect(latestState.taskGradingQueues[taskId]).toMatchObject({
@@ -880,15 +880,15 @@ describe('AppStateContext bounded whole-task grading queue', () => {
         <StateProbe />
       </AppStateProvider>,
     )
-    const { taskId, essayIds } = createQueuedImageEssays(2)
-    act(() => latestState.startTaskGrading(taskId))
+    const { taskId, essayIds } = await createQueuedImageEssays(2)
+    await act(async () => latestState.startTaskGrading(taskId))
 
     await waitFor(() => expect(gradeImages).toHaveBeenCalledTimes(2))
     expect(latestState.essays.find((essay) => essay.id === essayIds[0])?.status).toBe('pending_grading')
     expect(latestState.essays.find((essay) => essay.id === essayIds[1])?.status).toBe('grading_ready')
     const firstRequestId = requests.find((request) => request.essayId === essayIds[0])?.requestId
 
-    act(() => latestState.retryTaskEssay(essayIds[0]))
+    await act(async () => latestState.retryTaskEssay(essayIds[0]))
     await waitFor(() => expect(gradeImages).toHaveBeenCalledTimes(3))
     const retryIds = requests.filter((request) => request.essayId === essayIds[0]).map((request) => request.requestId)
     expect(retryIds).toEqual([firstRequestId, firstRequestId])
@@ -914,11 +914,11 @@ describe('AppStateContext bounded whole-task grading queue', () => {
         <StateProbe />
       </AppStateProvider>,
     )
-    const { taskId, essayIds } = createQueuedImageEssays(1)
-    act(() => latestState.startTaskGrading(taskId))
+    const { taskId, essayIds } = await createQueuedImageEssays(1)
+    await act(async () => latestState.startTaskGrading(taskId))
     await waitFor(() => expect(latestState.taskGradingQueues[taskId]?.items[essayIds[0]]?.phase).toBe('result_unknown'))
 
-    act(() => latestState.checkUnknownTaskEssay(essayIds[0]))
+    await act(async () => latestState.checkUnknownTaskEssay(essayIds[0]))
     await waitFor(() => expect(gradeImages).toHaveBeenCalledTimes(2))
     expect(requestIds[1]).toBe(requestIds[0])
     expect(latestState.essays.find((essay) => essay.id === essayIds[0])?.status).toBe('grading_ready')
@@ -942,15 +942,15 @@ describe('AppStateContext bounded whole-task grading queue', () => {
         <StateProbe />
       </AppStateProvider>,
     )
-    const { taskId, essayIds } = createQueuedImageEssays(3)
-    act(() => latestState.startTaskGrading(taskId))
+    const { taskId, essayIds } = await createQueuedImageEssays(3)
+    await act(async () => latestState.startTaskGrading(taskId))
     await waitFor(() => expect(latestState.taskGradingQueues[taskId]?.pauseReason).toBe('auth'))
     expect(gradeImages).toHaveBeenCalledTimes(1)
     const triggerRequest = requests[0]
 
     await act(async () => { await Promise.resolve() })
     expect(gradeImages).toHaveBeenCalledTimes(1)
-    act(() => latestState.resumeTaskGrading(taskId))
+    await act(async () => latestState.resumeTaskGrading(taskId))
     await waitFor(() => expect(gradeImages).toHaveBeenCalledTimes(4))
     const triggerAttempts = requests.filter((request) => request.essayId === triggerRequest.essayId)
     expect(triggerAttempts.map((request) => request.requestId)).toEqual([
@@ -980,19 +980,19 @@ describe('AppStateContext bounded whole-task grading queue', () => {
         <StateProbe />
       </AppStateProvider>,
     )
-    const { taskId, essayIds } = createQueuedImageEssays(1)
+    const { taskId, essayIds } = await createQueuedImageEssays(1)
     const essayId = essayIds[0]
-    act(() => latestState.startTaskGrading(taskId))
+    await act(async () => latestState.startTaskGrading(taskId))
     expect(calls).toHaveLength(1)
 
-    act(() => latestState.updateEssayOcrText(essayId, 'Teacher corrected exact text.', '2026-08-28T00:00:00.000Z'))
+    await act(async () => latestState.updateEssayOcrText(essayId, 'Teacher corrected exact text.', '2026-08-28T00:00:00.000Z'))
     expect(latestState.essays.find((essay) => essay.id === essayId)).toMatchObject({
       sourceGeneration: 1,
       ocrText: 'Teacher corrected exact text.',
       status: 'pending_grading',
       gradingRun: { status: 'idle' },
     })
-    act(() => latestState.retryTaskEssay(essayId))
+    await act(async () => latestState.retryTaskEssay(essayId))
 
     calls[0].response.resolve(resultForImages(calls[0].request))
     await waitFor(() => expect(calls).toHaveLength(2))
