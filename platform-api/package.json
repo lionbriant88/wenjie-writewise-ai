@@ -12,7 +12,8 @@
     "dev": "tsx src/index.ts",
     "accounts:prepare": "tsx scripts/accounts.ts prepare",
     "accounts:apply": "tsx scripts/accounts.ts apply",
-    "db:migrate": "tsx scripts/accounts.ts migrate"
+    "db:migrate": "tsx scripts/accounts.ts migrate",
+    "db:migrate:pilot": "tsx scripts/pilotMigrate.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.3.14",

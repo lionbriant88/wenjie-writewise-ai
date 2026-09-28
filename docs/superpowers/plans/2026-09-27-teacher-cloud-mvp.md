@@ -59,11 +59,11 @@
 
 **Interfaces:** `PilotTaskRepository(db:Database)` 提供 `list(ownerId,query):Promise<Page<TaskDto>>`、`get(ownerId,taskId):Promise<TaskDto>`、`createDraft(ownerId,command:Command<TaskDraftInput>):Promise<TaskDto>`、`saveDraft(ownerId,taskId,command):Promise<TaskDto>`、`confirm(ownerId,taskId,command):Promise<TaskDto>`。`runCommand<T>(tx,ownerId,operation,command,payloadHash,apply):Promise<T>` 原子记命令回执；重放必须先校验归属。
 
-- [ ] **1. 写失败测试。** `isolatesOwnersAndRejectsCompositeForeignKeys`：A 不能取得 B 草稿；复合关联错误触发约束。`replaysCommittedCommandAfterLostResponse`：相同命令只建一个任务，异 payload 409。`confirmsOnlyValidRubric`：40/40/15/5 通过、缺卷面/权重错误/空要求失败；材料失败但合法要求可通过。`doesNotBroadenAuthPrivileges`：密码仍不可写。
-- [ ] **2. 验证红灯。** `npm.cmd --prefix platform-api test -- src/pilot/validation.test.ts src/pilot/tasks.test.ts src/pilot/privileges.test.ts`，新接口缺失导致失败。
-- [ ] **3. 实施 schema 和接口。** 新建 `pilot_grading`：tasks、task_revisions、essays、essay_revisions、uploads、essay_pages、results、teacher_reviews、jobs、executions、outbox、provider_gate、command_receipts、cleanup_items、maintenance_jobs。教师实体含 owner_id，采用带 owner/版本的复合外键；gate 和 maintenance 为内部全站记录。数据库约束修订、页面顺序、逻辑作业身份和执行令牌。撤销 PUBLIC/anon/authenticated 权限，不暴露 Data API；运行角色仅加业务必需权限。确认生成固定 v2 task package，递增 rubricRevision；草稿保存不调用 AI。
-- [ ] **4. 验证绿灯和可重放迁移。** 重跑步骤 2、`npm.cmd --prefix platform-api run typecheck`。PGlite 两次迁移后结构一致，现有账号 fixture 不变；新增 `db:migrate:pilot` 明确使用管理连接，生产运行时不执行它。
-- [ ] **5. 提交。** 仅暂存本任务文件，提交 `feat: persist owned pilot tasks and revisions`。
+- [x] **1. 写失败测试。** `isolatesOwnersAndRejectsCompositeForeignKeys`：A 不能取得 B 草稿；复合关联错误触发约束。`replaysCommittedCommandAfterLostResponse`：相同命令只建一个任务，异 payload 409。`confirmsOnlyValidRubric`：40/40/15/5 通过、缺卷面/权重错误/空要求失败；材料失败但合法要求可通过。`doesNotBroadenAuthPrivileges`：密码仍不可写。
+- [x] **2. 验证红灯。** `npm.cmd --prefix platform-api test -- src/pilot/validation.test.ts src/pilot/tasks.test.ts src/pilot/privileges.test.ts`，新接口缺失导致失败。
+- [x] **3. 实施 schema 和接口。** 新建 `pilot_grading`：tasks、task_revisions、essays、essay_revisions、uploads、essay_pages、results、teacher_reviews、jobs、executions、outbox、provider_gate、command_receipts、cleanup_items、maintenance_jobs。教师实体含 owner_id，采用带 owner/版本的复合外键；gate 和 maintenance 为内部全站记录。数据库约束修订、页面顺序、逻辑作业身份和执行令牌。撤销 PUBLIC/anon/authenticated 权限，不暴露 Data API；运行角色仅加业务必需权限。确认生成固定 v2 task package，递增 rubricRevision；草稿保存不调用 AI。
+- [x] **4. 验证绿灯和可重放迁移。** 重跑步骤 2、`npm.cmd --prefix platform-api run typecheck`。PGlite 两次迁移后结构一致，现有账号 fixture 不变；新增 `db:migrate:pilot` 明确使用管理连接，生产运行时不执行它。
+- [x] **5. 提交。** 仅暂存本任务文件，提交 `feat: persist owned pilot tasks and revisions`。
 
 ### Task 2: 私有上传、恢复和原图校验
 
@@ -198,4 +198,4 @@
 - 五个 Review Focus 均有明确测试；材料理解/rubric 与作文共用 gate，raw Gateway 生产旁路关闭，未知调用无 TTL 解锁，删除保留必要墓碑。
 - 上述 DTO、commandId、revision、lease/fence 在任务间沿用同一合同；不使用浏览器 File 作为服务端持久类型。
 - 执行建议：**Native**，在当前任务由同一实施者逐项开发，最后独立整分支复核。任务接口关联紧密，逐项更换实施者会增加重复理解；仍可按用户选择改用逐任务独立代理和复核。
-- 状态：书面设计已确认；本实施计划待用户审阅和执行方式选择。当前未实施、未迁移、未部署，也未增加真实模型调用。
+- 状态：书面设计与 Native 执行方式已获用户确认；正在逐项实施。云端迁移、部署与公网验收另行记录。
