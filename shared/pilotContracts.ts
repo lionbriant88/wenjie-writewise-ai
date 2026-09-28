@@ -4,7 +4,7 @@ import type {
   TaskMaterialContextV1,
   GeneratedRubricV1,
 } from "../grading-gateway/src/multimodal/types.js";
-import type { AiGradingResultV1 } from "../grading-gateway/src/types.js";
+import type { MultimodalGradingResult } from "../grading-gateway/src/multimodal/normalizeMultimodalResult.js";
 export type Id = string;
 export type Revision = number;
 export interface Command<T> {
@@ -86,7 +86,7 @@ export interface ResultDto {
   resultRevision: number;
   sourceRevision: number;
   rubricRevision: number;
-  ai: AiGradingResultV1;
+  ai: MultimodalGradingResult;
   review: TeacherReviewInput | null;
   updatedAt: string;
 }

@@ -19,6 +19,7 @@ import { PilotError, invalid, notFound } from "./errors.js";
 import { payloadHash, runCommand } from "./commands.js";
 import { syncMaterialUploads } from "./materialUploads.js";
 type TaskRow = Record<string, unknown> & {
+  counts?: TaskDto["counts"];
   id: string;
   revision: number;
   rubric_revision: number;
@@ -36,11 +37,14 @@ export function projectTask(row: TaskRow): TaskDto {
     state: row.state,
     draft: row.draft,
     confirmedPackage: row.confirmed_package,
-    counts: { total: 0, completed: 0, exceptions: 0 },
+    counts: row.counts ?? { total: 0, completed: 0, exceptions: 0 },
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
   };
 }
+const taskCounts = `jsonb_build_object('total',(SELECT count(*) FROM pilot_grading.essays e WHERE e.owner_id=t.owner_id AND e.task_id=t.id),
+ 'completed',(SELECT count(*) FROM pilot_grading.essays e WHERE e.owner_id=t.owner_id AND e.task_id=t.id AND e.teacher_reviewed),
+ 'exceptions',(SELECT count(*) FROM pilot_grading.essays e WHERE e.owner_id=t.owner_id AND e.task_id=t.id AND NOT e.teacher_reviewed AND (e.manual_review_required OR EXISTS(SELECT 1 FROM pilot_grading.jobs j WHERE j.owner_id=e.owner_id AND j.essay_id=e.id AND j.source_revision=e.source_revision AND j.state IN ('failed','result_unknown','partial'))))) AS counts`;
 export async function ownedTask(
   tx: Queryable,
   ownerId: string,
@@ -49,7 +53,7 @@ export async function ownedTask(
 ): Promise<TaskRow> {
   const row = (
     await tx.query<TaskRow>(
-      `SELECT * FROM pilot_grading.tasks WHERE owner_id=$1 AND id=$2 AND deleted_at IS NULL${lock ? " FOR UPDATE" : ""}`,
+      `SELECT t.*,${taskCounts} FROM pilot_grading.tasks t WHERE owner_id=$1 AND id=$2 AND deleted_at IS NULL${lock ? " FOR UPDATE OF t" : ""}`,
       [id(ownerId), id(taskId)],
     )
   ).rows[0];
@@ -67,7 +71,7 @@ export class PilotTaskRepository {
     const { limit, cursor } = readListQuery(query);
     const rows = (
       await this.db.query<TaskRow>(
-        "SELECT * FROM pilot_grading.tasks WHERE owner_id=$1 AND deleted_at IS NULL AND ($2::uuid IS NULL OR id>$2) ORDER BY id LIMIT $3",
+        `SELECT t.*,${taskCounts} FROM pilot_grading.tasks t WHERE owner_id=$1 AND deleted_at IS NULL AND ($2::uuid IS NULL OR id>$2) ORDER BY id LIMIT $3`,
         [id(ownerId), cursor ?? null, limit + 1],
       )
     ).rows;

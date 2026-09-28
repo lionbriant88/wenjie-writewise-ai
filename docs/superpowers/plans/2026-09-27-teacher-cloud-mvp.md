@@ -97,13 +97,13 @@
 
 另有 `markManual(ownerId,essayId,command:Command<{manualReviewRequired:true}>):Promise<EssayDto>`，只改人工处理标记；`resumeKnownPause(db,expectedPauseRevision:number):Promise<void>` 仅由维护脚本调用，要求 gate 无活动/未知执行、暂停原因明确且配置合法，CAS 恢复；绝不提供未知占位强制解锁参数。
 
-- [ ] **1. 写失败测试。** 两个 repository 竞争相同 source/rubric 仅一个作业；两个不同阶段只能一个 claim；`lateResultDoesNotReplaceEditedTranscriptOrReview`；`successfulPersistenceSurvivesAckFailure`；`unknownLeaseNeverExpiresIntoRetry`；`onlyDirectEaccesConnectReleasesSlot`（Abort 优先）；维度分数越界/旧 expectedRevision 拒绝。
-- [ ] **2. 验证红灯。** `npm.cmd --prefix platform-api test -- src/pilot/essays.test.ts src/pilot/jobs.test.ts src/pilot/admission.test.ts`。
-- [ ] **3. 实施事务状态机。** enqueue 锁任务与当前版本，保存不可变输入快照、唯一逻辑身份和 outbox 同事务；客户端不用自报结果。claim 锁 singleton gate，产生单调 fence + 随机令牌。beginCall 必须持久标为调用可能发出后才连出；预检期间崩溃可在 fence 撤销后重新预检，旧 worker 的 beginCall 必须失败。beginCall 后失联只能 result_unknown，保留 gate；完整结果在同事务保存规范化结果、作业终态和释放 gate。迟到结果只能原 token/fence，旧版本可保存历史但不可成为当前结果。job 活跃或未知时，即使正文变更也不得给同作文开启第二个并行调用；不因删除而释放未知占位。
+- [x] **1. 写失败测试。** 两个 repository 竞争相同 source/rubric 仅一个作业；两个不同阶段只能一个 claim；`lateResultDoesNotReplaceEditedTranscriptOrReview`；`successfulPersistenceSurvivesAckFailure`；`unknownLeaseNeverExpiresIntoRetry`；`onlyDirectEaccesConnectReleasesSlot`（Abort 优先）；维度分数越界/旧 expectedRevision 拒绝。
+- [x] **2. 验证红灯。** `npm.cmd --prefix platform-api test -- src/pilot/essays.test.ts src/pilot/jobs.test.ts src/pilot/admission.test.ts`。
+- [x] **3. 实施事务状态机。** enqueue 锁任务与当前版本，保存不可变输入快照、唯一逻辑身份和 outbox 同事务；客户端不用自报结果。claim 锁 singleton gate，产生单调 fence + 随机令牌。beginCall 必须持久标为调用可能发出后才连出；预检期间崩溃可在 fence 撤销后重新预检，旧 worker 的 beginCall 必须失败。beginCall 后失联只能 result_unknown，保留 gate；完整结果在同事务保存规范化结果、作业终态和释放 gate。迟到结果只能原 token/fence，旧版本可保存历史但不可成为当前结果。job 活跃或未知时，即使正文变更也不得给同作文开启第二个并行调用；不因删除而释放未知占位。
 
   记录 call_started_at/deadline；超过函数截止仍为 calling 的执行在读取/恢复时标为 result_unknown，不能释放。若任务已删除，原令牌的已确认迟到结果只更新终止墓碑并释放 gate，不重新保存正文或结果内容。
-- [ ] **4. 完成明确失败策略并验证绿灯。** auth/balance/config 暂停全局准入，维护者修复配置后运行 resumeKnownPause；前端显示联系维护者，不能假称恢复。明确 429 依现有常量退避，最多 5 次重排；其他明确单篇失败不阻断后续。显式重试要求确认终止且可重试，沿用 maxAttempts=2。claim/beginCall 检查账号 active 与任务未删除；停用取消未发出的作业，已发出的仍按原令牌收尾。添加维护恢复/停用测试并重跑步骤 2 和 typecheck。
-- [ ] **5. 提交。** `feat: add persistent grading jobs and shared admission`。
+- [x] **4. 完成明确失败策略并验证绿灯。** auth/balance/config 暂停全局准入，维护者修复配置后运行 resumeKnownPause；前端显示联系维护者，不能假称恢复。明确 429 依现有常量退避，最多 5 次重排；其他明确单篇失败不阻断后续。显式重试要求确认终止且可重试，沿用 maxAttempts=2。claim/beginCall 检查账号 active 与任务未删除；停用取消未发出的作业，已发出的仍按原令牌收尾。添加维护恢复/停用测试并重跑步骤 2 和 typecheck。
+- [x] **5. 提交。** `feat: add persistent grading jobs and shared admission`。
 
 ### Task 5: Vercel 队列 worker、恢复与删除
 
