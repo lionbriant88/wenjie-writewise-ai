@@ -6,7 +6,24 @@ import { createSafeDiagnosticStderrSink } from "../../grading-gateway/src/safeDi
 
 const DEFAULT_MODEL = "dots-studio/dots-3-note-preview:free";
 
-function gatewayEnvironment(env: NodeJS.ProcessEnv): Record<string, string | undefined> {
+export function createPilotProvider(env: NodeJS.ProcessEnv) {
+  if (
+    env.GRADING_PROVIDER?.trim() !== "deepseek" ||
+    !env.DEEPSEEK_API_KEY?.trim()
+  )
+    throw Error("provider_not_configured");
+  const runtimeConfig = parseGatewayRuntimeConfig(gatewayEnvironment(env));
+  return {
+    runtimeConfig,
+    provider: getMultimodalProvider(runtimeConfig, {
+      apiKey: env.DEEPSEEK_API_KEY.trim(),
+    }),
+  };
+}
+
+function gatewayEnvironment(
+  env: NodeJS.ProcessEnv,
+): Record<string, string | undefined> {
   return {
     GRADING_PROVIDER: env.GRADING_PROVIDER?.trim(),
     GRADING_RUBRIC_STRATEGY: "single-pass-v1",
@@ -26,9 +43,11 @@ function gatewayEnvironment(env: NodeJS.ProcessEnv): Record<string, string | und
     CLASS_REVIEW_SYNTHESIS_MODE: "disabled",
     DEEPSEEK_API_BASE: env.DEEPSEEK_API_BASE,
     DEEPSEEK_MODEL: env.DEEPSEEK_MODEL ?? "deepseek-flash",
-    DEEPSEEK_MAX_COMPLETION_TOKENS: env.DEEPSEEK_MAX_COMPLETION_TOKENS ?? "16384",
+    DEEPSEEK_MAX_COMPLETION_TOKENS:
+      env.DEEPSEEK_MAX_COMPLETION_TOKENS ?? "16384",
     OPENROUTER_MODEL: env.OPENROUTER_MODEL?.trim() || DEFAULT_MODEL,
-    OPENROUTER_MAX_COMPLETION_TOKENS: env.OPENROUTER_MAX_COMPLETION_TOKENS?.trim() || "16384",
+    OPENROUTER_MAX_COMPLETION_TOKENS:
+      env.OPENROUTER_MAX_COMPLETION_TOKENS?.trim() || "16384",
   };
 }
 
@@ -38,14 +57,20 @@ export function createVercelGradingApp(
 ): RequestHandler | undefined {
   const provider = env.GRADING_PROVIDER?.trim();
   if (provider !== "deepseek" && provider !== "openrouter") return undefined;
-  const apiKey = (provider === "deepseek" ? env.DEEPSEEK_API_KEY : env.OPENROUTER_API_KEY)?.trim();
+  const apiKey = (
+    provider === "deepseek" ? env.DEEPSEEK_API_KEY : env.OPENROUTER_API_KEY
+  )?.trim();
   if (!apiKey) return undefined;
   try {
     const runtimeConfig = parseGatewayRuntimeConfig(gatewayEnvironment(env));
     const multimodalProvider = getMultimodalProvider(runtimeConfig, { apiKey });
     return createServer({
-      runtimeConfig, multimodalProvider, allowedOrigin,
-      onDiagnostic: createSafeDiagnosticStderrSink("1", (line) => console.error(line)),
+      runtimeConfig,
+      multimodalProvider,
+      allowedOrigin,
+      onDiagnostic: createSafeDiagnosticStderrSink("1", (line) =>
+        console.error(line),
+      ),
     });
   } catch {
     return undefined;

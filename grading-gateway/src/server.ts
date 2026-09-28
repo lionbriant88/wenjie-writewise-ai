@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import cors from 'cors'
 import express, { type NextFunction, type Request, type Response } from 'express'
 import multer from 'multer'
@@ -18,7 +17,7 @@ import {
   ESSAY_PROVIDER_SCHEMA_VERSION,
   LEGACY_ESSAY_PROVIDER_SCHEMA_VERSION,
 } from './multimodal/modelTaskContext.js'
-import { normalizeMultimodalResult } from './multimodal/normalizeMultimodalResult.js'
+import { executeMultimodalOperation, OperationNormalizationError } from './multimodal/executeOperation.js'
 import { validateConfirmedRubric, validateGeneratedRubric } from './multimodal/validateRubric.js'
 import type { GatewayImageInput, MultimodalProvider } from './providers/multimodalProviderTypes.js'
 import { GradingProviderError, type ProviderCallResult, type ProviderCallStage, type ProviderErrorCode } from './providers/providerTypes.js'
@@ -26,10 +25,8 @@ import type { ConfirmedTaskPackageV2 } from './multimodal/types.js'
 import { emitSafeGradingDiagnostic } from './safeDiagnostics.js'
 import type { SafeGradingDiagnosticSink } from './safeDiagnostics.js'
 import type { GatewayRuntimeConfig } from './gatewayRuntimeConfig.js'
-import { readSafeImageDimensions } from './imageMetadata.js'
 import {
   createProviderTelemetryRecorder,
-  recordProviderOperation,
   recordUniqueProviderAttempts,
   type ProviderTelemetryRecorder,
 } from './providerTelemetry.js'
@@ -159,6 +156,7 @@ const PROVIDER_SAFE_MESSAGES: Record<ProviderErrorCode, string> = {
 }
 
 function toSafeFailure(requestId: string, error: unknown) {
+  if (error instanceof OperationNormalizationError) return failure(requestId, error.publicError, true)
   if (error instanceof GradingProviderError) {
     return failure(requestId, { code: error.code, message: PROVIDER_SAFE_MESSAGES[error.code] }, error.retryable)
   }
@@ -547,17 +545,6 @@ async function attachRegistryUntilCallerDeadline(input: {
   return outcome
 }
 
-function safeImageOperationMetadata(pages: readonly GatewayImageInput[]) {
-  const dimensions = pages.flatMap((page, index) => {
-    const dimension = readSafeImageDimensions(page.buffer, page.mimeType)
-    return dimension.status === 'known' ? [{ page: index + 1, width: dimension.width, height: dimension.height }] : []
-  })
-  return {
-    pageCount: pages.length,
-    totalBytes: pages.reduce((total, page) => total + page.buffer.length, 0),
-    ...(dimensions.length ? { dimensions } : {}),
-  }
-}
 
 const classReviewJsonParser = express.json({
   limit: MAX_CLASS_REVIEW_JSON_BYTES,
@@ -769,17 +756,17 @@ export function createServer(options: CreateServerOptions = {}) {
         httpDeadlineMs: timeoutMs,
         execute: ({ signal }) => {
           const provider = providerFor(options)
-          return runObservedProvider(telemetry, options, 'material_context', () => provider.generateMaterialContext({
+          return runObservedProvider(telemetry, options, 'material_context', () => executeMultimodalOperation(provider, { kind: 'material_context', input: {
             requestId: validated.value.requestId,
             fullScore: validated.value.fullScore,
             writingRequirement,
             materials: validated.value.materials,
             signal,
-          }))
+          } }, { ...options, telemetry, onDiagnostic: (diagnostic) => { if (diagnostic.stage === 'normalization') emitSafeGradingDiagnostic(options.onDiagnostic, diagnostic) } }))
         },
       })
       if (outcome.kind !== 'success') {
-        emitSafeGradingDiagnostic(options.onDiagnostic, {
+        if (!(outcome.kind === 'failure' && outcome.error instanceof OperationNormalizationError)) emitSafeGradingDiagnostic(options.onDiagnostic, {
           stage: 'provider',
           diagnosticCode: outcome.kind === 'failure' && outcome.error instanceof GradingProviderError
             ? outcome.error.diagnosticCode ?? outcome.error.code
@@ -811,13 +798,13 @@ export function createServer(options: CreateServerOptions = {}) {
         telemetry,
         options,
         'material_context',
-        () => provider.generateMaterialContext({
+        () => executeMultimodalOperation(provider, { kind: 'material_context', input: {
           requestId: validated.value.requestId,
           fullScore: validated.value.fullScore,
           writingRequirement,
           materials: validated.value.materials,
           signal: controller.signal,
-        }),
+        } }, { ...options, telemetry, onDiagnostic: (diagnostic) => { if (diagnostic.stage === 'normalization') emitSafeGradingDiagnostic(options.onDiagnostic, diagnostic) } }),
       )
       const context = validateTaskMaterialContext(providerContext.value)
       if (!context.ok) {
@@ -830,7 +817,7 @@ export function createServer(options: CreateServerOptions = {}) {
       const safe = controller.signal.aborted
         ? failure(validated.value.requestId, { code: 'provider_timeout', message: 'AI grading timed out.' }, true)
         : toSafeFailure(validated.value.requestId, error)
-      emitSafeGradingDiagnostic(options.onDiagnostic, {
+      if (!(error instanceof OperationNormalizationError)) emitSafeGradingDiagnostic(options.onDiagnostic, {
         stage: 'provider',
         diagnosticCode: controller.signal.aborted
           ? 'provider_timeout'
@@ -857,14 +844,14 @@ export function createServer(options: CreateServerOptions = {}) {
         httpDeadlineMs: timeoutMs,
         execute: ({ signal }) => {
           const provider = providerFor(options)
-          return runObservedProvider(telemetry, options, 'rubric_generation', () => provider.generateRubric({
+          return runObservedProvider(telemetry, options, 'rubric_generation', () => executeMultimodalOperation(provider, { kind: 'rubric', input: {
             ...validated.value,
             signal,
-          }))
+          } }, { ...options, telemetry, onDiagnostic: (diagnostic) => { if (diagnostic.stage === 'normalization') emitSafeGradingDiagnostic(options.onDiagnostic, diagnostic) } }))
         },
       })
       if (outcome.kind !== 'success') {
-        emitSafeGradingDiagnostic(options.onDiagnostic, {
+        if (!(outcome.kind === 'failure' && outcome.error instanceof OperationNormalizationError)) emitSafeGradingDiagnostic(options.onDiagnostic, {
           stage: 'provider',
           diagnosticCode: outcome.kind === 'failure' && outcome.error instanceof GradingProviderError
             ? outcome.error.diagnosticCode ?? outcome.error.code
@@ -896,7 +883,7 @@ export function createServer(options: CreateServerOptions = {}) {
         telemetry,
         options,
         'rubric_generation',
-        () => provider.generateRubric({ ...validated.value, signal: controller.signal }),
+        () => executeMultimodalOperation(provider, { kind: 'rubric', input: { ...validated.value, signal: controller.signal } }, { ...options, telemetry, onDiagnostic: (diagnostic) => { if (diagnostic.stage === 'normalization') emitSafeGradingDiagnostic(options.onDiagnostic, diagnostic) } }),
       )
       const rubric = validateGeneratedRubric(providerRubric.value)
       if (!rubric.ok) {
@@ -909,7 +896,7 @@ export function createServer(options: CreateServerOptions = {}) {
       const safe = controller.signal.aborted
         ? failure(validated.value.requestId, { code: 'provider_timeout', message: 'AI grading timed out.' }, true)
         : toSafeFailure(validated.value.requestId, error)
-      emitSafeGradingDiagnostic(options.onDiagnostic, {
+      if (!(error instanceof OperationNormalizationError)) emitSafeGradingDiagnostic(options.onDiagnostic, {
         stage: 'provider',
         diagnosticCode: controller.signal.aborted
           ? 'provider_timeout'
@@ -973,10 +960,6 @@ export function createServer(options: CreateServerOptions = {}) {
         return
       }
 
-      const stage: ProviderCallStage = metadata.confirmedTranscript === undefined
-        ? 'essay_grading_images'
-        : 'essay_regrading_text'
-      const operationMedia = safeImageOperationMetadata(pages)
       const callerOutcome = await attachRegistryUntilCallerDeadline({
         services: memoryExecution,
         receivedAt: receivedAt(request),
@@ -989,88 +972,14 @@ export function createServer(options: CreateServerOptions = {}) {
           payloadHash: identity.payloadHash,
           callerRequestId: metadata.requestId,
           execute: async ({ signal }) => {
-            const operationDiagnosticId = randomUUID()
-            const operationStartedAt = validMonotonicNow(monotonicNow)
-            let operationRecorded = false
-            try {
-              const provider = providerFor(options)
-              const payload = await runObservedProvider(telemetry, options, stage, () => provider.gradeEssay({
-                requestId: metadata.requestId,
-                task: metadata.task,
-                essayId: metadata.essayId,
-                pages,
-                confirmedTranscript: metadata.confirmedTranscript,
-                signal,
-              }))
-              const normalizeStartedAt = validMonotonicNow(monotonicNow)
-              const normalized = normalizeMultimodalResult(payload.value, {
-                requestId: metadata.requestId,
-                essayId: metadata.essayId,
-                task: metadata.task,
-                provider: 'remote',
-                pageCount: pages.length,
-                confirmedTranscript: metadata.confirmedTranscript,
-                createdAt: (options.now ?? (() => new Date().toISOString()))(),
-              })
-              const normalizeMs = validMonotonicNow(monotonicNow) - normalizeStartedAt
-              if (!normalized.ok) {
-                recordProviderOperation(telemetry, {
-                  ...telemetryContext(options, stage, 'failed'), operationDiagnosticId,
-                  normalizeMs, totalMs: validMonotonicNow(monotonicNow) - operationStartedAt,
-                  ...operationMedia,
-                  ...(metadata.confirmedTranscript === undefined
-                    ? {}
-                    : { confirmedTextCodeUnits: metadata.confirmedTranscript.length }),
-                })
-                operationRecorded = true
-                emitSafeGradingDiagnostic(options.onDiagnostic, {
-                  stage: 'normalization', diagnosticCode: normalized.error.diagnosticCode,
-                })
-                throw new GradingProviderError(
-                  'provider_invalid_response',
-                  PROVIDER_SAFE_MESSAGES.provider_invalid_response,
-                  true,
-                  undefined,
-                  { termination: 'confirmed', attemptObservations: payload.attempts },
-                )
-              }
-              recordProviderOperation(telemetry, {
-                ...telemetryContext(options, stage, 'success'), operationDiagnosticId,
-                normalizeMs, totalMs: validMonotonicNow(monotonicNow) - operationStartedAt,
-                ...operationMedia,
-                ...(metadata.confirmedTranscript === undefined
-                  ? {}
-                  : { confirmedTextCodeUnits: metadata.confirmedTranscript.length }),
-              })
-              operationRecorded = true
-              const { requestId: _requestId, ...resultTemplate } = normalized.result
-              return { result: resultTemplate, attempts: payload.attempts }
-            } catch (error) {
-              if (!operationRecorded) {
-                recordProviderOperation(telemetry, {
-                  ...telemetryContext(
-                    options,
-                    stage,
-                    error instanceof GradingProviderError && error.details?.termination === 'confirmed'
-                      ? 'failed'
-                      : 'result_unknown',
-                  ),
-                  operationDiagnosticId,
-                  totalMs: validMonotonicNow(monotonicNow) - operationStartedAt,
-                  ...operationMedia,
-                  ...(metadata.confirmedTranscript === undefined
-                    ? {}
-                    : { confirmedTextCodeUnits: metadata.confirmedTranscript.length }),
-                })
-                emitSafeGradingDiagnostic(options.onDiagnostic, {
-                  stage: 'provider',
-                  diagnosticCode: error instanceof GradingProviderError
-                    ? error.diagnosticCode ?? error.code
-                    : 'provider_unavailable',
-                })
-              }
-              throw error
-            }
+            const operation = await executeMultimodalOperation(providerFor(options), {
+              kind: 'grade', input: {
+                requestId: metadata.requestId, task: metadata.task, essayId: metadata.essayId,
+                pages, confirmedTranscript: metadata.confirmedTranscript, signal,
+              },
+            }, { ...options, telemetry, monotonicNow })
+            const { requestId: _requestId, ...resultTemplate } = operation.value
+            return { result: resultTemplate, attempts: operation.attempts }
           },
         }),
       })
@@ -1088,56 +997,23 @@ export function createServer(options: CreateServerOptions = {}) {
       return
     }
     const controller = new AbortController()
-    const stage: ProviderCallStage = metadata.confirmedTranscript === undefined ? 'essay_grading_images' : 'essay_regrading_text'
-    const operationDiagnosticId = randomUUID()
-    const operationStartedAt = performance.now()
-    const operationMedia = safeImageOperationMetadata(pages)
     try {
-      const provider = providerFor(options)
-      const payload = await runObservedProviderWithDeadline(
-        controller,
-        timeoutMs,
-        telemetry,
-        options,
-        stage,
-        () => provider.gradeEssay({
-          requestId: metadata.requestId,
-          task: metadata.task,
-          essayId: metadata.essayId,
-          pages,
-          confirmedTranscript: metadata.confirmedTranscript,
-          signal: controller.signal,
-        }),
+      const operation = await runProviderWithDeadline(controller, timeoutMs, () =>
+        executeMultimodalOperation(providerFor(options), {
+          kind: 'grade', input: {
+            requestId: metadata.requestId, task: metadata.task, essayId: metadata.essayId,
+            pages, confirmedTranscript: metadata.confirmedTranscript, signal: controller.signal,
+          },
+        }, { ...options, telemetry, onDiagnostic: diagnostic => {
+          if (diagnostic.stage === 'normalization') emitSafeGradingDiagnostic(options.onDiagnostic, diagnostic)
+        } }),
       )
-      const normalizeStartedAt = performance.now()
-      const normalized = normalizeMultimodalResult(payload.value, { requestId: metadata.requestId, essayId: metadata.essayId, task: metadata.task, provider: 'remote', pageCount: pages.length, confirmedTranscript: metadata.confirmedTranscript, createdAt: (options.now ?? (() => new Date().toISOString()))() })
-      const normalizeMs = performance.now() - normalizeStartedAt
-      if (!normalized.ok) {
-        recordProviderOperation(telemetry, {
-          ...telemetryContext(options, stage, 'failed'), operationDiagnosticId,
-          normalizeMs, totalMs: performance.now() - operationStartedAt, ...operationMedia,
-          ...(metadata.confirmedTranscript === undefined ? {} : { confirmedTextCodeUnits: metadata.confirmedTranscript.length }),
-        })
-        emitSafeGradingDiagnostic(options.onDiagnostic, { stage: 'normalization', diagnosticCode: normalized.error.diagnosticCode })
-        response.status(503).json(failure(metadata.requestId, normalized.error, true))
-        return
-      }
-      recordProviderOperation(telemetry, {
-        ...telemetryContext(options, stage, 'success'), operationDiagnosticId,
-        normalizeMs, totalMs: performance.now() - operationStartedAt, ...operationMedia,
-        ...(metadata.confirmedTranscript === undefined ? {} : { confirmedTextCodeUnits: metadata.confirmedTranscript.length }),
-      })
-      response.json(normalized.result)
+      response.json(operation.value)
     } catch (error) {
-      recordProviderOperation(telemetry, {
-        ...telemetryContext(options, stage, controller.signal.aborted || (error instanceof GradingProviderError && error.details?.termination === 'unknown') ? 'result_unknown' : 'failed'),
-        operationDiagnosticId, totalMs: performance.now() - operationStartedAt, ...operationMedia,
-        ...(metadata.confirmedTranscript === undefined ? {} : { confirmedTextCodeUnits: metadata.confirmedTranscript.length }),
-      })
       const safe = controller.signal.aborted
         ? failure(metadata.requestId, { code: 'provider_timeout', message: 'AI grading timed out.' }, true)
         : toSafeFailure(metadata.requestId, error)
-      emitSafeGradingDiagnostic(options.onDiagnostic, {
+      if (!(error instanceof OperationNormalizationError)) emitSafeGradingDiagnostic(options.onDiagnostic, {
         stage: 'provider',
         diagnosticCode: controller.signal.aborted
           ? 'provider_timeout'

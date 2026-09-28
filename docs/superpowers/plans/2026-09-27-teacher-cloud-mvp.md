@@ -83,11 +83,11 @@
 
 **Interfaces:** `executeMultimodalOperation(provider:MultimodalProvider,operation:MultimodalOperation,services:OperationServices):Promise<OperationResult>`。operation 为 grade/输入 `GradeEssayProviderInput`、material_context/输入 `GenerateMaterialContextProviderInput`、rubric/输入 `GenerateRubricProviderInput` 的判别联合。result 为同种类严格归一化 value + 现有安全 attempts。OperationServices 含 now、既有 telemetry/diagnostic hooks；不包含 HTTP、数据库、队列或幂等 registry。`createPilotProvider(env):{provider,runtimeConfig}` 仅接受现有官方 DeepSeek 配置，缺失时 fail closed。
 
-- [ ] **1. 写失败测试。** `preservesV2ResultAndNormalization`、`runsOneRubricCompletion`、`usesZeroImagesForConfirmedText`、`keepsUnknownTerminationAndSafeDiagnostics`：比较现有 fixture 的外部结果、attempts 和错误分类，确认没有第二次调用。
-- [ ] **2. 验证红灯。** `npm.cmd --prefix grading-gateway test -- src/multimodal/executeOperation.test.ts`。
-- [ ] **3. 实施提取。** 把现有 server 内 Provider 调用、归一化、阶段观测移到上述纯执行边界；原 HTTP registry/admission 仍由原路由持有，云端持久 worker 自行占位。保留严格评分校验、canonical task context、去重输出、printed boundary/字迹策略及安全日志。不复制第二套 Prompt 或 normalizer，不在执行服务添加自动重试。
-- [ ] **4. 验证绿灯及合同回归。** 重跑新测试、Gateway 全量测试、typecheck、`npm.cmd --prefix grading-gateway run verify:shared-scoring-runtime`、平台 grading.test；原 `POST /grading/grade-images` 行为一致。
-- [ ] **5. 提交。** `refactor: share validated multimodal execution service`。
+- [x] **1. 写失败测试。** `preservesV2ResultAndNormalization`、`runsOneRubricCompletion`、`usesZeroImagesForConfirmedText`、`keepsUnknownTerminationAndSafeDiagnostics`：比较现有 fixture 的外部结果、attempts 和错误分类，确认没有第二次调用。
+- [x] **2. 验证红灯。** `npm.cmd --prefix grading-gateway test -- src/multimodal/executeOperation.test.ts`。
+- [x] **3. 实施提取。** 把现有 server 内 Provider 调用、归一化、阶段观测移到上述纯执行边界；原 HTTP registry/admission 仍由原路由持有，云端持久 worker 自行占位。保留严格评分校验、canonical task context、去重输出、printed boundary/字迹策略及安全日志。不复制第二套 Prompt 或 normalizer，不在执行服务添加自动重试。
+- [x] **4. 验证绿灯及合同回归。** 重跑新测试、Gateway 全量测试、typecheck、`npm.cmd --prefix grading-gateway run verify:shared-scoring-runtime`、平台 grading.test；原 `POST /grading/grade-images` 行为一致。
+- [x] **5. 提交。** `refactor: share validated multimodal execution service`。
 
 ### Task 4: 持久作业、全局占位和结果落库
 
