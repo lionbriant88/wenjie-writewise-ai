@@ -21,4 +21,11 @@
 - 前端 lint/typecheck、Gateway 和 Platform typecheck、共享评分运行时检查、根目录 production build、diff check 通过。
 - 独立只读复核无 Critical/Important/Minor；额外内存探针覆盖 SOF 类型、混合 APP 长度、截断、非法长度、SOS/EOI、填充及大量短段，无越界或无界工作发现。
 
-上线结果与一次性合成公网上传证据保存在本地 ignored `local-private-accounts/mobile-upload-diagnosis/`。只有实际 Ready / Current 和公网验证结果才能确认上线；本地测试不等于 vivo 真机通过。
+## 上线与公网验证
+
+- 产品修复 `f1be54a` 已推送。Production `dpl_7gCHcBjDzNWMFqNbfeYTQHb6Fcnc` 于 2026-09-29 显示 Ready，构建 1m 11s，正式域名已分配该部署。
+- 一次性合成验证通过：有效 32×32 JPEG 加 5 段最大 APP4，共 328328 bytes；Storage PUT 200、complete 200、list verified、短签名读取 200 且 SHA-256 与原图一致、退出重登仍 verified。
+- 本次模型调用为 0。只创建专属合成任务，成功后逻辑删除并确认读取 404；两次会话均退出并验证旧会话 401。合成对象保留到上传签名失效后按现有维护规则清理，未声称物理对象立即删除。
+- 对用户原图只做诊断：新解析器已能只读识别相同字节的 1836×4080 尺寸。没有替用户确认、删除、附加或批改真实作文。用户可刷新后重新检查并恢复原有上传；两次同名预约需按实际需要选一份。
+- vivo 真机唤起相机仍需用户复验；capture 属性及桌面测试不能保证浏览器实现。
+- ignored `local-private-accounts/mobile-upload-diagnosis/` 保存 `metadata.json`、一次性 `public-verification-reservation.json`、`public-verification.json` 和 `deployment-ready.png`。不得删除预约盲目重跑。

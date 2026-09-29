@@ -4,8 +4,9 @@
 
 - 用户报告安卓 vivo 浏览器拍照跳相册、2.85 MB JPEG 上传未确认。云端只读检查确认原图已上传，旧 JPEG 尺寸解析器的 64 KiB 文件偏移限制误拒绝了尺寸头位于 312232 的图片。
 - 拍照 input 改 `image/*`；JPEG 按安全段长跳过元数据，限制改为实际解析工作量。保留格式、8 MiB、摘要及归属校验，不压缩原图、不调用模型、不变更 v2 / 无 OCR / 全站并发 1。
-- 前端 94/1381、Gateway 56/1393、Platform 26/102、类型/lint/build/共享运行时检查通过；独立复核无阻断。上线及合成公网上传验证在继续，vivo 真机唤起相机仍待用户复验。
-- 详见 `docs/2026-09-29-mobile-upload-fix.md`。不得把本地通过当作已部署，也不要替用户重复提交真实作文批改。
+- 前端 94/1381、Gateway 56/1393、Platform 26/102、类型/lint/build/共享运行时检查通过；独立复核无阻断。产品修复 `f1be54a` 已推送，Production `dpl_7gCHcBjDzNWMFqNbfeYTQHb6Fcnc` Ready（1m 11s），正式域名已分配。
+- 一次合成公网上传确认 200、原字节 SHA-256 一致、退出重登仍 verified；合成任务逻辑删除 404、两次退出 204/旧会话 401，0 次模型调用。对象仍遵守签名失效后的清理规则。用户原图只读诊断，新解析器识别成功，未替用户改变真实任务或发起批改；vivo 真机唤起相机仍待用户复验。
+- 详见 `docs/2026-09-29-mobile-upload-fix.md` 及 ignored `local-private-accounts/mobile-upload-diagnosis/`。不要替用户重复提交真实作文批改。
 
 ## 2026-09-29：教师云端 MVP 已上线并通过合成公网闭环
 
