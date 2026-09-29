@@ -13,6 +13,31 @@ export async function assertRuntimePrivileges(db: Queryable): Promise<void> {
   ).rows[0];
   if (!row?.safe) throw Error("unsafe_database_role");
 }
+
+export async function assertMigrationRuntimePrivileges(
+  db: Queryable,
+  postgresQueue = false,
+): Promise<void> {
+  const row = (
+    await db.query<{ safe: boolean }>(`SELECT
+    has_table_privilege(current_user,'pilot_grading.migration_control','SELECT')
+    AND NOT has_table_privilege(current_user,'pilot_grading.migration_control','INSERT,UPDATE,DELETE,TRUNCATE')
+    AND NOT has_table_privilege(current_user,'pilot_grading.migration_admissions','INSERT,UPDATE,DELETE,TRUNCATE')
+    AND has_function_privilege(current_user,'pilot_grading.enter_migration(uuid)','EXECUTE')
+    AND has_function_privilege(current_user,'pilot_grading.leave_migration(uuid)','EXECUTE') AS safe`)
+  ).rows[0];
+  if (!row?.safe) throw Error("migration_database_not_ready");
+  if (postgresQueue)
+    for (const privilege of ["SELECT", "INSERT", "UPDATE"]) {
+      const delivery = (
+        await db.query<{ safe: boolean }>(
+          "SELECT has_table_privilege(current_user,'pilot_grading.deliveries',$1) AS safe",
+          [privilege],
+        )
+      ).rows[0];
+      if (!delivery?.safe) throw Error("delivery_database_not_ready");
+    }
+}
 export async function assertPilotRuntimePrivileges(
   db: Queryable,
 ): Promise<void> {

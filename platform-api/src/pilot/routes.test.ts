@@ -1,4 +1,11 @@
 import request from "supertest";
+import express, {
+  type Request,
+  type Response,
+  type NextFunction,
+} from "express";
+import { createPilotRouter } from "./routes.js";
+import type { MigrationGate } from "./migrationGate.js";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { createApp } from "../server.js";
 import { httpFixture } from "./httpTestSupport.js";
@@ -16,6 +23,62 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await fixture?.db.close();
+});
+it("holds migration admission through awaited signing and blocks all route effects while frozen", async () => {
+  let active = 0,
+    frozen = false,
+    finish: () => void = () => {};
+  const gate: MigrationGate = {
+    assertOpen: async () => {},
+    guardDatabase: (db) => db,
+    run: async (op) => {
+      if (frozen) throw Object.assign(Error(), { status: 503 });
+      active++;
+      try {
+        return await op();
+      } finally {
+        active--;
+      }
+    },
+  };
+  const a = express();
+  a.use((_req, res, next) => {
+    res.locals.user = { id: ownerA };
+    next();
+  });
+  const runtime = {
+    ...sample.deps,
+    uploads: Object.assign(Object.create(sample.deps.uploads), {
+      readUrl: async () => {
+        await new Promise<void>((r) => {
+          finish = r;
+        });
+        return { url: "synthetic", expiresAt: "" };
+      },
+    }),
+  };
+  a.use(createPilotRouter(runtime, { gate }));
+  a.use(
+    (
+      e: { status: number },
+      _req: Request,
+      res: Response,
+      _next: NextFunction,
+    ) => {
+      res.sendStatus(e.status);
+    },
+  );
+  const pending = request(a)
+    .get("/uploads/" + sample.uploadId + "/read-url")
+    .then((r) => r);
+  for (let i = 0; i < 100 && active === 0; i++)
+    await new Promise((r) => setTimeout(r, 5));
+  expect(active).toBe(1);
+  frozen = true;
+  expect((await request(a).get("/tasks")).status).toBe(503);
+  finish();
+  expect((await pending).status).toBe(200);
+  expect(active).toBe(0);
 });
 function call(
   method: "get" | "post" | "patch" | "put" | "delete",
@@ -221,10 +284,14 @@ it("disabledMvpLeavesAccountSessionUsableAndNeverReopensRawGateway", async () =>
     expect(res.body.error.code).toBe("persistent_job_required");
   }
 });
-it('returns a JSON deletion receipt and allows the same deletion command to replay',async()=>{
- const created=await call('post','/tasks',0,command(validDraft())),input=command({},created.body.revision)
- const removed=await call('delete','/tasks/'+created.body.id,0,input)
- expect(removed.status).toBe(200);expect(removed.body).toEqual({deleted:true})
- expect((await call('delete','/tasks/'+created.body.id,0,input)).body).toEqual({deleted:true})
- expect((await call('get','/tasks/'+created.body.id)).status).toBe(404)
-})
+it("returns a JSON deletion receipt and allows the same deletion command to replay", async () => {
+  const created = await call("post", "/tasks", 0, command(validDraft())),
+    input = command({}, created.body.revision);
+  const removed = await call("delete", "/tasks/" + created.body.id, 0, input);
+  expect(removed.status).toBe(200);
+  expect(removed.body).toEqual({ deleted: true });
+  expect(
+    (await call("delete", "/tasks/" + created.body.id, 0, input)).body,
+  ).toEqual({ deleted: true });
+  expect((await call("get", "/tasks/" + created.body.id)).status).toBe(404);
+});

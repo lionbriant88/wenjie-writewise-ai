@@ -1,0 +1,23 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "..",
+    "outDir": "../build/tencent-emitted",
+    "sourceMap": false,
+    "declaration": false,
+    "noEmitOnError": true
+  },
+  "include": [
+    "src/index.ts",
+    "src/standalone/api.ts",
+    "src/standalone/worker.ts",
+    "src/standalone/maintenance.ts",
+    "src/migrate.ts",
+    "src/pilot/migrate.ts",
+    "scripts/pilotMigrate.ts",
+    "scripts/migrationControl.ts",
+    "scripts/queueHandoff.ts"
+  ],
+  "exclude": ["**/*.test.ts", "node_modules"]
+}

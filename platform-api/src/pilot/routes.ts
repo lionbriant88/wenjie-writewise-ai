@@ -11,6 +11,9 @@ import { recoverPilotWork } from "./recovery.js";
 import { id, record, readListQuery } from "./validation.js";
 import { PilotError } from "./errors.js";
 import type { PilotRuntime } from "./runtime.js";
+import type { MigrationGate } from "./migrationGate.js";
+import type { DiskStorage } from "./diskStorage.js";
+import { createFileRouter } from "./fileRoutes.js";
 
 function query(req: Request): ListQuery {
   const q = record(req.query, ["limit", "cursor"]);
@@ -26,9 +29,32 @@ function query(req: Request): ListQuery {
 }
 const owner = (res: Response): string => res.locals.user.id;
 const resource = (req: Request) => id(req.params.id);
-export function createPilotRouter(runtime?: PilotRuntime): Router {
+export interface PilotRouterOptions {
+  gate?: MigrationGate;
+  files?: { storage: DiskStorage; gate: MigrationGate };
+}
+export function createPilotRouter(
+  runtime?: PilotRuntime,
+  options: PilotRouterOptions = {},
+): Router {
   const router = Router();
-  router.get("/capabilities", async (_req, res) => {
+  type Handler = (req: Request, res: Response) => Promise<unknown>;
+  const add =
+    (method: "get" | "post" | "patch" | "put" | "delete") =>
+    (path: string, handler: Handler) =>
+      router[method](path, async (req, res) => {
+        // Hold admission through storage, signing and queue publication as well as SQL.
+        if (options.gate) await options.gate.run(() => handler(req, res));
+        else await handler(req, res);
+      });
+  const routes = {
+    get: add("get"),
+    post: add("post"),
+    patch: add("patch"),
+    put: add("put"),
+    delete: add("delete"),
+  };
+  routes.get("/capabilities", async (_req, res) => {
     let capability: PilotCapabilities = {
       teacherMvp: false,
       aiAvailable: false,
@@ -58,6 +84,8 @@ export function createPilotRouter(runtime?: PilotRuntime): Router {
   router.use((_req, _res, next) =>
     next(runtime ? undefined : new PilotError("pilot_not_configured", 503)),
   );
+  if (runtime && options.files)
+    router.use(createFileRouter({ db: runtime.db, ...options.files }));
   router.use(json({ limit: "2mb", strict: true }));
   if (!runtime) return router;
   const recoveryRuntime = runtime;
@@ -73,78 +101,78 @@ export function createPilotRouter(runtime?: PilotRuntime): Router {
       /* A later teacher request or maintenance resumes the same job. */
     }
   }
-  router.get("/tasks", async (req, res) => {
+  routes.get("/tasks", async (req, res) => {
     await recover(res);
     res.json(await tasks.list(owner(res), query(req)));
   });
-  router.post("/tasks", async (req, res) =>
+  routes.post("/tasks", async (req, res) =>
     res.status(201).json(await tasks.createDraft(owner(res), req.body)),
   );
-  router.get("/tasks/:id", async (req, res) => {
+  routes.get("/tasks/:id", async (req, res) => {
     const result = await tasks.get(owner(res), resource(req));
     await recover(res);
     res.json(result);
   });
-  router.patch("/tasks/:id", async (req, res) =>
+  routes.patch("/tasks/:id", async (req, res) =>
     res.json(await tasks.saveDraft(owner(res), resource(req), req.body)),
   );
-  router.delete("/tasks/:id", async (req, res) => {
+  routes.delete("/tasks/:id", async (req, res) => {
     await cleanup.deleteTask(owner(res), resource(req), req.body);
     await recover(res);
     res.json({ deleted: true });
   });
-  router.post("/tasks/:id/confirm", async (req, res) =>
+  routes.post("/tasks/:id/confirm", async (req, res) =>
     res.json(await tasks.confirm(owner(res), resource(req), req.body)),
   );
-  router.get("/tasks/:id/uploads", async (req, res) =>
+  routes.get("/tasks/:id/uploads", async (req, res) =>
     res.json(await runtime.uploads.list(owner(res), resource(req), query(req))),
   );
-  router.post("/tasks/:id/uploads", async (req, res) =>
+  routes.post("/tasks/:id/uploads", async (req, res) =>
     res
       .status(201)
       .json(await runtime.uploads.reserve(owner(res), resource(req), req.body)),
   );
-  router.post("/uploads/:id/complete", async (req, res) =>
+  routes.post("/uploads/:id/complete", async (req, res) =>
     res.json(
       await runtime.uploads.complete(owner(res), resource(req), req.body),
     ),
   );
-  router.get("/uploads/:id/read-url", async (req, res) =>
+  routes.get("/uploads/:id/read-url", async (req, res) =>
     res.json(await runtime.uploads.readUrl(owner(res), resource(req))),
   );
-  router.get("/tasks/:id/essays", async (req, res) => {
+  routes.get("/tasks/:id/essays", async (req, res) => {
     const result = await essays.list(owner(res), resource(req), query(req));
     await recover(res);
     res.json(result);
   });
-  router.post("/tasks/:id/essays", async (req, res) =>
+  routes.post("/tasks/:id/essays", async (req, res) =>
     res
       .status(201)
       .json(await essays.attach(owner(res), resource(req), req.body)),
   );
-  router.get("/essays/:id", async (req, res) =>
+  routes.get("/essays/:id", async (req, res) =>
     res.json(await essays.get(owner(res), resource(req))),
   );
-  router.patch("/essays/:id/transcript", async (req, res) =>
+  routes.patch("/essays/:id/transcript", async (req, res) =>
     res.json(await essays.saveTranscript(owner(res), resource(req), req.body)),
   );
-  router.put("/essays/:id/review", async (req, res) =>
+  routes.put("/essays/:id/review", async (req, res) =>
     res.json(await essays.saveReview(owner(res), resource(req), req.body)),
   );
-  router.put("/essays/:id/manual", async (req, res) =>
+  routes.put("/essays/:id/manual", async (req, res) =>
     res.json(await essays.markManual(owner(res), resource(req), req.body)),
   );
-  router.post("/tasks/:id/grade", async (req, res) => {
+  routes.post("/tasks/:id/grade", async (req, res) => {
     const result = await jobs.enqueueTask(owner(res), resource(req), req.body);
     await recover(res);
     res.status(202).json(result);
   });
-  router.get("/tasks/:id/assist", async (req, res) => {
+  routes.get("/tasks/:id/assist", async (req, res) => {
     const result = await jobs.listAssistance(owner(res), resource(req));
     await recover(res);
     res.json(result);
   });
-  router.post("/tasks/:id/assist", async (req, res) => {
+  routes.post("/tasks/:id/assist", async (req, res) => {
     const result = await jobs.enqueueMaterial(
       owner(res),
       resource(req),
@@ -153,12 +181,12 @@ export function createPilotRouter(runtime?: PilotRuntime): Router {
     await recover(res);
     res.status(202).json(result);
   });
-  router.get("/jobs/:id", async (req, res) => {
+  routes.get("/jobs/:id", async (req, res) => {
     const result = await jobs.get(owner(res), resource(req));
     await recover(res);
     res.json(result);
   });
-  router.post("/jobs/:id/retry", async (req, res) => {
+  routes.post("/jobs/:id/retry", async (req, res) => {
     const result = await jobs.retryKnown(owner(res), resource(req), req.body);
     await recover(res);
     res.status(202).json(result);

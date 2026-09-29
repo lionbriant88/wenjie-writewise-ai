@@ -2,12 +2,18 @@ import { readConfig } from "./config.js";
 import { createApp } from "./server.js";
 import { AuthRepository } from "./repository.js";
 import { assertRuntimePrivileges } from "./privileges.js";
-import { getRuntimeApp } from "./runtime.js";
+import { getRuntimeApp, openStandaloneRuntime } from "./runtime.js";
 async function start() {
   const config = readConfig(process.env);
   let app;
   let close: undefined | (() => Promise<void>);
-  if (config.storage === "local") {
+  if (process.env.PILOT_DEPLOYMENT_MODE === "standalone") {
+    const runtime = await openStandaloneRuntime(process.env);
+    app = runtime.app;
+    close = runtime.close;
+  } else if (process.env.PILOT_DEPLOYMENT_MODE) {
+    throw Error("deployment_mode_invalid");
+  } else if (config.storage === "local") {
     const { createLocalDatabase } = await import("./localDatabase.js");
     const db = createLocalDatabase(config.localPath);
     close = () => db.close();

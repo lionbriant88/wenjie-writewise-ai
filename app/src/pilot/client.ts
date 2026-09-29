@@ -21,6 +21,58 @@ export class PilotApiError extends Error {
     this.code = code
   }
 }
+function fileTarget(value: string, method: 'GET' | 'PUT') {
+  const invalid = () => {
+    throw Error(method === 'PUT' ? '上传地址无效。' : '原图地址无效。')
+  }
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return invalid()
+  }
+  const rawPath = /^https?:\/\/[^/]+(\/[^?#]*)/.exec(value)?.[1]
+  if (
+    url.username ||
+    url.password ||
+    url.hash ||
+    rawPath !== url.pathname ||
+    /[%\\]/.test(url.pathname)
+  )
+    return invalid()
+  const sameOrigin = url.origin === window.location.origin
+  if (sameOrigin) {
+    const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+    if (
+      !(
+        url.protocol === 'https:' ||
+        (url.protocol === 'http:' &&
+          ['localhost', '127.0.0.1'].includes(url.hostname))
+      ) ||
+      !new RegExp(`^/api/pilot/files/${uuid}/${uuid}$`).test(url.pathname) ||
+      [...url.searchParams.keys()].sort().join(',') !== 'expires,signature' ||
+      !/^[1-9][0-9]*$/.test(url.searchParams.get('expires') ?? '') ||
+      !/^[a-f0-9]{64}$/.test(url.searchParams.get('signature') ?? '')
+    )
+      return invalid()
+  } else {
+    const prefix =
+      method === 'PUT'
+        ? '/storage/v1/object/upload/sign/pilot-originals/'
+        : '/storage/v1/object/sign/pilot-originals/'
+    if (
+      url.protocol !== 'https:' ||
+      url.hostname !== 'wudbhdyqgnbnuorebhnu.supabase.co' ||
+      url.port ||
+      !url.pathname.startsWith(prefix) ||
+      !/^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*$/.test(
+        url.pathname.slice(prefix.length),
+      )
+    )
+      return invalid()
+  }
+  return { url: url.href, sameOrigin }
+}
 export function createPilotClient({
   getCsrfToken,
   onSessionExpired,
@@ -147,31 +199,35 @@ export function createPilotClient({
         signal,
       ),
     async putUpload(url: string, file: File, signal?: AbortSignal) {
-      const parsed = new URL(url)
-      if (
-        parsed.protocol !== 'https:' ||
-        !parsed.hostname.endsWith('.supabase.co') ||
-        !parsed.pathname.startsWith('/storage/v1/object/upload/sign/')
-      )
-        throw new Error('上传地址无效。')
+      const target = fileTarget(url, 'PUT')
       signal?.throwIfAborted()
-      const res = await fetchImpl(url, {
+      const res = await fetchImpl(target.url, {
         method: 'PUT',
         body: file,
-        headers: { 'Content-Type': file.type, 'x-upsert': 'false' },
-        credentials: 'omit',
+        headers: {
+          'Content-Type': file.type,
+          ...(target.sameOrigin
+            ? { 'X-CSRF-Token': getCsrfToken() ?? '' }
+            : { 'x-upsert': 'false' }),
+        },
+        credentials: target.sameOrigin ? 'same-origin' : 'omit',
         redirect: 'error',
         signal,
       })
       signal?.throwIfAborted()
+      if (target.sameOrigin && res.status === 401) onSessionExpired()
       // An existing immutable object can mean the first upload response was lost. Completion verifies actual bytes.
-      const error = res.status === 400 ? await res.json().catch(() => null) : null
+      const error =
+        res.status === 400 ? await res.json().catch(() => null) : null
       signal?.throwIfAborted()
-      const duplicate = res.status === 409 || (res.status === 400
-        && String(error?.statusCode) === '409'
-        && ['Duplicate', 'ResourceAlreadyExists'].includes(error?.code ?? error?.error))
-      if (!res.ok && !duplicate)
-        throw new Error('图片上传失败，请重试。')
+      const duplicate =
+        res.status === 409 ||
+        (res.status === 400 &&
+          String(error?.statusCode) === '409' &&
+          ['Duplicate', 'ResourceAlreadyExists'].includes(
+            error?.code ?? error?.error,
+          ))
+      if (!res.ok && !duplicate) throw new Error('图片上传失败，请重试。')
     },
     async readImage(
       id: string,
@@ -184,18 +240,13 @@ export function createPilotClient({
         undefined,
         signal,
       )
-      const url = new URL(signed.url)
-      if (
-        url.protocol !== 'https:' ||
-        !url.hostname.endsWith('.supabase.co') ||
-        !url.pathname.startsWith('/storage/v1/object/sign/')
-      )
-        throw Error('原图地址无效。')
-      const response = await fetchImpl(url.href, {
-        credentials: 'omit',
+      const target = fileTarget(signed.url, 'GET')
+      const response = await fetchImpl(target.url, {
+        credentials: target.sameOrigin ? 'same-origin' : 'omit',
         redirect: 'error',
         signal,
       })
+      if (target.sameOrigin && response.status === 401) onSessionExpired()
       const type = response.headers.get('content-type')?.split(';')[0]
       if (
         !response.ok ||

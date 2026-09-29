@@ -131,7 +131,7 @@ it('retains successful page registration when another upload fails and restores 
       return Response.json({
         uploadId,
         url:
-          'https://synthetic.supabase.co/storage/v1/object/upload/sign/' +
+          'https://wudbhdyqgnbnuorebhnu.supabase.co/storage/v1/object/upload/sign/pilot-originals/' +
           uploadId,
         expiresAt: 'later',
       })

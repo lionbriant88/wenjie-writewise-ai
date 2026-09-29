@@ -2,8 +2,9 @@ import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { RecoveryDeps } from "./recovery.js";
 import { recoverPilotWork } from "./recovery.js";
+import type { MigrationGate } from "./migrationGate.js";
 export function createMaintenanceHandler(
-  load: () => Promise<RecoveryDeps>,
+  load: () => Promise<RecoveryDeps & { migrationGate?: MigrationGate }>,
   secret: () => string | undefined = () => process.env.CRON_SECRET,
 ) {
   return async (req: IncomingMessage, res: ServerResponse) => {
@@ -23,7 +24,10 @@ export function createMaintenanceHandler(
       return;
     }
     try {
-      await recoverPilotWork(await load(), 50);
+      const runtime = await load();
+      if (runtime.migrationGate)
+        await runtime.migrationGate.run(() => recoverPilotWork(runtime, 50));
+      else await recoverPilotWork(runtime, 50);
       res.statusCode = 204;
       res.end();
     } catch {

@@ -9,6 +9,7 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "build:standalone": "node ../deploy/tencent/build.mjs",
     "dev": "tsx src/index.ts",
     "accounts:prepare": "tsx scripts/accounts.ts prepare",
     "accounts:apply": "tsx scripts/accounts.ts apply",

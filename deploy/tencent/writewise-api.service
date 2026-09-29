@@ -1,0 +1,27 @@
+[Unit]
+Description=WriteWise private API
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=wj-app
+Group=wj-app
+WorkingDirectory=/srv/writewise/current
+EnvironmentFile=/etc/writewise/runtime.env
+ExecStart=@NODE@ platform-api/src/standalone/api.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=360
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/writewise
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

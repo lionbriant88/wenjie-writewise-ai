@@ -15,6 +15,7 @@ import { createSessionTools } from "./sessionMiddleware.js";
 import { createPilotRouter } from "./pilot/routes.js";
 import type { PilotRuntime } from "./pilot/runtime.js";
 import { PilotError } from "./pilot/errors.js";
+import type { MigrationGate } from "./pilot/migrationGate.js";
 // Shared across apps within an isolate. No waiting list can grow behind costly scrypt.
 let activeVerifications = 0;
 const dummyHash = `scrypt$32768$8$3$${"0".repeat(32)}$${"0".repeat(128)}`;
@@ -23,6 +24,18 @@ const invalid = () => new HttpError(400, "invalid_request", "请求内容无效�
 export interface CreateAppOptions {
   gradingApp?: RequestHandler;
   pilotRuntime?: PilotRuntime;
+  migrationGate?: MigrationGate;
+  readiness?: () => Promise<void>;
+}
+export function requestSource(req: Request, config: AuthConfig): string {
+  const peer = req.socket.remoteAddress ?? "unknown";
+  const loopback = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(peer);
+  const forwarded = config.trustedVercel
+    ? req.get("x-vercel-forwarded-for")
+    : config.trustedLoopbackProxy && loopback
+      ? req.get("x-forwarded-for")
+      : undefined;
+  return forwarded && isIP(forwarded) ? forwarded : peer;
 }
 function objectBody(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -41,11 +54,47 @@ export function createApp(
     res.set("X-Content-Type-Options", "nosniff");
     next();
   });
+  const gate = options.migrationGate ?? options.pilotRuntime?.migrationGate;
+  if (options.readiness)
+    app.get("/api/health/ready", async (_req, res) => {
+      await options.readiness!();
+      res.json({ ready: true });
+    });
+  // This is an early rejection only. Each actual async operation below also
+  // owns admission; an Express response/close event is not operation completion.
+  if (gate)
+    app.use(async (_req, _res, next) => {
+      await gate.assertOpen();
+      next();
+    });
+  function admitted(handler: RequestHandler): RequestHandler {
+    return async (req, res, next) => {
+      const operation = async () => {
+        await handler(req, res, next);
+      };
+      if (gate) await gate.run(operation);
+      else await operation();
+    };
+  }
+  function admittedSession(handler: RequestHandler): RequestHandler {
+    return async (req, res, next) => {
+      let failure: unknown;
+      const operation = async () => {
+        await handler(req, res, (error) => {
+          failure = error;
+        });
+      };
+      if (gate) await gate.run(operation);
+      else await operation();
+      // Continue outside the session admission's AsyncLocalStorage context.
+      next(failure);
+    };
+  }
   const { csrf, token, requireOrigin, authenticatedWrite, requireSession } =
     createSessionTools(repo, config, now);
   app.use(
     ["/api/grading", "/api/tasks"],
-    requireSession({ origin: true }),
+    admittedSession(requireSession({ origin: true })),
     (_req, _res, next) =>
       next(
         new HttpError(
@@ -57,12 +106,19 @@ export function createApp(
   );
   app.use(
     "/api/pilot",
-    (req, res, next) =>
+    admittedSession((req, res, next) =>
       requireSession({
         teacher: true,
         write: !["GET", "HEAD", "OPTIONS"].includes(req.method),
       })(req, res, next),
-    createPilotRouter(options.pilotRuntime),
+    ),
+    createPilotRouter(options.pilotRuntime, {
+      gate,
+      files:
+        options.pilotRuntime?.diskStorage && gate
+          ? { storage: options.pilotRuntime.diskStorage, gate }
+          : undefined,
+    }),
   );
   app.use(
     [
@@ -85,125 +141,138 @@ export function createApp(
     sameSite: "lax" as const,
     path: "/",
   };
-  function source(req: Request): string {
-    const forwarded = config.trustedVercel
-      ? req.get("x-vercel-forwarded-for")
-      : undefined;
-    if (forwarded && isIP(forwarded)) return forwarded;
-    return req.socket.remoteAddress ?? "unknown";
-  }
-  app.post("/api/auth/login", async (req, res) => {
-    requireOrigin(req);
-    if (
-      !objectBody(req.body) ||
-      Object.keys(req.body).sort().join(",") !== "password,username" ||
-      typeof req.body.username !== "string" ||
-      typeof req.body.password !== "string" ||
-      !req.body.username.trim() ||
-      req.body.username.length > 80 ||
-      !req.body.password ||
-      req.body.password.length > 256
-    )
-      throw invalid();
-    const username = req.body.username.trim().toLowerCase();
-    const currentTime = now();
-    if (
-      !(await repo.takeRateLimit(
-        keyedDigest(config.secret, `account:${username}`),
-        keyedDigest(config.secret, `source:${source(req)}`),
-        currentTime,
-      ))
-    )
-      throw limited();
-    if (activeVerifications >= 2) throw limited();
-    activeVerifications++;
-    try {
-      const account = await repo.findLogin(username);
-      const valid = await verifyPassword(
-        req.body.password,
-        account?.password_hash ?? dummyHash,
-      );
-      if (!valid || !account || account.status !== "active")
-        throw invalidLogin();
-      const value = randomBytes(32).toString("base64url");
-      const loggedIn = await repo.createSession(
-        account.id,
-        account.session_version,
-        digest(value),
-        now(),
-      );
-      if (!loggedIn) throw invalidLogin();
-      // Replace any prior cookie session after successful login to avoid orphan sessions on account switch.
-      try {
-        const previous = token(req);
-        await repo.logout(digest(previous));
-      } catch (error) {
-        if (!(error instanceof HttpError)) throw error;
-      }
-      res.cookie(config.cookieName, value, {
-        ...cookieOptions,
-        maxAge: absoluteMs(loggedIn.role),
-      });
-      res.json({ user: publicUser(loggedIn), csrfToken: csrf(value) });
-    } finally {
-      activeVerifications--;
-    }
-  });
-  app.get("/api/auth/session", async (req, res) => {
-    const value = token(req),
-      account = await repo.session(digest(value), now());
-    if (!account) throw unauthorized();
-    res.json({ user: publicUser(account), csrfToken: csrf(value) });
-  });
-  app.post("/api/auth/logout", async (req, res) => {
-    const value = authenticatedWrite(req);
-    if (!(await repo.session(digest(value), now()))) throw unauthorized();
-    await repo.logout(digest(value));
-    res.clearCookie(config.cookieName, cookieOptions);
-    res.status(204).end();
-  });
-  app.get("/api/admin/accounts", async (req, res) =>
-    res.json({ accounts: await repo.listAccounts(digest(token(req)), now()) }),
-  );
-  app.patch("/api/admin/accounts/:id", async (req, res) => {
-    const value = authenticatedWrite(req);
-    const account = await repo.session(digest(value), now());
-    if (!account) throw unauthorized();
-    if (account.role !== "admin")
-      throw new HttpError(403, "forbidden", "仅账号管理员可操作。");
-    if (
-      typeof req.params.id !== "string" ||
-      !/^([0-9a-f]{8}-)([0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(req.params.id) ||
-      !objectBody(req.body) ||
-      Object.keys(req.body).length === 0 ||
-      Object.keys(req.body).some((k) => !["status", "displayName"].includes(k))
-    )
-      throw invalid();
-    const patch: { status?: "active" | "disabled"; displayName?: string } = {};
-    if ("status" in req.body) {
-      if (req.body.status !== "active" && req.body.status !== "disabled")
-        throw invalid();
-      patch.status = req.body.status;
-    }
-    if ("displayName" in req.body) {
+  app.post(
+    "/api/auth/login",
+    admitted(async (req, res) => {
+      requireOrigin(req);
       if (
-        typeof req.body.displayName !== "string" ||
-        !req.body.displayName.trim() ||
-        req.body.displayName.length > 80 ||
-        /[\x00-\x1f\x7f]/.test(req.body.displayName)
+        !objectBody(req.body) ||
+        Object.keys(req.body).sort().join(",") !== "password,username" ||
+        typeof req.body.username !== "string" ||
+        typeof req.body.password !== "string" ||
+        !req.body.username.trim() ||
+        req.body.username.length > 80 ||
+        !req.body.password ||
+        req.body.password.length > 256
       )
         throw invalid();
-      patch.displayName = req.body.displayName.trim();
-    }
-    res.json({
-      account: await repo.patchAccount(
-        digest(value),
-        req.params.id,
-        patch,
-        now(),
-      ),
-    });
-  });
+      const username = req.body.username.trim().toLowerCase();
+      const currentTime = now();
+      if (
+        !(await repo.takeRateLimit(
+          keyedDigest(config.secret, `account:${username}`),
+          keyedDigest(config.secret, `source:${requestSource(req, config)}`),
+          currentTime,
+        ))
+      )
+        throw limited();
+      if (activeVerifications >= 2) throw limited();
+      activeVerifications++;
+      try {
+        const account = await repo.findLogin(username);
+        const valid = await verifyPassword(
+          req.body.password,
+          account?.password_hash ?? dummyHash,
+        );
+        if (!valid || !account || account.status !== "active")
+          throw invalidLogin();
+        const value = randomBytes(32).toString("base64url");
+        const loggedIn = await repo.createSession(
+          account.id,
+          account.session_version,
+          digest(value),
+          now(),
+        );
+        if (!loggedIn) throw invalidLogin();
+        // Replace any prior cookie session after successful login to avoid orphan sessions on account switch.
+        try {
+          const previous = token(req);
+          await repo.logout(digest(previous));
+        } catch (error) {
+          if (!(error instanceof HttpError)) throw error;
+        }
+        res.cookie(config.cookieName, value, {
+          ...cookieOptions,
+          maxAge: absoluteMs(loggedIn.role),
+        });
+        res.json({ user: publicUser(loggedIn), csrfToken: csrf(value) });
+      } finally {
+        activeVerifications--;
+      }
+    }),
+  );
+  app.get(
+    "/api/auth/session",
+    admitted(async (req, res) => {
+      const value = token(req),
+        account = await repo.session(digest(value), now());
+      if (!account) throw unauthorized();
+      res.json({ user: publicUser(account), csrfToken: csrf(value) });
+    }),
+  );
+  app.post(
+    "/api/auth/logout",
+    admitted(async (req, res) => {
+      const value = authenticatedWrite(req);
+      if (!(await repo.session(digest(value), now()))) throw unauthorized();
+      await repo.logout(digest(value));
+      res.clearCookie(config.cookieName, cookieOptions);
+      res.status(204).end();
+    }),
+  );
+  app.get(
+    "/api/admin/accounts",
+    admitted(async (req, res) =>
+      res.json({
+        accounts: await repo.listAccounts(digest(token(req)), now()),
+      }),
+    ),
+  );
+  app.patch(
+    "/api/admin/accounts/:id",
+    admitted(async (req, res) => {
+      const value = authenticatedWrite(req);
+      const account = await repo.session(digest(value), now());
+      if (!account) throw unauthorized();
+      if (account.role !== "admin")
+        throw new HttpError(403, "forbidden", "仅账号管理员可操作。");
+      if (
+        typeof req.params.id !== "string" ||
+        !/^([0-9a-f]{8}-)([0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(req.params.id) ||
+        !objectBody(req.body) ||
+        Object.keys(req.body).length === 0 ||
+        Object.keys(req.body).some(
+          (k) => !["status", "displayName"].includes(k),
+        )
+      )
+        throw invalid();
+      const patch: { status?: "active" | "disabled"; displayName?: string } =
+        {};
+      if ("status" in req.body) {
+        if (req.body.status !== "active" && req.body.status !== "disabled")
+          throw invalid();
+        patch.status = req.body.status;
+      }
+      if ("displayName" in req.body) {
+        if (
+          typeof req.body.displayName !== "string" ||
+          !req.body.displayName.trim() ||
+          req.body.displayName.length > 80 ||
+          /[\x00-\x1f\x7f]/.test(req.body.displayName)
+        )
+          throw invalid();
+        patch.displayName = req.body.displayName.trim();
+      }
+      res.json({
+        account: await repo.patchAccount(
+          digest(value),
+          req.params.id,
+          patch,
+          now(),
+        ),
+      });
+    }),
+  );
   app.use((_req, _res, next) =>
     next(new HttpError(404, "not_found", "接口不存在。")),
   );

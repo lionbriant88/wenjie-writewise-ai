@@ -25,6 +25,7 @@ import {
 import { runCommand, payloadHash } from "./commands.js";
 import { ownedTask } from "./tasks.js";
 import type { PrivateStorage } from "./storage.js";
+import type { StorageQuota } from "./storageQuota.js";
 export type UploadRow = Record<string, unknown> & {
   owner_id: string;
   id: string;
@@ -83,6 +84,7 @@ export class PilotUploadService {
   constructor(
     private db: Database,
     private storage: PrivateStorage,
+    private quota?: StorageQuota,
   ) {}
   async reserve(
     ownerId: string,
@@ -115,6 +117,7 @@ export class PilotUploadService {
             return invalid();
           const uploadId = randomUUID(),
             path = randomUUID() + "/" + randomUUID();
+          await this.quota?.reserve(tx, size);
           await tx.query(
             "INSERT INTO pilot_grading.uploads(owner_id,task_id,id,path,purpose,mime_type,size,label) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
             [
@@ -190,18 +193,16 @@ export class PilotUploadService {
       )
     ).rows;
     return {
-      items: rows
-        .slice(0, limit)
-        .map((r) => ({
-          id: r.id,
-          taskId: r.task_id,
-          purpose: r.purpose,
-          mimeType: r.mime_type,
-          size: r.size,
-          label: r.label,
-          state: r.state,
-          createdAt: new Date(r.created_at).toISOString(),
-        })),
+      items: rows.slice(0, limit).map((r) => ({
+        id: r.id,
+        taskId: r.task_id,
+        purpose: r.purpose,
+        mimeType: r.mime_type,
+        size: r.size,
+        label: r.label,
+        state: r.state,
+        createdAt: new Date(r.created_at).toISOString(),
+      })),
       nextCursor: rows.length > limit ? rows[limit - 1].id : null,
     };
   }

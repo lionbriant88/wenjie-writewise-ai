@@ -1,9 +1,11 @@
 import {
   link,
   mkdtemp,
+  open,
   readFile,
   readdir,
   symlink,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,7 +15,12 @@ import { createDiskStorage } from "./diskStorage.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...actual, link: vi.fn(actual.link) };
+  return {
+    ...actual,
+    link: vi.fn(actual.link),
+    open: vi.fn(actual.open),
+    unlink: vi.fn(actual.unlink),
+  };
 });
 
 const path =
@@ -388,17 +395,17 @@ describe("private disk storage", () => {
   it("retains readable original bytes when cancellation races successful publication", async () => {
     const { root, storage } = await fixture();
     const controller = new AbortController();
-    const actual = await vi.importActual<typeof import("node:fs/promises")>(
-      "node:fs/promises",
-    );
+    const actual =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
     let visibleAtCommit: Uint8Array | undefined;
     vi.mocked(link).mockImplementationOnce(async (source, target) => {
       await actual.link(source, target);
       controller.abort();
       // A confirming reader can see the real file before put receives completion.
-      visibleAtCommit = (
-        await storage.read(path, new AbortController().signal)
-      ).bytes;
+      visibleAtCommit = (await storage.read(path, new AbortController().signal))
+        .bytes;
     });
 
     await expect(
@@ -426,6 +433,170 @@ describe("private disk storage", () => {
         path,
         pieces(changed),
         { size: changed.length, contentType: "image/png" },
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: "upload_exists", status: 409 });
+    expect(await readFile(join(root, path))).toEqual(png);
+  });
+
+  it("syncs the new folder entry before publication and the published entry after temporary cleanup", async () => {
+    const { root, storage } = await fixture();
+    const folder = join(root, path.split("/")[0]);
+    const events: string[] = [];
+    const actual =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
+    vi.mocked(open).mockImplementation(async (file, flags, mode) => {
+      const name = String(file);
+      if (name === root || name === folder)
+        return {
+          sync: async () => {
+            events.push(name === root ? "root-sync" : "folder-sync");
+          },
+          close: async () => undefined,
+        } as unknown as Awaited<ReturnType<typeof open>>;
+      return actual.open(file, flags, mode);
+    });
+    vi.mocked(link).mockImplementation(async (source, target) => {
+      await actual.link(source, target);
+      events.push("link");
+    });
+    vi.mocked(unlink).mockImplementation(async (file) => {
+      await actual.unlink(file);
+      if (String(file).includes(".pending-")) events.push("temp-unlink");
+    });
+    try {
+      await storage.put(
+        path,
+        pieces(png),
+        { size: png.length, contentType: "image/png" },
+        new AbortController().signal,
+      );
+      expect(events).toEqual([
+        "root-sync",
+        "link",
+        "folder-sync",
+        "temp-unlink",
+        "folder-sync",
+      ]);
+      expect(await readFile(join(root, path))).toEqual(png);
+    } finally {
+      vi.mocked(open).mockImplementation(actual.open);
+      vi.mocked(link).mockImplementation(actual.link);
+      vi.mocked(unlink).mockImplementation(actual.unlink);
+    }
+  });
+
+  it("syncs the parent for each concurrent upload into a newly created folder", async () => {
+    const { root, storage } = await fixture();
+    const folder = join(root, path.split("/")[0]);
+    const other = `${path.split("/")[0]}/33333333-3333-4333-8333-333333333333`;
+    const actual =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
+    let rootSyncs = 0;
+    let entered!: () => void;
+    let release!: () => void;
+    const firstSync = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.mocked(open).mockImplementation(async (file, flags, mode) => {
+      if (String(file) === root)
+        return {
+          sync: async () => {
+            rootSyncs++;
+            if (rootSyncs === 1) {
+              entered();
+              await gate;
+            }
+          },
+          close: async () => undefined,
+        } as unknown as Awaited<ReturnType<typeof open>>;
+      if (String(file) === folder)
+        return {
+          sync: async () => undefined,
+          close: async () => undefined,
+        } as unknown as Awaited<ReturnType<typeof open>>;
+      return actual.open(file, flags, mode);
+    });
+    try {
+      const first = storage.put(
+        path,
+        pieces(png),
+        { size: png.length, contentType: "image/png" },
+        new AbortController().signal,
+      );
+      await firstSync;
+      const second = storage.put(
+        other,
+        pieces(png),
+        { size: png.length, contentType: "image/png" },
+        new AbortController().signal,
+      );
+      release();
+      await Promise.all([first, second]);
+      expect(rootSyncs).toBe(2);
+      expect(await readFile(join(root, path))).toEqual(png);
+      expect(await readFile(join(root, other))).toEqual(png);
+    } finally {
+      release?.();
+      vi.mocked(open).mockImplementation(actual.open);
+    }
+  });
+
+  it("retains published bytes when syncing the linked directory fails", async () => {
+    const { root, storage } = await fixture();
+    const folder = join(root, path.split("/")[0]);
+    const actual =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
+    vi.mocked(open).mockImplementation(async (file, flags, mode) => {
+      if (String(file) === folder)
+        return {
+          sync: async () => {
+            throw Object.assign(new Error("sync failed"), { code: "EIO" });
+          },
+          close: async () => undefined,
+        } as unknown as Awaited<ReturnType<typeof open>>;
+      if (String(file) === root)
+        return {
+          sync: async () => undefined,
+          close: async () => undefined,
+        } as unknown as Awaited<ReturnType<typeof open>>;
+      return actual.open(file, flags, mode);
+    });
+    try {
+      await expect(
+        storage.put(
+          path,
+          pieces(png),
+          { size: png.length, contentType: "image/png" },
+          new AbortController().signal,
+        ),
+      ).rejects.toMatchObject({ code: "storage_unavailable" });
+      expect(await readFile(join(root, path))).toEqual(png);
+      expect(await readdir(folder)).toEqual([path.split("/")[1]]);
+      await expect(
+        storage.read(path, new AbortController().signal),
+      ).rejects.toMatchObject({ code: "storage_unavailable" });
+    } finally {
+      vi.mocked(open).mockImplementation(actual.open);
+    }
+    expect(await storage.read(path, new AbortController().signal)).toEqual({
+      bytes: png,
+      contentType: "image/png",
+    });
+    await expect(
+      storage.put(
+        path,
+        pieces(png),
+        { size: png.length, contentType: "image/png" },
         new AbortController().signal,
       ),
     ).rejects.toMatchObject({ code: "upload_exists", status: 409 });

@@ -107,6 +107,33 @@ function stopIterator(iterator: AsyncIterator<Uint8Array>): void {
   }
 }
 
+async function syncDirectory(directory: string): Promise<void> {
+  try {
+    const handle = await open(
+      directory,
+      constants.O_RDONLY |
+        (constants.O_DIRECTORY ?? 0) |
+        (constants.O_NOFOLLOW ?? 0),
+    );
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    // Windows rejects directory fsync (EPERM on Node 24); Linux must fail
+    // closed because a successful upload promises durable directory entries.
+    if (
+      process.platform === "win32" &&
+      ["EPERM", "EINVAL", "ENOTSUP", "EOPNOTSUPP"].includes(
+        (error as NodeJS.ErrnoException)?.code ?? "",
+      )
+    )
+      return;
+    throw error;
+  }
+}
+
 export function createDiskStorage(config: DiskStorageConfig): DiskStorage {
   if (!config.root || !isAbsolute(config.root)) return invalid();
   const root = resolve(config.root);
@@ -144,14 +171,17 @@ export function createDiskStorage(config: DiskStorageConfig): DiskStorage {
     )
       return invalid();
     const directory = join(root, folder);
-    if (create)
-      await mkdir(directory, { mode: 0o700 }).catch(
-        (error: NodeJS.ErrnoException) => {
-          if (error.code !== "EEXIST") throw error;
-        },
-      );
+    if (create) {
+      try {
+        await mkdir(directory, { mode: 0o700 });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw error;
+      }
+    }
     const dirInfo = await lstat(directory);
     if (!dirInfo.isDirectory() || dirInfo.isSymbolicLink()) return invalid();
+    // A sibling PUT may observe this folder before its creator's fsync ends.
+    if (create) await syncDirectory(root);
     return { directory, filename, target: join(directory, filename) };
   }
   return {
@@ -245,6 +275,10 @@ export function createDiskStorage(config: DiskStorageConfig): DiskStorage {
         // Successful linking commits publication: concurrent readers may already
         // have confirmed these bytes, so later cancellation must not remove them.
         await link(temporary, target);
+        await syncDirectory(directory);
+        await unlink(temporary);
+        temporary = undefined;
+        await syncDirectory(directory);
       } catch (error) {
         if ((error as NodeJS.ErrnoException)?.code === "EEXIST")
           throw new PilotError("upload_exists", 409);
@@ -258,7 +292,7 @@ export function createDiskStorage(config: DiskStorageConfig): DiskStorage {
     },
     async read(path, signal) {
       try {
-        const { target } = await checkedDirectory(path);
+        const { directory, target } = await checkedDirectory(path);
         if (signal.aborted) throw new PilotError("storage_unavailable", 503);
         const targetInfo = await lstat(target);
         if (!targetInfo.isFile() || targetInfo.isSymbolicLink())
@@ -277,7 +311,12 @@ export function createDiskStorage(config: DiskStorageConfig): DiskStorage {
             throw new PilotError("invalid_image");
           const bytes = await file.readFile();
           if (signal.aborted) throw new PilotError("storage_unavailable", 503);
-          return { bytes, contentType: checkedImage(bytes) };
+          const contentType = checkedImage(bytes);
+          // A reader can observe the hard link before put's directory sync.
+          // Complete/read must not confirm that still-volatile publication.
+          await syncDirectory(root);
+          await syncDirectory(directory);
+          return { bytes, contentType };
         } finally {
           await file.close();
         }

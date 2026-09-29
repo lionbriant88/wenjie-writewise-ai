@@ -1,0 +1,11 @@
+[Unit]
+Description=WriteWise bounded maintenance schedule (disabled by installer)
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=5min
+Unit=writewise-maintenance.service
+Persistent=false
+
+[Install]
+WantedBy=timers.target

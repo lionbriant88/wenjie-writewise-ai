@@ -17,7 +17,9 @@ import { PersistentAdmission } from "./admission.js";
 import { recoverPilotWork } from "./recovery.js";
 import { PilotError } from "./errors.js";
 import { id } from "./validation.js";
+import type { MigrationGate } from "./migrationGate.js";
 export interface WorkerDeps {
+  migrationGate?: MigrationGate;
   db: Database;
   uploads: PilotUploadService;
   storage: PrivateStorage;
@@ -31,6 +33,14 @@ export interface WorkerDeps {
   now?: () => number;
 }
 export async function runPilotJob(
+  jobId: string,
+  deps: WorkerDeps,
+): Promise<"done" | "deferred"> {
+  return deps.migrationGate
+    ? deps.migrationGate.run(() => executePilotJob(jobId, deps))
+    : executePilotJob(jobId, deps);
+}
+async function executePilotJob(
   jobId: string,
   deps: WorkerDeps,
 ): Promise<"done" | "deferred"> {
@@ -186,18 +196,24 @@ export async function runPilotJob(
         resolve("timeout");
       }, remaining);
     });
-    const execution = executeMultimodalOperation(selected.provider, operation, {
-      runtimeConfig: selected.runtimeConfig,
-    }).then(
-      async (result) => {
-        await gate.complete(lease, result);
-        return "settled" as const;
-      },
-      async (error) => {
-        await gate.fail(lease, error, { aborted: controller.signal.aborted });
-        return "settled" as const;
-      },
-    );
+    const execute = () =>
+      executeMultimodalOperation(selected.provider, operation, {
+        runtimeConfig: selected.runtimeConfig,
+      }).then(
+        async (result) => {
+          await gate.complete(lease, result);
+          return "settled" as const;
+        },
+        async (error) => {
+          await gate.fail(lease, error, { aborted: controller.signal.aborted });
+          return "settled" as const;
+        },
+      );
+    // A late provider result is still an in-flight migration effect after the
+    // HTTP/job deadline. Nested run keeps the admission marker until it settles.
+    const execution = deps.migrationGate
+      ? deps.migrationGate.run(execute)
+      : execute();
     // Keep a handler attached so an original, late result can finish with its own lease.
     void execution.catch(() => {});
     try {
