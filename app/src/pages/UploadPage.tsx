@@ -383,7 +383,7 @@ export function UploadPage() {
                         <input
                           type="file"
                           aria-label="拍照上传"
-                          accept={imageAccept}
+                          accept="image/*"
                           capture="environment"
                           className="sr-only"
                           onChange={(event) => {

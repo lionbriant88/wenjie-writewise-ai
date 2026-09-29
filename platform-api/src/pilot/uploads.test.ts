@@ -136,6 +136,24 @@ describe("private uploads", () => {
     ).rejects.toMatchObject({ code: "upload_incomplete" });
     expect(store.calls).toBe(n);
   });
+  it("confirmsAndRecoversPhoneJpegWithLargeMetadataWithoutReuploading", async () => {
+    const app = Buffer.alloc(65_537);
+    app.set([0xff, 0xe4, 0xff, 0xff]);
+    const bytes = Buffer.concat([
+      Buffer.from([0xff, 0xd8]),
+      ...Array(5).fill(app),
+      Buffer.from([0xff, 0xc0, 0x00, 0x0b, 0x08, 0x0f, 0xf0, 0x07, 0x2c, 0x01, 0x01, 0x11, 0x00, 0xff, 0xd9]),
+    ]);
+    const t = await task();
+    const u = await uploads.reserve(ownerA, t.id, command({
+      purpose: "essay", mimeType: "image/jpeg", size: bytes.length, label: "Phone photo",
+    }));
+    put(u, bytes, "image/jpeg");
+    const recovered = new PilotUploadService(db, store);
+    expect(await recovered.complete(ownerA, u.uploadId, command({}))).toMatchObject({ id: u.uploadId, mimeType: "image/jpeg", size: bytes.length });
+    expect((await recovered.loadVerified(ownerA, u.uploadId, new AbortController().signal)).buffer).toEqual(bytes);
+    expect((await recovered.list(ownerA, t.id, {})).items).toMatchObject([{ id: u.uploadId, state: "verified" }]);
+  });
   it("rejectsMimeSizeAndDigestMismatch", async () => {
     const t = await task();
     for (const [bytes, mime] of [

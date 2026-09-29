@@ -25,18 +25,26 @@ function readPng(buffer: Buffer): SafeImageDimensions {
 const JPEG_START_OF_FRAME = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf])
 
 function readJpeg(buffer: Buffer): SafeImageDimensions {
-  const limit = Math.min(buffer.length, HEADER_SCAN_LIMIT)
+  const limit = buffer.length
   if (limit < 4 || buffer[0] !== 0xff || buffer[1] !== 0xd8) return unknownDimensions
   let offset = 2
-  while (offset + 3 < limit) {
+  let headerBytes = 2
+  // Bound parsing work, not the SOF's byte offset: phone metadata can span
+  // multiple APP segments. Skip their payloads using checked segment lengths.
+  while (offset + 3 < limit && headerBytes < HEADER_SCAN_LIMIT) {
     if (buffer[offset] !== 0xff) return unknownDimensions
-    while (offset < limit && buffer[offset] === 0xff) offset += 1
-    if (offset >= limit) return unknownDimensions
+    while (offset < limit && buffer[offset] === 0xff && headerBytes < HEADER_SCAN_LIMIT) {
+      offset += 1
+      headerBytes += 1
+    }
+    if (offset >= limit || headerBytes >= HEADER_SCAN_LIMIT) return unknownDimensions
     const marker = buffer[offset++]
+    headerBytes += 1
     if (marker === 0xd9 || marker === 0xda) return unknownDimensions
     if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue
-    if (offset + 2 > limit) return unknownDimensions
+    if (offset + 2 > limit || headerBytes + 2 > HEADER_SCAN_LIMIT) return unknownDimensions
     const segmentLength = buffer.readUInt16BE(offset)
+    headerBytes += 2
     if (segmentLength < 2 || offset + segmentLength > limit) return unknownDimensions
     if (JPEG_START_OF_FRAME.has(marker)) {
       if (segmentLength < 7) return unknownDimensions

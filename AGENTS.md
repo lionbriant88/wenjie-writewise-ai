@@ -1,5 +1,11 @@
 # 文阶 WriteWise AI 项目记忆
 
+## 2026-09-29：手机上传兼容性修复
+
+- 安卓 vivo 浏览器拍照跳相册：拍照 input 改为 `image/*`，保留 capture 和单文件；业务仍只接收 JPEG/PNG/WebP、单张 8 MiB。
+- 2.85 MB 原图确认失败已只读定位：Storage 对象已存在且 size/MIME 一致，JPEG 多段 APP 元数据使 SOF 位于 312232，旧 64 KiB 偏移限制误拒绝。解析器按安全段长跳过元数据，限制实际头部解析工作量，原字节不变。
+- 本地回归、类型、lint、build 通过，独立复核无阻断；正在部署和做独立合成上传验证。最终线上证据见 ignored `local-private-accounts/mobile-upload-diagnosis/`，说明见 `docs/2026-09-29-mobile-upload-fix.md`。真机相机仍待用户复验；没有授权代理对真实作文发起额外批改。
+
 ## 2026-09-29：教师云端 MVP 已上线并通过合成公网闭环
 
 - 用户已确认新增凭据创建和指定 Production 保存。Supabase 专用服务端 key `writewise_pilot_storage` 已创建，五项 `SUPABASE_URL`、`SUPABASE_STORAGE_BUCKET`、`SUPABASE_STORAGE_SERVICE_KEY`、`CRON_SECRET`、`PILOT_MVP_ENABLED=1` 已保存到 Vercel `wenjie-writewise-pilot` Production Secret；SDK 核对桶私有、8 MiB、JPEG/PNG/WebP 有效。不得回显或提交 key、私密配置和账号清单。

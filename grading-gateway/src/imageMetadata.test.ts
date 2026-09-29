@@ -35,6 +35,13 @@ function webpVp8x(width: number, height: number) {
   return buffer
 }
 
+function jpegWithPhoneMetadata() {
+  // Phone APP metadata can span several maximum-length segments before the SOF.
+  const app = Buffer.alloc(65_537)
+  app.set([0xff, 0xe4, 0xff, 0xff])
+  return Buffer.concat([jpeg(1836, 4080).subarray(0, 2), ...Array(5).fill(app), jpeg(1836, 4080).subarray(2)])
+}
+
 describe('readSafeImageDimensions', () => {
   it('reads bounded PNG, JPEG, and WebP headers without returning image data', () => {
     expect(readSafeImageDimensions(png(1200, 700), 'image/png')).toEqual({ status: 'known', width: 1200, height: 700 })
@@ -51,6 +58,27 @@ describe('readSafeImageDimensions', () => {
 
     const lateJpeg = Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.alloc(70 * 1024), jpeg(32, 24).subarray(2)])
     expect(readSafeImageDimensions(lateJpeg, 'image/jpeg')).toEqual({ status: 'unknown' })
+  })
+
+  it('reads a phone JPEG frame after large APP metadata without interpreting or changing that metadata', () => {
+    const input = jpegWithPhoneMetadata()
+    const before = Buffer.from(input)
+    expect(readSafeImageDimensions(input, 'image/jpeg')).toEqual({ status: 'known', width: 1836, height: 4080 })
+    expect(input).toEqual(before)
+  })
+
+  it('rejects truncated APP segments and stops at scan data instead of accepting a later fake frame', () => {
+    const input = jpegWithPhoneMetadata()
+    expect(readSafeImageDimensions(input.subarray(0, 70_000), 'image/jpeg')).toEqual({ status: 'unknown' })
+    const afterScan = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xda, 0x00, 0x02]), jpeg(32, 24).subarray(2)])
+    expect(readSafeImageDimensions(afterScan, 'image/jpeg')).toEqual({ status: 'unknown' })
+  })
+
+  it('keeps marker parsing bounded even when metadata payloads are skipped', () => {
+    const padding = Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.alloc(70 * 1024, 0xff), jpeg(32, 24).subarray(2)])
+    expect(readSafeImageDimensions(padding, 'image/jpeg')).toEqual({ status: 'unknown' })
+    const markers = Buffer.concat([Buffer.from([0xff, 0xd8]), ...Array(17_000).fill(Buffer.from([0xff, 0xe4, 0x00, 0x02])), jpeg(32, 24).subarray(2)])
+    expect(readSafeImageDimensions(markers, 'image/jpeg')).toEqual({ status: 'unknown' })
   })
 
   it('does not mutate, replace, resize, reorder, or re-encode the supplied buffer', () => {

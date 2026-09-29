@@ -117,6 +117,17 @@ describe('UploadPage student cards', () => {
     expect(screen.getByLabelText('拍照上传')).toHaveAttribute('capture', 'environment')
   })
 
+  it('requests a single image capture using the wildcard required by mobile camera pickers', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await user.click(screen.getByRole('button', { name: '为学生1添加作文' }))
+
+    const cameraInput = screen.getByLabelText('拍照上传')
+    expect(cameraInput).toHaveAttribute('accept', 'image/*')
+    expect(cameraInput).toHaveAttribute('capture', 'environment')
+    expect(cameraInput).not.toHaveAttribute('multiple')
+  })
+
   it('repeats the material-analysis fallback warning without changing the student upload workspace', async () => {
     renderFailedTaskPage()
 
@@ -229,17 +240,21 @@ describe('UploadPage student cards', () => {
     expect(revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:camera.jpg')
   })
 
-  it.each([
-    [new File(['gif'], 'essay.gif', { type: 'image/gif' })],
-    [new File(['heic'], 'essay.heic', { type: 'image/heic' })],
-    [new File([new Uint8Array(8 * 1024 * 1024 + 1)], 'large.png', { type: 'image/png' })],
-  ])('rejects unsupported or oversized local images before queueing', async (file) => {
-    const user = userEvent.setup({ applyAccept: false })
-    renderPage()
-    await user.click(screen.getByRole('button', { name: '为学生1添加作文' }))
-    await user.upload(screen.getByLabelText('上传相册图片'), file)
+  describe.each(['上传相册图片', '拍照上传'])('%s validation', (inputLabel) => {
+    it.each([
+      [new File(['gif'], 'essay.gif', { type: 'image/gif' })],
+      [new File(['heic'], 'essay.heic', { type: 'image/heic' })],
+      [new File([new Uint8Array(8 * 1024 * 1024 + 1)], 'large.png', { type: 'image/png' })],
+    ])('rejects unsupported or oversized local images before queueing', async (file) => {
+      const user = userEvent.setup({ applyAccept: false })
+      renderPage()
+      await user.click(screen.getByRole('button', { name: '为学生1添加作文' }))
+      await user.upload(screen.getByLabelText(inputLabel), file)
 
-    expect(screen.getByRole('alert')).toHaveTextContent('仅支持 PNG、JPEG、WebP 图片，且单张不超过 8 MiB。')
-    expect(screen.queryByText(file.name)).not.toBeInTheDocument()
+      expect(screen.getByRole('alert')).toHaveTextContent('仅支持 PNG、JPEG、WebP 图片，且单张不超过 8 MiB。')
+      expect(screen.queryByText(file.name)).not.toBeInTheDocument()
+      expect(screen.queryByRole('img', { name: /预览$/ })).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '提交作文并进入批改' })).toBeDisabled()
+    })
   })
 })
