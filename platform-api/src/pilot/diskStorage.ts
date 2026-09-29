@@ -75,6 +75,37 @@ function safeError(error: unknown): never {
   if (error instanceof PilotError) throw error;
   throw new PilotError("storage_unavailable", 503);
 }
+function aborted(): never {
+  throw new PilotError("storage_unavailable", 503);
+}
+async function nextOrAbort(
+  iterator: AsyncIterator<Uint8Array>,
+  signal: AbortSignal,
+): Promise<IteratorResult<Uint8Array>> {
+  if (signal.aborted) return aborted();
+  let onAbort!: () => void;
+  const cancellation = new Promise<never>((_, reject) => {
+    onAbort = () => reject(new PilotError("storage_unavailable", 503));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    if (signal.aborted) return aborted();
+    return await Promise.race([
+      Promise.resolve().then(() => iterator.next()),
+      cancellation,
+    ]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+function stopIterator(iterator: AsyncIterator<Uint8Array>): void {
+  try {
+    // A source may never settle its pending next()/return(); cleanup must not wait.
+    void Promise.resolve(iterator.return?.()).catch(() => undefined);
+  } catch {
+    // The upload's filesystem cleanup still runs for a broken source.
+  }
+}
 
 export function createDiskStorage(config: DiskStorageConfig): DiskStorage {
   if (!config.root || !isAbsolute(config.root)) return invalid();
@@ -141,6 +172,8 @@ export function createDiskStorage(config: DiskStorageConfig): DiskStorage {
         return invalid();
       let temporary: string | undefined;
       let handle: Awaited<ReturnType<typeof open>> | undefined;
+      let iterator: AsyncIterator<Uint8Array> | undefined;
+      let streamComplete = false;
       let reserved = false;
       try {
         const { directory, target } = await checkedDirectory(path, true);
@@ -162,8 +195,15 @@ export function createDiskStorage(config: DiskStorageConfig): DiskStorage {
           0o600,
         );
         let size = 0;
-        for await (const chunk of stream) {
-          if (signal.aborted) throw new PilotError("storage_unavailable", 503);
+        iterator = stream[Symbol.asyncIterator]();
+        while (true) {
+          const next = await nextOrAbort(iterator, signal);
+          if (next.done) {
+            streamComplete = true;
+            break;
+          }
+          const chunk = next.value;
+          if (signal.aborted) return aborted();
           if (
             !(chunk instanceof Uint8Array) ||
             size + chunk.byteLength > expected.size ||
@@ -183,7 +223,7 @@ export function createDiskStorage(config: DiskStorageConfig): DiskStorage {
           }
           size += chunk.byteLength;
         }
-        if (signal.aborted) throw new PilotError("storage_unavailable", 503);
+        if (signal.aborted) return aborted();
         if (size !== expected.size) throw new PilotError("invalid_image");
         await handle.sync();
         const image = await (async () => {
@@ -201,12 +241,18 @@ export function createDiskStorage(config: DiskStorageConfig): DiskStorage {
         await handle.close();
         handle = undefined;
         await checkedDirectory(path);
+        if (signal.aborted) return aborted();
         await link(temporary, target);
+        if (signal.aborted) {
+          await unlink(target);
+          return aborted();
+        }
       } catch (error) {
         if ((error as NodeJS.ErrnoException)?.code === "EEXIST")
           throw new PilotError("upload_exists", 409);
         safeError(error);
       } finally {
+        if (iterator && !streamComplete) stopIterator(iterator);
         if (reserved) pendingBytes -= expected.size;
         if (handle) await handle.close().catch(() => undefined);
         if (temporary) await unlink(temporary).catch(() => undefined);

@@ -284,6 +284,101 @@ describe("private disk storage", () => {
     expect(await readdir(join(root, path.split("/")[0]))).toEqual([]);
   });
 
+  it("aborts a stalled next without waiting for the source's return and releases reserved space", async () => {
+    const { root, storage } = await fixture(minFree + png.length);
+    const controller = new AbortController();
+    let waiting!: () => void;
+    const nextPending = new Promise<void>((resolve) => {
+      waiting = resolve;
+    });
+    let reads = 0;
+    const stalled: AsyncIterable<Uint8Array> = {
+      [Symbol.asyncIterator]() {
+        return {
+          next: () => {
+            reads++;
+            if (reads === 1)
+              return Promise.resolve({
+                done: false as const,
+                value: png.subarray(0, 8),
+              });
+            waiting();
+            return new Promise<IteratorResult<Uint8Array>>(() => undefined);
+          },
+          return: () =>
+            new Promise<IteratorResult<Uint8Array>>(() => undefined),
+        };
+      },
+    };
+    const upload = storage.put(
+      path,
+      stalled,
+      { size: png.length, contentType: "image/png" },
+      controller.signal,
+    );
+    await nextPending;
+    controller.abort();
+    await expect(
+      Promise.race([
+        upload,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(Error("abort waited for source")), 500),
+        ),
+      ]),
+    ).rejects.toMatchObject({ code: "storage_unavailable" });
+    expect(await readdir(join(root, path.split("/")[0]))).toEqual([]);
+    await storage.put(
+      path,
+      pieces(png),
+      { size: png.length, contentType: "image/png" },
+      new AbortController().signal,
+    );
+    expect(await readFile(join(root, path))).toEqual(png);
+  });
+
+  it("does not publish when aborted after stream completion during publication preparation", async () => {
+    const { root, storage } = await fixture();
+    const controller = new AbortController();
+    const actualAborted = Object.getOwnPropertyDescriptor(
+      AbortSignal.prototype,
+      "aborted",
+    )!.get!;
+    let streamComplete = false;
+    let abortScheduled = false;
+    Object.defineProperty(controller.signal, "aborted", {
+      get() {
+        if (streamComplete && !abortScheduled) {
+          abortScheduled = true;
+          queueMicrotask(() => controller.abort());
+        }
+        return actualAborted.call(controller.signal);
+      },
+    });
+    let pulls = 0;
+    const stream: AsyncIterable<Uint8Array> = {
+      [Symbol.asyncIterator]() {
+        return {
+          next: async () => {
+            pulls++;
+            if (pulls === 1) return { done: false as const, value: png };
+            streamComplete = true;
+            return { done: true as const, value: undefined };
+          },
+        };
+      },
+    };
+    await expect(
+      storage.put(
+        path,
+        stream,
+        { size: png.length, contentType: "image/png" },
+        controller.signal,
+      ),
+    ).rejects.toMatchObject({ code: "storage_unavailable" });
+    expect(abortScheduled).toBe(true);
+    expect(await readdir(join(root, path.split("/")[0]))).toEqual([]);
+  });
+
   it("refuses a symlink at the final file name", async () => {
     const { root, storage } = await fixture();
     await storage.put(
