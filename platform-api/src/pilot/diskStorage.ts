@@ -242,11 +242,9 @@ export function createDiskStorage(config: DiskStorageConfig): DiskStorage {
         handle = undefined;
         await checkedDirectory(path);
         if (signal.aborted) return aborted();
+        // Successful linking commits publication: concurrent readers may already
+        // have confirmed these bytes, so later cancellation must not remove them.
         await link(temporary, target);
-        if (signal.aborted) {
-          await unlink(target);
-          return aborted();
-        }
       } catch (error) {
         if ((error as NodeJS.ErrnoException)?.code === "EEXIST")
           throw new PilotError("upload_exists", 409);

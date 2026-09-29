@@ -1,4 +1,5 @@
 import {
+  link,
   mkdtemp,
   readFile,
   readdir,
@@ -7,8 +8,13 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createDiskStorage } from "./diskStorage.js";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, link: vi.fn(actual.link) };
+});
 
 const path =
   "11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222";
@@ -377,6 +383,53 @@ describe("private disk storage", () => {
     ).rejects.toMatchObject({ code: "storage_unavailable" });
     expect(abortScheduled).toBe(true);
     expect(await readdir(join(root, path.split("/")[0]))).toEqual([]);
+  });
+
+  it("retains readable original bytes when cancellation races successful publication", async () => {
+    const { root, storage } = await fixture();
+    const controller = new AbortController();
+    const actual = await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
+    let visibleAtCommit: Uint8Array | undefined;
+    vi.mocked(link).mockImplementationOnce(async (source, target) => {
+      await actual.link(source, target);
+      controller.abort();
+      // A confirming reader can see the real file before put receives completion.
+      visibleAtCommit = (
+        await storage.read(path, new AbortController().signal)
+      ).bytes;
+    });
+
+    await expect(
+      storage.put(
+        path,
+        pieces(png),
+        { size: png.length, contentType: "image/png" },
+        controller.signal,
+      ),
+    ).resolves.toBeUndefined();
+    expect(controller.signal.aborted).toBe(true);
+    expect(visibleAtCommit).toEqual(png);
+    expect(await storage.read(path, new AbortController().signal)).toEqual({
+      bytes: png,
+      contentType: "image/png",
+    });
+    expect(await readdir(join(root, path.split("/")[0]))).toEqual([
+      path.split("/")[1],
+    ]);
+
+    const changed = Buffer.from(png);
+    changed.writeUInt32BE(4, 16);
+    await expect(
+      storage.put(
+        path,
+        pieces(changed),
+        { size: changed.length, contentType: "image/png" },
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: "upload_exists", status: 409 });
+    expect(await readFile(join(root, path))).toEqual(png);
   });
 
   it("refuses a symlink at the final file name", async () => {
