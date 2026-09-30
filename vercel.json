@@ -1,5 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "git": {
+    "deploymentEnabled": {
+      "codex/tencent-migration": false
+    }
+  },
   "framework": "vite",
   "installCommand": "npm ci --prefix platform-api && npm ci --prefix grading-gateway && npm ci --prefix app",
   "buildCommand": "npm run build",
