@@ -1,5 +1,16 @@
 # 当前开发状态
 
+## 2026-09-30：腾讯云私下部署及恢复演练通过，正式切换等待备案
+
+- 用户已明确同意72小时受限SSH迁移通道并多次要求继续；授权已实际执行，不再重复询问原设计或该次SSH授权。wj-deploy无sudo，密钥于2026-10-02 21:01:47北京时间过期，仅授权127.0.0.1:8793转发；不要自动延长访问期限。私钥只在ignored目录，Windows权限已限制为实际用户和SYSTEM。
+- 实际工作树仍为 `.worktrees/codex-teacher-pilot-accounts`，分支 `codex/tencent-migration`。服务器当前release为 `20260929-migration-reviewed-03`，归档SHA256为f5172f9e3a2d6a7610c95e8d9e237b1e92588c29ce3af81610c46567592b8a90。修复root umask077导致代码目录不可读的安装器问题，真实服务账号探针及新版重新安装通过；不推送触发旧站部署。
+- 腾讯云PG17仅监听127.0.0.1:5432，严格TLS/SCRAM，未加密连接被拒绝。证书同时含IP127.0.0.1和DNSlocalhost，psql及Node pg真实校验通过。管理员和新运行凭据只在服务器私密文件；未复制源数据库密码、未重建教师账号。
+- 新源在线只读快照恢复到隔离库writewise_staging_8a95e70b675c：原22表99行、31账号及密码哈希、6原图8,789,177字节与10上传关联完整；迁移后25表保持冻结。目标完整备份及第二空库writewise_restore_22ec86b2614c恢复验证25表100行全部摘要一致，两库冻结。目标备份已加密取回本机并复核归档、dump、每图摘要，证据在ignored `local-private-accounts/tencent-migration/server-evidence/`。
+- 独立合成库writewise_standalone_d521e643b803的Linux PG/HTTP/fake验收通过：并发峰值1、重投不重复调用、未知结果不重发、冻结排空、进程死亡、原图、修订与重登、教师隔离、配额与上传删除竞态。0真实模型调用，未消费真实历史队列。
+- 实机systemd API启动及重启、仅loopback监听、冻结登录/session/readiness返回503、25表摘要前后不变、Nginx离线语法和日志检查均通过。API在验收后停止，worker/maintenance/timer及Nginx保持停止；公网没有开放80/443。current链接指向reviewed-03，runtime.env为冻结预演配置，DeepSeek key是无效合成占位值，不能解冻上线；正式切换时须经核验加密通道配置已授权真实key。
+- 备案页面刷新仍为腾讯云审核中、尚未提交管局。旧Vercel/Supabase源站继续可写，未改DNS、未做最终冻结。源在线快照不能替代正式切换备份。后续：备案/HTTPS条件满足后，源部署兼容冻结门、共同冻结排空及旧签名窗口/远端PUT确认、最新完整备份与恢复、显式队列衔接，再单写者切换和国内Wi-Fi/手机流量关闭VPN验收。不能宣称正式迁移、真实模型质量、30×50吞吐或新写入无损回退已通过。
+- 详情见实际工作树 `docs/2026-09-30-tencent-private-staging.md`。保留全部成功/失败报告、备份、合成库及旧服务；DeepSeek官方直连/v2/无OCR/模型并发1/未知不盲重试继续有效。
+
 ## 2026-09-29：腾讯云迁移本地实现与恢复验收完成，等待受限SSH授权
 
 - 用户已认可私有磁盘迁移设计并要求继续；方案批准保持有效，不再重复询问是否实施。实际工作树仍为 `.worktrees/codex-teacher-pilot-accounts`，分支 `codex/tencent-migration`，旧生产分支及线上服务未切换。

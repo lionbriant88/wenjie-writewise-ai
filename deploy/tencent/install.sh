@@ -36,7 +36,10 @@ install -d -o root -g root -m 0755 /srv/writewise/releases
 [ ! -e "/srv/writewise/releases/$name" ] || { echo release_already_exists >&2; exit 1; }
 cp -R -- "$release" "/srv/writewise/releases/$name"
 chown -R root:root "/srv/writewise/releases/$name"
-chmod -R go-w "/srv/writewise/releases/$name"
+# cp obeys the invoking root's umask (often 077), so explicitly make this
+# authenticated, secret-free code artifact readable/traversable by wj-app.
+# Capital X preserves executable dependencies without making ordinary files executable.
+chmod -R a+rX,go-w "/srv/writewise/releases/$name"
 install -d -o root -g wj-app -m 0750 /etc/writewise
 install -d -o wj-app -g wj-app -m 0700 /var/lib/writewise /var/lib/writewise/originals /var/lib/writewise/run
 if [ ! -e /etc/writewise/runtime.env ]; then

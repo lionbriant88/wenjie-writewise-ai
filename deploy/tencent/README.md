@@ -17,6 +17,8 @@
 5. 核对版本后由root设置 `/srv/writewise/current` 指向该release，再启动API。已授权SSH转发8793时仅测试API；Nginx的127.0.0.1:8080模板可在服务器本地检查，8080浏览器隧道须有相应转发授权后再使用。`/api/health/ready`在worker未启动、冻结、PG权限/存储不满足、10GiB余量不足时返回503，不能把登录成功当完整就绪。检查只读且不调用Provider。API仍仅监听127.0.0.1:8793。systemd使用专用standalone入口，丢失mode配置也不会回落到账号站点。
 6. 合成预演使用独立空库/新建合成数据和测试注入的fake provider；不要把生产DeepSeek配置用于恢复数据试跑。正式worker严格使用既有DeepSeek单次多模态流程，不提供环境开关绕到假provider。调用真实合成模型前另行明确范围。
 
+安装器仅对已验证、无秘密的release代码执行 `chmod -R a+rX,go-w`，防止root的 `umask 077` 让服务账号无法读取程序；目录可遍历、普通文件只读、原可执行文件保留执行权限，组及其他用户均不可写。安装后用 `runuser -u wj-app -- test -r /srv/writewise/releases/<版本>/platform-api/src/standalone/api.js` 和对应目录 `test -x` 验证。`/etc/writewise`、私有原图和含凭据的运维目录不适用这项权限修正。
+
 ## 正式切换前
 
 必须完成源码侧共同冻结、排空所有实际异步效果、旧2小时上传签名窗口及未知结果检查、新冻结备份、目标表/文件摘要与关联验证、备案和HTTPS。此部署包不代替该流程。
