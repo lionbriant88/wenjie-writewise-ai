@@ -4,13 +4,13 @@
 
 ## 当前入口与运行边界
 
-- 入口仍为本机 `http://127.0.0.1:18793`，经既有受限SSH通道访问腾讯云loopback API；没有开放公网端口或改DNS。前端由本机 `local-preview.mjs` 读取 `reviewed-03` 的 `public` 目录，API和后台worker运行在腾讯云。
-- 2026-09-30北京时间10:37:21启动独立 `wj-private-preview-manual-api` 与 `wj-private-preview-continuous`，ready检查通过，`Restart=on-failure`。后台复用现有生产worker实现，保持DeepSeek官方直连、v2、无独立OCR和全站模型并发1；不再以完成一次任务为退出条件。
+- 入口仍为本机 `http://127.0.0.1:18793`，经既有受限SSH通道访问腾讯云loopback API；没有开放公网端口或改DNS。2026-09-30相机修复后，前端由本机 `local-preview-camera.mjs` 读取 `20260930-camera-preview-02` 的 `public` 目录，腾讯云API和后台worker也已使用该release。
+- 独立 `wj-private-preview-manual-api` 与 `wj-private-preview-continuous` 最初于北京时间10:37:21开启持续批改；本次排空升级后于12:27:34启动新版本，ready检查通过，`Restart=on-failure`，检查时NRestarts均为0。保持DeepSeek官方直连、v2、无独立OCR和全站模型并发1；不再以完成一次任务为退出条件。
 - 此轮人工测试截至北京时间2026-09-30 22:00。服务已设置绝对到期停止定时器，worker本身也检查固定截止时间；异常重启不会延长窗口。到期先停止接收新工作并排空已执行工作。这不是长期服务或开机自启验收。
 - 独立数据库仍为 `writewise_private_preview_58f2d47ca236`，运行配置、图片、心跳与原冻结恢复库隔离。原31个账号、旧Vercel/Supabase及两个冻结恢复库保持不变。
 - SSH原到期时间为北京时间2026-10-02 21:01:47，不自动延长；账号与秘密只保存在ignored私密目录或服务器私密文件。
 
-## 本次恢复连续批改的证据
+## 10:37恢复连续批改的历史证据
 
 只处理用户已经手动提交、此前排队的作业 `a04cd70b-9250-44f5-8bfd-d8f303a9e84d`，未新增代理自主验证模型请求。该作业于北京时间10:37:22.528开始调用，10:37:34.652结束，结果为 `partial`，attempts为1、执行记录为1、执行状态为finished。没有重建账号、任务或队列身份，原一次性验证账本保持原样。
 
@@ -25,11 +25,21 @@
 
 ## GitHub与服务器版本对应
 
-迁移分支 `codex/tencent-migration` 已推送GitHub，远端提交核验为 `1c2069a6b25304c36fda5144840797ac363f0cae`。`vercel.json` 仅对该分支设置 `git.deploymentEnabled=false`；旧Production跟踪分支 `codex/teacher-pilot-accounts` 未更新。
+当前产品提交为 `b7d890ee46968cd2c96964a636098da87d830ccf`，已推送GitHub迁移分支 `codex/tencent-migration`。`vercel.json` 仅对该分支设置 `git.deploymentEnabled=false`；旧Production跟踪分支 `codex/teacher-pilot-accounts` 未更新。
 
-本轮复用 `20260929-migration-reviewed-03`，没有重新构建产品包。归档SHA256为 `f5172f9e3a2d6a7610c95e8d9e237b1e92588c29ce3af81610c46567592b8a90`。只读核验 `build/tencent/20260929-migration-reviewed-03/release-manifest.json` 的3797项文件大小及摘要均一致；20项直接复制的构建输入与当前源码匹配，7项前端产物与本机 `app/dist` 匹配。
+相机修复完整包为 `20260930-camera-preview-02`，SHA256 `274cb9a80f70f8d2293ce1f91c82728df765b6f840625a00bf95dd77fb3ce187`，13,639,784 bytes，清单3797项。3790个非public文件与reviewed-03一致，7项前端资源通过本机HTTP逐字节校验。两个私测服务的实际ExecStart与WorkingDirectory和本机代理PUBLIC目录均已切到新版本。
 
-从 `c6e23d1` 到 `1c2069a` 只改变记忆、验证文档和Vercel分支开关，产品源码、构建脚本、锁文件及包内部署模板未变。因此记录为“该提交包含相同产品及构建输入，复用已验证包”，不能称为“从该提交重新构建”。现有清单没有Git提交字段，也不构成重新构建后逐字节一致的证明。
+此前10:37首次持续测试使用提交 `1c2069a6b25304c36fda5144840797ac363f0cae` 中相同的产品和构建输入，复用reviewed-03包（SHA256 `f5172f9e3a2d6a7610c95e8d9e237b1e92588c29ce3af81610c46567592b8a90`），当时没有重新构建。它已由上方相机新包替代为当前私测运行版本，旧包和证据仍保留。
+
+## 相机反馈的完整修复结果
+
+用户反馈“拍照上传只打开相册”后，已新增直接使用摄像头的网页模态窗口：选择设备、实时画面、拍摄预览及确认后加入，保留相册入口。前端95文件/1402项、摄像头16项、相关集成2文件/14项、类型、lint和构建通过；独立代码与运维复核无剩余Critical或Important问题。
+
+12:26:12排空私测服务，保存当前preview 25表和2图的私密快照并核验摘要，再以同一数据库、账号、会话及图片目录启动新版本。12:30:39审计确认原两个作业仍各一次调用、gate空闲、教师记录保留，两个旧冻结恢复库及原图摘要不变。没有重新bootstrap、恢复覆盖或新增代理模型请求。
+
+内置浏览器刷新保持登录与原2/2完成状态，拍照按钮打开网页窗口；该浏览器尚未得到摄像头画面。用户在自己的电脑浏览器中另行确认“已看到实时画面，可以拍照”。因此电脑端实时画面与拍照已有人工复测证据，确认加入、上传、再次批改、希沃设备和vivo手机仍不在本轮已完成验收范围内。
+
+部署及验收详见 [网页摄像头拍照修复记录](./2026-09-30-camera-capture-fix.md)。全局 `/srv/writewise/current` 和bootstrap配置仍保留旧恢复环境身份；实际私测新版本由独立wrapper的绝对路径指定。22:00停止窗口和SSH到期时间均未延长。
 
 ## 每次反馈的修复闭环
 

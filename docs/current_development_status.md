@@ -1,5 +1,15 @@
 # 当前开发状态
 
+## 2026-09-30：拍照入口改为实时摄像头，已完成本地—GitHub—腾讯云修复
+
+- 用户确认目标为 Windows 希沃一体机上的 Edge / Chrome。旧 input capture 只是文件选择提示，已改为网页内 getUserMedia 摄像头预览：手机优先后置，可选择系统识别的摄像头/USB展台，拍照后确认加入学生作文，关闭即释放。保留相册/PDF；新帧按原始尺寸生成PNG，不对既有原图重编码，仍限单张8MiB及每生10页；权限拒绝、设备缺失/占用等给具体提示。
+- 产品提交 `b7d890ee46968cd2c96964a636098da87d830ccf` 已推送 `codex/tencent-migration`。前端95文件/1402测试、类型/lint/独立部署构建通过；包括16项摄像头组件检查及连续拍照加入正确学生的集成检查。独立产品/部署复核无阻断，不将模拟媒体API测试当真机证据。
+- 从干净产品提交构建 `20260930-camera-preview-02`，包SHA256 `274cb9a80f70f8d2293ce1f91c82728df765b6f840625a00bf95dd77fb3ce187`；3797文件校验通过，3790非public文件与reviewed-03相同。2026-09-30 12:27:34北京时间，腾讯云私人API/continuous worker已切到该版，ready=true、实际ExecStart/WorkingDirectory匹配且NRestarts=0。本机代理改用 `local-preview-camera.mjs`，7个静态资源HTTP摘要全部匹配；入口仍为 `http://127.0.0.1:18793`。
+- 切换前优雅停止并确认排空，保存独立preview库25表和2原图的root私密快照，摘要前后相同；未重建账号/覆盖数据。12:30:39审计仍为原2作业各1次模型执行、gate空闲，原教师修订、2图及两个历史冻结恢复库不变。本次代理新增模型调用0。初次构建受沙箱npm缓存权限阻断，01残留保留；初次云安装受CST时区解析保护拦截且未改服务/数据，改为UTC解析后02安装成功。
+- 浏览器刷新后保留登录及2/2已完成结果，点击拍照进入网页弹窗。用户随后明确反馈“已看到实时画面，可以拍照”，电脑端人工复测通过。手机及真正希沃/USB展台尚未实机验收；此次拍摄的新照片确认上传/批改没有新增验证证据。不要将当前本机测试入口当成手机可直接访问的公网地址。
+- 测试仍在北京时间2026-09-30 22:00到期；受限SSH仍在2026-10-02 21:01:47到期。全局current/旧停用服务仍为reviewed-03，preview显式使用新release；bootstrap身份配置保持原值，不能依靠current或历史one-shot报告判断新进程版本。原Vercel/域名/DNS未切换，DeepSeek官方/v2/无OCR/并发1/未知不盲重试不变。
+- 详情见 `docs/2026-09-30-camera-capture-fix.md`；本次证据在ignored `local-private-accounts/tencent-migration/private-preview/` 下 `camera-artifact-receipt.json`、`camera-proxy-verification.json`、`camera-post-deploy-audit.json`、`camera-deployment-ui-evidence.txt` 和 `camera-preview-dialog.png`。私密快照/凭据不提交Git。
+
 ## 2026-09-30：用户授权人工连续测试及本地—GitHub—腾讯云全链路修复
 
 - 用户明确要求一边人工测试，一边反馈问题，由代理负责本地修复、测试、GitHub提交推送、腾讯云部署和复验；这是本次及后续同范围修复授权，不再以旧记录的暂停开发/禁止推送阻断工作。DeepSeek官方直连/v2/无OCR/全站并发1/未知不盲重试仍保持。
