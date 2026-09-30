@@ -114,18 +114,29 @@ describe('UploadPage student cards', () => {
     expect(screen.getByLabelText('上传相册图片')).toHaveAttribute('multiple')
     expect(screen.getByLabelText('上传相册图片')).toHaveAttribute('accept', 'image/png,image/jpeg,image/webp')
     expect(screen.getByLabelText('上传PDF文件')).toHaveAttribute('accept', 'application/pdf')
-    expect(screen.getByLabelText('拍照上传')).toHaveAttribute('capture', 'environment')
+    expect(screen.getByRole('button', { name: '拍照上传' })).toBeEnabled()
   })
 
-  it('requests a single image capture using the wildcard required by mobile camera pickers', async () => {
+  it('opens the camera explicitly rather than a file picker and explains missing hardware', async () => {
     const user = userEvent.setup()
+    const getUserMedia = vi.fn().mockRejectedValue(new DOMException('No camera', 'NotFoundError'))
+    const originalDevices = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices')
+    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia } })
+    vi.stubGlobal('isSecureContext', true)
+    Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value: function (this: HTMLDialogElement) { this.open = true } })
+    Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value: function (this: HTMLDialogElement) { this.open = false } })
     renderPage()
     await user.click(screen.getByRole('button', { name: '为学生1添加作文' }))
-
-    const cameraInput = screen.getByLabelText('拍照上传')
-    expect(cameraInput).toHaveAttribute('accept', 'image/*')
-    expect(cameraInput).toHaveAttribute('capture', 'environment')
-    expect(cameraInput).not.toHaveAttribute('multiple')
+    try {
+      await user.click(screen.getByRole('button', { name: '拍照上传' }))
+      expect(getUserMedia).toHaveBeenCalledWith(expect.objectContaining({ audio: false, video: expect.any(Object) }))
+      expect(await screen.findByRole('alert')).toHaveTextContent(/摄像头/)
+      expect(document.querySelector('input[capture]')).toBeNull()
+      expect(screen.getByRole('button', { name: '提交作文并进入批改' })).toBeDisabled()
+    } finally {
+      if (originalDevices) Object.defineProperty(navigator, 'mediaDevices', originalDevices)
+      else Reflect.deleteProperty(navigator, 'mediaDevices')
+    }
   })
 
   it('repeats the material-analysis fallback warning without changing the student upload workspace', async () => {
@@ -179,7 +190,7 @@ describe('UploadPage student cards', () => {
     expect(screen.getByRole('img', { name: 'essay-page-2.png 预览' })).toBeInTheDocument()
   })
 
-  it('rejects a late PDF page when a camera upload has filled the tenth page', async () => {
+  it('rejects a late PDF page when another image has filled the tenth page', async () => {
     const user = userEvent.setup()
     const createObjectURL = vi.fn((file: File) => `blob:${file.name}`)
     vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL: vi.fn() })
@@ -190,7 +201,7 @@ describe('UploadPage student cards', () => {
       new File(['page'], `page-${index + 1}.png`, { type: 'image/png' })
     )))
     await user.upload(screen.getByLabelText('上传PDF文件'), new File(['pdf'], 'late.pdf', { type: 'application/pdf' }))
-    await user.upload(screen.getByLabelText('拍照上传'), new File(['photo'], 'camera.jpg', { type: 'image/jpeg' }))
+    await user.upload(screen.getByLabelText('上传相册图片'), new File(['photo'], 'camera.jpg', { type: 'image/jpeg' }))
 
     await act(async () => { resolvePdf([new File(['pdf page'], 'late.png', { type: 'image/png' })]) })
 
@@ -209,7 +220,7 @@ describe('UploadPage student cards', () => {
     const resolvePdf = deferPdfConversion()
     renderPage()
     await user.click(screen.getByRole('button', { name: '为学生1添加作文' }))
-    await user.upload(screen.getByLabelText('拍照上传'), new File(['photo'], 'camera.jpg', { type: 'image/jpeg' }))
+    await user.upload(screen.getByLabelText('上传相册图片'), new File(['photo'], 'camera.jpg', { type: 'image/jpeg' }))
     await user.upload(screen.getByLabelText('上传PDF文件'), new File(['pdf'], 'late.pdf', { type: 'application/pdf' }))
     await user.click(screen.getByRole('button', { name: '添加下一位学生' }))
     await user.click(screen.getByRole('button', { name: '删除学生1' }))
@@ -230,7 +241,7 @@ describe('UploadPage student cards', () => {
     const resolvePdf = deferPdfConversion()
     const { unmount } = renderPage()
     await user.click(screen.getByRole('button', { name: '为学生1添加作文' }))
-    await user.upload(screen.getByLabelText('拍照上传'), new File(['photo'], 'camera.jpg', { type: 'image/jpeg' }))
+    await user.upload(screen.getByLabelText('上传相册图片'), new File(['photo'], 'camera.jpg', { type: 'image/jpeg' }))
     await user.upload(screen.getByLabelText('上传PDF文件'), new File(['pdf'], 'late.pdf', { type: 'application/pdf' }))
     unmount()
 
@@ -240,7 +251,7 @@ describe('UploadPage student cards', () => {
     expect(revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:camera.jpg')
   })
 
-  describe.each(['上传相册图片', '拍照上传'])('%s validation', (inputLabel) => {
+  describe('image file validation', () => {
     it.each([
       [new File(['gif'], 'essay.gif', { type: 'image/gif' })],
       [new File(['heic'], 'essay.heic', { type: 'image/heic' })],
@@ -249,7 +260,7 @@ describe('UploadPage student cards', () => {
       const user = userEvent.setup({ applyAccept: false })
       renderPage()
       await user.click(screen.getByRole('button', { name: '为学生1添加作文' }))
-      await user.upload(screen.getByLabelText(inputLabel), file)
+      await user.upload(screen.getByLabelText('上传相册图片'), file)
 
       expect(screen.getByRole('alert')).toHaveTextContent('仅支持 PNG、JPEG、WebP 图片，且单张不超过 8 MiB。')
       expect(screen.queryByText(file.name)).not.toBeInTheDocument()

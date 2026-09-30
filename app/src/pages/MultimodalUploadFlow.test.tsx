@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useEffect, useRef } from 'react'
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom'
@@ -132,18 +132,44 @@ describe('material task direct image upload flow', () => {
   it('keeps repeated camera captures as ordered File pages on the selected student card', async () => {
     const user = userEvent.setup()
     vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn((file: File) => `blob:${file.name}`), revokeObjectURL: vi.fn() })
+    vi.stubGlobal('isSecureContext', true)
+    const originalDevices = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices')
+    const stop = vi.fn()
+    const getUserMedia = vi.fn().mockImplementation(async () => ({
+      getTracks: () => [{ stop }], getVideoTracks: () => [{ stop, getSettings: () => ({ deviceId: 'camera' }) }],
+    }))
+    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: {
+      getUserMedia, enumerateDevices: vi.fn().mockResolvedValue([]),
+    } })
+    Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value: function (this: HTMLDialogElement) { this.open = true } })
+    Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value: function (this: HTMLDialogElement) { this.open = false } })
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D)
+    let captureNumber = 0
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation(callback => {
+      callback(new Blob(['frame'.repeat(++captureNumber)], { type: 'image/png' }))
+    })
+    const capturePhoto = async (studentIndex: number) => {
+      await user.click(screen.getAllByRole('button', { name: '拍照上传' })[studentIndex])
+      const video = screen.getByLabelText('摄像头实时画面') as HTMLVideoElement
+      await waitFor(() => expect(video.srcObject).toBeTruthy())
+      Object.defineProperties(video, { videoWidth: { value: 640 }, videoHeight: { value: 480 }, readyState: { value: 2 } })
+      fireEvent.loadedData(video)
+      await user.click(screen.getByRole('button', { name: '拍照' }))
+      await user.click(await screen.findByRole('button', { name: '使用这张照片' }))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    }
+    try {
     renderMaterialFlow(createMockGradingClient(), { mode: 'adaptive-v1', hardLimit: 2, stableSuccessWindow: 1 })
     await screen.findByRole('button', { name: '为学生1添加作文' })
-    const firstStudentPhoto = new File(['student one'], 'first.jpg', { type: 'image/jpeg' })
     const albumPage = new File(['album page'], 'album.png', { type: 'image/png' })
-    const cameraPage = new File(['camera page'], 'capture.jpg', { type: 'image/jpeg' })
     await user.click(screen.getByRole('button', { name: '为学生1添加作文' }))
-    await user.upload(screen.getByLabelText('拍照上传'), firstStudentPhoto)
+    await capturePhoto(0)
     await user.click(screen.getByRole('button', { name: '添加下一位学生' }))
     await user.click(screen.getByRole('button', { name: '为学生2添加作文' }))
     await user.upload(screen.getAllByLabelText('上传相册图片')[1], albumPage)
-    await user.upload(screen.getAllByLabelText('拍照上传')[1], cameraPage)
-    await user.upload(screen.getAllByLabelText('拍照上传')[1], cameraPage)
+    await capturePhoto(1)
+    await capturePhoto(1)
     await user.click(screen.getByRole('button', { name: '提交作文并进入批改' }))
 
     await screen.findByRole('heading', { name: /批改进度/ })
@@ -151,14 +177,21 @@ describe('material task direct image upload flow', () => {
     const queued = capturedState?.essays.filter((essay) => essay.taskId === materialTask?.id) ?? []
     expect(queued.map((essay) => essay.essayNumber)).toEqual(['学生1', '学生2'])
     expect(queued[0]?.pages).toHaveLength(1)
-    expect(queued[0]?.pages[0].sourceFile).toBe(firstStudentPhoto)
+    expect(queued[0]?.pages[0].sourceFile).toMatchObject({ type: 'image/png', size: 5 })
     expect(queued[1]?.pages).toHaveLength(3)
     expect(queued[1]?.pages[0].sourceFile).toBe(albumPage)
-    expect(queued[1]?.pages[1].sourceFile).toBe(cameraPage)
-    expect(queued[1]?.pages[2].sourceFile).toBe(cameraPage)
+    expect(queued[1]?.pages[1].sourceFile).toMatchObject({ type: 'image/png', size: 10 })
+    expect(queued[1]?.pages[2].sourceFile).toMatchObject({ type: 'image/png', size: 15 })
     expect(queued[1]?.pages.map((page) => page.pageNumber)).toEqual([1, 2, 3])
     expect(queued[1]?.pageOrder).toEqual(queued[1]?.pages.map((page) => page.id))
     expect(new Set(queued[1]?.pageOrder).size).toBe(3)
+    expect(getUserMedia).toHaveBeenCalledTimes(3)
+    expect(stop).toHaveBeenCalledTimes(3)
+    } finally {
+      if (originalDevices) Object.defineProperty(navigator, 'mediaDevices', originalDevices)
+      else Reflect.deleteProperty(navigator, 'mediaDevices')
+      vi.unstubAllGlobals()
+    }
   })
 
   it('blocks eleven otherwise valid image pages for one student before it changes route or queues essays', async () => {

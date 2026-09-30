@@ -3,6 +3,7 @@ import { Camera, FileImage, FileText, Plus, Trash2 } from 'lucide-react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { EmptyState } from '../components/EmptyState'
 import { EssayImagePreview } from '../components/EssayImagePreview'
+import { CameraCaptureDialog } from '../components/CameraCaptureDialog'
 import { useAppState } from '../context/useAppState'
 import { AppLayout } from '../layout/AppLayout'
 import type { EssayPage } from '../types'
@@ -47,6 +48,7 @@ export function UploadPage() {
   const studentsRef = useRef(students)
   const mountedRef = useRef(false)
   const [uploadError, setUploadError] = useState('')
+  const [cameraStudentId, setCameraStudentId] = useState<string | null>(null)
   const [recoveredPages, setRecoveredPages] = useState<EssayPage[]>([])
   const [incompleteUploads, setIncompleteUploads] = useState<string[]>([])
   const [recoveryAttempt, setRecoveryAttempt] = useState(0)
@@ -177,6 +179,7 @@ export function UploadPage() {
   }
 
   const removeStudent = (studentId: string) => {
+    if (cameraStudentId === studentId) setCameraStudentId(null)
     setStudents((current) => {
       const removed = current.find((student) => student.id === studentId)
       removed?.pages.forEach((page) => {
@@ -218,6 +221,7 @@ export function UploadPage() {
 
   const hasPages = students.some((student) => student.pages.length > 0)
   const processingPdf = students.some((student) => student.processingPdf)
+  const cameraStudent = students.find((student) => student.id === cameraStudentId)
 
   return (
     <AppLayout
@@ -227,6 +231,16 @@ export function UploadPage() {
       description="按学生依次上传作文图片、PDF 或现场拍照；每位学生可包含多页。"
     >
       <>
+        {cameraStudent ? (
+          <CameraCaptureDialog
+            key={cameraStudent.id}
+            studentName={displayName(cameraStudent, students.indexOf(cameraStudent))}
+            onCapture={(file) => {
+              if (!submittingRef.current) addImageFiles(cameraStudent.id, [file])
+            }}
+            onClose={() => setCameraStudentId(null)}
+          />
+        ) : null}
         {task.materialProcessingStatus === 'failed' ? (
           <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
             材料暂时无法读取，本任务将仅按已填写的写作要求评分。
@@ -377,21 +391,15 @@ export function UploadPage() {
                           }}
                         />
                       </label>
-                      <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-3 text-sm font-semibold text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700">
+                      <button
+                        type="button"
+                        disabled={submitting || student.pages.length >= maxPagesPerStudent}
+                        onClick={() => setCameraStudentId(student.id)}
+                        className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-3 text-sm font-semibold text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
                         <Camera className="h-4 w-4" />
                         拍照上传
-                        <input
-                          type="file"
-                          aria-label="拍照上传"
-                          accept="image/*"
-                          capture="environment"
-                          className="sr-only"
-                          onChange={(event) => {
-                            addImageFiles(student.id, Array.from(event.target.files ?? []))
-                            event.target.value = ''
-                          }}
-                        />
-                      </label>
+                      </button>
                     </div>
                   ) : null}
                 </div>
@@ -412,7 +420,7 @@ export function UploadPage() {
           <button
             type="button"
             onClick={()=>void enqueueStudents()}
-            disabled={submitting || processingPdf || !hasPages}
+            disabled={submitting || processingPdf || !hasPages || !!cameraStudent}
             className="rounded-lg bg-blue-700 px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-slate-300"
           >
             {processingPdf ? '正在解析 PDF…' : '提交作文并进入批改'}
